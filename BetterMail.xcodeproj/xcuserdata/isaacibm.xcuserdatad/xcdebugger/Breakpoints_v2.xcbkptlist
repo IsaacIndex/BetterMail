@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Bucket
+   uuid = "93BF771F-E823-414D-8EFA-C4E3051D6575"
+   type = "1"
+   version = "2.0">
+   <Breakpoints>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "F3FFAF7A-2ABB-4921-A25E-A9EA82ECD6F5"
+            shouldBeEnabled = "No"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "BetterMail/MailControl.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "84"
+            endingLineNumber = "84"
+            landmarkName = "fetchRecent(from:account:daysBack:limit:)"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "F3FFAF7A-2ABB-4921-A25E-A9EA82ECD6F5 - aa5f45471adaacb4"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "static BetterMail.MailControl.fetchRecent(from: Swift.String, account: Swift.Optional&lt;Swift.String&gt;, daysBack: Swift.Int, limit: Swift.Int) throws -&gt; Swift.Array&lt;Swift.Dictionary&lt;Swift.String, Swift.String&gt;&gt;"
+                  moduleName = "BetterMail.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/isaacibm/GitHub/better-email-client/BetterMail/BetterMail/MailControl.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "84"
+                  endingLineNumber = "84">
+               </Location>
+               <Location
+                  uuid = "F3FFAF7A-2ABB-4921-A25E-A9EA82ECD6F5 - aa5f45471adaacb4"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "static BetterMail.MailControl.fetchRecent(from: Swift.String, account: Swift.Optional&lt;Swift.String&gt;, daysBack: Swift.Int, limit: Swift.Int) throws -&gt; Swift.Array&lt;Swift.Dictionary&lt;Swift.String, Swift.String&gt;&gt;"
+                  moduleName = "BetterMail.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/isaacibm/GitHub/better-email-client/BetterMail/BetterMail/MailControl.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "84"
+                  endingLineNumber = "84">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "86D663C3-45ED-4353-9696-8986CF1DF5A3"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "BetterMail/MailControl.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "85"
+            endingLineNumber = "85"
+            landmarkName = "fetchRecent(from:account:daysBack:limit:)"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "86D663C3-45ED-4353-9696-8986CF1DF5A3 - aa5f45471adaacd5"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "static BetterMail.MailControl.fetchRecent(from: Swift.String, account: Swift.Optional&lt;Swift.String&gt;, daysBack: Swift.Int, limit: Swift.Int) throws -&gt; Swift.Array&lt;Swift.Dictionary&lt;Swift.String, Swift.String&gt;&gt;"
+                  moduleName = "BetterMail.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/isaacibm/GitHub/better-email-client/BetterMail/BetterMail/MailControl.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "85"
+                  endingLineNumber = "85">
+               </Location>
+               <Location
+                  uuid = "86D663C3-45ED-4353-9696-8986CF1DF5A3 - 29d5c72a0582f191"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "closure #1 (Swift.Int) -&gt; Swift.Optional&lt;Swift.Dictionary&lt;Swift.String, Swift.String&gt;&gt; in static BetterMail.MailControl.fetchRecent(from: Swift.String, account: Swift.Optional&lt;Swift.String&gt;, daysBack: Swift.Int, limit: Swift.Int) throws -&gt; Swift.Array&lt;Swift.Dictionary&lt;Swift.String, Swift.String&gt;&gt;"
+                  moduleName = "BetterMail.debug.dylib"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/isaacibm/GitHub/better-email-client/BetterMail/BetterMail/MailControl.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "86"
+                  endingLineNumber = "86">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+   </Breakpoints>
+</Bucket>
