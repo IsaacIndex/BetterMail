@@ -6,8 +6,31 @@
 //
 
 import Foundation
+import AppKit
 
 struct MailControl {
+    static func ensureMailRunning() {
+        let bundleID = "com.apple.mail"
+        let isRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleID }
+        guard !isRunning else { return }
+
+        if #available(macOS 11.0, *) {
+            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in }
+                // Give Mail a moment to finish launching
+                usleep(500_000) // 0.5s – or better, poll until running & active
+            }
+        } else {
+            NSWorkspace.shared.launchApplication(withBundleIdentifier: bundleID,
+                                                 options: [],
+                                                 additionalEventParamDescriptor: nil,
+                                                 launchIdentifier: nil)
+            // Give Mail a moment to finish launching
+            usleep(500_000) // 0.5s – or better, poll until running & active
+        }
+    }
 
     static func moveSelection(to mailboxPath: String, in account: String) throws {
         let script = """
@@ -46,7 +69,7 @@ struct MailControl {
         end tell
         return _hits
         """
-        guard let r = try runAppleScript(script) else { return [] }
+        guard let r = try? runAppleScript(script) else { return [] }
         return (0..<r.numberOfItems).map { r.atIndex($0+1)?.stringValue ?? "" }
     }
 
@@ -55,10 +78,11 @@ struct MailControl {
                             daysBack: Int = 7,
                             limit: Int = 200) throws -> [[String: String]] {
         // Pulls a lightweight timeline: subject, sender, date received
+        print("Bundle id:", Bundle.main.bundleIdentifier ?? "nil")
         let script = """
         set _rows to {}
         set _cutoff to (current date) - (#{DAYS} * days)
-        tell application "Mail"
+        tell application id "com.apple.mail"
           #{MAILBOX_RESOLVE}
           set _msgs to messages of _mbx
           set _count to 0
@@ -81,7 +105,8 @@ struct MailControl {
             : "set _mbx to mailbox \"\(mailbox)\" of account \"\(account!)\""
         )
 
-        guard let r = try runAppleScript(script) else { return [] }
+        ensureMailRunning()
+        guard let r = try? runAppleScript(script) else { return [] }
         return (0..<r.numberOfItems).compactMap { i in
             (r.atIndex(i+1)?.stringValue ?? "").split(separator: "|", omittingEmptySubsequences: false).count == 6
             ? { let parts = (r.atIndex(i+1)?.stringValue ?? "").components(separatedBy: "||")
@@ -90,3 +115,4 @@ struct MailControl {
         }
     }
 }
+
