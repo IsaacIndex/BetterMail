@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var hits: [String] = []
     @State private var timeline: [[String:String]] = []
     @State private var status = ""
+    @State private var isBuildingTimeline = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -53,10 +54,16 @@ struct ContentView: View {
             // Timeline
             HStack {
                 Button("Build 7-day Timeline") {
+                    isBuildingTimeline = true
                     Task {
                         do { timeline = try MailControl.fetchRecent(daysBack: 7, limit: 200); status = "✓ Timeline ready" }
                         catch { status = "Timeline error: \(error)" }
+                        isBuildingTimeline = false
                     }
+                }
+                .disabled(isBuildingTimeline)
+                if isBuildingTimeline {
+                    ProgressView().controlSize(.small)
                 }
                 Spacer()
                 Text(status).foregroundColor(.secondary)
