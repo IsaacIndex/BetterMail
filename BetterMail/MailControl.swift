@@ -6,36 +6,47 @@
 //
 
 import Foundation
-import AppKit
 
 struct MailControl {
-    static func ensureMailRunning() {
-        let bundleID = "com.apple.mail"
-        let isRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleID }
-        guard !isRunning else { return }
+    /// Escape arbitrary user text so embedding it inside AppleScript stays well-formed.
+    private static func escapedForAppleScript(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
 
-        if #available(macOS 11.0, *) {
-            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = true
-                NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in }
-                // Give Mail a moment to finish launching
-                usleep(500_000) // 0.5s – or better, poll until running & active
-            }
-        } else {
-            NSWorkspace.shared.launchApplication(withBundleIdentifier: bundleID,
-                                                 options: [],
-                                                 additionalEventParamDescriptor: nil,
-                                                 launchIdentifier: nil)
-            // Give Mail a moment to finish launching
-            usleep(500_000) // 0.5s – or better, poll until running & active
+    /// Convert a "Projects/ACME" style path into the nested `mailbox` reference Mail expects.
+    private static func mailboxReference(path: String, account: String?) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = trimmed.lowercased()
+
+        let accountSuffix: (String) -> String = { ref in
+            guard let account, !account.isEmpty else { return ref }
+            return "\(ref) of account \"\(escapedForAppleScript(account))\""
         }
+
+        let builtin: Set<String> = ["inbox", "sent", "drafts", "junk", "trash", "outbox"]
+        if builtin.contains(lowered) {
+            return accountSuffix(lowered)
+        }
+
+        let components = trimmed.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !components.isEmpty else {
+            return accountSuffix("inbox")
+        }
+
+        var reference = "mailbox \"\(escapedForAppleScript(components.last!))\""
+        for parent in components.dropLast().reversed() {
+            reference += " of mailbox \"\(escapedForAppleScript(parent))\""
+        }
+        return accountSuffix(reference)
     }
 
     static func moveSelection(to mailboxPath: String, in account: String) throws {
+        let destReference = mailboxReference(path: mailboxPath, account: account)
         let script = """
         tell application "Mail"
-          set destMailbox to mailbox "\(mailboxPath)" of account "\(account)"
+          set destMailbox to \(destReference)
           repeat with m in selection
             move m to destMailbox
           end repeat
@@ -59,10 +70,11 @@ struct MailControl {
 
     static func searchInboxSubject(contains text: String, limit: Int = 50) throws -> [String] {
         // Returns subjects for simplicity (you can expand to return more fields)
+        let safeText = escapedForAppleScript(text)
         let script = """
         set _hits to {}
         tell application "Mail"
-          repeat with m in (messages of inbox whose subject contains "\(text)")
+          repeat with m in (messages of inbox whose subject contains "\(safeText)")
             copy (subject of m as string) to end of _hits
             if (count of _hits) ≥ \(limit) then exit repeat
           end repeat
@@ -79,11 +91,12 @@ struct MailControl {
                             limit: Int = 200) throws -> [[String: String]] {
         // Pulls a lightweight timeline: subject, sender, date received
         print("Bundle id:", Bundle.main.bundleIdentifier ?? "nil")
+        let mailboxRef = mailboxReference(path: mailbox, account: account)
         let script = """
         set _rows to {}
         set _cutoff to (current date) - (#{DAYS} * days)
         tell application id "com.apple.mail"
-          #{MAILBOX_RESOLVE}
+          set _mbx to \(mailboxRef)
           set _msgs to messages of _mbx
           set _count to 0
           repeat with m in _msgs
@@ -99,13 +112,7 @@ struct MailControl {
         """
         .replacingOccurrences(of: "#{DAYS}", with: String(daysBack))
         .replacingOccurrences(of: "#{LIMIT}", with: String(limit))
-        .replacingOccurrences(of: "#{MAILBOX_RESOLVE}", with:
-            account == nil
-            ? "set _mbx to \(mailbox)"
-            : "set _mbx to mailbox \"\(mailbox)\" of account \"\(account!)\""
-        )
 
-        ensureMailRunning()
         guard let r = try? runAppleScript(script) else { return [] }
         return (0..<r.numberOfItems).compactMap { i in
             (r.atIndex(i+1)?.stringValue ?? "").split(separator: "|", omittingEmptySubsequences: false).count == 6
@@ -115,4 +122,3 @@ struct MailControl {
         }
     }
 }
-
