@@ -1,0 +1,3 @@
+// Copy to ExtensionSigning.xcconfig and override with your real signing values
+DEVELOPMENT_TEAM_ID = YOUR_TEAM_ID
+MAIL_EXTENSION_BUNDLE_ID = com.example.BetterMail.MailHelperExtension

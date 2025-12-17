@@ -1,0 +1,3 @@
+// Copy to AppSigning.xcconfig and override with your real signing values
+DEVELOPMENT_TEAM_ID = YOUR_TEAM_ID
+BETTERMAIL_BUNDLE_ID = com.example.BetterMail
