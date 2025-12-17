@@ -90,7 +90,11 @@ struct MailControl {
                             daysBack: Int = 7,
                             limit: Int = 200) throws -> [[String: String]] {
         // Pulls a lightweight timeline: subject, sender, date received
-        print("Bundle id:", Bundle.main.bundleIdentifier ?? "nil")
+        print("fetchRecent bundle id:", Bundle.main.bundleIdentifier ?? "nil",
+              "mailbox:", mailbox,
+              "account:", account ?? "nil",
+              "daysBack:", daysBack,
+              "limit:", limit)
         let mailboxRef = mailboxReference(path: mailbox, account: account)
         let script = """
         set _rows to {}
@@ -115,10 +119,10 @@ struct MailControl {
 
         guard let r = try? runAppleScript(script) else { return [] }
         return (0..<r.numberOfItems).compactMap { i in
-            (r.atIndex(i+1)?.stringValue ?? "").split(separator: "|", omittingEmptySubsequences: false).count == 6
-            ? { let parts = (r.atIndex(i+1)?.stringValue ?? "").components(separatedBy: "||")
-                return ["subject": parts[0], "sender": parts[1], "date": parts[2]] }()
-            : nil
+            guard let row = r.atIndex(i+1)?.stringValue else { return nil }
+            let parts = row.components(separatedBy: "||")
+            guard parts.count >= 3 else { return nil }
+            return ["subject": parts[0], "sender": parts[1], "date": parts[2]]
         }
     }
 }
