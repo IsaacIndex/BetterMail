@@ -33,6 +33,15 @@ struct ThreadListView: View {
             if viewModel.isRefreshing {
                 ProgressView().controlSize(.small)
             }
+            HStack(spacing: 6) {
+                Text("Limit")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Limit", value: $viewModel.fetchLimit, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+            }
+            .fixedSize()
             Button(action: { viewModel.refreshNow() }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }

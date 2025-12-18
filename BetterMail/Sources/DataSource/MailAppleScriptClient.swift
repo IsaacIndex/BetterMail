@@ -32,6 +32,11 @@ struct MailAppleScriptClient {
         messages.reserveCapacity(descriptor.numberOfItems)
 
         let decoder = HeaderDecoder()
+        guard descriptor.numberOfItems > 0 else {
+            Log.appleScript.info("Descriptor contained no items.")
+            return []
+        }
+
         for index in 1...descriptor.numberOfItems {
             guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.source else { continue }
             guard let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue else { continue }
