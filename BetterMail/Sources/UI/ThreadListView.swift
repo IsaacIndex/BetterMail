@@ -9,7 +9,13 @@ struct ThreadListView: View {
             Divider()
             List {
                 OutlineGroup(viewModel.roots, children: \.childNodes) { node in
-                    MessageRowView(node: node)
+                    MessageRowView(node: node,
+                                   summaryState: viewModel.summaryState(for: node.id),
+                                   summaryExpansion: Binding(get: {
+                        viewModel.isSummaryExpanded(for: node.id)
+                    }, set: { newValue in
+                        viewModel.setSummaryExpanded(newValue, for: node.id)
+                    }))
                 }
             }
             .listStyle(.inset)
@@ -57,4 +63,5 @@ struct ThreadListView: View {
         }
         return viewModel.status
     }
+
 }
