@@ -1,0 +1,10 @@
+## 1. Intent-aware Threading
+- [x] 1.1 Extend the data layer with models/persistence for JWZ roots, AI embeddings, intent annotations, urgency/timeliness/personal-priority scores, and ThreadGroup aggregates that SwiftUI can consume without recomputing.
+- [x] 1.2 Implement an Apple Intelligence analysis service that runs off the main actor, caches embeddings and summaries per message, and exposes async APIs for roles, topic tags, and urgency inference with throttling/backoff.
+- [x] 1.3 Build the fragment/latent merge engine that ingests JWZ trees, applies cosine-similarity + participant-overlap heuristics, emits synthetic parent nodes, and records provenance + merge reasons with accept/revert controls.
+- [x] 1.4 Add the ordering pipeline that starts from JWZ chronology, layers Apple Intelligence scores (intent relevance, urgency, personal priority), boosts active tasks/unanswered questions, respects user pin/focus filters, and falls back to JWZ order for ties.
+- [x] 1.5 Replace `ThreadSidebarViewModel` with the new `ThreadViewModel` exposing `[ThreadGroup]`, filter state (“Priority”, “All”, “Waiting On Me”), and cached AI annotations so the UI only performs presentation work.
+- [x] 1.6 Redesign the SwiftUI inbox list to add segmented filters, thread cells with summaries/roles/badges/stacked avatars/topic gradients, and an expandable detail view that visualizes the JWZ tree with labeled AI merge dividers.
+- [x] 1.7 Provide user affordances to accept or revert AI merges, surface accessible badges (e.g., “Urgent, awaiting reply”), and expose AI summaries as `accessibilityHint` strings with localized fallbacks.
+- [x] 1.8 Localize all new user-visible copy (including AI generated summaries via `LocalizedStringKey` wrappers or fallback text) and add regression tests that cover threading merges, ordering, and the new view model transformations.
+- [x] 1.9 Validate via unit tests for the merge heuristics + scoring pipeline plus SwiftUI snapshot/previews for the redesigned cells, then document how to clear cached embeddings during debugging.

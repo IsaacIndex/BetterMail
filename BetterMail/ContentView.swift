@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var viewModel = ThreadSidebarViewModel()
+    @StateObject private var viewModel = ThreadViewModel()
 
     var body: some View {
         ThreadListView(viewModel: viewModel)
