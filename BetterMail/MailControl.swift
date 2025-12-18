@@ -16,7 +16,7 @@ struct MailControl {
     }
 
     /// Convert a "Projects/ACME" style path into the nested `mailbox` reference Mail expects.
-    private static func mailboxReference(path: String, account: String?) -> String {
+    static func mailboxReference(path: String, account: String?) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowered = trimmed.lowercased()
 
@@ -76,7 +76,7 @@ struct MailControl {
         tell application "Mail"
           repeat with m in (messages of inbox whose subject contains "\(safeText)")
             copy (subject of m as string) to end of _hits
-            if (count of _hits) ≥ \(limit) then exit repeat
+            if (count of _hits) is greater than or equal to \(limit) then exit repeat
           end repeat
         end tell
         return _hits
@@ -104,11 +104,11 @@ struct MailControl {
           set _msgs to messages of _mbx
           set _count to 0
           repeat with m in _msgs
-            if (date received of m) ≥ _cutoff then
+            if (date received of m) is greater than or equal to _cutoff then
               set _row to (subject of m as string) & "||" & (sender of m as string) & "||" & ((date received of m) as string)
               copy _row to end of _rows
               set _count to _count + 1
-              if _count ≥ #{LIMIT} then exit repeat
+              if _count is greater than or equal to #{LIMIT} then exit repeat
             end if
           end repeat
         end tell

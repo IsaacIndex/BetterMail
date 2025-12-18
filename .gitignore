@@ -4,6 +4,9 @@
 # Per-user Xcode data
 BetterMail.xcodeproj/xcuserdata/
 
+# Local IDE metadata
+.vscode/
+
 # Local signing configuration (copy from *.xcconfig.example)
 Config/*.xcconfig
 !Config/*.xcconfig.example
