@@ -69,11 +69,22 @@ BetterMail’s threading model follows Jamie Zawinski’s canonical algorithm th
 - Missing headers fall back to synthetic UUIDs, which means every message shows up in a deterministic thread even when Mail.app emits truncated metadata.
 See `Sources/Threading/JWZThreader.swift` for the full implementation, including normalization helpers and the map that keeps `MessageEntity` rows linked to their thread IDs.
 
+### Apple Intelligence Thread Grouping
+- `ThreadIntentAnalyzer` (`Sources/Services/ThreadIntentAnalyzer.swift`) runs off the main actor to generate per-thread embeddings, topic tags, badges, and `ThreadIntentSignals` (intent relevance, urgency, personal priority, timeliness) plus flags such as `hasActiveTask` / `isWaitingOnMe`.
+- `ThreadMergeEngine` (`Sources/Threading/ThreadMergeEngine.swift`) walks JWZ roots and merges related fragments whenever cosine similarity + participant overlap clear configurable thresholds or a user explicitly accepts the merge; it records `ThreadMergeReason` entries so UI controls can show/undo every decision.
+- `ThreadMergeDecisionStore` (UserDefaults-backed) persists per-thread merge overrides (`suggested`, `accepted`, `reverted`) so users can keep synthetic parents or split threads even after refreshes.
+- `ThreadOrderingPipeline` (`Sources/Threading/ThreadOrderingPipeline.swift`) reorders the resulting `ThreadGroup` list by pin state and weighted intent scores, falling back to the original JWZ chronological index to keep ordering deterministic.
+- `ThreadViewModel`/`ThreadGroupRowView` pair the above data with SwiftUI: each row exposes pin + expand toggles, AI summaries, gradient accents derived from topic tags, and Accept/Revert controls that surface whenever the merge engine grouped multiple JWZ roots.
+- Configure personal addresses under **BetterMail ▸ Settings ▸ Ignored Addresses** (`SelfAddressSettingsView`) so the merge engine ignores your own accounts when looking for participant overlap; this prevents two unrelated newsletters that only share “you” from merging.
+
 ## Apple Intelligence Summaries
 - When compiled on macOS 15.2 or later with the Foundation Models framework present, the app automatically instantiates `FoundationModelsEmailSummaryProvider`.
 - Summaries are optional; if the model is unavailable, the UI falls back to status strings explaining what is required.
 - Keep subjects tidy—the summarizer currently limits itself to the 25 unique subject lines per thread to stay within token budgets.
 - To clear cached embeddings and summaries during debugging, delete `~/Library/Application Support/BetterMail/intent-annotations.json` while the app is not running; the cache actor recreates the file on the next launch.
+
+## Settings
+- Open **BetterMail ▸ Settings** (⌘,) to manage ignored addresses. The Ignored Addresses panel lets you add/remove any of your own email aliases; the merge engine subtracts those when checking participant overlap so merely being CC’d on two conversations will not force a merge.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:

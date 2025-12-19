@@ -19,7 +19,8 @@ final class ThreadMergeEngine {
 
     func merge(nodes: [ThreadNode],
                metadata: [ThreadIntentMetadata],
-               mergeOverrides: [String: ThreadGroup.MergeState] = [:]) -> [ThreadGroupSeed] {
+               mergeOverrides: [String: ThreadGroup.MergeState] = [:],
+               ignoredParticipants: Set<String> = []) -> [ThreadGroupSeed] {
         guard !nodes.isEmpty else { return [] }
         let lookup = Dictionary(uniqueKeysWithValues: metadata.map { ($0.threadID, $0) })
         let nodeLookup = Dictionary(uniqueKeysWithValues: nodes.map { ($0.message.threadID ?? JWZThreader.threadIdentifier(for: $0), $0) })
@@ -36,7 +37,9 @@ final class ThreadMergeEngine {
             for candidate in metadata where candidate.threadID != id && !visited.contains(candidate.threadID) {
                 guard let candidateNode = nodeLookup[candidate.threadID] else { continue }
                 let similarity = data.embedding.cosineSimilarity(with: candidate.embedding)
-                let overlap = data.participantLookup.intersection(candidate.participantLookup)
+                let lhsParticipants = data.participantLookup.subtracting(ignoredParticipants)
+                let rhsParticipants = candidate.participantLookup.subtracting(ignoredParticipants)
+                let overlap = lhsParticipants.intersection(rhsParticipants)
                 let forcedMerge = mergeOverrides[id] == .accepted || mergeOverrides[candidate.threadID] == .accepted
                 guard forcedMerge || (similarity >= similarityThreshold && overlap.count >= participantOverlapThreshold) else { continue }
                 let reason = ThreadMergeReason(id: candidate.threadID,

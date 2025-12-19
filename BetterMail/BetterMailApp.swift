@@ -9,9 +9,14 @@ import SwiftUI
 
 @main
 struct BetterMailApp: App {
+    @StateObject private var selfAddressStore = SelfAddressStore()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(selfAddressStore: selfAddressStore)
+        }
+        Settings {
+            SelfAddressSettingsView(store: selfAddressStore)
         }
     }
 }

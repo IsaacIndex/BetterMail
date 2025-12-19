@@ -65,9 +65,18 @@ struct ThreadGroupRowView: View {
                         .accessibilityLabel(Text("Unread messages \(group.unreadCount)"))
                 }
             }
-            Text(Self.dateFormatter.string(from: group.lastUpdated))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(Self.dateFormatter.string(from: group.lastUpdated))
+                Label {
+                    Text(messageCountText)
+                } icon: {
+                    Image(systemName: "tray.full")
+                }
+                .labelStyle(.titleAndIcon)
+                .accessibilityLabel(Text("\(messageCountText) in this group"))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -167,11 +176,17 @@ struct ThreadGroupRowView: View {
 
     private var accessibilityHint: String {
         let badgeText = group.badges.map(\.accessibilityLabel).joined(separator: ", ")
-        let summary = group.summary
-        if badgeText.isEmpty {
-            return summary
+        var components: [String] = [group.summary]
+        if !badgeText.isEmpty {
+            components.append(badgeText)
         }
-        return "\(summary). \(badgeText)"
+        components.append(messageCountText)
+        return components.joined(separator: ". ")
+    }
+
+    private var messageCountText: String {
+        let count = group.messageCount
+        return count == 1 ? "1 message" : "\(count) messages"
     }
 }
 

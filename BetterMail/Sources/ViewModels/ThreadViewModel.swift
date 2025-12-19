@@ -29,31 +29,46 @@ final class ThreadViewModel: ObservableObject {
     private let mergeEngine: ThreadMergeEngine
     private let orderingPipeline = ThreadOrderingPipeline()
     private let mergeDecisions: ThreadMergeDecisionStore
+    private let selfAddressStore: SelfAddressStore
+    private var selfAddressCancellable: AnyCancellable?
     private var autoRefreshTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var didStart = false
     private var pinnedIDs: Set<String> = []
     @Published private var expandedGroupIDs: Set<String> = []
+    private var ignoredParticipants: Set<String>
 
     init(store: MessageStore = .shared,
          client: MailAppleScriptClient = MailAppleScriptClient(),
          threader: JWZThreader = JWZThreader(),
          analyzer: ThreadIntentAnalyzer? = nil,
-         mergeEngine: ThreadMergeEngine = ThreadMergeEngine(),
-         mergeDecisions: ThreadMergeDecisionStore = ThreadMergeDecisionStore()) {
+         mergeEngine: ThreadMergeEngine? = nil,
+         mergeDecisions: ThreadMergeDecisionStore = ThreadMergeDecisionStore(),
+         selfAddressStore: SelfAddressStore = .shared) {
         self.store = store
         self.client = client
         self.threader = threader
         let capability = EmailSummaryProviderFactory.makeCapability()
         self.analyzer = analyzer ?? ThreadIntentAnalyzer(summaryProvider: capability.provider)
-        self.mergeEngine = mergeEngine
+        self.mergeEngine = mergeEngine ?? ThreadMergeEngine()
         self.mergeDecisions = mergeDecisions
+        self.selfAddressStore = selfAddressStore
+        self.ignoredParticipants = selfAddressStore.addressSet
+        selfAddressCancellable = selfAddressStore.$addresses
+            .map { Set($0.map { $0.lowercased() }) }
+            .removeDuplicates()
+            .sink { [weak self] addresses in
+                guard let self else { return }
+                self.ignoredParticipants = addresses
+                Task { await self.refreshFromStore() }
+            }
         statusMessage = capability.statusMessage
     }
 
     deinit {
         autoRefreshTask?.cancel()
         refreshTask?.cancel()
+        selfAddressCancellable?.cancel()
     }
 
     func start() {
@@ -118,7 +133,8 @@ final class ThreadViewModel: ObservableObject {
             let decisions = mergeDecisions.allDecisions()
             let seeds = mergeEngine.merge(nodes: result.roots,
                                           metadata: metadata,
-                                          mergeOverrides: decisions)
+                                          mergeOverrides: decisions,
+                                          ignoredParticipants: ignoredParticipants)
             let groups = buildGroups(seeds: seeds, decisions: decisions)
             await MainActor.run {
                 self.groups = groups

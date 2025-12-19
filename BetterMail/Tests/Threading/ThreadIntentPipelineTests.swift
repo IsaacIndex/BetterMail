@@ -102,6 +102,57 @@ final class ThreadIntentPipelineTests: XCTestCase {
         XCTAssertEqual(pinned.first?.id, "A")
     }
 
+    func testThreadGroupMessageCountIncludesRelatedConversations() {
+        let child = ThreadNode(message: makeMessage(id: "child",
+                                                    subject: "Re: Parent",
+                                                    snippet: "Follow up",
+                                                    from: "Casey <casey@example.com>",
+                                                    to: "Alex <alex@example.com>",
+                                                    date: .now))
+        let parent = ThreadNode(message: makeMessage(id: "parent",
+                                                     subject: "Parent Thread",
+                                                     snippet: "Need input",
+                                                     from: "Alex <alex@example.com>",
+                                                     to: "Casey <casey@example.com>",
+                                                     date: .now),
+                                children: [child])
+        let relatedNode = ThreadNode(message: makeMessage(id: "related",
+                                                          subject: "Spin-off",
+                                                          snippet: "Another detail",
+                                                          from: "Jamie <jamie@example.com>",
+                                                          to: "Alex <alex@example.com>",
+                                                          date: .now))
+        let reason = ThreadMergeReason(id: "related",
+                                       description: "Merged",
+                                       similarity: 0.9,
+                                       sharedParticipants: [])
+        let relatedConversation = ThreadRelatedConversation(id: "related",
+                                                            title: "Spin-off",
+                                                            nodes: [relatedNode],
+                                                            reason: reason)
+        let group = ThreadGroup(id: "group",
+                                subject: "Parent Thread",
+                                topicTag: nil,
+                                summary: "Summary",
+                                participants: [],
+                                badges: [],
+                                intentSignals: ThreadIntentSignals(intentRelevance: 0.5,
+                                                                   urgencyScore: 0.5,
+                                                                   personalPriorityScore: 0.5,
+                                                                   timelinessScore: 0.5),
+                                lastUpdated: Date(),
+                                unreadCount: 1,
+                                rootNodes: [parent],
+                                relatedConversations: [relatedConversation],
+                                mergeReasons: [reason],
+                                mergeState: .accepted,
+                                isWaitingOnMe: false,
+                                hasActiveTask: false,
+                                pinned: false,
+                                chronologicalIndex: 0)
+        XCTAssertEqual(group.messageCount, 3)
+    }
+
     private func makeMessage(id: String,
                              subject: String,
                              snippet: String,

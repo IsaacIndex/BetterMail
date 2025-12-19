@@ -121,6 +121,18 @@ struct ThreadGroup: Identifiable, Hashable {
     let pinned: Bool
     let chronologicalIndex: Int
 
+    var messageCount: Int {
+        let rootTotal = rootNodes.reduce(0) { partial, node in
+            partial + Self.countMessages(in: node)
+        }
+        let relatedTotal = relatedConversations.reduce(0) { partial, conversation in
+            partial + conversation.nodes.reduce(0) { subtotal, node in
+                subtotal + Self.countMessages(in: node)
+            }
+        }
+        return rootTotal + relatedTotal
+    }
+
     static func == (lhs: ThreadGroup, rhs: ThreadGroup) -> Bool {
         lhs.id == rhs.id && lhs.chronologicalIndex == rhs.chronologicalIndex
     }
@@ -128,5 +140,11 @@ struct ThreadGroup: Identifiable, Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
         hasher.combine(chronologicalIndex)
+    }
+
+    private static func countMessages(in node: ThreadNode) -> Int {
+        1 + node.children.reduce(0) { partial, child in
+            partial + countMessages(in: child)
+        }
     }
 }
