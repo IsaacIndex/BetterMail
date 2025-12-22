@@ -7,6 +7,14 @@ struct ThreadingResult {
 }
 
 final class JWZThreader {
+    private let subjectMergeWindow: TimeInterval = 7 * 24 * 60 * 60
+    private let contentSimilarityThreshold: Double = 0.25
+    private static let stopWords: Set<String> = [
+        "the", "and", "for", "with", "that", "this", "your", "from", "have",
+        "will", "need", "please", "regarding", "about", "into", "over",
+        "what", "were", "when", "where", "which"
+    ]
+
     private final class Container: Hashable {
         let identifier: String
         weak var parent: Container?
@@ -77,7 +85,9 @@ final class JWZThreader {
             threadRoots.append(contentsOf: flatten(container: root))
         }
 
-        let sortedRoots = threadRoots.sorted { lhs, rhs in
+        let mergedRoots = mergeSubjectOnlyThreads(threadRoots)
+
+        let sortedRoots = mergedRoots.sorted { lhs, rhs in
             if lhs.message.date == rhs.message.date {
                 return lhs.message.subject.localizedCaseInsensitiveCompare(rhs.message.subject) == .orderedAscending
             }
@@ -134,6 +144,114 @@ final class JWZThreader {
         return (updatedNode, latest, unread, total)
     }
 
+    private func mergeSubjectOnlyThreads(_ roots: [ThreadNode]) -> [ThreadNode] {
+        guard roots.count > 1 else { return roots }
+        var passthrough: [ThreadNode] = []
+        var subjectBuckets: [String: [ThreadNode]] = [:]
+
+        for node in roots {
+            guard node.message.inReplyTo == nil,
+                  node.message.references.isEmpty else {
+                passthrough.append(node)
+                continue
+            }
+            let canonical = Self.canonicalSubject(node.message.subject)
+            guard !canonical.isEmpty else {
+                passthrough.append(node)
+                continue
+            }
+            subjectBuckets[canonical, default: []].append(node)
+        }
+
+        for (_, bucket) in subjectBuckets {
+            guard bucket.count > 1 else {
+                passthrough.append(contentsOf: bucket)
+                continue
+            }
+            passthrough.append(contentsOf: mergeSubjectBucket(bucket))
+        }
+
+        return passthrough
+    }
+
+    private func mergeSubjectBucket(_ nodes: [ThreadNode]) -> [ThreadNode] {
+        var visited: Set<Int> = []
+        var results: [ThreadNode] = []
+        var contentCache: [String: Set<String>] = [:]
+
+        for index in nodes.indices {
+            guard !visited.contains(index) else { continue }
+            var stack: [Int] = [index]
+            var component: [ThreadNode] = []
+            visited.insert(index)
+
+            while let current = stack.popLast() {
+                component.append(nodes[current])
+                for candidate in nodes.indices where !visited.contains(candidate) {
+                    if shouldMergeSubjectNodes(lhs: nodes[current],
+                                               rhs: nodes[candidate],
+                                               cache: &contentCache) {
+                        visited.insert(candidate)
+                        stack.append(candidate)
+                    }
+                }
+            }
+
+            if component.count == 1 {
+                results.append(component[0])
+            } else {
+                results.append(graftSubjectComponent(component))
+            }
+        }
+
+        return results
+    }
+
+    private func shouldMergeSubjectNodes(lhs: ThreadNode,
+                                         rhs: ThreadNode,
+                                         cache: inout [String: Set<String>]) -> Bool {
+        let timeGap = abs(lhs.message.date.timeIntervalSince(rhs.message.date))
+        guard timeGap <= subjectMergeWindow else { return false }
+        let lhsTokens = cachedContentTokens(for: lhs, cache: &cache)
+        let rhsTokens = cachedContentTokens(for: rhs, cache: &cache)
+        if lhsTokens.isEmpty && rhsTokens.isEmpty {
+            return true
+        }
+        let similarity = contentSimilarity(lhsTokens: lhsTokens, rhsTokens: rhsTokens)
+        return similarity >= contentSimilarityThreshold
+    }
+
+    private func contentSimilarity(lhsTokens: Set<String>,
+                                   rhsTokens: Set<String>) -> Double {
+        let union = lhsTokens.union(rhsTokens)
+        guard !union.isEmpty else { return 0 }
+        let intersection = lhsTokens.intersection(rhsTokens)
+        return Double(intersection.count) / Double(union.count)
+    }
+
+    private func cachedContentTokens(for node: ThreadNode,
+                                     cache: inout [String: Set<String>]) -> Set<String> {
+        if let cached = cache[node.id] {
+            return cached
+        }
+        let tokens = Self.contentTokens(for: node.message)
+        cache[node.id] = tokens
+        return tokens
+    }
+
+    private func graftSubjectComponent(_ nodes: [ThreadNode]) -> ThreadNode {
+        guard !nodes.isEmpty else { return ThreadNode(message: EmailMessage.placeholder) }
+        let sorted = nodes.sorted { $0.message.date < $1.message.date }
+        var root = sorted[0]
+        var children = root.children
+        for node in sorted.dropFirst() {
+            children.append(node)
+        }
+        children.sort { $0.message.date < $1.message.date }
+        root.children = children
+        return root
+    }
+
     static func normalizeIdentifier(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
@@ -142,6 +260,52 @@ final class JWZThreader {
             candidate = String(candidate.dropFirst().dropLast())
         }
         return candidate.lowercased()
+    }
+
+    private static func canonicalSubject(_ subject: String) -> String {
+        var trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        while true {
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("re:") {
+                trimmed = trimmed.dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+            if lower.hasPrefix("fw:") {
+                trimmed = trimmed.dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+            if lower.hasPrefix("fwd:") {
+                trimmed = trimmed.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+            break
+        }
+        if trimmed.hasPrefix("[") && trimmed.contains("]") {
+            if let closing = trimmed.firstIndex(of: "]") {
+                trimmed = trimmed[trimmed.index(after: closing)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return trimmed.lowercased()
+    }
+
+    private static func contentTokens(for message: EmailMessage) -> Set<String> {
+        let snippetTokens = tokenize(message.snippet)
+        if snippetTokens.isEmpty {
+            let fallback = tokenize(canonicalSubject(message.subject))
+            return Set(fallback)
+        }
+        return Set(snippetTokens)
+    }
+
+    private static func tokenize(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { token in
+                token.count >= 3 && stopWords.contains(token) == false
+            }
     }
 
     static func threadIdentifier(for node: ThreadNode) -> String {

@@ -54,6 +54,61 @@ final class ThreadIntentPipelineTests: XCTestCase {
         XCTAssertEqual(seeds.first?.related.first?.id, "b@example.com")
     }
 
+    func testAcceptedMergeKeepsUserSelectedRoot() {
+        let nodeA = ThreadNode(message: makeMessage(id: "a@example.com",
+                                                    subject: "Travel Plans",
+                                                    snippet: "ASAP itinerary",
+                                                    from: "Alex <alex@example.com>",
+                                                    to: "Taylor <taylor@example.com>",
+                                                    date: .now))
+        let nodeB = ThreadNode(message: makeMessage(id: "b@example.com",
+                                                    subject: "Re: Travel Plans",
+                                                    snippet: "Need your reply",
+                                                    from: "Taylor <taylor@example.com>",
+                                                    to: "Alex <alex@example.com>",
+                                                    date: .now))
+        let signals = ThreadIntentSignals(intentRelevance: 0.5,
+                                          urgencyScore: 0.9,
+                                          personalPriorityScore: 0.7,
+                                          timelinessScore: 0.6)
+        let metadataA = ThreadIntentMetadata(threadID: "a@example.com",
+                                             summary: "Trip summary",
+                                             topicTag: "Travel",
+                                             participants: [],
+                                             badges: [],
+                                             intentSignals: signals,
+                                             isWaitingOnMe: true,
+                                             hasActiveTask: true,
+                                             embedding: IntentEmbedding.make(from: "travel plans"),
+                                             participantLookup: Set(arrayLiteral: "alex@example.com"),
+                                             lastUpdated: .now,
+                                             unreadCount: 1,
+                                             chronologicalIndex: 0)
+        let metadataB = ThreadIntentMetadata(threadID: "b@example.com",
+                                             summary: "Trip summary",
+                                             topicTag: "Travel",
+                                             participants: [],
+                                             badges: [],
+                                             intentSignals: signals,
+                                             isWaitingOnMe: true,
+                                             hasActiveTask: true,
+                                             embedding: IntentEmbedding.make(from: "travel itinerary"),
+                                             participantLookup: Set(arrayLiteral: "alex@example.com"),
+                                             lastUpdated: .now,
+                                             unreadCount: 1,
+                                             chronologicalIndex: 1)
+        let engine = ThreadMergeEngine(similarityThreshold: 0.99)
+        let overrides: [String: ThreadGroup.MergeState] = [
+            "b@example.com": .accepted
+        ]
+        let seeds = engine.merge(nodes: [nodeA, nodeB],
+                                 metadata: [metadataA, metadataB],
+                                 mergeOverrides: overrides)
+        XCTAssertEqual(seeds.count, 1)
+        XCTAssertEqual(seeds.first?.metadata.threadID, "b@example.com")
+        XCTAssertEqual(seeds.first?.root.message.messageID, "b@example.com")
+    }
+
     func testOrderingPipelineRespectsPinsAndChronologicalFallback() {
         let groupA = ThreadGroup(id: "A",
                                  subject: "Subject A",

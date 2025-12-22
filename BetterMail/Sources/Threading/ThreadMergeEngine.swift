@@ -22,12 +22,13 @@ final class ThreadMergeEngine {
                mergeOverrides: [String: ThreadGroup.MergeState] = [:],
                ignoredParticipants: Set<String> = []) -> [ThreadGroupSeed] {
         guard !nodes.isEmpty else { return [] }
-        let lookup = Dictionary(uniqueKeysWithValues: metadata.map { ($0.threadID, $0) })
+        let orderedMetadata = prioritizeMetadata(metadata,
+                                                 mergeOverrides: mergeOverrides)
         let nodeLookup = Dictionary(uniqueKeysWithValues: nodes.map { ($0.message.threadID ?? JWZThreader.threadIdentifier(for: $0), $0) })
         var visited: Set<String> = []
         var seeds: [ThreadGroupSeed] = []
 
-        for data in metadata {
+        for data in orderedMetadata {
             let id = data.threadID
             guard visited.contains(id) == false else { continue }
             guard let root = nodeLookup[id] else { continue }
@@ -65,5 +66,18 @@ final class ThreadMergeEngine {
         }
 
         return seeds
+    }
+
+    private func prioritizeMetadata(_ metadata: [ThreadIntentMetadata],
+                                    mergeOverrides: [String: ThreadGroup.MergeState]) -> [ThreadIntentMetadata] {
+        let acceptedIDs = Set(mergeOverrides.filter { $0.value == .accepted }.map(\.key))
+        return metadata.enumerated().sorted { lhs, rhs in
+            let lhsAccepted = acceptedIDs.contains(lhs.element.threadID)
+            let rhsAccepted = acceptedIDs.contains(rhs.element.threadID)
+            if lhsAccepted == rhsAccepted {
+                return lhs.offset < rhs.offset
+            }
+            return lhsAccepted && !rhsAccepted
+        }.map(\.element)
     }
 }
