@@ -108,6 +108,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var summaryTasks: [String: Task<Void, Never>] = [:]
+    private var summaryRefreshGeneration = 0
     private var didStart = false
     private var shouldForceFullReload = false
 
@@ -282,12 +283,17 @@ final class ThreadSidebarViewModel: ObservableObject {
 
         let provider = summaryProvider
         let rootsSnapshot = roots
+        summaryRefreshGeneration += 1
+        let generation = summaryRefreshGeneration
         Task { [weak self] in
             guard let self else { return }
             let subjectsByID = await worker.subjectsByRoot(rootsSnapshot)
-            prepareSummaries(for: rootsSnapshot,
-                             subjectsByID: subjectsByID,
-                             summaryProvider: provider)
+            await MainActor.run {
+                guard self.summaryRefreshGeneration == generation else { return }
+                self.prepareSummaries(for: rootsSnapshot,
+                                      subjectsByID: subjectsByID,
+                                      summaryProvider: provider)
+            }
         }
     }
 
