@@ -60,6 +60,64 @@ Mail.app ⇄ AppleScriptRunner → MailAppleScriptClient → MessageStore (Core 
 - `EmailSummaryProvider` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` demonstrates how to execute follow-up AppleScript commands (move, flag, search) against the current Mail selection.
 
+## Refresh & Summary Concurrency (Non-Blocking)
+- Heavy work stays off `@MainActor`: AppleScript fetch, Core Data upserts, JWZ threading, subject gathering, and Apple Intelligence summaries all run on a dedicated serial actor (`SidebarBackgroundWorker`), with AppleScript executed by `NSAppleScriptRunner`.
+- The main actor only applies UI state (`roots`, unread totals, summary text/status, `isRefreshing`), so the SwiftUI sidebar remains responsive during refreshes and summaries.
+- Sequence diagram (source at `openspec/changes/refactor-refresh-concurrency/refresh-flow.mmd`):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as UI
+    participant VM as ThreadSidebarViewModel (MainActor)
+    participant Worker as SidebarBackgroundWorker (serial actor)
+    participant Script as NSAppleScriptRunner (actor)
+    participant Store as MessageStore
+    participant Threader as JWZThreader
+    participant Summary as EmailSummaryProviding
+    participant SummState as Summary State (MainActor)
+
+    rect rgb(245,245,245)
+        note over UI,VM: App init (non-blocking)
+        UI->>VM: start()
+        VM->>Worker: performRethread()
+        note over Worker,VM: Off main actor
+        Worker->>Store: fetchMessages()
+        Worker->>Threader: buildThreads()
+        Worker-->>VM: roots + unread
+        VM->>Worker: subjectsByRoot()
+        note over Worker,VM: Off main actor
+        Worker-->>VM: subjectsByID
+        VM->>Worker: summarize(subjects)
+        note over Worker,VM: Summary on worker (not main)
+        Worker-->>VM: summary text/status
+        VM->>SummState: apply summary (MainActor)
+    end
+
+    rect rgb(235,245,255)
+        note over UI,VM: Manual/auto refresh
+        UI->>VM: refreshNow()
+        VM->>VM: isRefreshing = true
+        VM->>Worker: performRefresh(limit,since)
+        note over Worker,VM: AppleScript fetch on worker
+        Worker->>Script: run AppleScript
+        Script-->>Worker: messages
+        Worker->>Store: upsert(messages)
+        Worker-->>VM: fetchedCount/latestDate
+        VM->>Worker: performRethread()
+        note over Worker,VM: Rethread on worker
+        Worker-->>VM: roots + unread
+        VM->>Worker: subjectsByRoot()
+        note over Worker,VM: Off main actor
+        Worker-->>VM: subjectsByID
+        VM->>Worker: summarize(subjects)
+        note over Worker,VM: Summary on worker
+        Worker-->>VM: summary text/status
+        VM->>SummState: apply summary (MainActor)
+        VM->>VM: isRefreshing = false
+    end
+```
+
 ### JWZ Threading Algorithm
 BetterMail’s threading model follows Jamie Zawinski’s canonical algorithm that many email clients rely on:
 - Every message is normalized to a lowercase message-id (stripping angle brackets) so Mail’s inconsistent headers still point to the same canonical ID.
