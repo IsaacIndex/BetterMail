@@ -8,6 +8,12 @@ enum MailAppleScriptClientError: Error {
 }
 
 struct MailAppleScriptClient {
+    private let scriptRunner: NSAppleScriptRunner
+
+    init(scriptRunner: NSAppleScriptRunner = NSAppleScriptRunner()) {
+        self.scriptRunner = scriptRunner
+    }
+
     private enum RowIndex {
         static let messageID = 1
         static let subject = 2
@@ -17,12 +23,12 @@ struct MailAppleScriptClient {
         static let source = 6
     }
 
-    func fetchMessages(since date: Date?, limit: Int = 10, mailbox: String = "inbox") throws -> [EmailMessage] {
+    func fetchMessages(since date: Date?, limit: Int = 10, mailbox: String = "inbox") async throws -> [EmailMessage] {
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
         Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
         let script = buildScript(mailbox: mailbox, limit: limit, since: date)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
-        let descriptor = try runAppleScript(script)
+        let descriptor = try await scriptRunner.run(script)
         Log.appleScript.debug("AppleScript returned \(descriptor.numberOfItems, privacy: .public) rows.")
         guard descriptor.descriptorType == typeAEList else {
             throw MailAppleScriptClientError.malformedDescriptor

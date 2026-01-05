@@ -13,6 +13,33 @@ enum AppleScriptError: Error {
     case executionFailed(String)
 }
 
+actor NSAppleScriptRunner {
+    enum ScriptError: Error, LocalizedError {
+        case compileFailed
+        case executionFailed(NSDictionary)
+
+        var errorDescription: String? {
+            switch self {
+            case .compileFailed:
+                return "Failed to compile AppleScript."
+            case let .executionFailed(dict):
+                return "AppleScript error: \(dict)"
+            }
+        }
+    }
+
+    func run(_ source: String) throws -> NSAppleEventDescriptor {
+        try ensureMailRunning()
+
+        guard let script = NSAppleScript(source: source) else { throw ScriptError.compileFailed }
+
+        var err: NSDictionary?
+        let result = script.executeAndReturnError(&err)
+        if let err { throw ScriptError.executionFailed(err) }
+        return result
+    }
+}
+
 func ensureMailRunning(timeout: TimeInterval = 10) throws {
     let bundleID = "com.apple.mail"
 
