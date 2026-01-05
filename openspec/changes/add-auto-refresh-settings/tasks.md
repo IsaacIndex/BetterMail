@@ -7,4 +7,4 @@
 
 ## 2. Validation
 - [x] 2.1 Run `openspec validate add-auto-refresh-settings --strict`.
-- [ ] 2.2 Manual check: toggle auto refresh, adjust interval, verify last updated/next refresh display.
+- [x] 2.2 Manual check: toggle auto refresh, adjust interval, verify last updated/next refresh display.
