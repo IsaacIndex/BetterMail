@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ThreadListView: View {
     @ObservedObject var viewModel: ThreadSidebarViewModel
+    @ObservedObject var settings: AutoRefreshSettings
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +25,12 @@ struct ThreadListView: View {
         .task {
             viewModel.start()
         }
+        .onChange(of: settings.isEnabled) { _, _ in
+            viewModel.applyAutoRefreshSettings()
+        }
+        .onChange(of: settings.interval) { _, _ in
+            viewModel.applyAutoRefreshSettings()
+        }
     }
 
     private var header: some View {
@@ -34,6 +41,7 @@ struct ThreadListView: View {
                 Text(statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                refreshTimingView
             }
             Spacer()
             if viewModel.isRefreshing {
@@ -59,9 +67,28 @@ struct ThreadListView: View {
 
     private var statusText: String {
         if viewModel.unreadTotal > 0 {
-            return "Unread: \(viewModel.unreadTotal) • \(viewModel.status)"
+            return String.localizedStringWithFormat(
+                NSLocalizedString("threadlist.status.unread", comment: "Status showing unread count"),
+                viewModel.unreadTotal,
+                viewModel.status
+            )
         }
         return viewModel.status
+    }
+
+    private var refreshTimingView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let lastRefreshDate = viewModel.lastRefreshDate {
+                Text("Last updated: \(lastRefreshDate.formatted(date: .numeric, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if settings.isEnabled, let nextRefreshDate = viewModel.nextRefreshDate {
+                Text("Next refresh: \(nextRefreshDate.formatted(date: .numeric, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
 }
