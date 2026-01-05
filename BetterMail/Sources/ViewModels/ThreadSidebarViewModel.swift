@@ -130,10 +130,19 @@ final class ThreadSidebarViewModel: ObservableObject {
         autoRefreshTask?.cancel()
         nextRefreshDate = Date().addingTimeInterval(clampedInterval)
         autoRefreshTask = Task { [weak self] in
-            while let self, !Task.isCancelled {
+            while let self {
                 let nextDate = Date().addingTimeInterval(clampedInterval)
                 await self.updateNextRefreshDate(nextDate)
-                try? await Task.sleep(nanoseconds: UInt64(clampedInterval * 1_000_000_000))
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(clampedInterval * 1_000_000_000))
+                    try Task.checkCancellation()
+                } catch is CancellationError {
+                    Log.refresh.debug("Auto refresh cancelled before scheduling next run.")
+                    break
+                } catch {
+                    Log.refresh.error("Auto refresh wait failed: \(error.localizedDescription, privacy: .public)")
+                    continue
+                }
                 await self.refreshNow()
             }
         }
