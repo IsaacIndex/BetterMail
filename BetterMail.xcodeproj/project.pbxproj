@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5AD11B042EBCAC2100881D51 /* MailHelperExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5AD11AEB2EBCAC2100881D51 /* MailHelperExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5B28F8B12F0B1F0E007D1200 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5B28F8B02F0B1F0E007D1200 /* Localizable.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +42,7 @@
 		5AE0F0022EE03E570066A869 /* AppSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppSigning.xcconfig.example; sourceTree = "<group>"; };
 		5AE0F0032EE03E570066A869 /* ExtensionSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ExtensionSigning.xcconfig; sourceTree = "<group>"; };
 		5AE0F0042EE03E570066A869 /* ExtensionSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ExtensionSigning.xcconfig.example; sourceTree = "<group>"; };
+		5B28F8B02F0B1F0E007D1200 /* Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = BetterMail/Resources/Localizable.strings; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -229,6 +231,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5B28F8B12F0B1F0E007D1200 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
