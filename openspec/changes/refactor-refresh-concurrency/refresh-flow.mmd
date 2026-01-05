@@ -1,0 +1,59 @@
+%% Refresh/init threading sequence
+sequenceDiagram
+    autonumber
+    participant UI as ThreadListView / UI
+    participant VM as ThreadSidebarViewModel<br/>(MainActor)
+    participant Worker as SidebarBackgroundWorker<br/>(serial actor)
+    participant Client as MailAppleScriptClient
+    participant Script as NSAppleScriptRunner<br/>(serial actor)
+    participant Store as MessageStore
+    participant Threader as JWZThreader
+    participant Summary as EmailSummaryProviding
+    participant SummState as Summary State (MainActor)
+
+    rect rgb(245,245,245)
+        note over UI,VM: App initialization
+        UI->>VM: start()
+        VM->>VM: loadCachedMessages()
+        VM->>Worker: performRethread(fetchLimit)
+        note over Worker,VM: Background worker (serial actor) off MainActor
+        Worker->>Store: fetchMessages()
+        Worker->>Threader: buildThreads()
+        Worker->>Store: updateThreadMembership()
+        Worker-->>VM: roots + unreadTotal
+        VM->>VM: refreshSummaries(roots)
+        VM->>Worker: subjectsByRoot(roots)
+        note over Worker,VM: Subject gathering off MainActor
+        Worker-->>VM: subjectsByID
+        VM->>Worker: summarize(subjects) loop
+        note over Worker,VM: Summary runs on serial worker (not main)
+        Worker-->>VM: summary text / status
+        VM->>SummState: updateSummary(id,text,status,isSummarizing=false)
+    end
+
+    rect rgb(235,245,255)
+        note over UI,VM: Manual/auto refresh
+        UI->>VM: refreshNow()
+        VM->>VM: set isRefreshing true, status
+        VM->>Worker: performRefresh(limit,since)
+        note over Worker,VM: AppleScript fetch runs on serial worker
+        Worker->>Client: fetchMessages()
+        Client->>Script: run(AppleScript)
+        Script-->>Client: NSAppleEventDescriptor
+        Client-->>Worker: messages
+        Worker->>Store: upsert(messages)
+        Worker-->>VM: fetchedCount, latestDate
+        VM->>VM: status, lastRefreshDate, scheduleRethread()
+        VM->>Worker: performRethread(fetchLimit)
+        note over Worker,VM: Rethread on worker (serial, non-main)
+        Worker-->>VM: roots + unreadTotal
+        VM->>VM: refreshSummaries(roots)
+        VM->>Worker: subjectsByRoot(roots)
+        note over Worker,VM: Subject gathering off MainActor
+        Worker-->>VM: subjectsByID
+        VM->>Worker: summarize(subjects) loop
+        note over Worker,VM: Summary runs on serial worker (not main)
+        Worker-->>VM: summary text / status
+        VM->>SummState: updateSummary(id,text,status,isSummarizing=false)
+        VM->>VM: clear isRefreshing
+    end
