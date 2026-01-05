@@ -5,31 +5,39 @@ struct AutoRefreshSettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("Enable Auto Refresh", isOn: $settings.isEnabled)
-            intervalRow
-                .disabled(!settings.isEnabled)
-        }
-        .padding()
-        .frame(minWidth: 360)
-    }
+            Section {
+                Toggle("Enable auto refresh", isOn: $settings.isEnabled)
 
-    private var intervalRow: some View {
-        HStack {
-            Text("Refresh interval")
-            Spacer()
-            Stepper(value: intervalBinding, in: Self.minimumMinutes...Self.maximumMinutes, step: 1) {
-                Text("\(Int(settings.interval / 60)) min")
-                    .monospacedDigit()
+                LabeledContent("Refresh interval") {
+                    Stepper(
+                        value: minutesBinding,
+                        in: Int(Self.minimumMinutes)...Int(Self.maximumMinutes),
+                        step: 1
+                    ) {
+                        Text("\(minutesBinding.wrappedValue) min")
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                    .disabled(!settings.isEnabled)
+                }
+            } header: {
+                Text("Auto Refresh")
+            } footer: {
+                Text("Automatically refreshes the thread list on the selected interval.")
             }
         }
+        .formStyle(.grouped)
+        .frame(minWidth: 460, idealWidth: 520)
+        .padding(.vertical, 8)
     }
 
-    private var intervalBinding: Binding<Double> {
-        Binding(get: {
-            settings.interval / 60
-        }, set: { newValue in
-            settings.interval = newValue * 60
-        })
+    private var minutesBinding: Binding<Int> {
+        Binding(
+            get: { Int(settings.interval / 60) },
+            set: { newValue in
+                settings.interval = Double(newValue) * 60
+            }
+        )
     }
 
     private static let minimumMinutes = AutoRefreshSettings.minimumInterval / 60
