@@ -14,6 +14,8 @@ final class ThreadSidebarViewModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var status: String = ""
     @Published private(set) var unreadTotal: Int = 0
+    @Published private(set) var lastRefreshDate: Date?
+    @Published private(set) var nextRefreshDate: Date?
     @Published private(set) var threadSummaries: [String: ThreadSummaryState] = [:]
     @Published private(set) var expandedSummaryIDs: Set<String> = []
     @Published var fetchLimit: Int = 10 {
@@ -30,18 +32,21 @@ final class ThreadSidebarViewModel: ObservableObject {
     private let client: MailAppleScriptClient
     private let threader: JWZThreader
     private let summaryProvider: EmailSummaryProviding?
+    private let settings: AutoRefreshSettings
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var summaryTasks: [String: Task<Void, Never>] = [:]
     private var didStart = false
     private var shouldForceFullReload = false
 
-    init(store: MessageStore = .shared,
+    init(settings: AutoRefreshSettings,
+         store: MessageStore = .shared,
          client: MailAppleScriptClient = MailAppleScriptClient(),
          threader: JWZThreader = JWZThreader()) {
         self.store = store
         self.client = client
         self.threader = threader
+        self.settings = settings
         let capability = EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
     }
@@ -58,7 +63,7 @@ final class ThreadSidebarViewModel: ObservableObject {
         Log.refresh.info("ThreadSidebarViewModel start invoked. didStart=false; kicking off initial load.")
         Task { await loadCachedMessages() }
         refreshNow()
-        beginAutoRefresh()
+        applyAutoRefreshSettings()
     }
 
     func refreshNow(limit: Int? = nil) {
@@ -68,7 +73,7 @@ final class ThreadSidebarViewModel: ObservableObject {
         }
         let effectiveLimit = limit ?? fetchLimit
         isRefreshing = true
-        status = "Refreshing…"
+        status = NSLocalizedString("refresh.status.refreshing", comment: "Status when refresh begins")
         let since: Date?
         if shouldForceFullReload {
             Log.refresh.info("Forcing full reload due to fetchLimit change.")
@@ -94,24 +99,50 @@ final class ThreadSidebarViewModel: ObservableObject {
                 }
                 shouldForceFullReload = false
                 scheduleRethread()
-                status = "Updated \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
+                let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+                lastRefreshDate = Date()
+                status = String.localizedStringWithFormat(
+                    NSLocalizedString("refresh.status.updated", comment: "Status after refresh completes"),
+                    timestamp
+                )
             } catch {
                 Log.refresh.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
-                status = "Refresh failed: \(error.localizedDescription)"
+                status = String.localizedStringWithFormat(
+                    NSLocalizedString("refresh.status.failed", comment: "Status when refresh fails"),
+                    error.localizedDescription
+                )
             }
-                isRefreshing = false
+            isRefreshing = false
         }
     }
 
-    func beginAutoRefresh(interval: TimeInterval = 300) {
-        Log.refresh.info("Configuring auto refresh. interval=\(interval, privacy: .public)s")
+    func applyAutoRefreshSettings() {
+        if settings.isEnabled {
+            scheduleAutoRefresh(interval: settings.interval)
+        } else {
+            stopAutoRefresh()
+        }
+    }
+
+    private func scheduleAutoRefresh(interval: TimeInterval) {
+        let clampedInterval = min(max(interval, AutoRefreshSettings.minimumInterval), AutoRefreshSettings.maximumInterval)
+        Log.refresh.info("Configuring auto refresh. interval=\(clampedInterval, privacy: .public)s")
         autoRefreshTask?.cancel()
+        nextRefreshDate = Date().addingTimeInterval(clampedInterval)
         autoRefreshTask = Task { [weak self] in
             while let self, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                let nextDate = Date().addingTimeInterval(clampedInterval)
+                await self.updateNextRefreshDate(nextDate)
+                try? await Task.sleep(nanoseconds: UInt64(clampedInterval * 1_000_000_000))
                 await self.refreshNow()
             }
         }
+    }
+
+    private func stopAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        nextRefreshDate = nil
     }
 
     private func loadCachedMessages() async {
@@ -141,7 +172,10 @@ final class ThreadSidebarViewModel: ObservableObject {
             Log.refresh.info("Rethread complete. messages=\(messages.count, privacy: .public) threads=\(result.threads.count, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
-            status = "Threading failed: \(error.localizedDescription)"
+            status = String.localizedStringWithFormat(
+                NSLocalizedString("refresh.status.threading_failed", comment: "Status when threading fails"),
+                error.localizedDescription
+            )
         }
     }
 
@@ -242,5 +276,10 @@ final class ThreadSidebarViewModel: ObservableObject {
         } else {
             expandedSummaryIDs.remove(id)
         }
+    }
+
+    @MainActor
+    private func updateNextRefreshDate(_ date: Date?) {
+        nextRefreshDate = date
     }
 }

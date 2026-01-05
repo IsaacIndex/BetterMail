@@ -9,9 +9,14 @@ import SwiftUI
 
 @main
 struct BetterMailApp: App {
+    @StateObject private var settings = AutoRefreshSettings()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(settings: settings)
+        }
+        Settings {
+            AutoRefreshSettingsView(settings: settings)
         }
     }
 }
