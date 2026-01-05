@@ -1,0 +1,5 @@
+"refresh.status.refreshing" = "Refreshing...";
+"refresh.status.updated" = "Updated %@";
+"refresh.status.failed" = "Refresh failed: %@";
+"refresh.status.threading_failed" = "Threading failed: %@";
+"threadlist.status.unread" = "Unread: %d - %@";
