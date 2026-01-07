@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		5AD11B042EBCAC2100881D51 /* MailHelperExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5AD11AEB2EBCAC2100881D51 /* MailHelperExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5B28F8B12F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5B28F8B02F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings */; };
+		22F837F5A55C486AB0F0F200 /* ThreadCanvasLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */; };
+		CA32DC8C96F34952A33D8F16 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08CE01DE8A1C40779BF22717 /* XCTest.framework */; };
+		63654992E5B34382AE3799B6 /* BetterMail.app in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AD2C65B2EBB0927004783B6 /* BetterMail.app */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -18,6 +21,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 5AD11AEA2EBCAC2100881D51;
 			remoteInfo = MailHelperExtension;
+		};
+		1F4D4D6BD8D742A7BBD59F27 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5AD2C6532EBB0927004783B6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5AD2C65A2EBB0927004783B6;
+			remoteInfo = BetterMail;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -38,11 +48,14 @@
 /* Begin PBXFileReference section */
 		5AD11AEB2EBCAC2100881D51 /* MailHelperExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MailHelperExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AD2C65B2EBB0927004783B6 /* BetterMail.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterMail.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3C49E9582D184F838AB8DF93 /* BetterMailTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BetterMailTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AE0F0012EE03E570066A869 /* AppSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppSigning.xcconfig; sourceTree = "<group>"; };
 		5AE0F0022EE03E570066A869 /* AppSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppSigning.xcconfig.example; sourceTree = "<group>"; };
 		5AE0F0032EE03E570066A869 /* ExtensionSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ExtensionSigning.xcconfig; sourceTree = "<group>"; };
 		5AE0F0042EE03E570066A869 /* ExtensionSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ExtensionSigning.xcconfig.example; sourceTree = "<group>"; };
+		08CE01DE8A1C40779BF22717 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		5B28F8B02F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = BetterMail/Resources/Localizable.strings; sourceTree = SOURCE_ROOT; };
+		C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasLayoutTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -99,6 +112,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CCF3839BCE1C4FF69B2643C9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				63654992E5B34382AE3799B6 /* BetterMail.app in Frameworks */,
+				CA32DC8C96F34952A33D8F16 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -107,7 +129,9 @@
 			children = (
 				5AD2C65D2EBB0927004783B6 /* BetterMail */,
 				5AD11AEC2EBCAC2100881D51 /* MailHelperExtension */,
+				5247F506B4884367A16A6E10 /* Tests */,
 				5AE0F0052EE03E570066A869 /* Config */,
+				DB69B8C6F09949F79A24D79C /* Frameworks */,
 				5AD2C65C2EBB0927004783B6 /* Products */,
 				5AFEAE5F2F0B9FB1000F0929 /* Recovered References */,
 			);
@@ -118,8 +142,25 @@
 			children = (
 				5AD2C65B2EBB0927004783B6 /* BetterMail.app */,
 				5AD11AEB2EBCAC2100881D51 /* MailHelperExtension.appex */,
+				3C49E9582D184F838AB8DF93 /* BetterMailTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		5247F506B4884367A16A6E10 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		DB69B8C6F09949F79A24D79C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				08CE01DE8A1C40779BF22717 /* XCTest.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		5AE0F0052EE03E570066A869 /* Config */ = {
@@ -190,6 +231,26 @@
 			productReference = 5AD2C65B2EBB0927004783B6 /* BetterMail.app */;
 			productType = "com.apple.product-type.application";
 		};
+		C3DC12E18E95447DA7AF601B /* BetterMailTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B60B31BB706F4566A71904C2 /* Build configuration list for PBXNativeTarget "BetterMailTests" */;
+			buildPhases = (
+				979F9052C49F412CBB8DC0BE /* Sources */,
+				CCF3839BCE1C4FF69B2643C9 /* Frameworks */,
+				872C431E44D644BEBDAA453E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0F506E5B5A3A4292A3BF361F /* PBXTargetDependency */,
+			);
+			name = BetterMailTests;
+			packageProductDependencies = (
+			);
+			productName = BetterMailTests;
+			productReference = 3C49E9582D184F838AB8DF93 /* BetterMailTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -204,6 +265,9 @@
 						CreatedOnToolsVersion = 26.0;
 					};
 					5AD2C65A2EBB0927004783B6 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					C3DC12E18E95447DA7AF601B = {
 						CreatedOnToolsVersion = 26.0;
 					};
 				};
@@ -224,6 +288,7 @@
 			targets = (
 				5AD2C65A2EBB0927004783B6 /* BetterMail */,
 				5AD11AEA2EBCAC2100881D51 /* MailHelperExtension */,
+				C3DC12E18E95447DA7AF601B /* BetterMailTests */,
 			);
 		};
 /* End PBXProject section */
@@ -244,6 +309,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		872C431E44D644BEBDAA453E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -261,6 +333,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		979F9052C49F412CBB8DC0BE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				22F837F5A55C486AB0F0F200 /* ThreadCanvasLayoutTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -268,6 +348,11 @@
 			isa = PBXTargetDependency;
 			target = 5AD11AEA2EBCAC2100881D51 /* MailHelperExtension */;
 			targetProxy = 5AD11B022EBCAC2100881D51 /* PBXContainerItemProxy */;
+		};
+		0F506E5B5A3A4292A3BF361F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5AD2C65A2EBB0927004783B6 /* BetterMail */;
+			targetProxy = 1F4D4D6BD8D742A7BBD59F27 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -566,6 +651,60 @@
 			};
 			name = Release;
 		};
+		B1EF96DA6D784F3A80B8D99A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5AE0F0012EE03E570066A869 /* AppSigning.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM_ID)";
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = BetterMailTests;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bettermail.BetterMailTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx26.2;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BetterMail.app/Contents/MacOS/BetterMail";
+			};
+			name = Debug;
+		};
+		2F88B17572AC4024AF30C5B0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5AE0F0012EE03E570066A869 /* AppSigning.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM_ID)";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = BetterMailTests;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bettermail.BetterMailTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx26.2;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BetterMail.app/Contents/MacOS/BetterMail";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -592,6 +731,15 @@
 			buildConfigurations = (
 				5AD2C6672EBB092A004783B6 /* Debug */,
 				5AD2C6682EBB092A004783B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B60B31BB706F4566A71904C2 /* Build configuration list for PBXNativeTarget "BetterMailTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B1EF96DA6D784F3A80B8D99A /* Debug */,
+				2F88B17572AC4024AF30C5B0 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
