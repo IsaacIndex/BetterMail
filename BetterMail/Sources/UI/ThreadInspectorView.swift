@@ -4,8 +4,6 @@ import SwiftUI
 struct ThreadInspectorView: View {
     let node: ThreadNode?
 
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -74,26 +72,9 @@ struct ThreadInspectorView: View {
     @ViewBuilder
     private var inspectorBackground: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-                .overlay(shape.stroke(Color.secondary.opacity(0.2)))
-        } else if #available(macOS 26, *) {
-            shape
-                .fill(Color.white.opacity(0.08))
-                .glassEffect(
-                    .regular
-                        .tint(Color.white.opacity(0.22))
-                        .interactive(),
-                    in: .rect(cornerRadius: 18)
-                )
-                .overlay(shape.stroke(Color.white.opacity(0.35)))
-                .shadow(color: Color.black.opacity(0.22), radius: 16, y: 8)
-        } else {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(Color.white.opacity(0.22)))
-        }
+        shape
+            .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
+            .overlay(shape.stroke(Color.secondary.opacity(0.2)))
     }
 
     private func subjectText(for node: ThreadNode) -> String {
