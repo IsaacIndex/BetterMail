@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
 struct MessageRowView: View {
     let node: ThreadNode
     let summaryState: ThreadSummaryState?
     let summaryExpansion: Binding<Bool>?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -114,9 +116,20 @@ struct MessageRowView: View {
             }
         }
         .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.accentColor.opacity(0.3))
-        )
+        .background(summaryBackground)
+    }
+
+    @ViewBuilder
+    private var summaryBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor))
+                .overlay(shape.stroke(Color.secondary.opacity(0.2)))
+        } else {
+            shape
+                .fill(Color.accentColor.opacity(0.08))
+                .overlay(shape.stroke(Color.accentColor.opacity(0.25)))
+        }
     }
 }
