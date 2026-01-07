@@ -60,7 +60,16 @@ Mail.app ⇄ AppleScriptRunner → MailAppleScriptClient → MessageStore (Core 
 - `EmailSummaryProvider` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` demonstrates how to execute follow-up AppleScript commands (move, flag, search) against the current Mail selection.
 
-## Refresh & Summary Concurrency (Non-Blocking)
+## Technical Notes
+
+### Liquid Glass Nav Bar Readability
+To keep the Liquid Glass look without losing nav bar legibility, the glass container is scoped to the list only and the nav bar is layered above it:
+- `GlassEffectContainer` wraps just `threadList`, while `navigationBarOverlay` sits outside in a ZStack.
+- Nav foreground colors are explicitly set for glass mode, with a subtle text shadow to lift labels off the glass.
+- The limit `TextField` swaps to a plain style with a translucent fill and stronger border so the input stays visible.
+- The nav background tint is brightened slightly to avoid a heavy dark cast behind text.
+
+### Refresh & Summary Concurrency (Non-Blocking)
 - Heavy work stays off `@MainActor`: AppleScript fetch, Core Data upserts, JWZ threading, subject gathering, and Apple Intelligence summaries all run on a dedicated serial actor (`SidebarBackgroundWorker`), with AppleScript executed by `NSAppleScriptRunner`.
 - The main actor only applies UI state (`roots`, unread totals, summary text/status, `isRefreshing`), so the SwiftUI sidebar remains responsive during refreshes and summaries.
 - Sequence diagram (source at `openspec/changes/refactor-refresh-concurrency/refresh-flow.mmd`):
@@ -127,7 +136,7 @@ BetterMail’s threading model follows Jamie Zawinski’s canonical algorithm th
 - Missing headers fall back to synthetic UUIDs, which means every message shows up in a deterministic thread even when Mail.app emits truncated metadata.
 See `Sources/Threading/JWZThreader.swift` for the full implementation, including normalization helpers and the map that keeps `MessageEntity` rows linked to their thread IDs.
 
-## Apple Intelligence Summaries
+### Apple Intelligence Summaries
 - When compiled on macOS 15.2 or later with the Foundation Models framework present, the app automatically instantiates `FoundationModelsEmailSummaryProvider`.
 - Summaries are optional; if the model is unavailable, the UI falls back to status strings explaining what is required.
 - Keep subjects tidy—the summarizer currently limits itself to the 25 unique subject lines per thread to stay within token budgets.
