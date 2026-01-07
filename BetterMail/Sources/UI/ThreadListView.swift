@@ -228,7 +228,11 @@ struct ThreadListView: View {
     @ViewBuilder
     private var rowBackground: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        if #available(macOS 26, *) {
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor))
+                .overlay(shape.stroke(Color.white.opacity(0.25)))
+        } else if #available(macOS 26, *) {
             shape
                 .fill(Color.white.opacity(0.08))
                 .overlay(shape.stroke(Color.white.opacity(0.16)))
