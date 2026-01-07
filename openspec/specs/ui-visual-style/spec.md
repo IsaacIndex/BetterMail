@@ -4,7 +4,7 @@
 TBD - created by archiving change add-glassmorphism-ui. Update Purpose after archive.
 ## Requirements
 ### Requirement: Glassmorphism Surface Styling
-The system SHALL present primary UI surfaces (window background, header, thread canvas nodes, and inspector panel) with a cohesive glassmorphism visual treatment that includes translucency, blur, and subtle highlight/stroke layering, with solid fallbacks when Reduce Transparency is enabled.
+The system SHALL present primary UI surfaces (window background, header, thread canvas nodes, and inspector panel) with a cohesive glassmorphism visual treatment that includes translucency, blur, and subtle highlight/stroke layering, with solid fallbacks when Reduce Transparency is enabled. Liquid Glass treatments for macOS 26+ are temporarily deferred due to technical constraints and should be revisited when feasible.
 
 #### Scenario: App launch surfaces
 - **WHEN** the app launches
