@@ -114,9 +114,13 @@ struct MessageRowView: View {
             }
         }
         .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.accentColor.opacity(0.3))
-        )
+        .background(summaryBackground)
+    }
+
+    private var summaryBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return shape
+            .fill(Color.accentColor.opacity(0.08))
+            .overlay(shape.stroke(Color.accentColor.opacity(0.25)))
     }
 }
