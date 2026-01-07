@@ -1,4 +1,5 @@
 import Combine
+import CoreGraphics
 import Foundation
 import OSLog
 
@@ -89,6 +90,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     @Published private(set) var nextRefreshDate: Date?
     @Published private(set) var threadSummaries: [String: ThreadSummaryState] = [:]
     @Published private(set) var expandedSummaryIDs: Set<String> = []
+    @Published var selectedNodeID: String?
     @Published var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -381,8 +383,164 @@ final class ThreadSidebarViewModel: ObservableObject {
         }
     }
 
+    func selectNode(id: String?) {
+        selectedNodeID = id
+    }
+
+    var selectedNode: ThreadNode? {
+        Self.node(matching: selectedNodeID, in: roots)
+    }
+
+    func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
+                      today: Date = Date(),
+                      calendar: Calendar = .current) -> ThreadCanvasLayout {
+        Self.canvasLayout(for: roots, metrics: metrics, today: today, calendar: calendar)
+    }
+
     @MainActor
     private func updateNextRefreshDate(_ date: Date?) {
         nextRefreshDate = date
+    }
+}
+
+extension ThreadSidebarViewModel {
+    static func canvasLayout(for roots: [ThreadNode],
+                             metrics: ThreadCanvasLayoutMetrics,
+                             today: Date,
+                             calendar: Calendar) -> ThreadCanvasLayout {
+        let days = (0..<ThreadCanvasLayoutMetrics.dayCount).map { index -> ThreadCanvasDay in
+            let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
+            let label = ThreadCanvasDateHelper.label(for: date)
+            let yOffset = metrics.contentPadding + CGFloat(index) * metrics.dayHeight
+            return ThreadCanvasDay(id: index, date: date, label: label, yOffset: yOffset)
+        }
+
+        let columnItems: [(root: ThreadNode, latestDate: Date)] = roots.map { root in
+            (root, latestDate(in: root))
+        }
+        .sorted { lhs, rhs in
+            lhs.latestDate > rhs.latestDate
+        }
+
+        var columns: [ThreadCanvasColumn] = []
+        columns.reserveCapacity(columnItems.count)
+
+        for (index, item) in columnItems.enumerated() {
+            let threadID = item.root.message.threadID ?? item.root.id
+            let columnX = metrics.contentPadding
+                + metrics.dayLabelWidth
+                + CGFloat(index) * (metrics.columnWidth + metrics.columnSpacing)
+            let nodes = layoutNodes(for: item.root,
+                                    threadID: threadID,
+                                    columnX: columnX,
+                                    metrics: metrics,
+                                    today: today,
+                                    calendar: calendar)
+            let title = item.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : item.root.message.subject
+            columns.append(ThreadCanvasColumn(id: threadID,
+                                              title: title,
+                                              xOffset: columnX,
+                                              nodes: nodes,
+                                              latestDate: item.latestDate))
+        }
+
+        let columnCount = CGFloat(columns.count)
+        let totalWidth = metrics.contentPadding * 2
+            + metrics.dayLabelWidth
+            + (columnCount * metrics.columnWidth)
+            + max(columnCount - 1, 0) * metrics.columnSpacing
+        let totalHeight = metrics.contentPadding * 2
+            + CGFloat(ThreadCanvasLayoutMetrics.dayCount) * metrics.dayHeight
+        return ThreadCanvasLayout(days: days,
+                                  columns: columns,
+                                  contentSize: CGSize(width: totalWidth, height: totalHeight))
+    }
+
+    static func node(matching id: String?, in roots: [ThreadNode]) -> ThreadNode? {
+        guard let id else { return nil }
+        for root in roots {
+            if let match = findNode(in: root, matching: id) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func latestDate(in node: ThreadNode) -> Date {
+        node.children.reduce(node.message.date) { current, child in
+            max(current, latestDate(in: child))
+        }
+    }
+
+    private static func layoutNodes(for root: ThreadNode,
+                                    threadID: String,
+                                    columnX: CGFloat,
+                                    metrics: ThreadCanvasLayoutMetrics,
+                                    today: Date,
+                                    calendar: Calendar) -> [ThreadCanvasNode] {
+        var grouped: [Int: [ThreadNode]] = [:]
+        let allNodes = flatten(node: root)
+        for node in allNodes {
+            guard let dayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                                                 today: today,
+                                                                 calendar: calendar) else {
+                continue
+            }
+            grouped[dayIndex, default: []].append(node)
+        }
+
+        var nodes: [ThreadCanvasNode] = []
+        for (dayIndex, dayNodes) in grouped {
+            let sorted = dayNodes.sorted { lhs, rhs in
+                lhs.message.date < rhs.message.date
+            }
+            let count = sorted.count
+            let dayBaseY = metrics.contentPadding
+                + CGFloat(dayIndex) * metrics.dayHeight
+                + metrics.nodeVerticalSpacing
+            let usableHeight = max(metrics.dayHeight - metrics.nodeHeight - (metrics.nodeVerticalSpacing * 2), 0)
+            let maxStep = metrics.nodeHeight + metrics.nodeVerticalSpacing
+            let step = count > 1 ? min(maxStep, usableHeight / CGFloat(count - 1)) : 0
+
+            for (stackIndex, node) in sorted.enumerated() {
+                let y = dayBaseY + CGFloat(stackIndex) * step
+                let frame = CGRect(x: columnX + metrics.nodeHorizontalInset,
+                                   y: y,
+                                   width: metrics.nodeWidth,
+                                   height: metrics.nodeHeight)
+                nodes.append(ThreadCanvasNode(id: node.id,
+                                              message: node.message,
+                                              threadID: threadID,
+                                              frame: frame,
+                                              dayIndex: dayIndex))
+            }
+        }
+
+        return nodes.sorted { lhs, rhs in
+            if lhs.dayIndex == rhs.dayIndex {
+                return lhs.message.date < rhs.message.date
+            }
+            return lhs.dayIndex < rhs.dayIndex
+        }
+    }
+
+    private static func flatten(node: ThreadNode) -> [ThreadNode] {
+        var results = [node]
+        for child in node.children {
+            results.append(contentsOf: flatten(node: child))
+        }
+        return results
+    }
+
+    private static func findNode(in node: ThreadNode, matching id: String) -> ThreadNode? {
+        if node.id == id {
+            return node
+        }
+        for child in node.children {
+            if let match = findNode(in: child, matching: id) {
+                return match
+            }
+        }
+        return nil
     }
 }
