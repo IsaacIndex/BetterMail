@@ -408,12 +408,17 @@ extension ThreadSidebarViewModel {
                              metrics: ThreadCanvasLayoutMetrics,
                              today: Date,
                              calendar: Calendar) -> ThreadCanvasLayout {
+        let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
+        var currentYOffset = metrics.contentPadding
         let days = (0..<ThreadCanvasLayoutMetrics.dayCount).map { index -> ThreadCanvasDay in
             let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
             let label = ThreadCanvasDateHelper.label(for: date)
-            let yOffset = metrics.contentPadding + CGFloat(index) * metrics.dayHeight
-            return ThreadCanvasDay(id: index, date: date, label: label, yOffset: yOffset)
+            let height = dayHeights[index] ?? metrics.dayHeight
+            let day = ThreadCanvasDay(id: index, date: date, label: label, yOffset: currentYOffset, height: height)
+            currentYOffset += height
+            return day
         }
+        let dayLookup = Dictionary(uniqueKeysWithValues: days.map { ($0.id, $0) })
 
         let columnItems: [(root: ThreadNode, latestDate: Date)] = roots.map { root in
             (root, latestDate(in: root))
@@ -435,7 +440,8 @@ extension ThreadSidebarViewModel {
                                     columnX: columnX,
                                     metrics: metrics,
                                     today: today,
-                                    calendar: calendar)
+                                    calendar: calendar,
+                                    dayLookup: dayLookup)
             let title = item.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : item.root.message.subject
             columns.append(ThreadCanvasColumn(id: threadID,
                                               title: title,
@@ -450,7 +456,7 @@ extension ThreadSidebarViewModel {
             + (columnCount * metrics.columnWidth)
             + max(columnCount - 1, 0) * metrics.columnSpacing
         let totalHeight = metrics.contentPadding * 2
-            + CGFloat(ThreadCanvasLayoutMetrics.dayCount) * metrics.dayHeight
+            + days.reduce(0) { $0 + $1.height }
         return ThreadCanvasLayout(days: days,
                                   columns: columns,
                                   contentSize: CGSize(width: totalWidth, height: totalHeight))
@@ -477,7 +483,8 @@ extension ThreadSidebarViewModel {
                                     columnX: CGFloat,
                                     metrics: ThreadCanvasLayoutMetrics,
                                     today: Date,
-                                    calendar: Calendar) -> [ThreadCanvasNode] {
+                                    calendar: Calendar,
+                                    dayLookup: [Int: ThreadCanvasDay]) -> [ThreadCanvasNode] {
         var grouped: [Int: [ThreadNode]] = [:]
         let allNodes = flatten(node: root)
         for node in allNodes {
@@ -491,14 +498,13 @@ extension ThreadSidebarViewModel {
 
         var nodes: [ThreadCanvasNode] = []
         for (dayIndex, dayNodes) in grouped {
+            guard let day = dayLookup[dayIndex] else { continue }
             let sorted = dayNodes.sorted { lhs, rhs in
                 lhs.message.date < rhs.message.date
             }
             let count = sorted.count
-            let dayBaseY = metrics.contentPadding
-                + CGFloat(dayIndex) * metrics.dayHeight
-                + metrics.nodeVerticalSpacing
-            let usableHeight = max(metrics.dayHeight - metrics.nodeHeight - (metrics.nodeVerticalSpacing * 2), 0)
+            let dayBaseY = day.yOffset + metrics.nodeVerticalSpacing
+            let usableHeight = max(day.height - metrics.nodeHeight - (metrics.nodeVerticalSpacing * 2), 0)
             let maxStep = metrics.nodeHeight + metrics.nodeVerticalSpacing
             let step = count > 1 ? min(maxStep, usableHeight / CGFloat(count - 1)) : 0
 
@@ -542,5 +548,43 @@ extension ThreadSidebarViewModel {
             }
         }
         return nil
+    }
+
+    private static func dayHeights(for roots: [ThreadNode],
+                                   metrics: ThreadCanvasLayoutMetrics,
+                                   today: Date,
+                                   calendar: Calendar) -> [Int: CGFloat] {
+        var maxCountsByDay: [Int: Int] = [:]
+        for root in roots {
+            var countsByDay: [Int: Int] = [:]
+            for node in flatten(node: root) {
+                guard let dayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                                                     today: today,
+                                                                     calendar: calendar) else {
+                    continue
+                }
+                countsByDay[dayIndex, default: 0] += 1
+            }
+            for (dayIndex, count) in countsByDay {
+                maxCountsByDay[dayIndex] = max(maxCountsByDay[dayIndex, default: 0], count)
+            }
+        }
+
+        var heights: [Int: CGFloat] = [:]
+        for dayIndex in 0..<ThreadCanvasLayoutMetrics.dayCount {
+            let count = maxCountsByDay[dayIndex, default: 0]
+            heights[dayIndex] = max(metrics.dayHeight, requiredDayHeight(nodeCount: count, metrics: metrics))
+        }
+        return heights
+    }
+
+    private static func requiredDayHeight(nodeCount: Int, metrics: ThreadCanvasLayoutMetrics) -> CGFloat {
+        guard nodeCount > 1 else {
+            return metrics.dayHeight
+        }
+        let maxStep = metrics.nodeHeight + metrics.nodeVerticalSpacing
+        return metrics.nodeHeight
+            + (metrics.nodeVerticalSpacing * 2)
+            + CGFloat(nodeCount - 1) * maxStep
     }
 }

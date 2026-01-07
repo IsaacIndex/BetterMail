@@ -62,6 +62,7 @@ struct ThreadCanvasDay: Identifiable, Hashable {
     let date: Date
     let label: String
     let yOffset: CGFloat
+    let height: CGFloat
 }
 
 struct ThreadCanvasNode: Identifiable, Hashable {
