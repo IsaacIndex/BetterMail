@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ThreadListView: View {
@@ -10,6 +11,7 @@ struct ThreadListView: View {
     private let navHorizontalPadding: CGFloat = 16
     private let navTopPadding: CGFloat = 12
     private let navBottomSpacing: CGFloat = 12
+    private let inspectorWidth: CGFloat = 320
 
     var body: some View {
         content
@@ -38,7 +40,7 @@ struct ThreadListView: View {
         if #available(macOS 26, *) {
             ZStack(alignment: .top) {
                 GlassEffectContainer {
-                    threadList
+                    canvasContent
                 }
                 navigationBarOverlay
             }
@@ -49,49 +51,20 @@ struct ThreadListView: View {
 
     private var layeredContent: some View {
         ZStack(alignment: .top) {
-            threadList
+            canvasContent
             navigationBarOverlay
         }
     }
 
-    private var threadList: some View {
-        List {
-            OutlineGroup(viewModel.roots, children: \.childNodes) { node in
-                MessageRowView(
-                    node: node,
-                    summaryState: viewModel.summaryState(for: node.id),
-                    summaryExpansion: Binding(
-                        get: {
-                            viewModel.isSummaryExpanded(for: node.id)
-                        },
-                        set: { newValue in
-                            viewModel.setSummaryExpanded(newValue, for: node.id)
-                        }
-                    )
-                )
-                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
-                .listRowBackground(rowBackground)
-            }
+    private var canvasContent: some View {
+        HStack(spacing: 16) {
+            ThreadCanvasView(viewModel: viewModel, selectedNodeID: selectionBinding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ThreadInspectorView(node: viewModel.selectedNode)
+                .frame(width: inspectorWidth)
         }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Color.clear.frame(height: navInsetHeight)
-        }
-        .overlay(alignment: .top) {
-            if !reduceTransparency {
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.12),
-                        Color.clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 28)
-                .allowsHitTesting(false)
-            }
-        }
+        .padding(.horizontal, navHorizontalPadding)
+        .padding(.top, navInsetHeight)
     }
 
     private var navInsetHeight: CGFloat {
@@ -226,24 +199,6 @@ struct ThreadListView: View {
     }
 
     @ViewBuilder
-    private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor))
-                .overlay(shape.stroke(Color.white.opacity(0.25)))
-        } else if #available(macOS 26, *) {
-            shape
-                .fill(Color.white.opacity(0.08))
-                .overlay(shape.stroke(Color.white.opacity(0.16)))
-        } else {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.92))
-                .overlay(shape.stroke(Color.white.opacity(0.16)))
-        }
-    }
-
-    @ViewBuilder
     private var refreshButton: some View {
         let button = Button(action: { viewModel.refreshNow() }) {
             Label("Refresh", systemImage: "arrow.clockwise")
@@ -280,6 +235,13 @@ struct ThreadListView: View {
                 .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
                 .overlay(shape.stroke(Color.white.opacity(0.25)))
         }
+    }
+
+    private var selectionBinding: Binding<String?> {
+        Binding(
+            get: { viewModel.selectedNodeID },
+            set: { viewModel.selectNode(id: $0) }
+        )
     }
 }
 
