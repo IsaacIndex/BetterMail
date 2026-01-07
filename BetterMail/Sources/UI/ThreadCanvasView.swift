@@ -176,6 +176,7 @@ private struct ThreadCanvasNodeView: View {
     let fontScale: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -188,21 +189,23 @@ private struct ThreadCanvasNodeView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(subjectText)
                 .font(.system(size: 13 * fontScale, weight: node.message.isUnread ? .semibold : .regular))
+                .foregroundStyle(primaryTextColor)
                 .lineLimit(1)
 
             Text(node.message.from)
                 .font(.system(size: 11 * fontScale))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(secondaryTextColor)
                 .lineLimit(1)
 
             Text(Self.timeFormatter.string(from: node.message.date))
                 .font(.system(size: 11 * fontScale))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(secondaryTextColor)
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(nodeBackground)
         .overlay(selectionOverlay)
+        .shadow(color: textShadowColor, radius: textShadowRadius, x: 0, y: 1)
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
@@ -220,23 +223,9 @@ private struct ThreadCanvasNodeView: View {
     @ViewBuilder
     private var nodeBackground: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor))
-                .overlay(shape.stroke(Color.secondary.opacity(0.2)))
-        } else if #available(macOS 26, *) {
-            shape
-                .fill(Color.white.opacity(0.08))
-                .glassEffect(
-                    .regular.tint(Color.white.opacity(0.18)),
-                    in: .rect(cornerRadius: cornerRadius)
-                )
-                .overlay(shape.stroke(Color.white.opacity(0.2)))
-        } else {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(Color.white.opacity(0.18)))
-        }
+        shape
+            .fill(nodeSolidFillColor)
+            .overlay(shape.stroke(nodeStrokeColor))
     }
 
     @ViewBuilder
@@ -255,5 +244,35 @@ private struct ThreadCanvasNodeView: View {
             subjectText,
             Self.timeFormatter.string(from: node.message.date)
         )
+    }
+
+    private var nodeSolidFillColor: Color {
+        if reduceTransparency {
+            return Color(nsColor: NSColor.windowBackgroundColor).opacity(0.98)
+        }
+        return colorScheme == .dark ? Color.black.opacity(0.55) : Color.white.opacity(0.92)
+    }
+
+    private var nodeStrokeColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.22) : Color.black.opacity(0.1)
+    }
+
+    private var primaryTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.95) : Color.black.opacity(0.88)
+    }
+
+    private var secondaryTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.7) : Color.black.opacity(0.55)
+    }
+
+    private var textShadowColor: Color {
+        guard !reduceTransparency, colorScheme == .dark else {
+            return .clear
+        }
+        return Color.black.opacity(0.45)
+    }
+
+    private var textShadowRadius: CGFloat {
+        (reduceTransparency || colorScheme == .light) ? 0 : 1
     }
 }
