@@ -3,3 +3,13 @@
 "refresh.status.failed" = "Refresh failed: %@";
 "refresh.status.threading_failed" = "Threading failed: %@";
 "threadlist.status.unread" = "Unread: %d - %@";
+"threadcanvas.subject.placeholder" = "(No Subject)";
+"threadcanvas.node.accessibility" = "%@, %@, %@";
+"threadcanvas.inspector.title" = "Inspector";
+"threadcanvas.inspector.empty" = "Select a message to see details.";
+"threadcanvas.inspector.unread" = "Unread";
+"threadcanvas.inspector.from" = "From";
+"threadcanvas.inspector.to" = "To";
+"threadcanvas.inspector.date" = "Date";
+"threadcanvas.inspector.snippet" = "Snippet";
+"threadcanvas.inspector.snippet.empty" = "No preview available.";
