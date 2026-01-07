@@ -158,6 +158,18 @@ AI agents should explicitly refuse to:
 - Assist with App Store policy evasion
 - Generate code intended to exploit system vulnerabilities
 
+# Review
+
+at the last step of a change, always try to build the app and resolve any compilation error.
+
+```bash
+xcodebuild \
+  -project BetterMail.xcodeproj \
+  -scheme BetterMail \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  build
+```
 ---
 
 _Last updated: 2025‑03‑08_
