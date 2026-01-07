@@ -127,7 +127,7 @@ private struct ThreadCanvasDayBand: View {
                 .padding(.top, metrics.nodeVerticalSpacing)
                 .accessibilityAddTraits(.isHeader)
         }
-        .frame(width: contentWidth, height: metrics.dayHeight, alignment: .topLeading)
+        .frame(width: contentWidth, height: day.height, alignment: .topLeading)
     }
 
     private func bandBackground(isEven: Bool) -> Color {
