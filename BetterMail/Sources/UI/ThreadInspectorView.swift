@@ -3,6 +3,8 @@ import SwiftUI
 
 struct ThreadInspectorView: View {
     let node: ThreadNode?
+    let summaryState: ThreadSummaryState?
+    let summaryExpansion: Binding<Bool>?
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -42,6 +44,13 @@ struct ThreadInspectorView: View {
                 Label(NSLocalizedString("threadcanvas.inspector.unread", comment: "Unread indicator"), systemImage: "circle.fill")
                     .font(.caption)
                     .foregroundStyle(Color.accentColor)
+            }
+
+            if let summaryState, let summaryExpansion {
+                ThreadSummaryDisclosureView(title: NSLocalizedString("threadcanvas.inspector.summary.title",
+                                                                     comment: "Title for the thread summary disclosure in the inspector"),
+                                             state: summaryState,
+                                             isExpanded: summaryExpansion)
             }
 
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.from", comment: "From label"),

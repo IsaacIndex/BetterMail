@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ThreadListView: View {
-    @ObservedObject var viewModel: ThreadSidebarViewModel
+    @ObservedObject var viewModel: ThreadCanvasViewModel
     @ObservedObject var settings: AutoRefreshSettings
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var navHeight: CGFloat = 96
@@ -60,7 +60,9 @@ struct ThreadListView: View {
         HStack(spacing: 16) {
             ThreadCanvasView(viewModel: viewModel, selectedNodeID: selectionBinding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            ThreadInspectorView(node: viewModel.selectedNode)
+            ThreadInspectorView(node: viewModel.selectedNode,
+                                summaryState: selectedSummaryState,
+                                summaryExpansion: selectedSummaryExpansion)
                 .frame(width: inspectorWidth)
         }
         .padding(.horizontal, navHorizontalPadding)
@@ -241,6 +243,25 @@ struct ThreadListView: View {
         Binding(
             get: { viewModel.selectedNodeID },
             set: { viewModel.selectNode(id: $0) }
+        )
+    }
+
+    private var selectedSummaryState: ThreadSummaryState? {
+        guard let selectedNodeID = viewModel.selectedNodeID,
+              let rootID = viewModel.rootID(containing: selectedNodeID) else {
+            return nil
+        }
+        return viewModel.summaryState(for: rootID)
+    }
+
+    private var selectedSummaryExpansion: Binding<Bool>? {
+        guard let selectedNodeID = viewModel.selectedNodeID,
+              let rootID = viewModel.rootID(containing: selectedNodeID) else {
+            return nil
+        }
+        return Binding(
+            get: { viewModel.isSummaryExpanded(for: rootID) },
+            set: { viewModel.setSummaryExpanded($0, for: rootID) }
         )
     }
 }

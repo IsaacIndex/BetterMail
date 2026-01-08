@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ThreadCanvasView: View {
-    @ObservedObject var viewModel: ThreadSidebarViewModel
+    @ObservedObject var viewModel: ThreadCanvasViewModel
     @Binding var selectedNodeID: String?
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency

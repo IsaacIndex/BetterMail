@@ -10,7 +10,7 @@ struct ThreadSummaryState {
 }
 
 @MainActor
-final class ThreadSidebarViewModel: ObservableObject {
+final class ThreadCanvasViewModel: ObservableObject {
     private actor SidebarBackgroundWorker {
         private let client: MailAppleScriptClient
         private let store: MessageStore
@@ -139,7 +139,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     func start() {
         guard !didStart else { return }
         didStart = true
-        Log.refresh.info("ThreadSidebarViewModel start invoked. didStart=false; kicking off initial load.")
+        Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
         Task { await loadCachedMessages() }
         refreshNow()
         applyAutoRefreshSettings()
@@ -275,6 +275,10 @@ final class ThreadSidebarViewModel: ObservableObject {
         threadSummaries[nodeID]
     }
 
+    func rootID(containing nodeID: String) -> String? {
+        Self.rootID(for: nodeID, in: roots)
+    }
+
     private func refreshSummaries(for roots: [ThreadNode]) {
         guard let summaryProvider else {
             threadSummaries = [:]
@@ -403,7 +407,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     }
 }
 
-extension ThreadSidebarViewModel {
+extension ThreadCanvasViewModel {
     static func canvasLayout(for roots: [ThreadNode],
                              metrics: ThreadCanvasLayoutMetrics,
                              today: Date,
@@ -545,6 +549,15 @@ extension ThreadSidebarViewModel {
         for child in node.children {
             if let match = findNode(in: child, matching: id) {
                 return match
+            }
+        }
+        return nil
+    }
+
+    static func rootID(for nodeID: String, in roots: [ThreadNode]) -> String? {
+        for root in roots {
+            if findNode(in: root, matching: nodeID) != nil {
+                return root.id
             }
         }
         return nil
