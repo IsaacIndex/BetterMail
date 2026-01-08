@@ -64,9 +64,10 @@ struct MailAppleScriptClient {
             let inReplyTo = (replyHeader?.isEmpty == false) ? replyHeader : nil
             let recipients = headers["to"] ?? ""
             let sender = headers["from"] ?? ""
+            let snippetPreviewLineLimit = snippetLineLimit == Int.max ? snippetLineLimit : snippetLineLimit + 1
             let snippet = decoder.bodySnippet(fromBody: bodyText,
                                               fallbackSource: source,
-                                              maxLines: snippetLineLimit)
+                                              maxLines: snippetPreviewLineLimit)
 
             let email = EmailMessage(messageID: canonicalID,
                                      mailboxID: mailboxID,
