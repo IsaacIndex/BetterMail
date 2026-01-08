@@ -5,6 +5,7 @@ struct ThreadInspectorView: View {
     let node: ThreadNode?
     let summaryState: ThreadSummaryState?
     let summaryExpansion: Binding<Bool>?
+    @ObservedObject var inspectorSettings: InspectorViewSettings
     let onOpenInMail: (ThreadNode) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -15,8 +16,6 @@ struct ThreadInspectorView: View {
         formatter.timeStyle = .short
         return formatter
     }()
-    private static let previewMaxLines = 10
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
@@ -131,21 +130,11 @@ struct ThreadInspectorView: View {
     }
 
     private func snippetText(for node: ThreadNode) -> String {
-        let trimmed = node.message.snippet.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
+        let formatted = snippetFormatter.format(node.message.snippet)
+        if formatted.isEmpty {
             return NSLocalizedString("threadcanvas.inspector.snippet.empty", comment: "Placeholder when snippet missing")
         }
-        return Self.trimmedPreview(trimmed, maxLines: Self.previewMaxLines)
-    }
-
-    private static func trimmedPreview(_ text: String, maxLines: Int) -> String {
-        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-        guard lines.count > maxLines else { return text }
-        var limited = lines.prefix(maxLines).map(String.init)
-        if let lastIndex = limited.indices.last {
-            limited[lastIndex] = limited[lastIndex] + "…"
-        }
-        return limited.joined(separator: "\n")
+        return formatted
     }
 
     @ViewBuilder
@@ -161,6 +150,11 @@ struct ThreadInspectorView: View {
         } else {
             button.buttonStyle(.bordered)
         }
+    }
+
+    private var snippetFormatter: SnippetFormatter {
+        SnippetFormatter(lineLimit: inspectorSettings.snippetLineLimit,
+                         stopPhrases: inspectorSettings.stopPhrases)
     }
 }
 

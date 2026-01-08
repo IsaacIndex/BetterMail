@@ -16,3 +16,8 @@
 "threadcanvas.inspector.open_in_mail" = "Open in Mail";
 "threadcanvas.inspector.summary.title" = "Thread summary";
 "threadcanvas.summary.apple_intelligence" = "Apple Intelligence";
+"settings.inspector.title" = "Inspector View";
+"settings.inspector.snippet_lines" = "Max snippet lines";
+"settings.inspector.snippet_lines.value" = "%d lines";
+"settings.inspector.stop_words" = "Stop phrases";
+"settings.inspector.stop_words.footer" = "One phrase per line. Matching is case-insensitive.";
