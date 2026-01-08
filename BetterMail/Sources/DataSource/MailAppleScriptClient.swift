@@ -21,6 +21,7 @@ struct MailAppleScriptClient {
         static let date = 4
         static let read = 5
         static let source = 6
+        static let body = 7
     }
 
     func fetchMessages(since date: Date?, limit: Int = 10, mailbox: String = "inbox") async throws -> [EmailMessage] {
@@ -44,7 +45,7 @@ struct MailAppleScriptClient {
         }
 
         for index in 1...descriptor.numberOfItems {
-            guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.source else { continue }
+            guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.body else { continue }
             guard let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue else { continue }
             let normalizedID = JWZThreader.normalizeIdentifier(rawMessageID)
             let canonicalID = normalizedID.isEmpty ? UUID().uuidString.lowercased() : normalizedID
@@ -53,13 +54,14 @@ struct MailAppleScriptClient {
             let dateValue = row.atIndex(RowIndex.date)?.dateValue ?? Date()
             let isRead = row.atIndex(RowIndex.read)?.booleanValue ?? true
             guard let source = row.atIndex(RowIndex.source)?.stringValue else { continue }
+            let bodyText = row.atIndex(RowIndex.body)?.stringValue ?? ""
             let headers = decoder.headers(from: source)
             let references = decoder.references(from: headers)
             let replyHeader = headers["in-reply-to"].flatMap { JWZThreader.normalizeIdentifier($0) }
             let inReplyTo = (replyHeader?.isEmpty == false) ? replyHeader : nil
             let recipients = headers["to"] ?? ""
             let sender = headers["from"] ?? ""
-            let snippet = decoder.bodySnippet(from: source)
+            let snippet = decoder.bodySnippet(fromBody: bodyText, fallbackSource: source)
 
             let email = EmailMessage(messageID: canonicalID,
                                      mailboxID: mailboxID,
@@ -108,12 +110,18 @@ struct MailAppleScriptClient {
               end if
               if _shouldInclude then
                 set _src to ""
+                set _body to ""
                 try
                   set _src to (source of m as string)
                 on error
                   set _src to ""
                 end try
-                copy {(message id of m as string), (subject of m as string), _mailboxName, (date received of m), (read status of m), _src} to end of _rows
+                try
+                  set _body to (content of m as string)
+                on error
+                  set _body to ""
+                end try
+                copy {(message id of m as string), (subject of m as string), _mailboxName, (date received of m), (read status of m), _src, _body} to end of _rows
                 set _count to _count + 1
                 if _count is greater than or equal to _limit then exit repeat
               end if
@@ -155,17 +163,51 @@ private struct HeaderDecoder {
         return extractIdentifiers(from: refs)
     }
 
-    func bodySnippet(from source: String, maxLength: Int = 120) -> String {
+    func bodySnippet(fromBody body: String, fallbackSource source: String, maxLength: Int = 120) -> String {
+        let cleanedBody = cleanSnippetText(body)
+        if !cleanedBody.isEmpty {
+            return truncate(cleanedBody, maxLength: maxLength)
+        }
+        return bodySnippetFromSource(source, maxLength: maxLength)
+    }
+
+    private func bodySnippetFromSource(_ source: String, maxLength: Int) -> String {
         let normalizedSource = source.replacingOccurrences(of: "\r\n", with: "\n")
         guard let range = normalizedSource.range(of: "\n\n") else { return "" }
         let body = normalizedSource[range.upperBound...]
         let lines = body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
         guard let firstLine = lines.first(where: { !$0.isEmpty }) else { return "" }
-        if firstLine.count > maxLength {
-            let index = firstLine.index(firstLine.startIndex, offsetBy: maxLength)
-            return String(firstLine[..<index]) + "…"
+        let cleaned = cleanSnippetText(String(firstLine))
+        return truncate(cleaned, maxLength: maxLength)
+    }
+
+    private func cleanSnippetText(_ text: String) -> String {
+        var cleaned = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        if cleaned.contains("<") && cleaned.contains(">") {
+            cleaned = cleaned.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         }
-        return firstLine
+
+        cleaned = cleaned
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+
+        let parts = cleaned.split { $0.isWhitespace }
+        return parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func truncate(_ text: String, maxLength: Int) -> String {
+        if text.count > maxLength {
+            let index = text.index(text.startIndex, offsetBy: maxLength)
+            return String(text[..<index]) + "…"
+        }
+        return text
     }
 
     private func extractIdentifiers(from value: String) -> [String] {
