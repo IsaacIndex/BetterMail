@@ -11,6 +11,7 @@ struct ThreadListView: View {
     private let navHorizontalPadding: CGFloat = 16
     private let navTopPadding: CGFloat = 12
     private let navBottomSpacing: CGFloat = 12
+    private let navCanvasSpacing: CGFloat = 6
     private let inspectorWidth: CGFloat = 320
 
     var body: some View {
@@ -38,12 +39,7 @@ struct ThreadListView: View {
     @ViewBuilder
     private var glassLayeredContent: some View {
         if #available(macOS 26, *) {
-            ZStack(alignment: .top) {
-                GlassEffectContainer {
-                    canvasContent
-                }
-                navigationBarOverlay
-            }
+            layeredContent
         } else {
             layeredContent
         }
@@ -51,26 +47,43 @@ struct ThreadListView: View {
 
     private var layeredContent: some View {
         ZStack(alignment: .top) {
-            canvasContent
+            if #available(macOS 26, *) {
+                GlassEffectContainer {
+                    canvasContent
+                }
+            } else {
+                canvasContent
+            }
+            inspectorOverlay
             navigationBarOverlay
         }
     }
 
     private var canvasContent: some View {
-        HStack(spacing: 16) {
-            ThreadCanvasView(viewModel: viewModel, selectedNodeID: selectionBinding)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            ThreadInspectorView(node: viewModel.selectedNode,
-                                summaryState: selectedSummaryState,
-                                summaryExpansion: selectedSummaryExpansion)
-                .frame(width: inspectorWidth)
-        }
+        ThreadCanvasView(viewModel: viewModel,
+                         selectedNodeID: selectionBinding,
+                         topInset: canvasTopPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, navHorizontalPadding)
-        .padding(.top, navInsetHeight)
+    }
+
+    private var inspectorOverlay: some View {
+        ThreadInspectorView(node: viewModel.selectedNode,
+                            summaryState: selectedSummaryState,
+                            summaryExpansion: selectedSummaryExpansion)
+            .frame(width: inspectorWidth)
+            .padding(.top, navInsetHeight)
+            .padding(.trailing, navHorizontalPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .zIndex(0.5)
     }
 
     private var navInsetHeight: CGFloat {
         max(navHeight + navTopPadding + navBottomSpacing, 88)
+    }
+
+    private var canvasTopPadding: CGFloat {
+        navHeight + navTopPadding + navCanvasSpacing
     }
 
     private var navigationBarOverlay: some View {

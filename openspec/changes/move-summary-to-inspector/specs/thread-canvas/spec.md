@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 ### Requirement: Node Content and Selection
-The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. When an Apple Intelligence summary is available for the selected thread, the inspector SHALL present a collapsible summary disclosure before the From field.
+The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. When an Apple Intelligence summary is available for the selected thread, the inspector SHALL present a collapsible summary disclosure before the From field. The nav bar and inspector SHALL render above the canvas with glass styling, and the canvas content SHALL be inset so the first day band clears the nav bar.
 
 #### Scenario: Selecting a node
 - **WHEN** the user clicks a node
@@ -13,3 +13,7 @@ The system SHALL render each node with sender, subject, and time, and SHALL upda
 #### Scenario: Summary unavailable for selected thread
 - **WHEN** the selected thread lacks a summary or summaries are unsupported
 - **THEN** the inspector omits the summary disclosure
+
+#### Scenario: Canvas content clears nav bar
+- **WHEN** the canvas renders beneath the nav bar
+- **THEN** the first day band starts below the nav bar while remaining visible through the glass surface
