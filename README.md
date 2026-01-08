@@ -3,7 +3,7 @@
 BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox over Apple Events, stores a lightweight cache in Core Data, threads conversations with the JWZ algorithm, and can summarize what matters using Apple Intelligence when it is available on the device. The repository also ships a MailKit helper extension with sample content blocking, compose, and message action hooks that can evolve into automation shortcuts.
 
 ## Highlights
-- Native SwiftUI thread sidebar backed by `ThreadSidebarViewModel`, live unread counts, manual limits, and background auto-refresh.
+- Native SwiftUI thread sidebar backed by `ThreadCanvasViewModel`, live unread counts, manual limits, and background auto-refresh.
 - AppleScript ingestion via `MailAppleScriptClient`/`AppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
@@ -49,14 +49,14 @@ xcodebuild \
 ## Architecture at a Glance
 ```
 Mail.app ⇄ AppleScriptRunner → MailAppleScriptClient → MessageStore (Core Data)
-                                         ↘︎ JWZThreader → ThreadSidebarViewModel → SwiftUI ThreadListView/MessageRowView
+                                         ↘︎ JWZThreader → ThreadCanvasViewModel → SwiftUI ThreadListView/MessageRowView
                                                                           ↘︎ EmailSummaryProvider (Apple Intelligence)
 ```
 - `AppleScriptRunner` makes sure Mail is running, executes scripts, and logs failures.
 - `MailAppleScriptClient` fetches message metadata + raw source, decodes headers/snippets, and hands `EmailMessage` models to the store.
 - `MessageStore` keeps everything off the main actor, exposes async fetch/upsert helpers, and maintains per-thread entities.
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
-- `ThreadSidebarViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
+- `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
 - `EmailSummaryProvider` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` demonstrates how to execute follow-up AppleScript commands (move, flag, search) against the current Mail selection.
 
@@ -78,7 +78,7 @@ To keep the Liquid Glass look without losing nav bar legibility, the glass conta
 sequenceDiagram
     autonumber
     participant UI as UI
-    participant VM as ThreadSidebarViewModel (MainActor)
+    participant VM as ThreadCanvasViewModel (MainActor)
     participant Worker as SidebarBackgroundWorker (serial actor)
     participant Script as NSAppleScriptRunner (actor)
     participant Store as MessageStore

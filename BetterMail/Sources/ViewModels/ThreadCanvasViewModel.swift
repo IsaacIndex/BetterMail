@@ -10,7 +10,7 @@ struct ThreadSummaryState {
 }
 
 @MainActor
-final class ThreadSidebarViewModel: ObservableObject {
+final class ThreadCanvasViewModel: ObservableObject {
     private actor SidebarBackgroundWorker {
         private let client: MailAppleScriptClient
         private let store: MessageStore
@@ -40,8 +40,11 @@ final class ThreadSidebarViewModel: ObservableObject {
         }
 
         func performRefresh(effectiveLimit: Int,
-                            since: Date?) async throws -> RefreshOutcome {
-            let fetched = try await client.fetchMessages(since: since, limit: effectiveLimit)
+                            since: Date?,
+                            snippetLineLimit: Int) async throws -> RefreshOutcome {
+            let fetched = try await client.fetchMessages(since: since,
+                                                         limit: effectiveLimit,
+                                                         snippetLineLimit: snippetLineLimit)
             try await store.upsert(messages: fetched)
             let latest = fetched.map(\.date).max()
             return RefreshOutcome(fetchedCount: fetched.count, latestDate: latest)
@@ -106,6 +109,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     private let threader: JWZThreader
     private let summaryProvider: EmailSummaryProviding?
     private let settings: AutoRefreshSettings
+    private let inspectorSettings: InspectorViewSettings
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
@@ -115,6 +119,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     private var shouldForceFullReload = false
 
     init(settings: AutoRefreshSettings,
+         inspectorSettings: InspectorViewSettings,
          store: MessageStore = .shared,
          client: MailAppleScriptClient = MailAppleScriptClient(),
          threader: JWZThreader = JWZThreader()) {
@@ -122,6 +127,7 @@ final class ThreadSidebarViewModel: ObservableObject {
         self.client = client
         self.threader = threader
         self.settings = settings
+        self.inspectorSettings = inspectorSettings
         let capability = EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
         self.worker = SidebarBackgroundWorker(client: client,
@@ -139,7 +145,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     func start() {
         guard !didStart else { return }
         didStart = true
-        Log.refresh.info("ThreadSidebarViewModel start invoked. didStart=false; kicking off initial load.")
+        Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
         Task { await loadCachedMessages() }
         refreshNow()
         applyAutoRefreshSettings()
@@ -166,8 +172,10 @@ final class ThreadSidebarViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
+                let snippetLineLimit = inspectorSettings.snippetLineLimit
                 let outcome = try await worker.performRefresh(effectiveLimit: effectiveLimit,
-                                                              since: since)
+                                                              since: since,
+                                                              snippetLineLimit: snippetLineLimit)
                 if let latest = outcome.latestDate {
                     store.lastSyncDate = latest
                     Log.refresh.debug("Updated lastSyncDate to \(latest.ISO8601Format(), privacy: .public)")
@@ -273,6 +281,10 @@ final class ThreadSidebarViewModel: ObservableObject {
 
     func summaryState(for nodeID: String) -> ThreadSummaryState? {
         threadSummaries[nodeID]
+    }
+
+    func rootID(containing nodeID: String) -> String? {
+        Self.rootID(for: nodeID, in: roots)
     }
 
     private func refreshSummaries(for roots: [ThreadNode]) {
@@ -387,6 +399,17 @@ final class ThreadSidebarViewModel: ObservableObject {
         selectedNodeID = id
     }
 
+    func openMessageInMail(_ node: ThreadNode) {
+        let messageID = node.message.messageID
+        Task.detached {
+            do {
+                try MailControl.openMessage(messageID: messageID)
+            } catch {
+                Log.appleScript.error("Open in Mail failed for messageID=\(messageID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     var selectedNode: ThreadNode? {
         Self.node(matching: selectedNodeID, in: roots)
     }
@@ -403,7 +426,7 @@ final class ThreadSidebarViewModel: ObservableObject {
     }
 }
 
-extension ThreadSidebarViewModel {
+extension ThreadCanvasViewModel {
     static func canvasLayout(for roots: [ThreadNode],
                              metrics: ThreadCanvasLayoutMetrics,
                              today: Date,
@@ -545,6 +568,15 @@ extension ThreadSidebarViewModel {
         for child in node.children {
             if let match = findNode(in: child, matching: id) {
                 return match
+            }
+        }
+        return nil
+    }
+
+    static func rootID(for nodeID: String, in roots: [ThreadNode]) -> String? {
+        for root in roots {
+            if findNode(in: root, matching: nodeID) != nil {
+                return root.id
             }
         }
         return nil

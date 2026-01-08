@@ -3,6 +3,12 @@ import SwiftUI
 
 struct ThreadInspectorView: View {
     let node: ThreadNode?
+    let summaryState: ThreadSummaryState?
+    let summaryExpansion: Binding<Bool>?
+    @ObservedObject var inspectorSettings: InspectorViewSettings
+    let onOpenInMail: (ThreadNode) -> Void
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -10,7 +16,6 @@ struct ThreadInspectorView: View {
         formatter.timeStyle = .short
         return formatter
     }()
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
@@ -28,7 +33,10 @@ struct ThreadInspectorView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .foregroundStyle(inspectorPrimaryForegroundStyle)
+        .shadow(color: Color.black.opacity(isGlassInspectorEnabled ? 0.35 : 0), radius: 1.2, x: 0, y: 1)
         .background(inspectorBackground)
+        .modifier(InspectorColorSchemeModifier(isEnabled: isGlassInspectorEnabled))
     }
 
     @ViewBuilder
@@ -44,6 +52,13 @@ struct ThreadInspectorView: View {
                     .foregroundStyle(Color.accentColor)
             }
 
+            if let summaryState, let summaryExpansion {
+                ThreadSummaryDisclosureView(title: NSLocalizedString("threadcanvas.inspector.summary.title",
+                                                                     comment: "Title for the thread summary disclosure in the inspector"),
+                                             state: summaryState,
+                                             isExpanded: summaryExpansion)
+            }
+
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.from", comment: "From label"),
                            value: node.message.from)
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.to", comment: "To label"),
@@ -54,27 +69,60 @@ struct ThreadInspectorView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(NSLocalizedString("threadcanvas.inspector.snippet", comment: "Snippet label"))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Text(snippetText(for: node))
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            openInMailButton(for: node)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var emptyState: some View {
         Text(NSLocalizedString("threadcanvas.inspector.empty", comment: "Empty inspector placeholder"))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(inspectorSecondaryForegroundStyle)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private var isGlassInspectorEnabled: Bool {
+        if #available(macOS 26, *) {
+            return !reduceTransparency
+        }
+        return false
+    }
+
+    private var inspectorPrimaryForegroundStyle: Color {
+        isGlassInspectorEnabled ? Color.white : Color.primary
+    }
+
+    private var inspectorSecondaryForegroundStyle: Color {
+        isGlassInspectorEnabled ? Color.white.opacity(0.75) : Color.secondary
     }
 
     @ViewBuilder
     private var inspectorBackground: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        shape
-            .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-            .overlay(shape.stroke(Color.secondary.opacity(0.2)))
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
+                .overlay(shape.stroke(Color.white.opacity(0.3)))
+        } else if #available(macOS 26, *) {
+            shape
+                .fill(Color.white.opacity(0.08))
+                .glassEffect(
+                    .regular
+                        .tint(Color.white.opacity(0.2)),
+                    in: .rect(cornerRadius: 18)
+                )
+                .overlay(shape.stroke(Color.white.opacity(0.35)))
+                .shadow(color: Color.black.opacity(0.25), radius: 16, y: 8)
+        } else {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+                .overlay(shape.stroke(Color.white.opacity(0.25)))
+        }
     }
 
     private func subjectText(for node: ThreadNode) -> String {
@@ -82,11 +130,31 @@ struct ThreadInspectorView: View {
     }
 
     private func snippetText(for node: ThreadNode) -> String {
-        let trimmed = node.message.snippet.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
+        let formatted = snippetFormatter.format(node.message.snippet)
+        if formatted.isEmpty {
             return NSLocalizedString("threadcanvas.inspector.snippet.empty", comment: "Placeholder when snippet missing")
         }
-        return trimmed
+        return formatted
+    }
+
+    @ViewBuilder
+    private func openInMailButton(for node: ThreadNode) -> some View {
+        let button = Button(action: { onOpenInMail(node) }) {
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail", comment: "Open in Mail button title"),
+                  systemImage: "envelope.open")
+        }
+        .controlSize(.small)
+
+        if #available(macOS 26, *) {
+            button.buttonStyle(.glass)
+        } else {
+            button.buttonStyle(.bordered)
+        }
+    }
+
+    private var snippetFormatter: SnippetFormatter {
+        SnippetFormatter(lineLimit: inspectorSettings.snippetLineLimit,
+                         stopPhrases: inspectorSettings.stopPhrases)
     }
 }
 
@@ -94,14 +162,35 @@ private struct InspectorField: View {
     let label: String
     let value: String
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(labelForegroundStyle)
             Text(value)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var labelForegroundStyle: Color {
+        if #available(macOS 26, *) {
+            return reduceTransparency ? Color.secondary : Color.white.opacity(0.75)
+        }
+        return Color.secondary
+    }
+}
+
+private struct InspectorColorSchemeModifier: ViewModifier {
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.colorScheme(.dark)
+        } else {
+            content
         }
     }
 }

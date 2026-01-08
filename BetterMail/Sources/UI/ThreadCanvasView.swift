@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 struct ThreadCanvasView: View {
-    @ObservedObject var viewModel: ThreadSidebarViewModel
+    @ObservedObject var viewModel: ThreadCanvasViewModel
     @Binding var selectedNodeID: String?
+    let topInset: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
@@ -23,6 +24,7 @@ struct ThreadCanvasView: View {
                 nodesLayer(layout: layout, metrics: metrics)
             }
             .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
+            .padding(.top, topInset)
         }
         .scrollIndicators(.visible)
         .background(canvasBackground)
