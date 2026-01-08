@@ -2,15 +2,18 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var settings: AutoRefreshSettings
-    @StateObject private var viewModel: ThreadSidebarViewModel
+    @ObservedObject var inspectorSettings: InspectorViewSettings
+    @StateObject private var viewModel: ThreadCanvasViewModel
 
-    init(settings: AutoRefreshSettings) {
+    init(settings: AutoRefreshSettings, inspectorSettings: InspectorViewSettings) {
         self.settings = settings
-        _viewModel = StateObject(wrappedValue: ThreadSidebarViewModel(settings: settings))
+        self.inspectorSettings = inspectorSettings
+        _viewModel = StateObject(wrappedValue: ThreadCanvasViewModel(settings: settings,
+                                                                     inspectorSettings: inspectorSettings))
     }
 
     var body: some View {
-        ThreadListView(viewModel: viewModel, settings: settings)
+        ThreadListView(viewModel: viewModel, settings: settings, inspectorSettings: inspectorSettings)
             .frame(minWidth: 720, minHeight: 520)
     }
 }
