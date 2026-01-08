@@ -40,8 +40,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
 
         func performRefresh(effectiveLimit: Int,
-                            since: Date?) async throws -> RefreshOutcome {
-            let fetched = try await client.fetchMessages(since: since, limit: effectiveLimit)
+                            since: Date?,
+                            snippetLineLimit: Int) async throws -> RefreshOutcome {
+            let fetched = try await client.fetchMessages(since: since,
+                                                         limit: effectiveLimit,
+                                                         snippetLineLimit: snippetLineLimit)
             try await store.upsert(messages: fetched)
             let latest = fetched.map(\.date).max()
             return RefreshOutcome(fetchedCount: fetched.count, latestDate: latest)
@@ -106,6 +109,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     private let threader: JWZThreader
     private let summaryProvider: EmailSummaryProviding?
     private let settings: AutoRefreshSettings
+    private let inspectorSettings: InspectorViewSettings
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
@@ -115,6 +119,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     private var shouldForceFullReload = false
 
     init(settings: AutoRefreshSettings,
+         inspectorSettings: InspectorViewSettings,
          store: MessageStore = .shared,
          client: MailAppleScriptClient = MailAppleScriptClient(),
          threader: JWZThreader = JWZThreader()) {
@@ -122,6 +127,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         self.client = client
         self.threader = threader
         self.settings = settings
+        self.inspectorSettings = inspectorSettings
         let capability = EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
         self.worker = SidebarBackgroundWorker(client: client,
@@ -166,8 +172,10 @@ final class ThreadCanvasViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
+                let snippetLineLimit = inspectorSettings.snippetLineLimit
                 let outcome = try await worker.performRefresh(effectiveLimit: effectiveLimit,
-                                                              since: since)
+                                                              since: since,
+                                                              snippetLineLimit: snippetLineLimit)
                 if let latest = outcome.latestDate {
                     store.lastSyncDate = latest
                     Log.refresh.debug("Updated lastSyncDate to \(latest.ISO8601Format(), privacy: .public)")

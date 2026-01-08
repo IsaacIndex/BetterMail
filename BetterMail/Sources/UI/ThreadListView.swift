@@ -4,6 +4,7 @@ import SwiftUI
 struct ThreadListView: View {
     @ObservedObject var viewModel: ThreadCanvasViewModel
     @ObservedObject var settings: AutoRefreshSettings
+    @ObservedObject var inspectorSettings: InspectorViewSettings
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var navHeight: CGFloat = 96
 
@@ -71,6 +72,7 @@ struct ThreadListView: View {
         ThreadInspectorView(node: viewModel.selectedNode,
                             summaryState: selectedSummaryState,
                             summaryExpansion: selectedSummaryExpansion,
+                            inspectorSettings: inspectorSettings,
                             onOpenInMail: viewModel.openMessageInMail)
             .frame(width: inspectorWidth)
             .padding(.top, navInsetHeight)

@@ -24,7 +24,10 @@ struct MailAppleScriptClient {
         static let body = 7
     }
 
-    func fetchMessages(since date: Date?, limit: Int = 10, mailbox: String = "inbox") async throws -> [EmailMessage] {
+    func fetchMessages(since date: Date?,
+                       limit: Int = 10,
+                       mailbox: String = "inbox",
+                       snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
         Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
         let script = buildScript(mailbox: mailbox, limit: limit, since: date)
@@ -61,7 +64,9 @@ struct MailAppleScriptClient {
             let inReplyTo = (replyHeader?.isEmpty == false) ? replyHeader : nil
             let recipients = headers["to"] ?? ""
             let sender = headers["from"] ?? ""
-            let snippet = decoder.bodySnippet(fromBody: bodyText, fallbackSource: source)
+            let snippet = decoder.bodySnippet(fromBody: bodyText,
+                                              fallbackSource: source,
+                                              maxLines: snippetLineLimit)
 
             let email = EmailMessage(messageID: canonicalID,
                                      mailboxID: mailboxID,
@@ -163,25 +168,43 @@ private struct HeaderDecoder {
         return extractIdentifiers(from: refs)
     }
 
-    func bodySnippet(fromBody body: String, fallbackSource source: String, maxLength: Int = 120) -> String {
-        let cleanedBody = cleanSnippetText(body)
+    func bodySnippet(fromBody body: String,
+                     fallbackSource source: String,
+                     maxLength: Int = 400,
+                     maxLines: Int = 20) -> String {
+        let cleanedBody = cleanedSnippetLines(from: body, maxLines: maxLines)
         if !cleanedBody.isEmpty {
             return truncate(cleanedBody, maxLength: maxLength)
         }
-        return bodySnippetFromSource(source, maxLength: maxLength)
+        return bodySnippetFromSource(source, maxLength: maxLength, maxLines: maxLines)
     }
 
-    private func bodySnippetFromSource(_ source: String, maxLength: Int) -> String {
+    private func bodySnippetFromSource(_ source: String, maxLength: Int, maxLines: Int) -> String {
         let normalizedSource = source.replacingOccurrences(of: "\r\n", with: "\n")
         guard let range = normalizedSource.range(of: "\n\n") else { return "" }
         let body = normalizedSource[range.upperBound...]
-        let lines = body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-        guard let firstLine = lines.first(where: { !$0.isEmpty }) else { return "" }
-        let cleaned = cleanSnippetText(String(firstLine))
+        let cleaned = cleanedSnippetLines(from: String(body), maxLines: maxLines)
+        if cleaned.isEmpty {
+            return ""
+        }
         return truncate(cleaned, maxLength: maxLength)
     }
 
-    private func cleanSnippetText(_ text: String) -> String {
+    private func cleanedSnippetLines(from text: String, maxLines: Int) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        let cleaned = lines.compactMap { line -> String? in
+            let value = cleanSnippetLine(String(line))
+            return value.isEmpty ? nil : value
+        }
+        guard !cleaned.isEmpty else { return "" }
+        let limited = maxLines > 0 ? Array(cleaned.prefix(maxLines)) : cleaned
+        return limited.joined(separator: "\n")
+    }
+
+    private func cleanSnippetLine(_ text: String) -> String {
         var cleaned = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
