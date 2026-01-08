@@ -5,6 +5,7 @@ struct ThreadInspectorView: View {
     let node: ThreadNode?
     let summaryState: ThreadSummaryState?
     let summaryExpansion: Binding<Bool>?
+    let onOpenInMail: (ThreadNode) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -14,6 +15,7 @@ struct ThreadInspectorView: View {
         formatter.timeStyle = .short
         return formatter
     }()
+    private static let previewMaxLines = 10
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -73,6 +75,8 @@ struct ThreadInspectorView: View {
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            openInMailButton(for: node)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -131,7 +135,32 @@ struct ThreadInspectorView: View {
         if trimmed.isEmpty {
             return NSLocalizedString("threadcanvas.inspector.snippet.empty", comment: "Placeholder when snippet missing")
         }
-        return trimmed
+        return Self.trimmedPreview(trimmed, maxLines: Self.previewMaxLines)
+    }
+
+    private static func trimmedPreview(_ text: String, maxLines: Int) -> String {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        guard lines.count > maxLines else { return text }
+        var limited = lines.prefix(maxLines).map(String.init)
+        if let lastIndex = limited.indices.last {
+            limited[lastIndex] = limited[lastIndex] + "…"
+        }
+        return limited.joined(separator: "\n")
+    }
+
+    @ViewBuilder
+    private func openInMailButton(for node: ThreadNode) -> some View {
+        let button = Button(action: { onOpenInMail(node) }) {
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail", comment: "Open in Mail button title"),
+                  systemImage: "envelope.open")
+        }
+        .controlSize(.small)
+
+        if #available(macOS 26, *) {
+            button.buttonStyle(.glass)
+        } else {
+            button.buttonStyle(.bordered)
+        }
     }
 }
 

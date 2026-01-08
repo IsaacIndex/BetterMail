@@ -70,7 +70,8 @@ struct ThreadListView: View {
     private var inspectorOverlay: some View {
         ThreadInspectorView(node: viewModel.selectedNode,
                             summaryState: selectedSummaryState,
-                            summaryExpansion: selectedSummaryExpansion)
+                            summaryExpansion: selectedSummaryExpansion,
+                            onOpenInMail: viewModel.openMessageInMail)
             .frame(width: inspectorWidth)
             .padding(.top, navInsetHeight)
             .padding(.trailing, navHorizontalPadding)

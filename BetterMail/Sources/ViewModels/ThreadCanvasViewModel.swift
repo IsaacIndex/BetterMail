@@ -391,6 +391,17 @@ final class ThreadCanvasViewModel: ObservableObject {
         selectedNodeID = id
     }
 
+    func openMessageInMail(_ node: ThreadNode) {
+        let messageID = node.message.messageID
+        Task.detached {
+            do {
+                try MailControl.openMessage(messageID: messageID)
+            } catch {
+                Log.appleScript.error("Open in Mail failed for messageID=\(messageID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     var selectedNode: ThreadNode? {
         Self.node(matching: selectedNodeID, in: roots)
     }
