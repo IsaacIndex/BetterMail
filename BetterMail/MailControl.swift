@@ -5,7 +5,22 @@
 //  Created by Isaac IBM on 5/11/2025.
 //
 
+import AppKit
 import Foundation
+
+enum MailControlError: LocalizedError {
+    case invalidMessageID
+    case openFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidMessageID:
+            return "Invalid Message-ID for message:// URL."
+        case .openFailed:
+            return "Failed to open the message in Mail."
+        }
+    }
+}
 
 struct MailControl {
     /// Escape arbitrary user text so embedding it inside AppleScript stays well-formed.
@@ -40,6 +55,21 @@ struct MailControl {
             reference += " of mailbox \"\(escapedForAppleScript(parent))\""
         }
         return accountSuffix(reference)
+    }
+
+    static func openMessage(messageID: String) throws {
+        let trimmed = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MailControlError.invalidMessageID
+        }
+        let normalized = (trimmed.hasPrefix("<") && trimmed.hasSuffix(">")) ? trimmed : "<\(trimmed)>"
+        guard let encoded = normalized.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "message://\(encoded)") else {
+            throw MailControlError.invalidMessageID
+        }
+        guard NSWorkspace.shared.open(url) else {
+            throw MailControlError.openFailed
+        }
     }
 
     static func moveSelection(to mailboxPath: String, in account: String) throws {
