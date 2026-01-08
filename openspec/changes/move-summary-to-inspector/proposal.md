@@ -8,6 +8,7 @@ The current canvas UI no longer uses `MessageRowView`, so the Apple Intelligence
 - Keep summary generation logic unchanged and reuse the existing disclosure behavior (collapsed preview + expanded text).
 - Mark `MessageRowView` as deprecated while keeping it available for reference.
 - Rename `ThreadSidebarViewModel` to `ThreadCanvasViewModel` to match the current UI and file naming.
+- Align Liquid Glass layering so the nav bar and inspector float above the canvas, and inset canvas content so the first day band clears the nav bar.
 
 ## Impact
 - Affected specs: `thread-canvas`
