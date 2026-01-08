@@ -74,7 +74,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         let newerRoot = ThreadNode(message: newerRootMessage)
 
         let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
-        let layout = ThreadSidebarViewModel.canvasLayout(for: [newerRoot, rootWithNewerChild],
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [newerRoot, rootWithNewerChild],
                                                          metrics: metrics,
                                                          today: today,
                                                          calendar: calendar)
@@ -108,8 +108,8 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                         threadID: "thread-root")
 
         let root = ThreadNode(message: rootMessage, children: [ThreadNode(message: childMessage)])
-        let match = ThreadSidebarViewModel.node(matching: "child", in: [root])
-        let missing = ThreadSidebarViewModel.node(matching: "missing", in: [root])
+        let match = ThreadCanvasViewModel.node(matching: "child", in: [root])
+        let missing = ThreadCanvasViewModel.node(matching: "missing", in: [root])
 
         XCTAssertEqual(match?.id, "child")
         XCTAssertNil(missing)

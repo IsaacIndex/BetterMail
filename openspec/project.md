@@ -25,7 +25,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail. It automates Mail.app vi
   - **Data ingestion** lives in `AppleScriptRunner.swift` and `Sources/DataSource/MailAppleScriptClient.swift`, which ensure Mail.app is running and execute scripts.
   - **Storage** is centralized in `Sources/Storage/MessageStore.swift`, keeping Core Data access off the main actor and exposing async helpers.
   - **Threading** is encapsulated in `Sources/Threading/JWZThreader.swift`, which converts fetched messages into conversation trees and annotates unread state.
-  - **View models** (e.g., `Sources/ViewModels/ThreadSidebarViewModel.swift`) orchestrate refresh timers, selection, and summary fetches for SwiftUI views in `Sources/UI/`.
+  - **View models** (e.g., `Sources/ViewModels/ThreadCanvasViewModel.swift`) orchestrate refresh timers, selection, and summary fetches for SwiftUI views in `Sources/UI/`.
   - **Services** such as `EmailSummaryProvider` wrap optional Apple Intelligence/Foundation Models capabilities so the rest of the app can query summaries via protocol abstractions.
 - The MailKit helper target mirrors this modularity: each handler class owns one MailKit surface (content blocker, compose, message action, security).
 - Logging utilities live in `Sources/Support/Log.swift` to keep OSLog categories consistent.
