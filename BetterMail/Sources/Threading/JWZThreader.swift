@@ -4,6 +4,7 @@ struct ThreadingResult {
     let roots: [ThreadNode]
     let threads: [EmailThread]
     let messageThreadMap: [String: String]
+    let manualOverrideMessageIDs: Set<String>
 }
 
 final class JWZThreader {
@@ -101,7 +102,10 @@ final class JWZThreader {
             threads.append(thread)
         }
 
-        return ThreadingResult(roots: annotatedRoots, threads: threads, messageThreadMap: messageMap)
+        return ThreadingResult(roots: annotatedRoots,
+                               threads: threads,
+                               messageThreadMap: messageMap,
+                               manualOverrideMessageIDs: [])
     }
 
     private func flatten(container: Container) -> [ThreadNode] {
@@ -147,5 +151,113 @@ final class JWZThreader {
     static func threadIdentifier(for node: ThreadNode) -> String {
         let normalized = normalizeIdentifier(node.message.messageID)
         return normalized.isEmpty ? node.message.id.uuidString.lowercased() : normalized
+    }
+}
+
+extension JWZThreader {
+    struct ManualOverrideApplication {
+        let result: ThreadingResult
+        let invalidKeys: [String]
+    }
+
+    func applyManualOverrides(_ overrides: [String: String],
+                              to result: ThreadingResult) -> ManualOverrideApplication {
+        guard !overrides.isEmpty else {
+            return ManualOverrideApplication(result: result, invalidKeys: [])
+        }
+
+        let availableThreadIDs = Set(result.threads.map(\.id))
+        let allNodes = result.roots.flatMap { Self.flattenNodes(from: $0) }
+        var messageKeyToMessageID: [String: String] = [:]
+
+        for node in allNodes {
+            let key = node.message.threadKey
+            messageKeyToMessageID[key] = node.message.messageID
+        }
+
+        var updatedMap = result.messageThreadMap
+        var appliedOverrideKeys: Set<String> = []
+        var invalidKeys: [String] = []
+
+        for (messageKey, targetThreadID) in overrides {
+            guard availableThreadIDs.contains(targetThreadID) else {
+                invalidKeys.append(messageKey)
+                continue
+            }
+            guard updatedMap[messageKey] != nil else {
+                invalidKeys.append(messageKey)
+                continue
+            }
+            if updatedMap[messageKey] == targetThreadID {
+                invalidKeys.append(messageKey)
+                continue
+            }
+            updatedMap[messageKey] = targetThreadID
+            appliedOverrideKeys.insert(messageKey)
+        }
+
+        let manualOverrideMessageIDs = Set(appliedOverrideKeys.compactMap { messageKeyToMessageID[$0] })
+        let preferredRootIDsByThreadID = result.threads.reduce(into: [String: String]()) { result, thread in
+            guard let rootID = thread.rootMessageID else { return }
+            result[thread.id] = rootID
+        }
+
+        var messagesByThreadID: [String: [EmailMessage]] = [:]
+        for node in allNodes {
+            let key = node.message.threadKey
+            let threadID = updatedMap[key] ?? node.message.threadID ?? key
+            let updatedMessage = node.message.assigning(threadID: threadID)
+            messagesByThreadID[threadID, default: []].append(updatedMessage)
+        }
+
+        var rebuiltRoots: [ThreadNode] = []
+        var rebuiltThreads: [EmailThread] = []
+        rebuiltRoots.reserveCapacity(messagesByThreadID.count)
+        rebuiltThreads.reserveCapacity(messagesByThreadID.count)
+
+        for (threadID, messages) in messagesByThreadID {
+            guard let rootMessage = Self.selectRootMessage(from: messages,
+                                                           preferredRootID: preferredRootIDsByThreadID[threadID]) else {
+                continue
+            }
+            let children = messages
+                .filter { $0.messageID != rootMessage.messageID }
+                .sorted { $0.date < $1.date }
+                .map { ThreadNode(message: $0) }
+            let rootNode = ThreadNode(message: rootMessage, children: children)
+            rebuiltRoots.append(rootNode)
+
+            let lastUpdated = messages.map(\.date).max() ?? rootMessage.date
+            let unreadCount = messages.reduce(0) { $0 + ($1.isUnread ? 1 : 0) }
+            let thread = EmailThread(id: threadID,
+                                     rootMessageID: rootMessage.messageID,
+                                     subject: rootMessage.subject,
+                                     lastUpdated: lastUpdated,
+                                     unreadCount: unreadCount,
+                                     messageCount: messages.count)
+            rebuiltThreads.append(thread)
+        }
+
+        let updatedResult = ThreadingResult(roots: rebuiltRoots,
+                                            threads: rebuiltThreads,
+                                            messageThreadMap: updatedMap,
+                                            manualOverrideMessageIDs: manualOverrideMessageIDs)
+        return ManualOverrideApplication(result: updatedResult, invalidKeys: invalidKeys)
+    }
+
+    private static func flattenNodes(from node: ThreadNode) -> [ThreadNode] {
+        var results = [node]
+        for child in node.children {
+            results.append(contentsOf: flattenNodes(from: child))
+        }
+        return results
+    }
+
+    private static func selectRootMessage(from messages: [EmailMessage],
+                                          preferredRootID: String?) -> EmailMessage? {
+        if let preferredRootID, let preferred = messages.first(where: { $0.messageID == preferredRootID }) {
+            return preferred
+        }
+        return messages.min { $0.date < $1.date }
     }
 }

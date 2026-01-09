@@ -85,6 +85,51 @@ final class MessageStore {
         }
     }
 
+    func fetchManualThreadOverrides() async throws -> [String: String] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ManualThreadOverrideEntity> = ManualThreadOverrideEntity.fetchRequest()
+            let overrides = try context.fetch(request)
+            return overrides.reduce(into: [String: String]()) { result, override in
+                result[override.messageKey] = override.threadID
+            }
+        }
+    }
+
+    func upsertManualThreadOverrides(_ overrides: [String: String]) async throws {
+        guard !overrides.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let keys = Array(overrides.keys)
+            let request: NSFetchRequest<ManualThreadOverrideEntity> = ManualThreadOverrideEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "messageKey IN %@", keys)
+            let existing = try context.fetch(request)
+            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ($0.messageKey, $0) })
+            for (key, threadID) in overrides {
+                let entity = lookup[key] ?? ManualThreadOverrideEntity(context: context)
+                entity.messageKey = key
+                entity.threadID = threadID
+                lookup[key] = entity
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func deleteManualThreadOverrides(messageKeys: [String]) async throws {
+        guard !messageKeys.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ManualThreadOverrideEntity> = ManualThreadOverrideEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "messageKey IN %@", messageKeys)
+            let existing = try context.fetch(request)
+            for entity in existing {
+                context.delete(entity)
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
     func updateThreadMembership(_ map: [String: String], threads: [EmailThread]) async throws {
         guard !map.isEmpty else { return }
         try await container.performBackgroundTask { context in
@@ -261,7 +306,27 @@ final class MessageStore {
             messageCountAttr
         ]
 
-        model.entities = [messageEntity, threadEntity]
+        let overrideEntity = NSEntityDescription()
+        overrideEntity.name = "ManualThreadOverrideEntity"
+        overrideEntity.managedObjectClassName = NSStringFromClass(ManualThreadOverrideEntity.self)
+
+        let overrideMessageKeyAttr = NSAttributeDescription()
+        overrideMessageKeyAttr.name = "messageKey"
+        overrideMessageKeyAttr.attributeType = .stringAttributeType
+        overrideMessageKeyAttr.isOptional = false
+        overrideMessageKeyAttr.isIndexed = true
+
+        let overrideThreadAttr = NSAttributeDescription()
+        overrideThreadAttr.name = "threadID"
+        overrideThreadAttr.attributeType = .stringAttributeType
+        overrideThreadAttr.isOptional = false
+
+        overrideEntity.properties = [
+            overrideMessageKeyAttr,
+            overrideThreadAttr
+        ]
+
+        model.entities = [messageEntity, threadEntity, overrideEntity]
         return model
     }
 }
@@ -335,6 +400,18 @@ final class ThreadEntity: NSManagedObject {
 extension ThreadEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadEntity> {
         NSFetchRequest<ThreadEntity>(entityName: "ThreadEntity")
+    }
+}
+
+@objc(ManualThreadOverrideEntity)
+final class ManualThreadOverrideEntity: NSManagedObject {
+    @NSManaged var messageKey: String
+    @NSManaged var threadID: String
+}
+
+extension ManualThreadOverrideEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ManualThreadOverrideEntity> {
+        NSFetchRequest<ManualThreadOverrideEntity>(entityName: "ManualThreadOverrideEntity")
     }
 }
 

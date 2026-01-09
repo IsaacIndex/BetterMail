@@ -3,7 +3,6 @@ import SwiftUI
 
 struct ThreadCanvasView: View {
     @ObservedObject var viewModel: ThreadCanvasViewModel
-    @Binding var selectedNodeID: String?
     let topInset: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -89,19 +88,26 @@ struct ThreadCanvasView: View {
     private func nodesLayer(layout: ThreadCanvasLayout, metrics: ThreadCanvasLayoutMetrics) -> some View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
-                ThreadCanvasNodeView(node: node, isSelected: node.id == selectedNodeID, fontScale: metrics.fontScale)
+                ThreadCanvasNodeView(node: node,
+                                     isSelected: viewModel.selectedNodeIDs.contains(node.id),
+                                     fontScale: metrics.fontScale)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .onTapGesture {
-                        selectedNodeID = node.id
+                        viewModel.selectNode(id: node.id, additive: isCommandClick())
                     }
             }
         }
     }
 
     private func isColumnSelected(_ column: ThreadCanvasColumn) -> Bool {
-        guard let selectedNodeID else { return false }
+        guard let selectedNodeID = viewModel.selectedNodeID else { return false }
         return column.nodes.contains(where: { $0.id == selectedNodeID })
+    }
+
+    private func isCommandClick() -> Bool {
+        guard let flags = NSApp.currentEvent?.modifierFlags else { return false }
+        return flags.contains(.command)
     }
 }
 
@@ -152,16 +158,22 @@ private struct ThreadCanvasConnectorColumn: View {
 
     var body: some View {
         let sortedNodes = column.nodes.sorted { $0.frame.minY < $1.frame.minY }
-        Path { path in
-            for index in 1..<sortedNodes.count {
-                let previous = sortedNodes[index - 1]
-                let next = sortedNodes[index]
-                let x = metrics.columnWidth / 2
-                path.move(to: CGPoint(x: x, y: previous.frame.maxY))
-                path.addLine(to: CGPoint(x: x, y: next.frame.minY))
+        let segments = connectorSegments(for: sortedNodes)
+        ZStack(alignment: .topLeading) {
+            ForEach(segments) { segment in
+                Path { path in
+                    let x = metrics.columnWidth / 2
+                    path.move(to: CGPoint(x: x, y: segment.startY))
+                    path.addLine(to: CGPoint(x: x, y: segment.endY))
+                }
+                .stroke(segment.isManual ? manualConnectorColor : connectorColor,
+                        style: StrokeStyle(lineWidth: isHighlighted ? 2 : 1,
+                                           lineCap: .round,
+                                           dash: segment.isManual ? [4, 4] : []))
             }
         }
-        .stroke(connectorColor, style: StrokeStyle(lineWidth: isHighlighted ? 2 : 1, lineCap: .round))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel(segments: segments))
     }
 
     private var connectorColor: Color {
@@ -170,6 +182,46 @@ private struct ThreadCanvasConnectorColumn: View {
         }
         return reduceTransparency ? Color.secondary.opacity(0.35) : Color.white.opacity(0.2)
     }
+
+    private var manualConnectorColor: Color {
+        if reduceTransparency {
+            return Color.orange.opacity(0.6)
+        }
+        return Color.orange.opacity(0.85)
+    }
+
+    private func connectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
+        guard nodes.count > 1 else { return [] }
+        var segments: [ConnectorSegment] = []
+        segments.reserveCapacity(nodes.count - 1)
+        for index in 1..<nodes.count {
+            let previous = nodes[index - 1]
+            let next = nodes[index]
+            let isManual = previous.isManualOverride || next.isManualOverride
+            segments.append(ConnectorSegment(id: "\(column.id)-\(index)",
+                                             startY: previous.frame.maxY,
+                                             endY: next.frame.minY,
+                                             isManual: isManual))
+        }
+        return segments
+    }
+
+    private func accessibilityLabel(segments: [ConnectorSegment]) -> Text {
+        let manualCount = segments.filter(\.isManual).count
+        let jwzCount = segments.count - manualCount
+        return Text(String.localizedStringWithFormat(
+            NSLocalizedString("threadcanvas.connectors.accessibility", comment: "Accessibility label for thread connectors"),
+            jwzCount,
+            manualCount
+        ))
+    }
+}
+
+private struct ConnectorSegment: Identifiable {
+    let id: String
+    let startY: CGFloat
+    let endY: CGFloat
+    let isManual: Bool
 }
 
 private struct ThreadCanvasNodeView: View {
