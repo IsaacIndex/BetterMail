@@ -57,12 +57,12 @@ struct ThreadListView: View {
             }
             inspectorOverlay
             navigationBarOverlay
+            selectionActionBar
         }
     }
 
     private var canvasContent: some View {
         ThreadCanvasView(viewModel: viewModel,
-                         selectedNodeID: selectionBinding,
                          topInset: canvasTopPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, navHorizontalPadding)
@@ -255,11 +255,63 @@ struct ThreadListView: View {
         }
     }
 
-    private var selectionBinding: Binding<String?> {
-        Binding(
-            get: { viewModel.selectedNodeID },
-            set: { viewModel.selectNode(id: $0) }
-        )
+    private var selectionActionBar: some View {
+        Group {
+            if viewModel.shouldShowSelectionActions {
+                HStack(spacing: 12) {
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
+                        viewModel.selectedNodeIDs.count
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(navSecondaryForegroundStyle)
+                    Spacer()
+                    Button(action: { viewModel.groupSelectedMessages() }) {
+                        Label(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"),
+                              systemImage: "link")
+                    }
+                    .disabled(!viewModel.canGroupSelection)
+                    Button(action: { viewModel.ungroupSelectedMessages() }) {
+                        Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
+                              systemImage: "link.badge.minus")
+                    }
+                    .disabled(!viewModel.canUngroupSelection)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 420)
+                .background(selectionActionBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(reduceTransparency ? 0.15 : 0.25))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .shadow(color: Color.black.opacity(isGlassNavEnabled ? 0.3 : 0.2), radius: 12, y: 6)
+                .padding(.bottom, 16)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.shouldShowSelectionActions)
+    }
+
+    @ViewBuilder
+    private var selectionActionBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        if reduceTransparency {
+            shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.92))
+        } else if #available(macOS 26, *), isGlassNavEnabled {
+            shape
+                .fill(Color.white.opacity(0.1))
+                .glassEffect(
+                    .regular
+                        .tint(Color.white.opacity(0.16))
+                        .interactive(),
+                    in: .rect(cornerRadius: 14)
+                )
+        } else {
+            shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.86))
+        }
     }
 
     private var selectedSummaryState: ThreadSummaryState? {

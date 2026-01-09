@@ -16,6 +16,10 @@
 "threadcanvas.inspector.open_in_mail" = "Open in Mail";
 "threadcanvas.inspector.summary.title" = "Thread summary";
 "threadcanvas.summary.apple_intelligence" = "Apple Intelligence";
+"threadcanvas.connectors.accessibility" = "Thread connectors: %d standard, %d manual";
+"threadlist.selection.count" = "%d selected";
+"threadlist.selection.group" = "Group";
+"threadlist.selection.ungroup" = "Ungroup";
 "settings.inspector.title" = "Inspector View";
 "settings.inspector.snippet_lines" = "Max snippet lines";
 "settings.inspector.snippet_lines.value" = "%d lines";

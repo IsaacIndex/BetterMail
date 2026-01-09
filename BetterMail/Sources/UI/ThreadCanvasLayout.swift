@@ -71,6 +71,7 @@ struct ThreadCanvasNode: Identifiable, Hashable {
     let threadID: String
     let frame: CGRect
     let dayIndex: Int
+    let isManualOverride: Bool
 }
 
 struct ThreadCanvasColumn: Identifiable, Hashable {

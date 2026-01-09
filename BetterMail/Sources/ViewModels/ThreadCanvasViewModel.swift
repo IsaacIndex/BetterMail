@@ -37,6 +37,7 @@ final class ThreadCanvasViewModel: ObservableObject {
             let unreadTotal: Int
             let messageCount: Int
             let threadCount: Int
+            let manualOverrideMessageIDs: Set<String>
         }
 
         func performRefresh(effectiveLimit: Int,
@@ -52,13 +53,20 @@ final class ThreadCanvasViewModel: ObservableObject {
 
         func performRethread(fetchLimit: Int) async throws -> RethreadOutcome {
             let messages = try await store.fetchMessages(limit: fetchLimit)
-            let result = threader.buildThreads(from: messages)
-            try await store.updateThreadMembership(result.messageThreadMap, threads: result.threads)
-            let unread = result.threads.reduce(0) { $0 + $1.unreadCount }
-            return RethreadOutcome(roots: result.roots,
+            let baseResult = threader.buildThreads(from: messages)
+            let overrides = try await store.fetchManualThreadOverrides()
+            let applied = threader.applyManualOverrides(overrides, to: baseResult)
+            if !applied.invalidKeys.isEmpty {
+                try await store.deleteManualThreadOverrides(messageKeys: applied.invalidKeys)
+            }
+            let updatedResult = applied.result
+            try await store.updateThreadMembership(updatedResult.messageThreadMap, threads: updatedResult.threads)
+            let unread = updatedResult.threads.reduce(0) { $0 + $1.unreadCount }
+            return RethreadOutcome(roots: updatedResult.roots,
                                    unreadTotal: unread,
                                    messageCount: messages.count,
-                                   threadCount: result.threads.count)
+                                   threadCount: updatedResult.threads.count,
+                                   manualOverrideMessageIDs: updatedResult.manualOverrideMessageIDs)
         }
 
         func subjectsByRoot(_ roots: [ThreadNode]) -> [String: [String]] {
@@ -94,6 +102,8 @@ final class ThreadCanvasViewModel: ObservableObject {
     @Published private(set) var threadSummaries: [String: ThreadSummaryState] = [:]
     @Published private(set) var expandedSummaryIDs: Set<String> = []
     @Published var selectedNodeID: String?
+    @Published private(set) var selectedNodeIDs: Set<String> = []
+    @Published private(set) var manualOverrideMessageIDs: Set<String> = []
     @Published var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -268,6 +278,8 @@ final class ThreadCanvasViewModel: ObservableObject {
             let rethreadResult = try await worker.performRethread(fetchLimit: fetchLimit)
             self.roots = rethreadResult.roots
             self.unreadTotal = rethreadResult.unreadTotal
+            self.manualOverrideMessageIDs = rethreadResult.manualOverrideMessageIDs
+            pruneSelection(using: rethreadResult.roots)
             refreshSummaries(for: rethreadResult.roots)
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
         } catch {
@@ -396,7 +408,30 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
     func selectNode(id: String?) {
-        selectedNodeID = id
+        selectNode(id: id, additive: false)
+    }
+
+    func selectNode(id: String?, additive: Bool) {
+        guard let id else {
+            selectedNodeID = nil
+            selectedNodeIDs = []
+            return
+        }
+
+        if additive {
+            if selectedNodeIDs.contains(id) {
+                selectedNodeIDs.remove(id)
+                if selectedNodeID == id {
+                    selectedNodeID = selectedNodeIDs.sorted().first
+                }
+            } else {
+                selectedNodeIDs.insert(id)
+                selectedNodeID = id
+            }
+        } else {
+            selectedNodeID = id
+            selectedNodeIDs = [id]
+        }
     }
 
     func openMessageInMail(_ node: ThreadNode) {
@@ -417,12 +452,101 @@ final class ThreadCanvasViewModel: ObservableObject {
     func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
                       today: Date = Date(),
                       calendar: Calendar = .current) -> ThreadCanvasLayout {
-        Self.canvasLayout(for: roots, metrics: metrics, today: today, calendar: calendar)
+        Self.canvasLayout(for: roots,
+                          metrics: metrics,
+                          today: today,
+                          calendar: calendar,
+                          manualOverrideMessageIDs: manualOverrideMessageIDs)
+    }
+
+    var shouldShowSelectionActions: Bool {
+        selectedNodeIDs.count >= 2 || hasManualOverridesInSelection
+    }
+
+    var canGroupSelection: Bool {
+        guard selectedNodeIDs.count >= 2,
+              let targetID = selectedNodeID,
+              let targetNode = Self.node(matching: targetID, in: roots) else {
+            return false
+        }
+        let targetThreadID = targetNode.message.threadID ?? targetNode.id
+        return selectedNodes(in: roots).contains { ($0.message.threadID ?? $0.id) != targetThreadID }
+    }
+
+    var canUngroupSelection: Bool {
+        hasManualOverridesInSelection
+    }
+
+    func groupSelectedMessages() {
+        guard selectedNodeIDs.count >= 2,
+              let targetID = selectedNodeID,
+              let targetNode = Self.node(matching: targetID, in: roots) else {
+            return
+        }
+        let targetThreadID = targetNode.message.threadID ?? targetNode.id
+        let selectedNodes = selectedNodes(in: roots)
+        let overrides = selectedNodes.reduce(into: [String: String]()) { result, node in
+            let currentThreadID = node.message.threadID ?? node.id
+            guard currentThreadID != targetThreadID else { return }
+            result[node.message.threadKey] = targetThreadID
+        }
+        guard !overrides.isEmpty else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await store.upsertManualThreadOverrides(overrides)
+                await MainActor.run { self.scheduleRethread() }
+            } catch {
+                Log.app.error("Failed to save manual thread overrides: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    func ungroupSelectedMessages() {
+        let selectedNodes = selectedNodes(in: roots)
+        let keys = selectedNodes
+            .filter { manualOverrideMessageIDs.contains($0.id) }
+            .map(\.message.threadKey)
+        guard !keys.isEmpty else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await store.deleteManualThreadOverrides(messageKeys: keys)
+                await MainActor.run { self.scheduleRethread() }
+            } catch {
+                Log.app.error("Failed to remove manual thread overrides: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     @MainActor
     private func updateNextRefreshDate(_ date: Date?) {
         nextRefreshDate = date
+    }
+
+    private var hasManualOverridesInSelection: Bool {
+        !manualOverrideMessageIDs.isEmpty &&
+            selectedNodes(in: roots).contains { manualOverrideMessageIDs.contains($0.id) }
+    }
+
+    private func selectedNodes(in roots: [ThreadNode]) -> [ThreadNode] {
+        guard !selectedNodeIDs.isEmpty else { return [] }
+        return Self.nodes(matching: selectedNodeIDs, in: roots)
+    }
+
+    private func pruneSelection(using roots: [ThreadNode]) {
+        let validIDs = Set(Self.flatten(nodes: roots).map(\.id))
+        if selectedNodeIDs.isEmpty {
+            selectedNodeID = nil
+            return
+        }
+        selectedNodeIDs = selectedNodeIDs.intersection(validIDs)
+        if let selectedNodeID, !selectedNodeIDs.contains(selectedNodeID) {
+            self.selectedNodeID = selectedNodeIDs.sorted().first
+        }
+        if selectedNodeIDs.isEmpty {
+            selectedNodeID = nil
+        }
     }
 }
 
@@ -430,7 +554,8 @@ extension ThreadCanvasViewModel {
     static func canvasLayout(for roots: [ThreadNode],
                              metrics: ThreadCanvasLayoutMetrics,
                              today: Date,
-                             calendar: Calendar) -> ThreadCanvasLayout {
+                             calendar: Calendar,
+                             manualOverrideMessageIDs: Set<String> = []) -> ThreadCanvasLayout {
         let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
         var currentYOffset = metrics.contentPadding
         let days = (0..<ThreadCanvasLayoutMetrics.dayCount).map { index -> ThreadCanvasDay in
@@ -464,7 +589,8 @@ extension ThreadCanvasViewModel {
                                     metrics: metrics,
                                     today: today,
                                     calendar: calendar,
-                                    dayLookup: dayLookup)
+                                    dayLookup: dayLookup,
+                                    manualOverrideMessageIDs: manualOverrideMessageIDs)
             let title = item.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : item.root.message.subject
             columns.append(ThreadCanvasColumn(id: threadID,
                                               title: title,
@@ -507,7 +633,8 @@ extension ThreadCanvasViewModel {
                                     metrics: ThreadCanvasLayoutMetrics,
                                     today: Date,
                                     calendar: Calendar,
-                                    dayLookup: [Int: ThreadCanvasDay]) -> [ThreadCanvasNode] {
+                                    dayLookup: [Int: ThreadCanvasDay],
+                                    manualOverrideMessageIDs: Set<String>) -> [ThreadCanvasNode] {
         var grouped: [Int: [ThreadNode]] = [:]
         let allNodes = flatten(node: root)
         for node in allNodes {
@@ -541,7 +668,8 @@ extension ThreadCanvasViewModel {
                                               message: node.message,
                                               threadID: threadID,
                                               frame: frame,
-                                              dayIndex: dayIndex))
+                                              dayIndex: dayIndex,
+                                              isManualOverride: manualOverrideMessageIDs.contains(node.id)))
             }
         }
 
@@ -618,5 +746,18 @@ extension ThreadCanvasViewModel {
         return metrics.nodeHeight
             + (metrics.nodeVerticalSpacing * 2)
             + CGFloat(nodeCount - 1) * maxStep
+    }
+
+    private static func nodes(matching ids: Set<String>, in roots: [ThreadNode]) -> [ThreadNode] {
+        guard !ids.isEmpty else { return [] }
+        return flatten(nodes: roots).filter { ids.contains($0.id) }
+    }
+
+    private static func flatten(nodes: [ThreadNode]) -> [ThreadNode] {
+        var results: [ThreadNode] = []
+        for node in nodes {
+            results.append(contentsOf: flatten(node: node))
+        }
+        return results
     }
 }

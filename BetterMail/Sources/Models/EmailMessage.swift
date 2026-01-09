@@ -47,6 +47,11 @@ struct EmailMessage: Identifiable, Hashable {
         JWZThreader.normalizeIdentifier(messageID)
     }
 
+    var threadKey: String {
+        let normalized = normalizedMessageID
+        return normalized.isEmpty ? id.uuidString.lowercased() : normalized
+    }
+
     func assigning(threadID: String?) -> EmailMessage {
         EmailMessage(id: id,
                      messageID: messageID,

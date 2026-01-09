@@ -114,4 +114,63 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(match?.id, "child")
         XCTAssertNil(missing)
     }
+
+    func testManualOverrideUpdatesLatestDateOrdering() {
+        let calendar = Calendar(identifier: .gregorian)
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2025
+        components.month = 3
+        components.day = 8
+        components.hour = 12
+        let today = calendar.date(from: components)!
+
+        let rootMessage = EmailMessage(messageID: "root-a",
+                                       mailboxID: "inbox",
+                                       subject: "Thread A",
+                                       from: "a@example.com",
+                                       to: "me@example.com",
+                                       date: calendar.date(byAdding: .day, value: -5, to: today)!,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [])
+        let threadBRoot = EmailMessage(messageID: "root-b",
+                                       mailboxID: "inbox",
+                                       subject: "Thread B",
+                                       from: "b@example.com",
+                                       to: "me@example.com",
+                                       date: calendar.date(byAdding: .day, value: -3, to: today)!,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [])
+        let threadBReply = EmailMessage(messageID: "reply-b",
+                                        mailboxID: "inbox",
+                                        subject: "Thread B",
+                                        from: "c@example.com",
+                                        to: "me@example.com",
+                                        date: calendar.date(byAdding: .day, value: -1, to: today)!,
+                                        snippet: "",
+                                        isUnread: false,
+                                        inReplyTo: threadBRoot.messageID,
+                                        references: [])
+
+        let threader = JWZThreader()
+        let result = threader.buildThreads(from: [rootMessage, threadBRoot, threadBReply])
+        let threadAID = result.messageThreadMap[rootMessage.threadKey]!
+        let overrides = [threadBReply.threadKey: threadAID]
+        let applied = threader.applyManualOverrides(overrides, to: result)
+
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: applied.result.roots,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        manualOverrideMessageIDs: applied.result.manualOverrideMessageIDs)
+
+        XCTAssertEqual(layout.columns.first?.id, threadAID)
+        XCTAssertEqual(layout.columns.count, 2)
+    }
 }
