@@ -41,7 +41,7 @@ struct ThreadCanvasLayoutMetrics {
     }
 
     var nodeVerticalSpacing: CGFloat {
-        10 * clampedZoom
+        30 * clampedZoom
     }
 
     var nodeCornerRadius: CGFloat {
