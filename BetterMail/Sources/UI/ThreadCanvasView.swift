@@ -184,7 +184,7 @@ private struct ThreadCanvasConnectorColumn: View {
                     .fill(segmentColor(for: segment))
                     .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
                     .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                    .position(x: localX - (segment.isManual ? 5 : -5), y: segment.endY)
+                    .position(x: localX - (segment.isManual ? 5 : -5), y: segment.endY - lineWidth * 8.8 / 2)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -215,7 +215,7 @@ private struct ThreadCanvasConnectorColumn: View {
         if reduceTransparency {
             return Color.secondary.opacity(0.35)
         }
-        return Color.white.opacity(0.35)
+        return Color.blue.opacity(0.35)
     }
 
     private var connectorGlowColor: Color {
