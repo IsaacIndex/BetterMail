@@ -51,8 +51,8 @@ final class ThreadCanvasViewModel: ObservableObject {
             return RefreshOutcome(fetchedCount: fetched.count, latestDate: latest)
         }
 
-        func performRethread(fetchLimit: Int) async throws -> RethreadOutcome {
-            let messages = try await store.fetchMessages(limit: fetchLimit)
+        func performRethread(cutoffDate: Date?) async throws -> RethreadOutcome {
+            let messages = try await store.fetchMessages(since: cutoffDate)
             let baseResult = threader.buildThreads(from: messages)
             let overrides = try await store.fetchManualThreadOverrides()
             let applied = threader.applyManualOverrides(overrides, to: baseResult)
@@ -274,8 +274,8 @@ final class ThreadCanvasViewModel: ObservableObject {
     private func performRethread() async {
         do {
             Log.refresh.debug("Beginning rethread from store.")
-            let fetchLimit = self.fetchLimit
-            let rethreadResult = try await worker.performRethread(fetchLimit: fetchLimit)
+            let cutoffDate = cachedMessageCutoffDate()
+            let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate)
             self.roots = rethreadResult.roots
             self.unreadTotal = rethreadResult.unreadTotal
             self.manualOverrideMessageIDs = rethreadResult.manualOverrideMessageIDs
@@ -547,6 +547,14 @@ final class ThreadCanvasViewModel: ObservableObject {
         if selectedNodeIDs.isEmpty {
             selectedNodeID = nil
         }
+    }
+
+    private func cachedMessageCutoffDate(today: Date = Date(),
+                                         calendar: Calendar = .current) -> Date? {
+        let dayCount = ThreadCanvasLayoutMetrics.dayCount
+        guard dayCount > 0 else { return nil }
+        let startOfToday = calendar.startOfDay(for: today)
+        return calendar.date(byAdding: .day, value: -(dayCount - 1), to: startOfToday)
     }
 }
 
