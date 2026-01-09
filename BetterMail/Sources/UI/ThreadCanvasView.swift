@@ -167,8 +167,8 @@ private struct ThreadCanvasConnectorColumn: View {
                     .clamped(to: 0...metrics.columnWidth)
                 Path { path in
                     // Draw the connector directly under the node (not at column center).
-                    path.move(to: CGPoint(x: localX, y: segment.startY))
-                    path.addLine(to: CGPoint(x: localX, y: segment.endY))
+                    path.move(to: CGPoint(x: localX - (segment.isManual ? 5 : -5), y: segment.startY))
+                    path.addLine(to: CGPoint(x: localX - (segment.isManual ? 5 : -5), y: segment.endY))
                 }
                 .stroke(
                     segmentColor(for: segment),
@@ -178,13 +178,13 @@ private struct ThreadCanvasConnectorColumn: View {
                         dash: segment.isManual ? [4, 4] : []
                     )
                 )
-                .shadow(color: Color.mint, radius: glowRadius, x: 0, y: 0)
+                .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
                 
                 Circle()
                     .fill(segmentColor(for: segment))
                     .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
-                    .shadow(color: Color.mint, radius: glowRadius)
-                    .position(x: localX, y: segment.endY)
+                    .shadow(color: segmentColor(for: segment), radius: glowRadius)
+                    .position(x: localX - (segment.isManual ? 5 : -5), y: segment.endY)
             }
         }
         .accessibilityElement(children: .ignore)

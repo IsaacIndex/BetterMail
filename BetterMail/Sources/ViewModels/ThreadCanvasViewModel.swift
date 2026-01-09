@@ -478,17 +478,17 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
     func groupSelectedMessages() {
-        guard selectedNodeIDs.count >= 2,
-              let targetID = selectedNodeID,
-              let targetNode = Self.node(matching: targetID, in: roots) else {
+        let selectedNodes = selectedNodes(in: roots)
+        guard selectedNodes.count >= 2 else {
             return
         }
-        let targetThreadID = targetNode.message.threadID ?? targetNode.id
-        let selectedNodes = selectedNodes(in: roots)
-        let overrides = selectedNodes.reduce(into: [String: String]()) { result, node in
-            let currentThreadID = node.message.threadID ?? node.id
-            guard currentThreadID != targetThreadID else { return }
-            result[node.message.threadKey] = targetThreadID
+        let selectedThreadIDs = Set(selectedNodes.map { $0.message.threadID ?? $0.id })
+        guard selectedThreadIDs.count >= 2 else { return }
+        let allNodes = Self.flatten(nodes: roots)
+        let nodesInSelectedThreads = allNodes.filter { selectedThreadIDs.contains($0.message.threadID ?? $0.id) }
+        let mergedThreadID = "merged-\(UUID().uuidString.lowercased())"
+        let overrides = nodesInSelectedThreads.reduce(into: [String: String]()) { result, node in
+            result[node.message.threadKey] = mergedThreadID
         }
         guard !overrides.isEmpty else { return }
         Task { [weak self] in

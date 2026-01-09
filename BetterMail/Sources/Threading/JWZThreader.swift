@@ -166,7 +166,6 @@ extension JWZThreader {
             return ManualOverrideApplication(result: result, invalidKeys: [])
         }
 
-        let availableThreadIDs = Set(result.threads.map(\.id))
         let allNodes = result.roots.flatMap { Self.flattenNodes(from: $0) }
         var messageKeyToMessageID: [String: String] = [:]
 
@@ -178,22 +177,45 @@ extension JWZThreader {
         var updatedMap = result.messageThreadMap
         var appliedOverrideKeys: Set<String> = []
         var invalidKeys: [String] = []
+        var parentByThreadID: [String: String] = [:]
+
+        func findThreadID(_ id: String) -> String {
+            if let parent = parentByThreadID[id] {
+                if parent == id { return parent }
+                let root = findThreadID(parent)
+                parentByThreadID[id] = root
+                return root
+            }
+            parentByThreadID[id] = id
+            return id
+        }
+
+        func mergeThread(_ source: String, into target: String) {
+            let sourceRoot = findThreadID(source)
+            let targetRoot = findThreadID(target)
+            guard sourceRoot != targetRoot else { return }
+            parentByThreadID[sourceRoot] = targetRoot
+        }
 
         for (messageKey, targetThreadID) in overrides {
-            guard availableThreadIDs.contains(targetThreadID) else {
-                invalidKeys.append(messageKey)
-                continue
-            }
             guard updatedMap[messageKey] != nil else {
                 invalidKeys.append(messageKey)
                 continue
             }
-            if updatedMap[messageKey] == targetThreadID {
+            guard let sourceThreadID = updatedMap[messageKey], sourceThreadID != targetThreadID else {
                 invalidKeys.append(messageKey)
                 continue
             }
-            updatedMap[messageKey] = targetThreadID
+            mergeThread(sourceThreadID, into: targetThreadID)
             appliedOverrideKeys.insert(messageKey)
+        }
+
+        guard !appliedOverrideKeys.isEmpty else {
+            return ManualOverrideApplication(result: result, invalidKeys: invalidKeys)
+        }
+
+        for (key, threadID) in updatedMap {
+            updatedMap[key] = findThreadID(threadID)
         }
 
         let manualOverrideMessageIDs = Set(appliedOverrideKeys.compactMap { messageKeyToMessageID[$0] })
