@@ -655,7 +655,8 @@ extension ThreadCanvasViewModel {
             let count = sorted.count
             let dayBaseY = day.yOffset + metrics.nodeVerticalSpacing
             let usableHeight = max(day.height - metrics.nodeHeight - (metrics.nodeVerticalSpacing * 2), 0)
-            let maxStep = metrics.nodeHeight + metrics.nodeVerticalSpacing
+            let nodeGap = metrics.nodeVerticalSpacing
+            let maxStep = metrics.nodeHeight + nodeGap
             let step = count > 1 ? min(maxStep, usableHeight / CGFloat(count - 1)) : 0
 
             for (stackIndex, node) in sorted.enumerated() {
@@ -742,7 +743,8 @@ extension ThreadCanvasViewModel {
         guard nodeCount > 1 else {
             return metrics.dayHeight
         }
-        let maxStep = metrics.nodeHeight + metrics.nodeVerticalSpacing
+        let nodeGap = metrics.nodeVerticalSpacing
+        let maxStep = metrics.nodeHeight + nodeGap
         return metrics.nodeHeight
             + (metrics.nodeVerticalSpacing * 2)
             + CGFloat(nodeCount - 1) * maxStep

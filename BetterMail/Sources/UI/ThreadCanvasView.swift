@@ -159,49 +159,107 @@ private struct ThreadCanvasConnectorColumn: View {
     var body: some View {
         let sortedNodes = column.nodes.sorted { $0.frame.minY < $1.frame.minY }
         let segments = connectorSegments(for: sortedNodes)
+
         ZStack(alignment: .topLeading) {
             ForEach(segments) { segment in
+                // Convert the node’s global X into this column-local coordinate space.
+                let localX = (segment.nodeMidX - column.xOffset)
+                    .clamped(to: 0...metrics.columnWidth)
                 Path { path in
-                    let x = metrics.columnWidth / 2
-                    path.move(to: CGPoint(x: x, y: segment.startY))
-                    path.addLine(to: CGPoint(x: x, y: segment.endY))
+                    // Draw the connector directly under the node (not at column center).
+                    path.move(to: CGPoint(x: localX, y: segment.startY))
+                    path.addLine(to: CGPoint(x: localX, y: segment.endY))
                 }
-                .stroke(segment.isManual ? manualConnectorColor : connectorColor,
-                        style: StrokeStyle(lineWidth: isHighlighted ? 2 : 1,
-                                           lineCap: .round,
-                                           dash: segment.isManual ? [4, 4] : []))
+                .stroke(
+                    segmentColor(for: segment),
+                    style: StrokeStyle(
+                        lineWidth: lineWidth,
+                        lineCap: .round,
+                        dash: segment.isManual ? [4, 4] : []
+                    )
+                )
+                .shadow(color: Color.mint, radius: glowRadius, x: 0, y: 0)
+                
+                Circle()
+                    .fill(segmentColor(for: segment))
+                    .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
+                    .shadow(color: Color.mint, radius: glowRadius)
+                    .position(x: localX, y: segment.endY)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(segments: segments))
     }
 
-    private var connectorColor: Color {
-        if isHighlighted {
-            return Color.accentColor.opacity(0.55)
+    private var lineWidth: CGFloat {
+        isHighlighted ? 2 : 1.3
+    }
+
+    private var glowRadius: CGFloat {
+        isHighlighted ? 4 : 3.75
+    }
+
+    private func segmentColor(for segment: ConnectorSegment) -> Color {
+        let baseColor = segment.isManual ? manualConnectorColor : connectorColor
+        return isHighlighted ? baseColor.opacity(1.0) : baseColor.opacity(0.7)
+    }
+
+    private func segmentGlowColor(for segment: ConnectorSegment) -> Color {
+        if segment.isManual {
+            return manualConnectorGlowColor
         }
-        return reduceTransparency ? Color.secondary.opacity(0.35) : Color.white.opacity(0.2)
+        return isHighlighted ? connectorGlowColor : connectorGlowColor.opacity(0.6)
+    }
+
+    private var connectorColor: Color {
+        if reduceTransparency {
+            return Color.secondary.opacity(0.35)
+        }
+        return Color.white.opacity(0.35)
+    }
+
+    private var connectorGlowColor: Color {
+        Color.accentColor.opacity(isHighlighted ? 0.75 : 0.55)
     }
 
     private var manualConnectorColor: Color {
         if reduceTransparency {
-            return Color.orange.opacity(0.6)
+            return Color.red.opacity(0.68)
         }
-        return Color.orange.opacity(0.85)
+        return Color.red.opacity(0.95)
+    }
+
+    private var manualConnectorGlowColor: Color {
+        Color.orange.opacity(isHighlighted ? 0.92 : 0.65)
     }
 
     private func connectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
         guard nodes.count > 1 else { return [] }
         var segments: [ConnectorSegment] = []
         segments.reserveCapacity(nodes.count - 1)
+
+        // Keep the connector from touching the node cards.
+        // let gap = max(6, 8 * metrics.fontScale)
+        let gap = 0.0
+
         for index in 1..<nodes.count {
             let previous = nodes[index - 1]
             let next = nodes[index]
             let isManual = previous.isManualOverride || next.isManualOverride
-            segments.append(ConnectorSegment(id: "\(column.id)-\(index)",
-                                             startY: previous.frame.maxY,
-                                             endY: next.frame.minY,
-                                             isManual: isManual))
+
+            let startY = previous.frame.maxY + gap
+            let endY = next.frame.minY - gap
+            guard endY > startY else { continue }
+
+            segments.append(
+                ConnectorSegment(
+                    id: "\(column.id)-\(index)",
+                    startY: startY,
+                    endY: endY,
+                    nodeMidX: previous.frame.midX,
+                    isManual: isManual
+                )
+            )
         }
         return segments
     }
@@ -221,6 +279,7 @@ private struct ConnectorSegment: Identifiable {
     let id: String
     let startY: CGFloat
     let endY: CGFloat
+    let nodeMidX: CGFloat
     let isManual: Bool
 }
 
@@ -328,5 +387,11 @@ private struct ThreadCanvasNodeView: View {
 
     private var textShadowRadius: CGFloat {
         (reduceTransparency || colorScheme == .light) ? 0 : 1
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
