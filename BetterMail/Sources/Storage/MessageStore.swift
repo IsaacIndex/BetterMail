@@ -67,9 +67,16 @@ final class MessageStore {
     }
 
     func fetchMessages(limit: Int? = nil) async throws -> [EmailMessage] {
+        try await fetchMessages(since: nil, limit: limit)
+    }
+
+    func fetchMessages(since date: Date?, limit: Int? = nil) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
             request.sortDescriptors = [NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false)]
+            if let date {
+                request.predicate = NSPredicate(format: "date >= %@", date as NSDate)
+            }
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
             return entities.compactMap { $0.toModel() }

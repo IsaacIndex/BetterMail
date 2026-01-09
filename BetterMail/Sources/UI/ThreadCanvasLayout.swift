@@ -3,7 +3,7 @@ import CoreGraphics
 
 struct ThreadCanvasLayoutMetrics {
     static let dayCount = 7
-    static let minZoom: CGFloat = 0.7
+    static let minZoom: CGFloat = 0.01
     static let maxZoom: CGFloat = 1.6
 
     let zoom: CGFloat
