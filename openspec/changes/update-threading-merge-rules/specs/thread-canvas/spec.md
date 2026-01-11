@@ -9,3 +9,7 @@ The system SHALL render vertical connector lanes between consecutive nodes in th
 #### Scenario: Merged JWZ sub-threads
 - **WHEN** a manual group contains messages from multiple JWZ thread IDs
 - **THEN** each JWZ sub-thread renders its own connector lane with a distinct offset
+
+#### Scenario: Grouping or ungrouping realigns connectors
+- **WHEN** the user groups or ungroups messages
+- **THEN** connector lanes are recalculated and offsets are realigned to the updated thread membership

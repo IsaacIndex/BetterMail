@@ -6,6 +6,13 @@ The system SHALL persist manual thread groups with a stable manual thread ID, an
 - **WHEN** the user groups messages manually
 - **THEN** the manual group is stored with its manual thread ID, JWZ thread ID set, and manual message keys
 
+### Requirement: Manual Override Migration
+The system SHALL migrate existing manual overrides into manual group records on upgrade.
+
+#### Scenario: Upgrade with existing overrides
+- **WHEN** stored manual overrides are present during upgrade
+- **THEN** the system creates manual groups that preserve the existing merged memberships and deletes legacy overrides
+
 ### Requirement: Grouping Rules
 The system SHALL apply grouping rules based on the selected nodes’ current membership.
 
@@ -33,4 +40,4 @@ The system SHALL allow ungrouping only for manually attached messages and SHALL 
 
 #### Scenario: Ungroup manual selection
 - **WHEN** the user ungroup-selects manually attached nodes
-- **THEN** only those nodes are detached from the manual group and revert to their JWZ thread
+- **THEN** only those nodes are detached from the manual group and revert to their JWZ thread, and a rethread is triggered immediately
