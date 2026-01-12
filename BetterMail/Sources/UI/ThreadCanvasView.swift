@@ -202,18 +202,18 @@ private struct ThreadCanvasConnectorColumn: View {
 
             Circle()
                 .fill(segmentColor(for: segment))
-                .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
+                .frame(width: lineWidth * 5.8, height: lineWidth * 5.8)
                 .shadow(color: segmentColor(for: segment), radius: glowRadius)
                 .position(x: localX + shift, y: segment.endY - lineWidth * 8.8 / 2)
         }
     }
 
     private var lineWidth: CGFloat {
-        isHighlighted ? 2 : 1.3
+        isHighlighted ? 3 : 2.3
     }
 
     private var glowRadius: CGFloat {
-        isHighlighted ? 4 : 3.75
+        isHighlighted ? 2 : 1
     }
 
     private func segmentColor(for segment: ConnectorSegment) -> Color {
