@@ -160,36 +160,52 @@ private struct ThreadCanvasConnectorColumn: View {
         let segments = connectorSegments(for: column.nodes)
 
         ZStack(alignment: .topLeading) {
-            ForEach(segments) { segment in
-                // Convert the node’s global X into this column-local coordinate space.
-                let localX = (segment.nodeMidX - column.xOffset)
-                    .clamped(to: 0...metrics.columnWidth)
-                let manualShift = max(4, metrics.nodeWidth * 0.02)
-                let shift = segment.isManual ? -manualShift : manualShift
-                Path { path in
-                    // Draw the connector directly under the node (not at column center).
-                    path.move(to: CGPoint(x: localX + shift, y: segment.startY))
-                    path.addLine(to: CGPoint(x: localX + shift, y: segment.endY))
-                }
-                .stroke(
-                    segmentColor(for: segment),
-                    style: StrokeStyle(
-                        lineWidth: lineWidth,
-                        lineCap: .round,
-                        dash: segment.isManual ? [4, 4] : []
-                    )
-                )
-                .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
-                
-                Circle()
-                    .fill(segmentColor(for: segment))
-                    .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
-                    .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                    .position(x: localX + shift, y: segment.endY - lineWidth * 8.8 / 2)
+            ForEach(segments, id: \.id) { segment in
+                connectorContent(segment)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(segments: segments))
+    }
+
+    private func connectorContent(_ segment: ConnectorSegment) -> some View {
+        let manualShift = max(4, metrics.nodeWidth * 0.02)
+        var localX: CGFloat
+        var shift: CGFloat
+        if segment.isManual {
+            localX = metrics.columnWidth / 2
+            shift = 0
+        } else {
+            // Convert the node’s global X into this column-local coordinate space.
+            localX = (segment.nodeMidX - column.xOffset)
+                .clamped(to: 0...metrics.columnWidth)
+            // Push blue lanes away from the column center.
+            let centerX = column.xOffset + (metrics.columnWidth / 2)
+            shift = (segment.nodeMidX - centerX) >= 0 ? manualShift : -manualShift
+        }
+
+        return ZStack(alignment: .topLeading) {
+            Path { path in
+                // Draw JWZ connectors under their lane; manual connectors stay centered.
+                path.move(to: CGPoint(x: localX + shift, y: segment.startY))
+                path.addLine(to: CGPoint(x: localX + shift, y: segment.endY))
+            }
+            .stroke(
+                segmentColor(for: segment),
+                style: StrokeStyle(
+                    lineWidth: lineWidth,
+                    lineCap: .round,
+                    dash: segment.isManual ? [4, 4] : []
+                )
+            )
+            .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
+
+            Circle()
+                .fill(segmentColor(for: segment))
+                .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
+                .shadow(color: segmentColor(for: segment), radius: glowRadius)
+                .position(x: localX + shift, y: segment.endY - lineWidth * 8.8 / 2)
+        }
     }
 
     private var lineWidth: CGFloat {
@@ -235,24 +251,27 @@ private struct ThreadCanvasConnectorColumn: View {
     }
 
     private func connectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
-        let jwzSegments = jwzConnectorSegments(for: nodes)
+        let jwzThreadIDs = Array(Set(nodes.map(\.jwzThreadID))).sorted()
+        let offsets = laneOffsets(for: jwzThreadIDs)
+        let jwzSegments = jwzConnectorSegments(for: nodes, laneOffsets: offsets)
         let manualSegments = manualConnectorSegments(for: nodes)
         return jwzSegments + manualSegments
     }
 
-    private func jwzConnectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
+    private func jwzConnectorSegments(for nodes: [ThreadCanvasNode],
+                                      laneOffsets: [String: CGFloat]) -> [ConnectorSegment] {
         let grouped = Dictionary(grouping: nodes, by: \.jwzThreadID)
         let sortedKeys = grouped.keys.sorted()
-        let offsets = laneOffsets(for: sortedKeys)
 
         var segments: [ConnectorSegment] = []
         for (index, jwzThreadID) in sortedKeys.enumerated() {
             guard let groupNodes = grouped[jwzThreadID]?.sorted(by: { $0.frame.minY < $1.frame.minY }),
                   groupNodes.count > 1 else { continue }
-            let laneOffset = offsets[jwzThreadID] ?? 0
+            let laneOffset = laneOffsets[jwzThreadID] ?? 0
             segments.append(contentsOf: connectorSegments(for: groupNodes,
                                                          laneOffset: laneOffset,
-                                                         segmentPrefix: "\(column.id)-\(index)"))
+                                                         segmentPrefix: "\(column.id)-\(index)",
+                                                         isManual: false))
         }
         return segments
     }
@@ -267,18 +286,21 @@ private struct ThreadCanvasConnectorColumn: View {
         for index in 1..<sortedNodes.count {
             let previous = sortedNodes[index - 1]
             let next = sortedNodes[index]
-            guard previous.isManualAttachment || next.isManualAttachment else { continue }
+            let crossesThreads = previous.jwzThreadID != next.jwzThreadID
+            let touchesManualAttachment = previous.isManualAttachment || next.isManualAttachment
+            guard crossesThreads || touchesManualAttachment else { continue }
 
             let startY = previous.frame.maxY + gap
             let endY = next.frame.minY - gap
             guard endY > startY else { continue }
 
+            let midX = (previous.frame.midX + next.frame.midX) / 2
             segments.append(
                 ConnectorSegment(
                     id: "\(column.id)-manual-\(index)",
                     startY: startY,
                     endY: endY,
-                    nodeMidX: previous.frame.midX,
+                    nodeMidX: midX,
                     isManual: true
                 )
             )
@@ -302,7 +324,8 @@ private struct ThreadCanvasConnectorColumn: View {
 
     private func connectorSegments(for nodes: [ThreadCanvasNode],
                                    laneOffset: CGFloat,
-                                   segmentPrefix: String) -> [ConnectorSegment] {
+                                   segmentPrefix: String,
+                                   isManual: Bool) -> [ConnectorSegment] {
         guard nodes.count > 1 else { return [] }
         var segments: [ConnectorSegment] = []
         segments.reserveCapacity(nodes.count - 1)
@@ -313,7 +336,6 @@ private struct ThreadCanvasConnectorColumn: View {
         for index in 1..<nodes.count {
             let previous = nodes[index - 1]
             let next = nodes[index]
-            let isManual = previous.isManualAttachment || next.isManualAttachment
 
             let startY = previous.frame.maxY + gap
             let endY = next.frame.minY - gap
