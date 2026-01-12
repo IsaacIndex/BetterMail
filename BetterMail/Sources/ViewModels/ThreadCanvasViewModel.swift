@@ -37,7 +37,10 @@ final class ThreadCanvasViewModel: ObservableObject {
             let unreadTotal: Int
             let messageCount: Int
             let threadCount: Int
-            let manualOverrideMessageIDs: Set<String>
+            let manualGroupByMessageKey: [String: String]
+            let manualAttachmentMessageIDs: Set<String>
+            let manualGroups: [String: ManualThreadGroup]
+            let jwzThreadMap: [String: String]
         }
 
         func performRefresh(effectiveLimit: Int,
@@ -54,19 +57,24 @@ final class ThreadCanvasViewModel: ObservableObject {
         func performRethread(cutoffDate: Date?) async throws -> RethreadOutcome {
             let messages = try await store.fetchMessages(since: cutoffDate)
             let baseResult = threader.buildThreads(from: messages)
-            let overrides = try await store.fetchManualThreadOverrides()
-            let applied = threader.applyManualOverrides(overrides, to: baseResult)
-            if !applied.invalidKeys.isEmpty {
-                try await store.deleteManualThreadOverrides(messageKeys: applied.invalidKeys)
+            let manualGroups = try await store.fetchManualThreadGroups()
+            let applied = threader.applyManualGroups(manualGroups, to: baseResult)
+            let effectiveGroups = applied.updatedGroups.isEmpty ? manualGroups : applied.updatedGroups
+            if !applied.updatedGroups.isEmpty {
+                try await store.upsertManualThreadGroups(applied.updatedGroups)
             }
             let updatedResult = applied.result
             try await store.updateThreadMembership(updatedResult.messageThreadMap, threads: updatedResult.threads)
             let unread = updatedResult.threads.reduce(0) { $0 + $1.unreadCount }
+            let groupsByID = Dictionary(uniqueKeysWithValues: effectiveGroups.map { ($0.id, $0) })
             return RethreadOutcome(roots: updatedResult.roots,
                                    unreadTotal: unread,
                                    messageCount: messages.count,
                                    threadCount: updatedResult.threads.count,
-                                   manualOverrideMessageIDs: updatedResult.manualOverrideMessageIDs)
+                                   manualGroupByMessageKey: updatedResult.manualGroupByMessageKey,
+                                   manualAttachmentMessageIDs: updatedResult.manualAttachmentMessageIDs,
+                                   manualGroups: groupsByID,
+                                   jwzThreadMap: updatedResult.jwzThreadMap)
         }
 
         func subjectsByRoot(_ roots: [ThreadNode]) -> [String: [String]] {
@@ -103,7 +111,10 @@ final class ThreadCanvasViewModel: ObservableObject {
     @Published private(set) var expandedSummaryIDs: Set<String> = []
     @Published var selectedNodeID: String?
     @Published private(set) var selectedNodeIDs: Set<String> = []
-    @Published private(set) var manualOverrideMessageIDs: Set<String> = []
+    @Published private(set) var manualGroupByMessageKey: [String: String] = [:]
+    @Published private(set) var manualAttachmentMessageIDs: Set<String> = []
+    @Published private(set) var manualGroups: [String: ManualThreadGroup] = [:]
+    @Published private(set) var jwzThreadMap: [String: String] = [:]
     @Published var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -125,6 +136,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     private var autoRefreshTask: Task<Void, Never>?
     private var summaryTasks: [String: Task<Void, Never>] = [:]
     private var summaryRefreshGeneration = 0
+    private var cancellables = Set<AnyCancellable>()
     private var didStart = false
     private var shouldForceFullReload = false
 
@@ -144,6 +156,12 @@ final class ThreadCanvasViewModel: ObservableObject {
                                               store: store,
                                               threader: threader,
                                               summaryProvider: capability.provider)
+        NotificationCenter.default.publisher(for: .manualThreadGroupsReset)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.scheduleRethread()
+            }
+            .store(in: &cancellables)
     }
 
     deinit {
@@ -278,7 +296,10 @@ final class ThreadCanvasViewModel: ObservableObject {
             let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate)
             self.roots = rethreadResult.roots
             self.unreadTotal = rethreadResult.unreadTotal
-            self.manualOverrideMessageIDs = rethreadResult.manualOverrideMessageIDs
+            self.manualGroupByMessageKey = rethreadResult.manualGroupByMessageKey
+            self.manualAttachmentMessageIDs = rethreadResult.manualAttachmentMessageIDs
+            self.manualGroups = rethreadResult.manualGroups
+            self.jwzThreadMap = rethreadResult.jwzThreadMap
             pruneSelection(using: rethreadResult.roots)
             refreshSummaries(for: rethreadResult.roots)
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
@@ -456,11 +477,12 @@ final class ThreadCanvasViewModel: ObservableObject {
                           metrics: metrics,
                           today: today,
                           calendar: calendar,
-                          manualOverrideMessageIDs: manualOverrideMessageIDs)
+                          manualAttachmentMessageIDs: manualAttachmentMessageIDs,
+                          jwzThreadMap: jwzThreadMap)
     }
 
     var shouldShowSelectionActions: Bool {
-        selectedNodeIDs.count >= 2 || hasManualOverridesInSelection
+        selectedNodeIDs.count >= 2 || hasManualAttachmentsInSelection
     }
 
     var canGroupSelection: Bool {
@@ -469,12 +491,23 @@ final class ThreadCanvasViewModel: ObservableObject {
               let targetNode = Self.node(matching: targetID, in: roots) else {
             return false
         }
-        let targetThreadID = targetNode.message.threadID ?? targetNode.id
-        return selectedNodes(in: roots).contains { ($0.message.threadID ?? $0.id) != targetThreadID }
+        let targetKey = targetNode.message.threadKey
+        let targetMembershipID = manualGroupByMessageKey[targetKey]
+            ?? jwzThreadMap[targetKey]
+            ?? targetNode.message.threadID
+            ?? targetNode.id
+        return selectedNodes(in: roots).contains {
+            let messageKey = $0.message.threadKey
+            let membershipID = manualGroupByMessageKey[messageKey]
+                ?? jwzThreadMap[messageKey]
+                ?? $0.message.threadID
+                ?? $0.id
+            return membershipID != targetMembershipID
+        }
     }
 
     var canUngroupSelection: Bool {
-        hasManualOverridesInSelection
+        hasManualAttachmentsInSelection
     }
 
     func groupSelectedMessages() {
@@ -482,22 +515,89 @@ final class ThreadCanvasViewModel: ObservableObject {
         guard selectedNodes.count >= 2 else {
             return
         }
-        let selectedThreadIDs = Set(selectedNodes.map { $0.message.threadID ?? $0.id })
-        guard selectedThreadIDs.count >= 2 else { return }
-        let allNodes = Self.flatten(nodes: roots)
-        let nodesInSelectedThreads = allNodes.filter { selectedThreadIDs.contains($0.message.threadID ?? $0.id) }
-        let mergedThreadID = "merged-\(UUID().uuidString.lowercased())"
-        let overrides = nodesInSelectedThreads.reduce(into: [String: String]()) { result, node in
-            result[node.message.threadKey] = mergedThreadID
+
+        let selectionDetails = selectedNodes.map { node -> (messageKey: String, jwzThreadID: String, manualGroupID: String?) in
+            let messageKey = node.message.threadKey
+            let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? node.id
+            return (messageKey, jwzThreadID, manualGroupByMessageKey[messageKey])
         }
-        guard !overrides.isEmpty else { return }
+
+        let manualGroupIDs = Set(selectionDetails.compactMap(\.manualGroupID))
+        let jwzThreadIDs = Set(selectionDetails.filter { $0.manualGroupID == nil }.map(\.jwzThreadID))
+        let selectedMessageKeys = Set(selectionDetails.map(\.messageKey))
+
+        guard let targetID = selectedNodeID,
+              let targetNode = Self.node(matching: targetID, in: roots) else { return }
+        let targetKey = targetNode.message.threadKey
+        let targetJWZID = jwzThreadMap[targetKey] ?? targetNode.message.threadID ?? targetNode.id
+
+        var jwzThreadCounts: [String: Int] = [:]
+        for detail in selectionDetails {
+            jwzThreadCounts[detail.jwzThreadID, default: 0] += 1
+        }
+        let manualAttachmentKeys = selectionDetails
+            .filter { detail in
+                detail.jwzThreadID != targetJWZID &&
+                    (jwzThreadCounts[detail.jwzThreadID] ?? 0) == 1
+            }
+            .map(\.messageKey)
+
+        if manualGroupIDs.isEmpty {
+            guard jwzThreadIDs.count >= 2 else { return }
+            let newGroup = ManualThreadGroup(id: Self.newManualGroupID(),
+                                             jwzThreadIDs: jwzThreadIDs,
+                                             manualMessageKeys: Set(manualAttachmentKeys))
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await store.upsertManualThreadGroups([newGroup])
+                    await MainActor.run { self.scheduleRethread() }
+                } catch {
+                    Log.app.error("Failed to save manual thread group: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            return
+        }
+
+        if manualGroupIDs.count == 1, !jwzThreadIDs.isEmpty {
+            guard let groupID = manualGroupIDs.first,
+                  var group = manualGroups[groupID] else { return }
+            group.jwzThreadIDs.formUnion(jwzThreadIDs)
+            group.manualMessageKeys.formUnion(manualAttachmentKeys)
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await store.upsertManualThreadGroups([group])
+                    await MainActor.run { self.scheduleRethread() }
+                } catch {
+                    Log.app.error("Failed to update manual thread group: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            return
+        }
+
+        guard manualGroupIDs.count >= 2 else { return }
+        var mergedJWZIDs: Set<String> = []
+        var mergedManualKeys: Set<String> = []
+        for groupID in manualGroupIDs {
+            guard let group = manualGroups[groupID] else { continue }
+            mergedJWZIDs.formUnion(group.jwzThreadIDs)
+            mergedManualKeys.formUnion(group.manualMessageKeys)
+        }
+        mergedJWZIDs.formUnion(jwzThreadIDs)
+        let mergedGroup = ManualThreadGroup(id: Self.newManualGroupID(),
+                                            jwzThreadIDs: mergedJWZIDs,
+                                            manualMessageKeys: mergedManualKeys)
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await store.upsertManualThreadOverrides(overrides)
+                try await store.upsertManualThreadGroups([mergedGroup])
+                for groupID in manualGroupIDs {
+                    try await store.deleteManualThreadGroup(id: groupID)
+                }
                 await MainActor.run { self.scheduleRethread() }
             } catch {
-                Log.app.error("Failed to save manual thread overrides: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to merge manual thread groups: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -505,16 +605,16 @@ final class ThreadCanvasViewModel: ObservableObject {
     func ungroupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
         let keys = selectedNodes
-            .filter { manualOverrideMessageIDs.contains($0.id) }
+            .filter { manualAttachmentMessageIDs.contains($0.id) }
             .map(\.message.threadKey)
         guard !keys.isEmpty else { return }
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await store.deleteManualThreadOverrides(messageKeys: keys)
+                try await removeManualAttachments(messageKeys: keys)
                 await MainActor.run { self.scheduleRethread() }
             } catch {
-                Log.app.error("Failed to remove manual thread overrides: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to remove manual thread attachments: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -524,9 +624,9 @@ final class ThreadCanvasViewModel: ObservableObject {
         nextRefreshDate = date
     }
 
-    private var hasManualOverridesInSelection: Bool {
-        !manualOverrideMessageIDs.isEmpty &&
-            selectedNodes(in: roots).contains { manualOverrideMessageIDs.contains($0.id) }
+    private var hasManualAttachmentsInSelection: Bool {
+        !manualAttachmentMessageIDs.isEmpty &&
+            selectedNodes(in: roots).contains { manualAttachmentMessageIDs.contains($0.id) }
     }
 
     private func selectedNodes(in roots: [ThreadNode]) -> [ThreadNode] {
@@ -556,6 +656,26 @@ final class ThreadCanvasViewModel: ObservableObject {
         let startOfToday = calendar.startOfDay(for: today)
         return calendar.date(byAdding: .day, value: -(dayCount - 1), to: startOfToday)
     }
+
+    private func removeManualAttachments(messageKeys: [String]) async throws {
+        let groupedKeys = Dictionary(grouping: messageKeys, by: { manualGroupByMessageKey[$0] })
+        for (groupID, keys) in groupedKeys {
+            guard let groupID,
+                  var group = manualGroups[groupID] else { continue }
+            group.manualMessageKeys.subtract(keys)
+            if group.manualMessageKeys.isEmpty && group.jwzThreadIDs.isEmpty {
+                try await store.deleteManualThreadGroup(id: groupID)
+            } else {
+                try await store.upsertManualThreadGroups([group])
+            }
+        }
+    }
+}
+
+private extension ThreadCanvasViewModel {
+    static func newManualGroupID() -> String {
+        "manual-\(UUID().uuidString.lowercased())"
+    }
 }
 
 extension ThreadCanvasViewModel {
@@ -563,7 +683,8 @@ extension ThreadCanvasViewModel {
                              metrics: ThreadCanvasLayoutMetrics,
                              today: Date,
                              calendar: Calendar,
-                             manualOverrideMessageIDs: Set<String> = []) -> ThreadCanvasLayout {
+                             manualAttachmentMessageIDs: Set<String> = [],
+                             jwzThreadMap: [String: String] = [:]) -> ThreadCanvasLayout {
         let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
         var currentYOffset = metrics.contentPadding
         let days = (0..<ThreadCanvasLayoutMetrics.dayCount).map { index -> ThreadCanvasDay in
@@ -598,7 +719,8 @@ extension ThreadCanvasViewModel {
                                     today: today,
                                     calendar: calendar,
                                     dayLookup: dayLookup,
-                                    manualOverrideMessageIDs: manualOverrideMessageIDs)
+                                    manualAttachmentMessageIDs: manualAttachmentMessageIDs,
+                                    jwzThreadMap: jwzThreadMap)
             let title = item.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : item.root.message.subject
             columns.append(ThreadCanvasColumn(id: threadID,
                                               title: title,
@@ -642,7 +764,8 @@ extension ThreadCanvasViewModel {
                                     today: Date,
                                     calendar: Calendar,
                                     dayLookup: [Int: ThreadCanvasDay],
-                                    manualOverrideMessageIDs: Set<String>) -> [ThreadCanvasNode] {
+                                    manualAttachmentMessageIDs: Set<String>,
+                                    jwzThreadMap: [String: String]) -> [ThreadCanvasNode] {
         var grouped: [Int: [ThreadNode]] = [:]
         let allNodes = flatten(node: root)
         for node in allNodes {
@@ -673,12 +796,15 @@ extension ThreadCanvasViewModel {
                                    y: y,
                                    width: metrics.nodeWidth,
                                    height: metrics.nodeHeight)
+                let messageKey = node.message.threadKey
+                let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? threadID
                 nodes.append(ThreadCanvasNode(id: node.id,
                                               message: node.message,
                                               threadID: threadID,
+                                              jwzThreadID: jwzThreadID,
                                               frame: frame,
                                               dayIndex: dayIndex,
-                                              isManualOverride: manualOverrideMessageIDs.contains(node.id)))
+                                              isManualAttachment: manualAttachmentMessageIDs.contains(node.id)))
             }
         }
 

@@ -69,9 +69,10 @@ struct ThreadCanvasNode: Identifiable, Hashable {
     let id: String
     let message: EmailMessage
     let threadID: String
+    let jwzThreadID: String
     let frame: CGRect
     let dayIndex: Int
-    let isManualOverride: Bool
+    let isManualAttachment: Bool
 }
 
 struct ThreadCanvasColumn: Identifiable, Hashable {

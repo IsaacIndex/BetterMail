@@ -2,7 +2,7 @@ import XCTest
 @testable import BetterMail
 
 final class ManualThreadOverrideTests: XCTestCase {
-    func testManualOverrideMergesThreads() {
+    func testManualGroupMergesJWZThreads() {
         let calendar = Calendar(identifier: .gregorian)
         let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
 
@@ -29,19 +29,22 @@ final class ManualThreadOverrideTests: XCTestCase {
 
         let threader = JWZThreader()
         let result = threader.buildThreads(from: [messageA, messageB])
-        let targetThreadID = result.messageThreadMap[messageA.threadKey]
-        XCTAssertNotNil(targetThreadID)
+        let threadAID = result.jwzThreadMap[messageA.threadKey]
+        let threadBID = result.jwzThreadMap[messageB.threadKey]
+        XCTAssertNotNil(threadAID)
+        XCTAssertNotNil(threadBID)
 
-        let overrides = [messageB.threadKey: targetThreadID!]
-        let applied = threader.applyManualOverrides(overrides, to: result)
+        let manualGroup = ManualThreadGroup(id: "manual-test",
+                                            jwzThreadIDs: [threadAID!, threadBID!],
+                                            manualMessageKeys: [])
+        let applied = threader.applyManualGroups([manualGroup], to: result)
 
         XCTAssertEqual(applied.result.threads.count, 1)
-        XCTAssertEqual(applied.result.messageThreadMap[messageB.threadKey], targetThreadID)
-        XCTAssertTrue(applied.result.manualOverrideMessageIDs.contains(messageB.messageID))
-        XCTAssertTrue(applied.invalidKeys.isEmpty)
+        XCTAssertEqual(applied.result.messageThreadMap[messageB.threadKey], manualGroup.id)
+        XCTAssertTrue(applied.result.manualAttachmentMessageIDs.isEmpty)
     }
 
-    func testManualOverrideRemovalRestoresThreads() {
+    func testManualAttachmentsTrackSelection() {
         let calendar = Calendar(identifier: .gregorian)
         let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
 
@@ -68,14 +71,13 @@ final class ManualThreadOverrideTests: XCTestCase {
 
         let threader = JWZThreader()
         let baseResult = threader.buildThreads(from: [messageA, messageB])
-        let targetThreadID = baseResult.messageThreadMap[messageA.threadKey]
-        let overrides = [messageB.threadKey: targetThreadID!]
-        let applied = threader.applyManualOverrides(overrides, to: baseResult)
+        let threadAID = baseResult.jwzThreadMap[messageA.threadKey]!
+        let manualGroup = ManualThreadGroup(id: "manual-attach",
+                                            jwzThreadIDs: [threadAID],
+                                            manualMessageKeys: [messageB.threadKey])
+        let applied = threader.applyManualGroups([manualGroup], to: baseResult)
 
         XCTAssertEqual(applied.result.threads.count, 1)
-
-        let ungrouped = threader.applyManualOverrides([:], to: baseResult)
-        XCTAssertEqual(ungrouped.result.threads.count, 2)
-        XCTAssertTrue(ungrouped.result.manualOverrideMessageIDs.isEmpty)
+        XCTAssertTrue(applied.result.manualAttachmentMessageIDs.contains(messageB.messageID))
     }
 }

@@ -1,5 +1,10 @@
 import CoreData
 import Foundation
+import OSLog
+
+extension Notification.Name {
+    static let manualThreadGroupsReset = Notification.Name("MessageStore.manualThreadGroupsReset")
+}
 
 final class MessageStore {
     static let shared = MessageStore()
@@ -7,6 +12,7 @@ final class MessageStore {
     private let container: NSPersistentContainer
     private let userDefaults: UserDefaults
     private let lastSyncKey = "MessageStore.lastSync"
+    private let manualGroupMigrationKey = "MessageStore.manualGroupMigrationV1"
 
     var lastSyncDate: Date? {
         get { userDefaults.object(forKey: lastSyncKey) as? Date }
@@ -29,6 +35,9 @@ final class MessageStore {
             if let error {
                 fatalError("Failed to load persistent store: \(error)")
             }
+        }
+        Task { [weak self] in
+            await self?.migrateLegacyOverridesIfNeeded()
         }
     }
 
@@ -100,6 +109,133 @@ final class MessageStore {
                 result[override.messageKey] = override.threadID
             }
         }
+    }
+
+    func fetchManualThreadGroups() async throws -> [ManualThreadGroup] {
+        try await container.performBackgroundTask { context in
+            let groupRequest: NSFetchRequest<ManualThreadGroupEntity> = ManualThreadGroupEntity.fetchRequest()
+            let groups = try context.fetch(groupRequest)
+
+            let jwzRequest: NSFetchRequest<ManualThreadGroupJWZEntity> = ManualThreadGroupJWZEntity.fetchRequest()
+            let jwzMappings = try context.fetch(jwzRequest)
+            var jwzByGroupID: [String: Set<String>] = [:]
+            for mapping in jwzMappings {
+                jwzByGroupID[mapping.groupID, default: []].insert(mapping.jwzThreadID)
+            }
+
+            let messageRequest: NSFetchRequest<ManualThreadGroupMessageEntity> = ManualThreadGroupMessageEntity.fetchRequest()
+            let messageMappings = try context.fetch(messageRequest)
+            var messageKeysByGroupID: [String: Set<String>] = [:]
+            for mapping in messageMappings {
+                messageKeysByGroupID[mapping.groupID, default: []].insert(mapping.messageKey)
+            }
+
+            return groups.map { group in
+                ManualThreadGroup(id: group.id,
+                                  jwzThreadIDs: jwzByGroupID[group.id, default: []],
+                                  manualMessageKeys: messageKeysByGroupID[group.id, default: []])
+            }
+        }
+    }
+
+    func upsertManualThreadGroups(_ groups: [ManualThreadGroup]) async throws {
+        guard !groups.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let ids = groups.map(\.id)
+            let request: NSFetchRequest<ManualThreadGroupEntity> = ManualThreadGroupEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "id IN %@", ids)
+            let existing = try context.fetch(request)
+            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+
+            let jwzRequest: NSFetchRequest<ManualThreadGroupJWZEntity> = ManualThreadGroupJWZEntity.fetchRequest()
+            jwzRequest.predicate = NSPredicate(format: "groupID IN %@", ids)
+            for mapping in try context.fetch(jwzRequest) {
+                context.delete(mapping)
+            }
+
+            let messageRequest: NSFetchRequest<ManualThreadGroupMessageEntity> = ManualThreadGroupMessageEntity.fetchRequest()
+            messageRequest.predicate = NSPredicate(format: "groupID IN %@", ids)
+            for mapping in try context.fetch(messageRequest) {
+                context.delete(mapping)
+            }
+
+            for group in groups {
+                let entity = lookup[group.id] ?? ManualThreadGroupEntity(context: context)
+                entity.id = group.id
+                lookup[group.id] = entity
+
+                for jwzThreadID in group.jwzThreadIDs {
+                    let mapping = ManualThreadGroupJWZEntity(context: context)
+                    mapping.groupID = group.id
+                    mapping.jwzThreadID = jwzThreadID
+                }
+
+                for messageKey in group.manualMessageKeys {
+                    let mapping = ManualThreadGroupMessageEntity(context: context)
+                    mapping.groupID = group.id
+                    mapping.messageKey = messageKey
+                }
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func deleteManualThreadGroup(id: String) async throws {
+        try await container.performBackgroundTask { context in
+            let groupRequest: NSFetchRequest<ManualThreadGroupEntity> = ManualThreadGroupEntity.fetchRequest()
+            groupRequest.predicate = NSPredicate(format: "id == %@", id)
+            for group in try context.fetch(groupRequest) {
+                context.delete(group)
+            }
+
+            let jwzRequest: NSFetchRequest<ManualThreadGroupJWZEntity> = ManualThreadGroupJWZEntity.fetchRequest()
+            jwzRequest.predicate = NSPredicate(format: "groupID == %@", id)
+            for mapping in try context.fetch(jwzRequest) {
+                context.delete(mapping)
+            }
+
+            let messageRequest: NSFetchRequest<ManualThreadGroupMessageEntity> = ManualThreadGroupMessageEntity.fetchRequest()
+            messageRequest.predicate = NSPredicate(format: "groupID == %@", id)
+            for mapping in try context.fetch(messageRequest) {
+                context.delete(mapping)
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func resetManualThreadGroups() async throws {
+        try await container.performBackgroundTask { context in
+            let groupRequest: NSFetchRequest<ManualThreadGroupEntity> = ManualThreadGroupEntity.fetchRequest()
+            for group in try context.fetch(groupRequest) {
+                context.delete(group)
+            }
+
+            let jwzRequest: NSFetchRequest<ManualThreadGroupJWZEntity> = ManualThreadGroupJWZEntity.fetchRequest()
+            for mapping in try context.fetch(jwzRequest) {
+                context.delete(mapping)
+            }
+
+            let messageRequest: NSFetchRequest<ManualThreadGroupMessageEntity> = ManualThreadGroupMessageEntity.fetchRequest()
+            for mapping in try context.fetch(messageRequest) {
+                context.delete(mapping)
+            }
+
+            let overrideRequest: NSFetchRequest<ManualThreadOverrideEntity> = ManualThreadOverrideEntity.fetchRequest()
+            for override in try context.fetch(overrideRequest) {
+                context.delete(override)
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+        NotificationCenter.default.post(name: .manualThreadGroupsReset, object: nil)
     }
 
     func upsertManualThreadOverrides(_ overrides: [String: String]) async throws {
@@ -333,8 +469,110 @@ final class MessageStore {
             overrideThreadAttr
         ]
 
-        model.entities = [messageEntity, threadEntity, overrideEntity]
+        let manualGroupEntity = NSEntityDescription()
+        manualGroupEntity.name = "ManualThreadGroupEntity"
+        manualGroupEntity.managedObjectClassName = NSStringFromClass(ManualThreadGroupEntity.self)
+
+        let manualGroupIDAttr = NSAttributeDescription()
+        manualGroupIDAttr.name = "id"
+        manualGroupIDAttr.attributeType = .stringAttributeType
+        manualGroupIDAttr.isOptional = false
+        manualGroupIDAttr.isIndexed = true
+
+        manualGroupEntity.properties = [manualGroupIDAttr]
+
+        let manualGroupJWZEntity = NSEntityDescription()
+        manualGroupJWZEntity.name = "ManualThreadGroupJWZEntity"
+        manualGroupJWZEntity.managedObjectClassName = NSStringFromClass(ManualThreadGroupJWZEntity.self)
+
+        let manualGroupJWZGroupIDAttr = NSAttributeDescription()
+        manualGroupJWZGroupIDAttr.name = "groupID"
+        manualGroupJWZGroupIDAttr.attributeType = .stringAttributeType
+        manualGroupJWZGroupIDAttr.isOptional = false
+        manualGroupJWZGroupIDAttr.isIndexed = true
+
+        let manualGroupJWZThreadIDAttr = NSAttributeDescription()
+        manualGroupJWZThreadIDAttr.name = "jwzThreadID"
+        manualGroupJWZThreadIDAttr.attributeType = .stringAttributeType
+        manualGroupJWZThreadIDAttr.isOptional = false
+        manualGroupJWZThreadIDAttr.isIndexed = true
+
+        manualGroupJWZEntity.properties = [
+            manualGroupJWZGroupIDAttr,
+            manualGroupJWZThreadIDAttr
+        ]
+
+        let manualGroupMessageEntity = NSEntityDescription()
+        manualGroupMessageEntity.name = "ManualThreadGroupMessageEntity"
+        manualGroupMessageEntity.managedObjectClassName = NSStringFromClass(ManualThreadGroupMessageEntity.self)
+
+        let manualGroupMessageGroupIDAttr = NSAttributeDescription()
+        manualGroupMessageGroupIDAttr.name = "groupID"
+        manualGroupMessageGroupIDAttr.attributeType = .stringAttributeType
+        manualGroupMessageGroupIDAttr.isOptional = false
+        manualGroupMessageGroupIDAttr.isIndexed = true
+
+        let manualGroupMessageKeyAttr = NSAttributeDescription()
+        manualGroupMessageKeyAttr.name = "messageKey"
+        manualGroupMessageKeyAttr.attributeType = .stringAttributeType
+        manualGroupMessageKeyAttr.isOptional = false
+        manualGroupMessageKeyAttr.isIndexed = true
+
+        manualGroupMessageEntity.properties = [
+            manualGroupMessageGroupIDAttr,
+            manualGroupMessageKeyAttr
+        ]
+
+        model.entities = [
+            messageEntity,
+            threadEntity,
+            overrideEntity,
+            manualGroupEntity,
+            manualGroupJWZEntity,
+            manualGroupMessageEntity
+        ]
         return model
+    }
+
+    private func migrateLegacyOverridesIfNeeded() async {
+        guard !userDefaults.bool(forKey: manualGroupMigrationKey) else { return }
+        do {
+            let overrides = try await fetchManualThreadOverrides()
+            guard !overrides.isEmpty else {
+                userDefaults.set(true, forKey: manualGroupMigrationKey)
+                return
+            }
+
+            let existingGroups = try await fetchManualThreadGroups()
+            guard existingGroups.isEmpty else {
+                userDefaults.set(true, forKey: manualGroupMigrationKey)
+                return
+            }
+
+            let messages = try await fetchMessages()
+            let baseResult = JWZThreader().buildThreads(from: messages)
+            let groupedOverrides = Dictionary(grouping: overrides.keys, by: { overrides[$0] ?? "" })
+
+            var migratedGroups: [ManualThreadGroup] = []
+            migratedGroups.reserveCapacity(groupedOverrides.count)
+
+            for (legacyThreadID, messageKeys) in groupedOverrides {
+                guard !legacyThreadID.isEmpty else { continue }
+                let jwzThreadIDs = Set(messageKeys.compactMap { baseResult.messageThreadMap[$0] })
+                let group = ManualThreadGroup(id: legacyThreadID,
+                                              jwzThreadIDs: jwzThreadIDs,
+                                              manualMessageKeys: Set(messageKeys))
+                migratedGroups.append(group)
+            }
+
+            if !migratedGroups.isEmpty {
+                try await upsertManualThreadGroups(migratedGroups)
+                try await deleteManualThreadOverrides(messageKeys: Array(overrides.keys))
+            }
+            userDefaults.set(true, forKey: manualGroupMigrationKey)
+        } catch {
+            Log.app.error("Manual thread override migration failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }
 
@@ -419,6 +657,41 @@ final class ManualThreadOverrideEntity: NSManagedObject {
 extension ManualThreadOverrideEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<ManualThreadOverrideEntity> {
         NSFetchRequest<ManualThreadOverrideEntity>(entityName: "ManualThreadOverrideEntity")
+    }
+}
+
+@objc(ManualThreadGroupEntity)
+final class ManualThreadGroupEntity: NSManagedObject {
+    @NSManaged var id: String
+}
+
+extension ManualThreadGroupEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ManualThreadGroupEntity> {
+        NSFetchRequest<ManualThreadGroupEntity>(entityName: "ManualThreadGroupEntity")
+    }
+}
+
+@objc(ManualThreadGroupJWZEntity)
+final class ManualThreadGroupJWZEntity: NSManagedObject {
+    @NSManaged var groupID: String
+    @NSManaged var jwzThreadID: String
+}
+
+extension ManualThreadGroupJWZEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ManualThreadGroupJWZEntity> {
+        NSFetchRequest<ManualThreadGroupJWZEntity>(entityName: "ManualThreadGroupJWZEntity")
+    }
+}
+
+@objc(ManualThreadGroupMessageEntity)
+final class ManualThreadGroupMessageEntity: NSManagedObject {
+    @NSManaged var groupID: String
+    @NSManaged var messageKey: String
+}
+
+extension ManualThreadGroupMessageEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ManualThreadGroupMessageEntity> {
+        NSFetchRequest<ManualThreadGroupMessageEntity>(entityName: "ManualThreadGroupMessageEntity")
     }
 }
 
