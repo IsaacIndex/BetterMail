@@ -516,10 +516,11 @@ final class ThreadCanvasViewModel: ObservableObject {
             return
         }
 
-        let selectionDetails = selectedNodes.map { node -> (messageKey: String, jwzThreadID: String, manualGroupID: String?) in
+        let selectionDetails = selectedNodes.map { node -> (messageKey: String, jwzThreadID: String, manualGroupID: String?, isJWZThreaded: Bool) in
             let messageKey = node.message.threadKey
             let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? node.id
-            return (messageKey, jwzThreadID, manualGroupByMessageKey[messageKey])
+            let isJWZThreaded = jwzThreadMap[messageKey] != nil
+            return (messageKey, jwzThreadID, manualGroupByMessageKey[messageKey], isJWZThreaded)
         }
 
         let manualGroupIDs = Set(selectionDetails.compactMap(\.manualGroupID))
@@ -536,14 +537,15 @@ final class ThreadCanvasViewModel: ObservableObject {
         var jwzThreadIDs: Set<String> = []
         for detail in selectionDetails where detail.manualGroupID == nil {
             let count = jwzThreadCounts[detail.jwzThreadID] ?? 0
-            if detail.jwzThreadID == targetJWZID || count > 1 {
+            if detail.isJWZThreaded || detail.jwzThreadID == targetJWZID || count > 1 {
                 jwzThreadIDs.insert(detail.jwzThreadID)
             }
         }
 
         let manualAttachmentKeys = selectionDetails
             .filter { detail in
-                detail.jwzThreadID != targetJWZID &&
+                !detail.isJWZThreaded &&
+                    detail.jwzThreadID != targetJWZID &&
                     (jwzThreadCounts[detail.jwzThreadID] ?? 0) == 1
             }
             .map(\.messageKey)
