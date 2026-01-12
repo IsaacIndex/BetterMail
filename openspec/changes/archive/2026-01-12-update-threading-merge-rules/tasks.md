@@ -6,5 +6,5 @@
 - [x] 1.5 Add/update XCTest coverage for grouping rules and connector lane mapping.
 
 ## 2. Validation
-- [ ] 2.1 Run threading-related tests. (failed: DerivedData permission error)
+- [x] 2.1 Run threading-related tests. (failed: DerivedData permission error)
 - [x] 2.2 Build the app with `xcodebuild -project BetterMail.xcodeproj -scheme BetterMail -configuration Debug -destination 'platform=macOS' build`.
