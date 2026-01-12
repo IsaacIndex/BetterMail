@@ -591,6 +591,7 @@ final class ThreadCanvasViewModel: ObservableObject {
             mergedManualKeys.formUnion(group.manualMessageKeys)
         }
         mergedJWZIDs.formUnion(jwzThreadIDs)
+        mergedManualKeys.formUnion(manualAttachmentKeys)
         let mergedGroup = ManualThreadGroup(id: Self.newManualGroupID(),
                                             jwzThreadIDs: mergedJWZIDs,
                                             manualMessageKeys: mergedManualKeys)
