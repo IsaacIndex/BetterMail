@@ -191,10 +191,10 @@ extension JWZThreader {
         updatedGroups.reserveCapacity(groups.count)
 
         for group in groups {
-            let validManualKeys = group.manualMessageKeys.filter { baseThreadMap[$0] != nil }
+            let manualKeysInCurrentWindow = group.manualMessageKeys.filter { baseThreadMap[$0] != nil }
             let updatedGroup = ManualThreadGroup(id: group.id,
                                                  jwzThreadIDs: group.jwzThreadIDs,
-                                                 manualMessageKeys: Set(validManualKeys))
+                                                 manualMessageKeys: group.manualMessageKeys)
             updatedGroups.append(updatedGroup)
 
             for (messageKey, jwzThreadID) in baseThreadMap where group.jwzThreadIDs.contains(jwzThreadID) {
@@ -203,7 +203,7 @@ extension JWZThreader {
                 }
             }
 
-            for messageKey in updatedGroup.manualMessageKeys {
+            for messageKey in manualKeysInCurrentWindow {
                 if manualGroupByMessageKey[messageKey] == nil {
                     manualGroupByMessageKey[messageKey] = group.id
                 }
