@@ -1,8 +1,10 @@
+import OSLog
 import SwiftUI
 
 struct AutoRefreshSettingsView: View {
     @ObservedObject var settings: AutoRefreshSettings
     @ObservedObject var inspectorSettings: InspectorViewSettings
+    @State private var isResetConfirmationPresented = false
 
     var body: some View {
         Form {
@@ -60,10 +62,33 @@ struct AutoRefreshSettingsView: View {
             } footer: {
                 Text(NSLocalizedString("settings.inspector.stop_words.footer", comment: "Footer describing stop words behavior"))
             }
+
+            Section {
+                Button(role: .destructive) {
+                    isResetConfirmationPresented = true
+                } label: {
+                    Text(NSLocalizedString("settings.reset.manual_grouping.button", comment: "Button label for resetting manual grouping"))
+                }
+            } header: {
+                Text(NSLocalizedString("settings.reset.title", comment: "Header for reset section in settings"))
+            } footer: {
+                Text(NSLocalizedString("settings.reset.manual_grouping.footer", comment: "Footer text describing manual grouping reset"))
+            }
         }
         .formStyle(.grouped)
         .frame(minWidth: 460, idealWidth: 520)
         .padding(.vertical, 8)
+        .alert(NSLocalizedString("settings.reset.manual_grouping.confirm_title", comment: "Title for confirmation alert when resetting manual grouping"),
+               isPresented: $isResetConfirmationPresented) {
+            Button(NSLocalizedString("settings.reset.manual_grouping.confirm_action", comment: "Destructive action label for resetting manual grouping"),
+                   role: .destructive) {
+                resetManualGrouping()
+            }
+            Button(NSLocalizedString("settings.reset.manual_grouping.cancel", comment: "Cancel label for resetting manual grouping"),
+                   role: .cancel) {}
+        } message: {
+            Text(NSLocalizedString("settings.reset.manual_grouping.confirm_message", comment: "Confirmation message for resetting manual grouping"))
+        }
     }
 
     private var minutesBinding: Binding<Int> {
@@ -83,5 +108,15 @@ struct AutoRefreshSettingsView: View {
             get: { inspectorSettings.snippetLineLimit },
             set: { inspectorSettings.snippetLineLimit = $0 }
         )
+    }
+
+    private func resetManualGrouping() {
+        Task {
+            do {
+                try await MessageStore.shared.resetManualThreadGroups()
+            } catch {
+                Log.app.error("Failed to reset manual thread groups: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 }

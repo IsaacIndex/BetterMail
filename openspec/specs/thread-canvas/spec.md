@@ -36,11 +36,19 @@ The system SHALL support two-axis scrolling and zoom with clamped limits for rea
 - **THEN** the canvas pans on both axes and scales within defined minimum and maximum zoom levels
 
 ### Requirement: Thread Continuity Connectors
-The system SHALL render vertical connectors between consecutive nodes in the same thread column.
+The system SHALL render vertical connector lanes between consecutive nodes in the same thread column. When a thread column represents a manual group that merges multiple JWZ sub-threads, the system SHALL render a separate connector lane for each JWZ sub-thread, with dynamic horizontal offsets based on layout metrics.
 
 #### Scenario: Multi-day thread
 - **WHEN** a thread has messages on multiple days
 - **THEN** connector segments link the nodes in date order within that column
+
+#### Scenario: Merged JWZ sub-threads
+- **WHEN** a manual group contains messages from multiple JWZ thread IDs
+- **THEN** each JWZ sub-thread renders its own connector lane with a distinct offset
+
+#### Scenario: Grouping or ungrouping realigns connectors
+- **WHEN** the user groups or ungroups messages
+- **THEN** connector lanes are recalculated and offsets are realigned to the updated thread membership
 
 ### Requirement: Canvas Accessibility
 The system SHALL expose nodes as accessibility elements and day bands as accessibility headers.
@@ -48,4 +56,18 @@ The system SHALL expose nodes as accessibility elements and day bands as accessi
 #### Scenario: VoiceOver navigation
 - **WHEN** VoiceOver is enabled
 - **THEN** users can navigate day headers and hear each node's sender, subject, and time
+
+### Requirement: Manual Thread Grouping Controls
+The system SHALL support multi-select with Cmd+click and SHALL present a bottom action bar when two or more nodes are selected, offering actions to group into a target thread or ungroup manual overrides.
+
+#### Scenario: Multi-select action bar
+- **WHEN** the user Cmd+clicks to select two or more nodes
+- **THEN** a bottom action bar appears with "Group" and "Ungroup" actions, and the last clicked node is treated as the target thread
+
+### Requirement: Thread Source Visualization
+The system SHALL distinguish JWZ-derived thread connectors from manual override connectors using distinct colors, with JWZ connectors rendered as solid lines and manual override connectors rendered as dotted lines.
+
+#### Scenario: Manual connector styling
+- **WHEN** a connector represents a manual override relationship
+- **THEN** it renders as a dotted line using the manual thread color while JWZ connectors remain solid
 

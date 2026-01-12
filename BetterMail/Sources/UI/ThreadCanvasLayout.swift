@@ -3,7 +3,7 @@ import CoreGraphics
 
 struct ThreadCanvasLayoutMetrics {
     static let dayCount = 7
-    static let minZoom: CGFloat = 0.7
+    static let minZoom: CGFloat = 0.01
     static let maxZoom: CGFloat = 1.6
 
     let zoom: CGFloat
@@ -41,7 +41,7 @@ struct ThreadCanvasLayoutMetrics {
     }
 
     var nodeVerticalSpacing: CGFloat {
-        10 * clampedZoom
+        30 * clampedZoom
     }
 
     var nodeCornerRadius: CGFloat {
@@ -69,8 +69,10 @@ struct ThreadCanvasNode: Identifiable, Hashable {
     let id: String
     let message: EmailMessage
     let threadID: String
+    let jwzThreadID: String
     let frame: CGRect
     let dayIndex: Int
+    let isManualAttachment: Bool
 }
 
 struct ThreadCanvasColumn: Identifiable, Hashable {

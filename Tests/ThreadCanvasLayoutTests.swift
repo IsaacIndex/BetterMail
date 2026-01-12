@@ -114,4 +114,114 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(match?.id, "child")
         XCTAssertNil(missing)
     }
+
+    func testManualOverrideUpdatesLatestDateOrdering() {
+        let calendar = Calendar(identifier: .gregorian)
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2025
+        components.month = 3
+        components.day = 8
+        components.hour = 12
+        let today = calendar.date(from: components)!
+
+        let rootMessage = EmailMessage(messageID: "root-a",
+                                       mailboxID: "inbox",
+                                       subject: "Thread A",
+                                       from: "a@example.com",
+                                       to: "me@example.com",
+                                       date: calendar.date(byAdding: .day, value: -5, to: today)!,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [])
+        let threadBRoot = EmailMessage(messageID: "root-b",
+                                       mailboxID: "inbox",
+                                       subject: "Thread B",
+                                       from: "b@example.com",
+                                       to: "me@example.com",
+                                       date: calendar.date(byAdding: .day, value: -3, to: today)!,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [])
+        let threadBReply = EmailMessage(messageID: "reply-b",
+                                        mailboxID: "inbox",
+                                        subject: "Thread B",
+                                        from: "c@example.com",
+                                        to: "me@example.com",
+                                        date: calendar.date(byAdding: .day, value: -1, to: today)!,
+                                        snippet: "",
+                                        isUnread: false,
+                                        inReplyTo: threadBRoot.messageID,
+                                        references: [])
+
+        let threader = JWZThreader()
+        let result = threader.buildThreads(from: [rootMessage, threadBRoot, threadBReply])
+        let threadAID = result.jwzThreadMap[rootMessage.threadKey]!
+        let threadBID = result.jwzThreadMap[threadBReply.threadKey]!
+        let manualGroup = ManualThreadGroup(id: "manual-merge",
+                                            jwzThreadIDs: [threadAID, threadBID],
+                                            manualMessageKeys: [])
+        let applied = threader.applyManualGroups([manualGroup], to: result)
+
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: applied.result.roots,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        manualAttachmentMessageIDs: applied.result.manualAttachmentMessageIDs,
+                                                        jwzThreadMap: applied.result.jwzThreadMap)
+
+        XCTAssertEqual(layout.columns.first?.id, manualGroup.id)
+        XCTAssertEqual(layout.columns.count, 1)
+    }
+
+    func testMergedGroupPreservesJWZThreadIDsInLayout() {
+        let calendar = Calendar(identifier: .gregorian)
+        let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let messageA = EmailMessage(messageID: "a1",
+                                    mailboxID: "inbox",
+                                    subject: "A",
+                                    from: "a@example.com",
+                                    to: "me@example.com",
+                                    date: calendar.date(byAdding: .day, value: -2, to: baseDate)!,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+        let messageB = EmailMessage(messageID: "b1",
+                                    mailboxID: "inbox",
+                                    subject: "B",
+                                    from: "b@example.com",
+                                    to: "me@example.com",
+                                    date: calendar.date(byAdding: .day, value: -1, to: baseDate)!,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+
+        let threader = JWZThreader()
+        let result = threader.buildThreads(from: [messageA, messageB])
+        let threadAID = result.jwzThreadMap[messageA.threadKey]!
+        let threadBID = result.jwzThreadMap[messageB.threadKey]!
+
+        let manualGroup = ManualThreadGroup(id: "manual-merge",
+                                            jwzThreadIDs: [threadAID, threadBID],
+                                            manualMessageKeys: [])
+        let applied = threader.applyManualGroups([manualGroup], to: result)
+
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: applied.result.roots,
+                                                        metrics: metrics,
+                                                        today: baseDate,
+                                                        calendar: calendar,
+                                                        manualAttachmentMessageIDs: applied.result.manualAttachmentMessageIDs,
+                                                        jwzThreadMap: applied.result.jwzThreadMap)
+
+        let jwzIDs = Set(layout.columns.first?.nodes.map(\.jwzThreadID) ?? [])
+        XCTAssertEqual(jwzIDs, Set([threadAID, threadBID]))
+    }
 }

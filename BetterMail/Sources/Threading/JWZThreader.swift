@@ -4,6 +4,9 @@ struct ThreadingResult {
     let roots: [ThreadNode]
     let threads: [EmailThread]
     let messageThreadMap: [String: String]
+    let jwzThreadMap: [String: String]
+    let manualGroupByMessageKey: [String: String]
+    let manualAttachmentMessageIDs: Set<String>
 }
 
 final class JWZThreader {
@@ -101,7 +104,12 @@ final class JWZThreader {
             threads.append(thread)
         }
 
-        return ThreadingResult(roots: annotatedRoots, threads: threads, messageThreadMap: messageMap)
+        return ThreadingResult(roots: annotatedRoots,
+                               threads: threads,
+                               messageThreadMap: messageMap,
+                               jwzThreadMap: messageMap,
+                               manualGroupByMessageKey: [:],
+                               manualAttachmentMessageIDs: [])
     }
 
     private func flatten(container: Container) -> [ThreadNode] {
@@ -147,5 +155,132 @@ final class JWZThreader {
     static func threadIdentifier(for node: ThreadNode) -> String {
         let normalized = normalizeIdentifier(node.message.messageID)
         return normalized.isEmpty ? node.message.id.uuidString.lowercased() : normalized
+    }
+}
+
+extension JWZThreader {
+    struct ManualGroupApplication {
+        let result: ThreadingResult
+        let updatedGroups: [ManualThreadGroup]
+    }
+
+    func applyManualGroups(_ groups: [ManualThreadGroup],
+                           to result: ThreadingResult) -> ManualGroupApplication {
+        guard !groups.isEmpty else {
+            let updatedResult = ThreadingResult(roots: result.roots,
+                                                threads: result.threads,
+                                                messageThreadMap: result.messageThreadMap,
+                                                jwzThreadMap: result.jwzThreadMap,
+                                                manualGroupByMessageKey: [:],
+                                                manualAttachmentMessageIDs: [])
+            return ManualGroupApplication(result: updatedResult, updatedGroups: [])
+        }
+
+        let allNodes = result.roots.flatMap { Self.flattenNodes(from: $0) }
+        let baseThreadMap = result.jwzThreadMap
+        var messageKeyToMessageID: [String: String] = [:]
+
+        for node in allNodes {
+            let key = node.message.threadKey
+            messageKeyToMessageID[key] = node.message.messageID
+        }
+
+        var manualGroupByMessageKey: [String: String] = [:]
+        var manualAttachmentMessageIDs: Set<String> = []
+        var updatedGroups: [ManualThreadGroup] = []
+        updatedGroups.reserveCapacity(groups.count)
+
+        for group in groups {
+            let manualKeysInCurrentWindow = group.manualMessageKeys.filter { baseThreadMap[$0] != nil }
+            let updatedGroup = ManualThreadGroup(id: group.id,
+                                                 jwzThreadIDs: group.jwzThreadIDs,
+                                                 manualMessageKeys: group.manualMessageKeys)
+            updatedGroups.append(updatedGroup)
+
+            for (messageKey, jwzThreadID) in baseThreadMap where group.jwzThreadIDs.contains(jwzThreadID) {
+                if manualGroupByMessageKey[messageKey] == nil {
+                    manualGroupByMessageKey[messageKey] = group.id
+                }
+            }
+
+            for messageKey in manualKeysInCurrentWindow {
+                if manualGroupByMessageKey[messageKey] == nil {
+                    manualGroupByMessageKey[messageKey] = group.id
+                }
+                if let messageID = messageKeyToMessageID[messageKey] {
+                    manualAttachmentMessageIDs.insert(messageID)
+                }
+            }
+        }
+
+        var updatedMap = baseThreadMap
+        for (messageKey, groupID) in manualGroupByMessageKey {
+            updatedMap[messageKey] = groupID
+        }
+
+        let preferredRootIDsByThreadID = result.threads.reduce(into: [String: String]()) { result, thread in
+            guard let rootID = thread.rootMessageID else { return }
+            result[thread.id] = rootID
+        }
+
+        var messagesByThreadID: [String: [EmailMessage]] = [:]
+        for node in allNodes {
+            let key = node.message.threadKey
+            let threadID = updatedMap[key] ?? node.message.threadID ?? key
+            let updatedMessage = node.message.assigning(threadID: threadID)
+            messagesByThreadID[threadID, default: []].append(updatedMessage)
+        }
+
+        var rebuiltRoots: [ThreadNode] = []
+        var rebuiltThreads: [EmailThread] = []
+        rebuiltRoots.reserveCapacity(messagesByThreadID.count)
+        rebuiltThreads.reserveCapacity(messagesByThreadID.count)
+
+        for (threadID, messages) in messagesByThreadID {
+            guard let rootMessage = Self.selectRootMessage(from: messages,
+                                                           preferredRootID: preferredRootIDsByThreadID[threadID]) else {
+                continue
+            }
+            let children = messages
+                .filter { $0.messageID != rootMessage.messageID }
+                .sorted { $0.date < $1.date }
+                .map { ThreadNode(message: $0) }
+            let rootNode = ThreadNode(message: rootMessage, children: children)
+            rebuiltRoots.append(rootNode)
+
+            let lastUpdated = messages.map(\.date).max() ?? rootMessage.date
+            let unreadCount = messages.reduce(0) { $0 + ($1.isUnread ? 1 : 0) }
+            let thread = EmailThread(id: threadID,
+                                     rootMessageID: rootMessage.messageID,
+                                     subject: rootMessage.subject,
+                                     lastUpdated: lastUpdated,
+                                     unreadCount: unreadCount,
+                                     messageCount: messages.count)
+            rebuiltThreads.append(thread)
+        }
+
+        let updatedResult = ThreadingResult(roots: rebuiltRoots,
+                                            threads: rebuiltThreads,
+                                            messageThreadMap: updatedMap,
+                                            jwzThreadMap: result.jwzThreadMap,
+                                            manualGroupByMessageKey: manualGroupByMessageKey,
+                                            manualAttachmentMessageIDs: manualAttachmentMessageIDs)
+        return ManualGroupApplication(result: updatedResult, updatedGroups: updatedGroups)
+    }
+
+    private static func flattenNodes(from node: ThreadNode) -> [ThreadNode] {
+        var results = [node]
+        for child in node.children {
+            results.append(contentsOf: flattenNodes(from: child))
+        }
+        return results
+    }
+
+    private static func selectRootMessage(from messages: [EmailMessage],
+                                          preferredRootID: String?) -> EmailMessage? {
+        if let preferredRootID, let preferred = messages.first(where: { $0.messageID == preferredRootID }) {
+            return preferred
+        }
+        return messages.min { $0.date < $1.date }
     }
 }
