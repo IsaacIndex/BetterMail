@@ -523,8 +523,6 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
 
         let manualGroupIDs = Set(selectionDetails.compactMap(\.manualGroupID))
-        let jwzThreadIDs = Set(selectionDetails.filter { $0.manualGroupID == nil }.map(\.jwzThreadID))
-        let selectedMessageKeys = Set(selectionDetails.map(\.messageKey))
 
         guard let targetID = selectedNodeID,
               let targetNode = Self.node(matching: targetID, in: roots) else { return }
@@ -535,6 +533,14 @@ final class ThreadCanvasViewModel: ObservableObject {
         for detail in selectionDetails {
             jwzThreadCounts[detail.jwzThreadID, default: 0] += 1
         }
+        var jwzThreadIDs: Set<String> = []
+        for detail in selectionDetails where detail.manualGroupID == nil {
+            let count = jwzThreadCounts[detail.jwzThreadID] ?? 0
+            if detail.jwzThreadID == targetJWZID || count > 1 {
+                jwzThreadIDs.insert(detail.jwzThreadID)
+            }
+        }
+
         let manualAttachmentKeys = selectionDetails
             .filter { detail in
                 detail.jwzThreadID != targetJWZID &&
@@ -543,7 +549,7 @@ final class ThreadCanvasViewModel: ObservableObject {
             .map(\.messageKey)
 
         if manualGroupIDs.isEmpty {
-            guard jwzThreadIDs.count >= 2 else { return }
+            guard jwzThreadIDs.count >= 2 || (!manualAttachmentKeys.isEmpty && !jwzThreadIDs.isEmpty) else { return }
             let newGroup = ManualThreadGroup(id: Self.newManualGroupID(),
                                              jwzThreadIDs: jwzThreadIDs,
                                              manualMessageKeys: Set(manualAttachmentKeys))
@@ -559,7 +565,7 @@ final class ThreadCanvasViewModel: ObservableObject {
             return
         }
 
-        if manualGroupIDs.count == 1, !jwzThreadIDs.isEmpty {
+        if manualGroupIDs.count == 1, (!jwzThreadIDs.isEmpty || !manualAttachmentKeys.isEmpty) {
             guard let groupID = manualGroupIDs.first,
                   var group = manualGroups[groupID] else { return }
             group.jwzThreadIDs.formUnion(jwzThreadIDs)
