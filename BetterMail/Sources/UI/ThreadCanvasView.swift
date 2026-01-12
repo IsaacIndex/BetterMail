@@ -157,18 +157,19 @@ private struct ThreadCanvasConnectorColumn: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        let sortedNodes = column.nodes.sorted { $0.frame.minY < $1.frame.minY }
-        let segments = connectorSegments(for: sortedNodes)
+        let segments = connectorSegments(for: column.nodes)
 
         ZStack(alignment: .topLeading) {
             ForEach(segments) { segment in
                 // Convert the node’s global X into this column-local coordinate space.
                 let localX = (segment.nodeMidX - column.xOffset)
                     .clamped(to: 0...metrics.columnWidth)
+                let manualShift = max(4, metrics.nodeWidth * 0.02)
+                let shift = segment.isManual ? -manualShift : manualShift
                 Path { path in
                     // Draw the connector directly under the node (not at column center).
-                    path.move(to: CGPoint(x: localX - (segment.isManual ? 5 : -5), y: segment.startY))
-                    path.addLine(to: CGPoint(x: localX - (segment.isManual ? 5 : -5), y: segment.endY))
+                    path.move(to: CGPoint(x: localX + shift, y: segment.startY))
+                    path.addLine(to: CGPoint(x: localX + shift, y: segment.endY))
                 }
                 .stroke(
                     segmentColor(for: segment),
@@ -184,7 +185,7 @@ private struct ThreadCanvasConnectorColumn: View {
                     .fill(segmentColor(for: segment))
                     .frame(width: lineWidth * 8.8, height: lineWidth * 8.8)
                     .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                    .position(x: localX - (segment.isManual ? 5 : -5), y: segment.endY - lineWidth * 8.8 / 2)
+                    .position(x: localX + shift, y: segment.endY - lineWidth * 8.8 / 2)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -234,18 +235,39 @@ private struct ThreadCanvasConnectorColumn: View {
     }
 
     private func connectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
-        guard nodes.count > 1 else { return [] }
-        var segments: [ConnectorSegment] = []
-        segments.reserveCapacity(nodes.count - 1)
+        let jwzSegments = jwzConnectorSegments(for: nodes)
+        let manualSegments = manualConnectorSegments(for: nodes)
+        return jwzSegments + manualSegments
+    }
 
-        // Keep the connector from touching the node cards.
-        // let gap = max(6, 8 * metrics.fontScale)
+    private func jwzConnectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
+        let grouped = Dictionary(grouping: nodes, by: \.jwzThreadID)
+        let sortedKeys = grouped.keys.sorted()
+        let offsets = laneOffsets(for: sortedKeys)
+
+        var segments: [ConnectorSegment] = []
+        for (index, jwzThreadID) in sortedKeys.enumerated() {
+            guard let groupNodes = grouped[jwzThreadID]?.sorted(by: { $0.frame.minY < $1.frame.minY }),
+                  groupNodes.count > 1 else { continue }
+            let laneOffset = offsets[jwzThreadID] ?? 0
+            segments.append(contentsOf: connectorSegments(for: groupNodes,
+                                                         laneOffset: laneOffset,
+                                                         segmentPrefix: "\(column.id)-\(index)"))
+        }
+        return segments
+    }
+
+    private func manualConnectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
+        let sortedNodes = nodes.sorted { $0.frame.minY < $1.frame.minY }
+        guard sortedNodes.count > 1 else { return [] }
+
+        var segments: [ConnectorSegment] = []
         let gap = 0.0
 
-        for index in 1..<nodes.count {
-            let previous = nodes[index - 1]
-            let next = nodes[index]
-            let isManual = previous.isManualOverride || next.isManualOverride
+        for index in 1..<sortedNodes.count {
+            let previous = sortedNodes[index - 1]
+            let next = sortedNodes[index]
+            guard previous.isManualAttachment || next.isManualAttachment else { continue }
 
             let startY = previous.frame.maxY + gap
             let endY = next.frame.minY - gap
@@ -253,10 +275,56 @@ private struct ThreadCanvasConnectorColumn: View {
 
             segments.append(
                 ConnectorSegment(
-                    id: "\(column.id)-\(index)",
+                    id: "\(column.id)-manual-\(index)",
                     startY: startY,
                     endY: endY,
                     nodeMidX: previous.frame.midX,
+                    isManual: true
+                )
+            )
+        }
+        return segments
+    }
+
+    private func laneOffsets(for jwzThreadIDs: [String]) -> [String: CGFloat] {
+        guard jwzThreadIDs.count > 1 else {
+            return jwzThreadIDs.reduce(into: [:]) { $0[$1] = 0 }
+        }
+        let laneSpacing = max(6 * metrics.fontScale, metrics.nodeWidth * 0.08)
+        let totalWidth = laneSpacing * CGFloat(jwzThreadIDs.count - 1)
+        let startOffset = -totalWidth / 2
+        var offsets: [String: CGFloat] = [:]
+        for (index, jwzThreadID) in jwzThreadIDs.enumerated() {
+            offsets[jwzThreadID] = startOffset + laneSpacing * CGFloat(index)
+        }
+        return offsets
+    }
+
+    private func connectorSegments(for nodes: [ThreadCanvasNode],
+                                   laneOffset: CGFloat,
+                                   segmentPrefix: String) -> [ConnectorSegment] {
+        guard nodes.count > 1 else { return [] }
+        var segments: [ConnectorSegment] = []
+        segments.reserveCapacity(nodes.count - 1)
+
+        // Keep the connector from touching the node cards.
+        let gap = 0.0
+
+        for index in 1..<nodes.count {
+            let previous = nodes[index - 1]
+            let next = nodes[index]
+            let isManual = previous.isManualAttachment || next.isManualAttachment
+
+            let startY = previous.frame.maxY + gap
+            let endY = next.frame.minY - gap
+            guard endY > startY else { continue }
+
+            segments.append(
+                ConnectorSegment(
+                    id: "\(segmentPrefix)-\(index)",
+                    startY: startY,
+                    endY: endY,
+                    nodeMidX: previous.frame.midX + laneOffset,
                     isManual: isManual
                 )
             )

@@ -25,3 +25,10 @@
 "settings.inspector.snippet_lines.value" = "%d lines";
 "settings.inspector.stop_words" = "Stop phrases";
 "settings.inspector.stop_words.footer" = "One phrase per line. Matching is case-insensitive.";
+"settings.reset.title" = "Reset";
+"settings.reset.manual_grouping.button" = "Reset manual grouping";
+"settings.reset.manual_grouping.footer" = "Clears all manual thread groupings and attachments.";
+"settings.reset.manual_grouping.confirm_title" = "Reset manual grouping?";
+"settings.reset.manual_grouping.confirm_message" = "This removes all manual grouping and cannot be undone.";
+"settings.reset.manual_grouping.confirm_action" = "Reset";
+"settings.reset.manual_grouping.cancel" = "Cancel";

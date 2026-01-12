@@ -4,7 +4,9 @@ struct ThreadingResult {
     let roots: [ThreadNode]
     let threads: [EmailThread]
     let messageThreadMap: [String: String]
-    let manualOverrideMessageIDs: Set<String>
+    let jwzThreadMap: [String: String]
+    let manualGroupByMessageKey: [String: String]
+    let manualAttachmentMessageIDs: Set<String>
 }
 
 final class JWZThreader {
@@ -105,7 +107,9 @@ final class JWZThreader {
         return ThreadingResult(roots: annotatedRoots,
                                threads: threads,
                                messageThreadMap: messageMap,
-                               manualOverrideMessageIDs: [])
+                               jwzThreadMap: messageMap,
+                               manualGroupByMessageKey: [:],
+                               manualAttachmentMessageIDs: [])
     }
 
     private func flatten(container: Container) -> [ThreadNode] {
@@ -155,18 +159,25 @@ final class JWZThreader {
 }
 
 extension JWZThreader {
-    struct ManualOverrideApplication {
+    struct ManualGroupApplication {
         let result: ThreadingResult
-        let invalidKeys: [String]
+        let updatedGroups: [ManualThreadGroup]
     }
 
-    func applyManualOverrides(_ overrides: [String: String],
-                              to result: ThreadingResult) -> ManualOverrideApplication {
-        guard !overrides.isEmpty else {
-            return ManualOverrideApplication(result: result, invalidKeys: [])
+    func applyManualGroups(_ groups: [ManualThreadGroup],
+                           to result: ThreadingResult) -> ManualGroupApplication {
+        guard !groups.isEmpty else {
+            let updatedResult = ThreadingResult(roots: result.roots,
+                                                threads: result.threads,
+                                                messageThreadMap: result.messageThreadMap,
+                                                jwzThreadMap: result.jwzThreadMap,
+                                                manualGroupByMessageKey: [:],
+                                                manualAttachmentMessageIDs: [])
+            return ManualGroupApplication(result: updatedResult, updatedGroups: [])
         }
 
         let allNodes = result.roots.flatMap { Self.flattenNodes(from: $0) }
+        let baseThreadMap = result.jwzThreadMap
         var messageKeyToMessageID: [String: String] = [:]
 
         for node in allNodes {
@@ -174,51 +185,39 @@ extension JWZThreader {
             messageKeyToMessageID[key] = node.message.messageID
         }
 
-        var updatedMap = result.messageThreadMap
-        var appliedOverrideKeys: Set<String> = []
-        var invalidKeys: [String] = []
-        var parentByThreadID: [String: String] = [:]
+        var manualGroupByMessageKey: [String: String] = [:]
+        var manualAttachmentMessageIDs: Set<String> = []
+        var updatedGroups: [ManualThreadGroup] = []
+        updatedGroups.reserveCapacity(groups.count)
 
-        func findThreadID(_ id: String) -> String {
-            if let parent = parentByThreadID[id] {
-                if parent == id { return parent }
-                let root = findThreadID(parent)
-                parentByThreadID[id] = root
-                return root
+        for group in groups {
+            let validManualKeys = group.manualMessageKeys.filter { baseThreadMap[$0] != nil }
+            let updatedGroup = ManualThreadGroup(id: group.id,
+                                                 jwzThreadIDs: group.jwzThreadIDs,
+                                                 manualMessageKeys: Set(validManualKeys))
+            updatedGroups.append(updatedGroup)
+
+            for (messageKey, jwzThreadID) in baseThreadMap where group.jwzThreadIDs.contains(jwzThreadID) {
+                if manualGroupByMessageKey[messageKey] == nil {
+                    manualGroupByMessageKey[messageKey] = group.id
+                }
             }
-            parentByThreadID[id] = id
-            return id
-        }
 
-        func mergeThread(_ source: String, into target: String) {
-            let sourceRoot = findThreadID(source)
-            let targetRoot = findThreadID(target)
-            guard sourceRoot != targetRoot else { return }
-            parentByThreadID[sourceRoot] = targetRoot
-        }
-
-        for (messageKey, targetThreadID) in overrides {
-            guard updatedMap[messageKey] != nil else {
-                invalidKeys.append(messageKey)
-                continue
+            for messageKey in updatedGroup.manualMessageKeys {
+                if manualGroupByMessageKey[messageKey] == nil {
+                    manualGroupByMessageKey[messageKey] = group.id
+                }
+                if let messageID = messageKeyToMessageID[messageKey] {
+                    manualAttachmentMessageIDs.insert(messageID)
+                }
             }
-            guard let sourceThreadID = updatedMap[messageKey], sourceThreadID != targetThreadID else {
-                invalidKeys.append(messageKey)
-                continue
-            }
-            mergeThread(sourceThreadID, into: targetThreadID)
-            appliedOverrideKeys.insert(messageKey)
         }
 
-        guard !appliedOverrideKeys.isEmpty else {
-            return ManualOverrideApplication(result: result, invalidKeys: invalidKeys)
+        var updatedMap = baseThreadMap
+        for (messageKey, groupID) in manualGroupByMessageKey {
+            updatedMap[messageKey] = groupID
         }
 
-        for (key, threadID) in updatedMap {
-            updatedMap[key] = findThreadID(threadID)
-        }
-
-        let manualOverrideMessageIDs = Set(appliedOverrideKeys.compactMap { messageKeyToMessageID[$0] })
         let preferredRootIDsByThreadID = result.threads.reduce(into: [String: String]()) { result, thread in
             guard let rootID = thread.rootMessageID else { return }
             result[thread.id] = rootID
@@ -263,8 +262,10 @@ extension JWZThreader {
         let updatedResult = ThreadingResult(roots: rebuiltRoots,
                                             threads: rebuiltThreads,
                                             messageThreadMap: updatedMap,
-                                            manualOverrideMessageIDs: manualOverrideMessageIDs)
-        return ManualOverrideApplication(result: updatedResult, invalidKeys: invalidKeys)
+                                            jwzThreadMap: result.jwzThreadMap,
+                                            manualGroupByMessageKey: manualGroupByMessageKey,
+                                            manualAttachmentMessageIDs: manualAttachmentMessageIDs)
+        return ManualGroupApplication(result: updatedResult, updatedGroups: updatedGroups)
     }
 
     private static func flattenNodes(from node: ThreadNode) -> [ThreadNode] {
