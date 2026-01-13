@@ -3,6 +3,10 @@
 "refresh.status.failed" = "Refresh failed: %@";
 "refresh.status.threading_failed" = "Threading failed: %@";
 "threadlist.status.unread" = "Unread: %d - %@";
+"threadlist.backfill.button" = "Backfill visible days";
+"threadlist.backfill.status.fetching" = "Backfilling visible days...";
+"threadlist.backfill.status.complete" = "Backfill complete: %d";
+"threadlist.backfill.status.failed" = "Backfill failed: %@";
 "threadcanvas.subject.placeholder" = "(No Subject)";
 "threadcanvas.node.accessibility" = "%@, %@, %@";
 "threadcanvas.inspector.title" = "Inspector";

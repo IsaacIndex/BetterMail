@@ -33,56 +33,25 @@ struct MailAppleScriptClient {
         let script = buildScript(mailbox: mailbox, limit: limit, since: date)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
-        Log.appleScript.debug("AppleScript returned \(descriptor.numberOfItems, privacy: .public) rows.")
-        guard descriptor.descriptorType == typeAEList else {
-            throw MailAppleScriptClientError.malformedDescriptor
-        }
+        return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
+    }
 
-        var messages: [EmailMessage] = []
-        messages.reserveCapacity(descriptor.numberOfItems)
-
-        let decoder = HeaderDecoder()
-        guard descriptor.numberOfItems > 0 else {
-            Log.appleScript.info("Descriptor contained no items.")
-            return []
-        }
-
-        for index in 1...descriptor.numberOfItems {
-            guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.body else { continue }
-            guard let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue else { continue }
-            let normalizedID = JWZThreader.normalizeIdentifier(rawMessageID)
-            let canonicalID = normalizedID.isEmpty ? UUID().uuidString.lowercased() : normalizedID
-            let subject = row.atIndex(RowIndex.subject)?.stringValue ?? "(No Subject)"
-            let mailboxID = row.atIndex(RowIndex.mailbox)?.stringValue ?? mailbox
-            let dateValue = row.atIndex(RowIndex.date)?.dateValue ?? Date()
-            let isRead = row.atIndex(RowIndex.read)?.booleanValue ?? true
-            guard let source = row.atIndex(RowIndex.source)?.stringValue else { continue }
-            let bodyText = row.atIndex(RowIndex.body)?.stringValue ?? ""
-            let headers = decoder.headers(from: source)
-            let references = decoder.references(from: headers)
-            let replyHeader = headers["in-reply-to"].flatMap { JWZThreader.normalizeIdentifier($0) }
-            let inReplyTo = (replyHeader?.isEmpty == false) ? replyHeader : nil
-            let recipients = headers["to"] ?? ""
-            let sender = headers["from"] ?? ""
-            let snippetPreviewLineLimit = snippetLineLimit == Int.max ? snippetLineLimit : snippetLineLimit + 1
-            let snippet = decoder.bodySnippet(fromBody: bodyText,
-                                              fallbackSource: source,
-                                              maxLines: snippetPreviewLineLimit)
-
-            let email = EmailMessage(messageID: canonicalID,
-                                     mailboxID: mailboxID,
-                                     subject: subject,
-                                     from: sender,
-                                     to: recipients,
-                                     date: dateValue,
-                                     snippet: snippet,
-                                     isUnread: !isRead,
-                                     inReplyTo: inReplyTo,
-                                     references: references)
-            messages.append(email)
-        }
-        Log.appleScript.info("Decoded \(messages.count, privacy: .public) messages from AppleScript response.")
-        return messages
+    func fetchMessages(in range: DateInterval,
+                       limit: Int = 10,
+                       mailbox: String = "inbox",
+                       snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+        let now = Date()
+        let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
+        let clampedEnd = min(range.end, now)
+        let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
+        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        let script = buildScript(mailbox: mailbox,
+                                 limit: limit,
+                                 startWindow: startWindow,
+                                 endWindow: endWindow)
+        Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script)
+        return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
     private func buildScript(mailbox: String, limit: Int, since: Date?) -> String {
@@ -136,6 +105,115 @@ struct MailAppleScriptClient {
         end tell
         return _rows
         """
+    }
+
+    private func buildScript(mailbox: String, limit: Int, startWindow: Int, endWindow: Int) -> String {
+        let escapedPath = MailControl.mailboxReference(path: mailbox, account: nil)
+        return """
+        set _rows to {}
+        set _limit to \(limit)
+        set _startWindow to \(startWindow)
+        set _endWindow to \(endWindow)
+        set _now to (current date)
+        set _startCutoff to _now
+        set _endCutoff to _now
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
+            set _mbx to \(escapedPath)
+            set _mailboxName to (name of _mbx as string)
+            set _msgs to messages of _mbx
+            set _count to 0
+            if _startWindow > 0 then
+              set _startCutoff to _now - _startWindow
+            end if
+            if _endWindow > 0 then
+              set _endCutoff to _now - _endWindow
+            end if
+            repeat with m in _msgs
+              set _shouldInclude to true
+              if _startWindow > 0 then
+                set _shouldInclude to ((date received of m) is greater than or equal to _startCutoff)
+              end if
+              if _shouldInclude and _endWindow > 0 then
+                set _shouldInclude to ((date received of m) is less than _endCutoff)
+              end if
+              if _shouldInclude then
+                set _src to ""
+                set _body to ""
+                try
+                  set _src to (source of m as string)
+                on error
+                  set _src to ""
+                end try
+                try
+                  set _body to (content of m as string)
+                on error
+                  set _body to ""
+                end try
+                copy {(message id of m as string), (subject of m as string), _mailboxName, (date received of m), (read status of m), _src, _body} to end of _rows
+                set _count to _count + 1
+                if _count is greater than or equal to _limit then exit repeat
+              end if
+            end repeat
+          end timeout
+        end tell
+        return _rows
+        """
+    }
+
+    private func decodeMessages(from descriptor: NSAppleEventDescriptor,
+                                mailbox: String,
+                                snippetLineLimit: Int) throws -> [EmailMessage] {
+        Log.appleScript.debug("AppleScript returned \(descriptor.numberOfItems, privacy: .public) rows.")
+        guard descriptor.descriptorType == typeAEList else {
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+
+        var messages: [EmailMessage] = []
+        messages.reserveCapacity(descriptor.numberOfItems)
+
+        let decoder = HeaderDecoder()
+        guard descriptor.numberOfItems > 0 else {
+            Log.appleScript.info("Descriptor contained no items.")
+            return []
+        }
+
+        for index in 1...descriptor.numberOfItems {
+            guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.body else { continue }
+            guard let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue else { continue }
+            let normalizedID = JWZThreader.normalizeIdentifier(rawMessageID)
+            let canonicalID = normalizedID.isEmpty ? UUID().uuidString.lowercased() : normalizedID
+            let subject = row.atIndex(RowIndex.subject)?.stringValue ?? "(No Subject)"
+            let mailboxID = row.atIndex(RowIndex.mailbox)?.stringValue ?? mailbox
+            let dateValue = row.atIndex(RowIndex.date)?.dateValue ?? Date()
+            let isRead = row.atIndex(RowIndex.read)?.booleanValue ?? true
+            guard let source = row.atIndex(RowIndex.source)?.stringValue else { continue }
+            let bodyText = row.atIndex(RowIndex.body)?.stringValue ?? ""
+            let headers = decoder.headers(from: source)
+            let references = decoder.references(from: headers)
+            let replyHeader = headers["in-reply-to"].flatMap { JWZThreader.normalizeIdentifier($0) }
+            let inReplyTo = (replyHeader?.isEmpty == false) ? replyHeader : nil
+            let recipients = headers["to"] ?? ""
+            let sender = headers["from"] ?? ""
+            let snippetPreviewLineLimit = snippetLineLimit == Int.max ? snippetLineLimit : snippetLineLimit + 1
+            let snippet = decoder.bodySnippet(fromBody: bodyText,
+                                              fallbackSource: source,
+                                              maxLines: snippetPreviewLineLimit)
+
+            let email = EmailMessage(messageID: canonicalID,
+                                     mailboxID: mailboxID,
+                                     subject: subject,
+                                     from: sender,
+                                     to: recipients,
+                                     date: dateValue,
+                                     snippet: snippet,
+                                     isUnread: !isRead,
+                                     inReplyTo: inReplyTo,
+                                     references: references)
+            messages.append(email)
+        }
+        Log.appleScript.info("Decoded \(messages.count, privacy: .public) messages from AppleScript response.")
+        return messages
     }
 }
 

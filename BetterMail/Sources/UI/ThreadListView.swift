@@ -136,6 +136,9 @@ struct ThreadListView: View {
             if viewModel.isRefreshing {
                 ProgressView().controlSize(.small)
             }
+            if viewModel.isBackfilling {
+                ProgressView().controlSize(.small)
+            }
             HStack(spacing: 6) {
                 Text("Limit")
                     .font(.caption)
@@ -143,6 +146,7 @@ struct ThreadListView: View {
                 limitField
             }
             .fixedSize()
+            backfillButton
             refreshButton
         }
         .padding(.horizontal, 14)
@@ -227,6 +231,24 @@ struct ThreadListView: View {
             button.buttonStyle(.glass)
         } else {
             button
+        }
+    }
+
+    @ViewBuilder
+    private var backfillButton: some View {
+        if !viewModel.visibleEmptyDayIntervals.isEmpty {
+            let button = Button(action: { viewModel.backfillVisibleRange() }) {
+                Label(NSLocalizedString("threadlist.backfill.button",
+                                        comment: "Backfill visible days button"),
+                      systemImage: "tray.and.arrow.down")
+            }
+            .disabled(viewModel.isBackfilling)
+
+            if #available(macOS 26, *) {
+                button.buttonStyle(.glass)
+            } else {
+                button
+            }
         }
     }
 
