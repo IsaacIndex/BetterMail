@@ -2,11 +2,12 @@ import Foundation
 import CoreGraphics
 
 struct ThreadCanvasLayoutMetrics {
-    static let dayCount = 7
+    static let defaultDayCount = 7
     static let minZoom: CGFloat = 0.01
     static let maxZoom: CGFloat = 1.6
 
     let zoom: CGFloat
+    let dayCount: Int
 
     var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
@@ -55,6 +56,11 @@ struct ThreadCanvasLayoutMetrics {
     var nodeWidth: CGFloat {
         max(columnWidth - (nodeHorizontalInset * 2), 140)
     }
+
+    init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
+        self.zoom = zoom
+        self.dayCount = max(dayCount, 1)
+    }
 }
 
 struct ThreadCanvasDay: Identifiable, Hashable {
@@ -97,13 +103,13 @@ enum ThreadCanvasDateHelper {
         return formatter
     }()
 
-    static func dayIndex(for date: Date, today: Date, calendar: Calendar) -> Int? {
+    static func dayIndex(for date: Date, today: Date, calendar: Calendar, dayCount: Int) -> Int? {
         let startOfToday = calendar.startOfDay(for: today)
         let startOfDate = calendar.startOfDay(for: date)
         guard let diff = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day else {
             return nil
         }
-        guard diff >= 0, diff < ThreadCanvasLayoutMetrics.dayCount else {
+        guard diff >= 0, diff < dayCount else {
             return nil
         }
         return diff

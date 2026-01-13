@@ -8,12 +8,15 @@ struct ThreadCanvasView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
+    @State private var scrollOffset: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
 
     private let calendar = Calendar.current
 
     var body: some View {
-        let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale)
-        let layout = viewModel.canvasLayout(metrics: metrics, today: Date(), calendar: calendar)
+        let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
+        let today = Date()
+        let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
 
         ScrollView([.horizontal, .vertical]) {
             ZStack(alignment: .topLeading) {
@@ -24,12 +27,44 @@ struct ThreadCanvasView: View {
             }
             .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
             .padding(.top, topInset)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: ThreadCanvasScrollOffsetPreferenceKey.self,
+                                           value: proxy.frame(in: .named("ThreadCanvasScroll")).minY)
+                }
+            )
         }
         .scrollIndicators(.visible)
         .background(canvasBackground)
         .gesture(magnificationGesture)
+        .coordinateSpace(name: "ThreadCanvasScroll")
+        .background(viewportReader(layout: layout, metrics: metrics, today: today))
+        .onPreferenceChange(ThreadCanvasScrollOffsetPreferenceKey.self) { minY in
+            let offset = max(0, -minY)
+            scrollOffset = offset
+            viewModel.updateVisibleDayRange(scrollOffset: offset,
+                                            viewportHeight: viewportHeight,
+                                            layout: layout,
+                                            metrics: metrics,
+                                            today: today,
+                                            calendar: calendar)
+        }
+        .onChange(of: layout.contentSize.height) { _ in
+            viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                            viewportHeight: viewportHeight,
+                                            layout: layout,
+                                            metrics: metrics,
+                                            today: today,
+                                            calendar: calendar)
+        }
         .onAppear {
             accumulatedZoom = zoomScale
+            viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                            viewportHeight: viewportHeight,
+                                            layout: layout,
+                                            metrics: metrics,
+                                            today: today,
+                                            calendar: calendar)
         }
     }
 
@@ -108,6 +143,32 @@ struct ThreadCanvasView: View {
     private func isCommandClick() -> Bool {
         guard let flags = NSApp.currentEvent?.modifierFlags else { return false }
         return flags.contains(.command)
+    }
+
+    private func viewportReader(layout: ThreadCanvasLayout,
+                                metrics: ThreadCanvasLayoutMetrics,
+                                today: Date) -> some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear {
+                    viewportHeight = proxy.size.height
+                    viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                                    viewportHeight: viewportHeight,
+                                                    layout: layout,
+                                                    metrics: metrics,
+                                                    today: today,
+                                                    calendar: calendar)
+                }
+                .onChange(of: proxy.size.height) { height in
+                    viewportHeight = height
+                    viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                                    viewportHeight: height,
+                                                    layout: layout,
+                                                    metrics: metrics,
+                                                    today: today,
+                                                    calendar: calendar)
+                }
+        }
     }
 }
 
@@ -364,6 +425,15 @@ private struct ThreadCanvasConnectorColumn: View {
         ))
     }
 }
+
+private struct ThreadCanvasScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 
 private struct ConnectorSegment: Identifiable {
     let id: String
