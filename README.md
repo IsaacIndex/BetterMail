@@ -3,11 +3,11 @@
 BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox over Apple Events, stores a lightweight cache in Core Data, threads conversations with the JWZ algorithm, and can summarize what matters using Apple Intelligence when it is available on the device. The repository also ships a MailKit helper extension with sample content blocking, compose, and message action hooks that can evolve into automation shortcuts.
 
 ## Highlights
-- Native SwiftUI thread sidebar backed by `ThreadCanvasViewModel`, live unread counts, manual limits, and background auto-refresh.
-- AppleScript ingestion via `MailAppleScriptClient`/`AppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
+- Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual limits, and background auto-refresh.
+- AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
-- Optional Apple Intelligence digests powered by `EmailSummaryProvider` (Foundation Models on macOS 15.2+) that surface summaries inline with each thread.
+- Optional Apple Intelligence digests powered by `FoundationModelsEmailSummaryProvider` (Foundation Models on macOS 15.2+) that surface summaries in the inspector for the selected thread.
 - MailKit helper target (`MailHelperExtension`) that demonstrates content blocking, compose session customization, message automation, and security handlers.
 
 ## Requirements
@@ -48,23 +48,23 @@ xcodebuild \
 
 ## Architecture at a Glance
 ```
-Mail.app ⇄ AppleScriptRunner → MailAppleScriptClient → MessageStore (Core Data)
-                                         ↘︎ JWZThreader → ThreadCanvasViewModel → SwiftUI ThreadListView/MessageRowView
-                                                                          ↘︎ EmailSummaryProvider (Apple Intelligence)
+Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Core Data)
+                                            ↘︎ JWZThreader → ThreadCanvasViewModel → SwiftUI ThreadListView/ThreadCanvasView/ThreadInspectorView
+                                                                             ↘︎ FoundationModelsEmailSummaryProvider (Apple Intelligence)
 ```
-- `AppleScriptRunner` makes sure Mail is running, executes scripts, and logs failures.
+- `NSAppleScriptRunner` makes sure Mail is running, executes scripts, and logs failures.
 - `MailAppleScriptClient` fetches message metadata + raw source, decodes headers/snippets, and hands `EmailMessage` models to the store.
 - `MessageStore` keeps everything off the main actor, exposes async fetch/upsert helpers, and maintains per-thread entities.
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
-- `EmailSummaryProvider` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
+- `EmailSummaryProviderFactory` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` demonstrates how to execute follow-up AppleScript commands (move, flag, search) against the current Mail selection.
 
 ## Technical Notes
 
 ### Liquid Glass Nav Bar Readability
 To keep the Liquid Glass look without losing nav bar legibility, the glass container is scoped to the list only and the nav bar is layered above it:
-- `GlassEffectContainer` wraps just `threadList`, while `navigationBarOverlay` sits outside in a ZStack.
+- `GlassEffectContainer` wraps just `canvasContent`, while `navigationBarOverlay` sits outside in a ZStack.
 - Nav foreground colors are explicitly set for glass mode, with a subtle text shadow to lift labels off the glass.
 - The limit `TextField` swaps to a plain style with a translucent fill and stronger border so the input stays visible.
 - The nav background tint is brightened slightly to avoid a heavy dark cast behind text.
