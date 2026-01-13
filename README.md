@@ -150,6 +150,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
   - `navigationBarOverlay` as the top bar above the canvas.
   - `selectionActionBar` as a bottom overlay for multi-select actions.
 - `BetterMail/Sources/UI/MessageRowView.swift` exists but is marked deprecated and is not wired into the current UI.
+- Note: The older left sidebar thread list (vertical list of subjects/unread counts) is not part of the current UI. The only remaining artifact is the deprecated `MessageRowView`.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:
