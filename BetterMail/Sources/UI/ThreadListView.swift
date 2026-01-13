@@ -146,7 +146,6 @@ struct ThreadListView: View {
                 limitField
             }
             .fixedSize()
-            backfillButton
             refreshButton
         }
         .padding(.horizontal, 14)
@@ -235,24 +234,6 @@ struct ThreadListView: View {
     }
 
     @ViewBuilder
-    private var backfillButton: some View {
-        if !viewModel.visibleEmptyDayIntervals.isEmpty {
-            let button = Button(action: { viewModel.backfillVisibleRange() }) {
-                Label(NSLocalizedString("threadlist.backfill.button",
-                                        comment: "Backfill visible days button"),
-                      systemImage: "tray.and.arrow.down")
-            }
-            .disabled(viewModel.isBackfilling)
-
-            if #available(macOS 26, *) {
-                button.buttonStyle(.glass)
-            } else {
-                button
-            }
-        }
-    }
-
-    @ViewBuilder
     private var navBackground: some View {
         let shape = RoundedRectangle(cornerRadius: navCornerRadius, style: .continuous)
         if reduceTransparency {
@@ -279,29 +260,52 @@ struct ThreadListView: View {
 
     private var selectionActionBar: some View {
         Group {
-            if viewModel.shouldShowSelectionActions {
-                HStack(spacing: 12) {
-                    Text(String.localizedStringWithFormat(
-                        NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
-                        viewModel.selectedNodeIDs.count
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(navSecondaryForegroundStyle)
-                    Spacer()
-                    Button(action: { viewModel.groupSelectedMessages() }) {
-                        Label(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"),
-                              systemImage: "link")
+            if shouldShowActionBar {
+                Group {
+                    if viewModel.shouldShowSelectionActions {
+                        HStack(spacing: 12) {
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
+                                viewModel.selectedNodeIDs.count
+                            ))
+                            .font(.caption)
+                            .foregroundStyle(navSecondaryForegroundStyle)
+                            Spacer()
+                            Button(action: { viewModel.groupSelectedMessages() }) {
+                                Label(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"),
+                                      systemImage: "link")
+                            }
+                            .disabled(!viewModel.canGroupSelection)
+                            Button(action: { viewModel.ungroupSelectedMessages() }) {
+                                Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
+                                      systemImage: "link.badge.minus")
+                            }
+                            .disabled(!viewModel.canUngroupSelection)
+                            if shouldShowBackfillAction {
+                                Button(action: { viewModel.backfillVisibleRange() }) {
+                                    Label(NSLocalizedString("threadlist.backfill.button",
+                                                            comment: "Backfill visible days button"),
+                                          systemImage: "tray.and.arrow.down")
+                                }
+                                .disabled(viewModel.isBackfilling)
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 12) {
+                            if shouldShowBackfillAction {
+                                Button(action: { viewModel.backfillVisibleRange() }) {
+                                    Label(NSLocalizedString("threadlist.backfill.button",
+                                                            comment: "Backfill visible days button"),
+                                          systemImage: "tray.and.arrow.down")
+                                }
+                                .disabled(viewModel.isBackfilling)
+                            }
+                        }
                     }
-                    .disabled(!viewModel.canGroupSelection)
-                    Button(action: { viewModel.ungroupSelectedMessages() }) {
-                        Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
-                              systemImage: "link.badge.minus")
-                    }
-                    .disabled(!viewModel.canUngroupSelection)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .frame(maxWidth: 420)
+                .frame(maxWidth: actionBarMaxWidth)
                 .background(selectionActionBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -314,7 +318,19 @@ struct ThreadListView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.shouldShowSelectionActions)
+        .animation(.easeInOut(duration: 0.2), value: shouldShowActionBar)
+    }
+
+    private var shouldShowBackfillAction: Bool {
+        !viewModel.visibleRangeHasMessages && !viewModel.visibleEmptyDayIntervals.isEmpty
+    }
+
+    private var shouldShowActionBar: Bool {
+        viewModel.shouldShowSelectionActions || shouldShowBackfillAction
+    }
+
+    private var actionBarMaxWidth: CGFloat? {
+        viewModel.shouldShowSelectionActions ? 420 : nil
     }
 
     @ViewBuilder
