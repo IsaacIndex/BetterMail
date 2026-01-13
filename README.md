@@ -141,6 +141,16 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 - Summaries are optional; if the model is unavailable, the UI falls back to status strings explaining what is required.
 - Keep subjects tidy—the summarizer currently limits itself to the 25 unique subject lines per thread to stay within token budgets.
 
+## UI Layers (Current)
+- App entry point: `BetterMail/BetterMailApp.swift` shows `ContentView` in the main `WindowGroup`.
+- `BetterMail/ContentView.swift` renders only `ThreadListView` (no split view/sidebar container at the moment).
+- `BetterMail/Sources/UI/ThreadListView.swift` composes the main canvas stack:
+  - `ThreadCanvasView` as the full-window canvas.
+  - `ThreadInspectorView` as a right-side overlay panel.
+  - `navigationBarOverlay` as the top bar above the canvas.
+  - `selectionActionBar` as a bottom overlay for multi-select actions.
+- `BetterMail/Sources/UI/MessageRowView.swift` exists but is marked deprecated and is not wired into the current UI.
+
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:
   ```bash
