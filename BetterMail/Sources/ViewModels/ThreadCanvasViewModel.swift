@@ -133,6 +133,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     @Published private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
     @Published private(set) var visibleDayRange: ClosedRange<Int>?
     @Published private(set) var visibleEmptyDayIntervals: [DateInterval] = []
+    @Published private(set) var visibleRangeHasMessages = false
     @Published private(set) var isBackfilling = false
     @Published var fetchLimit: Int = 10 {
         didSet {
@@ -158,7 +159,6 @@ final class ThreadCanvasViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var didStart = false
     private var shouldForceFullReload = false
-    private var isPaging = false
     private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
 
     init(settings: AutoRefreshSettings,
@@ -323,7 +323,6 @@ final class ThreadCanvasViewModel: ObservableObject {
             self.jwzThreadMap = rethreadResult.jwzThreadMap
             pruneSelection(using: rethreadResult.roots)
             refreshSummaries(for: rethreadResult.roots)
-            isPaging = false
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
@@ -331,7 +330,6 @@ final class ThreadCanvasViewModel: ObservableObject {
                 NSLocalizedString("refresh.status.threading_failed", comment: "Status when threading fails"),
                 error.localizedDescription
             )
-            isPaging = false
         }
     }
 
@@ -528,13 +526,18 @@ final class ThreadCanvasViewModel: ObservableObject {
         if visibleEmptyDayIntervals != emptyIntervals {
             visibleEmptyDayIntervals = emptyIntervals
         }
-        let shouldExpand = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
-                                                      viewportHeight: viewportHeight,
-                                                      contentHeight: layout.contentSize.height,
-                                                      threshold: metrics.dayHeight * 2)
-        if shouldExpand {
-            expandDayWindowIfNeeded()
+        let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
+        let hasMessages = range.map { range in
+            range.contains { populatedDays.contains($0) }
+        } ?? false
+        if visibleRangeHasMessages != hasMessages {
+            visibleRangeHasMessages = hasMessages
         }
+        let nearBottom = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
+                                                    viewportHeight: viewportHeight,
+                                                    contentHeight: layout.contentSize.height,
+                                                    threshold: metrics.dayHeight * 2)
+        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
     }
 
     func backfillVisibleRange() {
@@ -755,10 +758,20 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    private func expandDayWindowIfNeeded() {
-        guard !isPaging else { return }
-        isPaging = true
-        dayWindowCount += dayWindowIncrement
+    private func expandDayWindowIfNeeded(visibleRange: ClosedRange<Int>?,
+                                         forceIncrement: Bool) {
+        var targetDayCount = dayWindowCount
+        if let visibleRange {
+            let highestVisibleDay = visibleRange.upperBound
+            let desiredBlocks = (highestVisibleDay / dayWindowIncrement) + 2
+            let desiredDayCount = desiredBlocks * dayWindowIncrement
+            targetDayCount = max(targetDayCount, desiredDayCount)
+        }
+        if forceIncrement && targetDayCount == dayWindowCount {
+            targetDayCount += dayWindowIncrement
+        }
+        guard targetDayCount > dayWindowCount else { return }
+        dayWindowCount = targetDayCount
         scheduleRethread()
     }
 
