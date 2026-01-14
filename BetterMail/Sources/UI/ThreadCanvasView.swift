@@ -34,17 +34,9 @@ struct ThreadCanvasView: View {
                         let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
                         Color.clear
                             .onChange(of: minY) { _, newValue in
-#if DEBUG
                                 let rawOffset = -newValue
                                 let adjustedOffset = max(0, rawOffset + topInset)
                                 let effectiveHeight = max(max(viewportHeight, proxy.size.height) - topInset, 1)
-                                let visibleBottom = adjustedOffset + effectiveHeight
-                                let contentHeight = max(layout.contentSize.height, 1)
-                                let distanceToBottom = max(0, contentHeight - visibleBottom)
-                                let remainingRatio = min(max(distanceToBottom / contentHeight, 0), 1)
-                                Log.app.info("ThreadCanvas geom scroll minY=\(newValue, privacy: .public) offset=\(adjustedOffset, privacy: .public) distanceToBottom=\(distanceToBottom, privacy: .public) remainingRatio=\(remainingRatio, privacy: .public)")
-                                print("ThreadCanvas geom scroll minY=\(newValue) offset=\(adjustedOffset) distanceToBottom=\(distanceToBottom) remainingRatio=\(remainingRatio)")
-#endif
                                 scrollOffset = adjustedOffset
                                 viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
                                                                 viewportHeight: effectiveHeight,
@@ -70,10 +62,6 @@ struct ThreadCanvasView: View {
                 let effectiveHeight = max(height, proxy.size.height) - topInset
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
-#if DEBUG
-                Log.app.info("ThreadCanvas viewport height=\(clampedHeight, privacy: .public)")
-                print("ThreadCanvas viewport height=\(clampedHeight)")
-#endif
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
                                                 viewportHeight: clampedHeight,
                                                 layout: layout,

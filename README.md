@@ -127,6 +127,10 @@ sequenceDiagram
     end
 ```
 
+### Infinite Canvas Paging
+- The thread canvas expands in 7-day blocks when you scroll near the bottom of the current range.
+- Scroll detection for paging is driven by `GeometryReader` content-frame updates so two-axis scrolling (horizontal + vertical) still triggers expansion.
+
 ### JWZ Threading Algorithm
 BetterMail’s threading model follows Jamie Zawinski’s canonical algorithm that many email clients rely on:
 - Every message is normalized to a lowercase message-id (stripping angle brackets) so Mail’s inconsistent headers still point to the same canonical ID.
