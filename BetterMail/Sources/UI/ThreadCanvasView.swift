@@ -22,7 +22,8 @@ struct ThreadCanvasView: View {
 
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
-                    dayBands(layout: layout, metrics: metrics)
+                    dayBands(layout: layout, metrics: metrics, rawZoom: zoomScale)
+                    groupLegendLayer(layout: layout, metrics: metrics, rawZoom: zoomScale, calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
                     nodesLayer(layout: layout, metrics: metrics)
@@ -117,9 +118,15 @@ struct ThreadCanvasView: View {
     }
 
     @ViewBuilder
-    private func dayBands(layout: ThreadCanvasLayout, metrics: ThreadCanvasLayoutMetrics) -> some View {
+    private func dayBands(layout: ThreadCanvasLayout,
+                          metrics: ThreadCanvasLayoutMetrics,
+                          rawZoom: CGFloat) -> some View {
+        let labelMap = dayLabelMap(days: layout.days, rawZoom: rawZoom, calendar: calendar)
         ForEach(layout.days) { day in
-            ThreadCanvasDayBand(day: day, metrics: metrics, contentWidth: layout.contentSize.width)
+            ThreadCanvasDayBand(day: day,
+                                metrics: metrics,
+                                labelText: labelMap[day.id] ?? nil,
+                                contentWidth: layout.contentSize.width)
                 .offset(x: 0, y: day.yOffset)
         }
     }
@@ -150,7 +157,8 @@ struct ThreadCanvasView: View {
             ForEach(column.nodes) { node in
                 ThreadCanvasNodeView(node: node,
                                      isSelected: viewModel.selectedNodeIDs.contains(node.id),
-                                     fontScale: metrics.fontScale)
+                                     fontScale: metrics.fontScale,
+                                     rawZoom: zoomScale)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .onTapGesture {
@@ -170,11 +178,119 @@ struct ThreadCanvasView: View {
         return flags.contains(.command)
     }
 
+    private func dayLabelMap(days: [ThreadCanvasDay],
+                             rawZoom: CGFloat,
+                             calendar: Calendar) -> [Int: String?] {
+        if dayLabelMode(rawZoom: rawZoom) == nil {
+            return days.reduce(into: [:]) { result, day in
+                result[day.id] = day.label
+            }
+        }
+        return days.reduce(into: [:]) { result, day in
+            result[day.id] = nil
+        }
+    }
+
+    private func dayLabelMode(rawZoom: CGFloat) -> DayLabelMode? {
+        let rawFontSize = 11 * rawZoom
+        if rawFontSize >= ThreadCanvasNodeView.textEllipsisPointSize {
+            return nil
+        }
+        if rawFontSize >= ThreadCanvasNodeView.textHidePointSize {
+            return .month
+        }
+        return .year
+    }
+
+    @ViewBuilder
+    private func groupLegendLayer(layout: ThreadCanvasLayout,
+                                  metrics: ThreadCanvasLayoutMetrics,
+                                  rawZoom: CGFloat,
+                                  calendar: Calendar) -> some View {
+        if let mode = dayLabelMode(rawZoom: rawZoom) {
+            let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
+            ForEach(items) { item in
+                ZStack {
+                    Rectangle()
+                        .fill(legendGuideColor)
+                        .frame(width: 1)
+                        .frame(maxHeight: .infinity)
+                    Text(item.label)
+                        .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(-90))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .accessibilityAddTraits(.isHeader)
+                        .allowsHitTesting(false)
+                }
+                .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset,
+                       height: item.height,
+                       alignment: .center)
+                .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+            }
+        } else {
+            EmptyView()
+        }
+    }
+
+    private var legendGuideColor: Color {
+        Color.secondary.opacity(0.35)
+    }
+
+    private func groupedLegendItems(days: [ThreadCanvasDay],
+                                    calendar: Calendar,
+                                    mode: DayLabelMode) -> [ThreadCanvasLegendItem] {
+        let sorted = days.sorted { $0.id < $1.id }
+        var items: [ThreadCanvasLegendItem] = []
+        var currentKey: String?
+        var currentLabel: String = ""
+        var groupStartY: CGFloat = 0
+        var groupEndY: CGFloat = 0
+
+        func flushGroup() {
+            guard let key = currentKey else { return }
+            let height = groupEndY - groupStartY
+            items.append(ThreadCanvasLegendItem(id: key,
+                                                label: currentLabel,
+                                                startY: groupStartY,
+                                                height: height))
+        }
+
+        for day in sorted {
+            let components = calendar.dateComponents([.year, .month], from: day.date)
+            let year = components.year ?? 0
+            let month = components.month ?? 0
+            let key: String
+            let label: String
+            switch mode {
+            case .month:
+                key = "\(year)-\(month)"
+                label = ThreadCanvasDateHelper.monthLabel(for: day.date)
+            case .year:
+                key = "\(year)"
+                label = ThreadCanvasDateHelper.yearLabel(for: day.date)
+            }
+            let dayStartY = day.yOffset
+            let dayEndY = day.yOffset + day.height
+            if key != currentKey {
+                flushGroup()
+                currentKey = key
+                currentLabel = label
+                groupStartY = dayStartY
+                groupEndY = dayEndY
+            } else {
+                groupEndY = dayEndY
+            }
+        }
+        flushGroup()
+        return items
+    }
 }
 
 private struct ThreadCanvasDayBand: View {
     let day: ThreadCanvasDay
     let metrics: ThreadCanvasLayoutMetrics
+    let labelText: String?
     let contentWidth: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -188,13 +304,15 @@ private struct ThreadCanvasDayBand: View {
                 .fill(separatorColor)
                 .frame(height: 1)
                 .padding(.leading, metrics.dayLabelWidth)
-            Text(day.label)
-                .font(.system(size: 11 * metrics.fontScale, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset, alignment: .trailing)
-                .padding(.leading, metrics.nodeHorizontalInset)
-                .padding(.top, metrics.nodeVerticalSpacing)
-                .accessibilityAddTraits(.isHeader)
+            if let labelText {
+                Text(labelText)
+                    .font(.system(size: 11 * metrics.fontScale, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset, alignment: .trailing)
+                    .padding(.leading, metrics.nodeHorizontalInset)
+                    .padding(.top, metrics.nodeVerticalSpacing)
+                    .accessibilityAddTraits(.isHeader)
+            }
         }
         .frame(width: contentWidth, height: day.height, alignment: .topLeading)
     }
@@ -444,9 +562,13 @@ private struct ConnectorSegment: Identifiable {
 }
 
 private struct ThreadCanvasNodeView: View {
+    static let textEllipsisPointSize: CGFloat = 10
+    static let textHidePointSize: CGFloat = 7
+
     let node: ThreadCanvasNode
     let isSelected: Bool
     let fontScale: CGFloat
+    let rawZoom: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -460,19 +582,15 @@ private struct ThreadCanvasNodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(subjectText)
-                .font(.system(size: 13 * fontScale, weight: node.message.isUnread ? .semibold : .regular))
-                .foregroundStyle(primaryTextColor)
-                .lineLimit(1)
-
-            Text(node.message.from)
-                .font(.system(size: 11 * fontScale))
-                .foregroundStyle(secondaryTextColor)
-                .lineLimit(1)
-
-            Text(Self.timeFormatter.string(from: node.message.date))
-                .font(.system(size: 11 * fontScale))
-                .foregroundStyle(secondaryTextColor)
+            textLine(subjectText,
+                     baseSize: 13,
+                     weight: node.message.isUnread ? .semibold : .regular,
+                     color: primaryTextColor)
+            textLine(node.message.from, baseSize: 11, weight: .regular, color: secondaryTextColor)
+            textLine(Self.timeFormatter.string(from: node.message.date),
+                     baseSize: 11,
+                     weight: .regular,
+                     color: secondaryTextColor)
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -548,6 +666,56 @@ private struct ThreadCanvasNodeView: View {
     private var textShadowRadius: CGFloat {
         (reduceTransparency || colorScheme == .light) ? 0 : 1
     }
+
+    @ViewBuilder
+    private func textLine(_ text: String,
+                          baseSize: CGFloat,
+                          weight: Font.Weight,
+                          color: Color) -> some View {
+        switch textVisibility(for: baseSize) {
+        case .normal:
+            Text(text)
+                .font(.system(size: baseSize * fontScale, weight: weight))
+                .foregroundStyle(color)
+                .lineLimit(1)
+        case .ellipsis:
+            Text("…")
+                .font(.system(size: baseSize * fontScale, weight: weight))
+                .foregroundStyle(color)
+                .lineLimit(1)
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    private func textVisibility(for baseSize: CGFloat) -> TextVisibility {
+        let rawSize = baseSize * rawZoom
+        if rawSize < Self.textHidePointSize {
+            return .hidden
+        }
+        if rawSize < Self.textEllipsisPointSize {
+            return .ellipsis
+        }
+        return .normal
+    }
+}
+
+private enum TextVisibility {
+    case normal
+    case ellipsis
+    case hidden
+}
+
+private enum DayLabelMode {
+    case month
+    case year
+}
+
+private struct ThreadCanvasLegendItem: Identifiable {
+    let id: String
+    let label: String
+    let startY: CGFloat
+    let height: CGFloat
 }
 
 private extension Comparable {

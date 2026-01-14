@@ -54,7 +54,7 @@ struct ThreadCanvasLayoutMetrics {
     }
 
     var nodeWidth: CGFloat {
-        max(columnWidth - (nodeHorizontalInset * 2), 140)
+        max(columnWidth - (nodeHorizontalInset * 2), 24)
     }
 
     init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
@@ -102,6 +102,16 @@ enum ThreadCanvasDateHelper {
         formatter.timeStyle = .none
         return formatter
     }()
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter
+    }()
+    private static let yearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy"
+        return formatter
+    }()
 
     static func dayIndex(for date: Date, today: Date, calendar: Calendar, dayCount: Int) -> Int? {
         let startOfToday = calendar.startOfDay(for: today)
@@ -121,5 +131,13 @@ enum ThreadCanvasDateHelper {
 
     static func label(for date: Date) -> String {
         dayFormatter.string(from: date)
+    }
+
+    static func monthLabel(for date: Date) -> String {
+        monthFormatter.string(from: date)
+    }
+
+    static func yearLabel(for date: Date) -> String {
+        yearFormatter.string(from: date)
     }
 }
