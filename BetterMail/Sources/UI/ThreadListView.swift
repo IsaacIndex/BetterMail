@@ -11,6 +11,7 @@ struct ThreadListView: View {
     @State private var backfillStartDate = Date()
     @State private var backfillEndDate = Date()
     @State private var backfillLimit: Int = 10
+    @State private var isInspectorVisible = false
 
     private let navCornerRadius: CGFloat = 18
     private let navHorizontalPadding: CGFloat = 16
@@ -24,6 +25,14 @@ struct ThreadListView: View {
             .frame(minWidth: 480, minHeight: 400)
             .task {
                 viewModel.start()
+            }
+            .onAppear {
+                isInspectorVisible = viewModel.selectedNode != nil
+            }
+            .onChange(of: viewModel.selectedNodeID) { _, newValue in
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                    isInspectorVisible = newValue != nil
+                }
             }
             .onChange(of: settings.isEnabled) { _, _ in
                 viewModel.applyAutoRefreshSettings()
@@ -85,7 +94,7 @@ struct ThreadListView: View {
 
     @ViewBuilder
     private var inspectorOverlay: some View {
-        if let selectedNode = viewModel.selectedNode {
+        if isInspectorVisible, let selectedNode = viewModel.selectedNode {
             ThreadInspectorView(node: selectedNode,
                                 summaryState: selectedSummaryState,
                                 summaryExpansion: selectedSummaryExpansion,
@@ -96,6 +105,11 @@ struct ThreadListView: View {
                 .padding(.trailing, navHorizontalPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .zIndex(0.5)
+                .transition(
+                    .scale(scale: 0.96, anchor: .topTrailing)
+                    .combined(with: .opacity)
+                )
+                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: viewModel.selectedNodeID)
         }
     }
 
