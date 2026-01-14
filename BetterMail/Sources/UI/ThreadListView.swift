@@ -83,17 +83,20 @@ struct ThreadListView: View {
         .padding(.horizontal, navHorizontalPadding)
     }
 
+    @ViewBuilder
     private var inspectorOverlay: some View {
-        ThreadInspectorView(node: viewModel.selectedNode,
-                            summaryState: selectedSummaryState,
-                            summaryExpansion: selectedSummaryExpansion,
-                            inspectorSettings: inspectorSettings,
-                            onOpenInMail: viewModel.openMessageInMail)
-            .frame(width: inspectorWidth)
-            .padding(.top, navInsetHeight)
-            .padding(.trailing, navHorizontalPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            .zIndex(0.5)
+        if let selectedNode = viewModel.selectedNode {
+            ThreadInspectorView(node: selectedNode,
+                                summaryState: selectedSummaryState,
+                                summaryExpansion: selectedSummaryExpansion,
+                                inspectorSettings: inspectorSettings,
+                                onOpenInMail: viewModel.openMessageInMail)
+                .frame(width: inspectorWidth)
+                .padding(.top, navInsetHeight)
+                .padding(.trailing, navHorizontalPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .zIndex(0.5)
+        }
     }
 
     private var navInsetHeight: CGFloat {
