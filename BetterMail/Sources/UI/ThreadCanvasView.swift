@@ -49,7 +49,13 @@ struct ThreadCanvasView: View {
                 )
             }
             .scrollIndicators(.visible)
-            .background(canvasBackground)
+            .background(
+                canvasBackground
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        viewModel.selectNode(id: nil)
+                    }
+            )
             .gesture(magnificationGesture)
             .coordinateSpace(name: "ThreadCanvasScroll")
             .background(
