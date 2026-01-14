@@ -80,6 +80,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         func performBackfill(ranges: [DateInterval],
                              limit: Int,
                              snippetLineLimit: Int) async throws -> Int {
+            Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) limit=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
             guard !ranges.isEmpty else { return 0 }
             var totalFetched = 0
             for range in ranges {
@@ -1107,3 +1108,4 @@ extension ThreadCanvasViewModel {
         return DateInterval(start: start, end: end)
     }
 }
+
