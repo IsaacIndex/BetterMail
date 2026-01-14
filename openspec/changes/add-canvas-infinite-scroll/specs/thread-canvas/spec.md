@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 ### Requirement: Default Range and Column Order
-The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward.
+The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward. Scroll detection SHALL be driven by GeometryReader updates of the canvas content frame so two-axis scrolling can still trigger paging.
 
 #### Scenario: Default range and ordering
 - **WHEN** the canvas loads
@@ -9,6 +9,10 @@ The system SHALL default the canvas to the most recent 7 days, SHALL order threa
 #### Scenario: Cache-only paging
 - **WHEN** the user scrolls near the end of the current day range
 - **THEN** the canvas expands by the next 7-day block using cached messages only
+
+#### Scenario: Two-axis scroll detection
+- **WHEN** the user scrolls the canvas vertically or diagonally
+- **THEN** GeometryReader content-frame updates drive the scroll position used for paging
 
 ## ADDED Requirements
 ### Requirement: Visible-Range Backfill Action
