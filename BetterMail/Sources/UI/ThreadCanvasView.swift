@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import os
 
 struct ThreadCanvasView: View {
     @ObservedObject var viewModel: ThreadCanvasViewModel
@@ -14,57 +15,85 @@ struct ThreadCanvasView: View {
     private let calendar = Calendar.current
 
     var body: some View {
-        let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
-        let today = Date()
-        let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
+        GeometryReader { proxy in
+            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
+            let today = Date()
+            let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
 
-        ScrollView([.horizontal, .vertical]) {
-            ZStack(alignment: .topLeading) {
-                dayBands(layout: layout, metrics: metrics)
-                columnDividers(layout: layout, metrics: metrics)
-                connectorLayer(layout: layout, metrics: metrics)
-                nodesLayer(layout: layout, metrics: metrics)
+            ScrollView([.horizontal, .vertical]) {
+                ZStack(alignment: .topLeading) {
+                    dayBands(layout: layout, metrics: metrics)
+                    columnDividers(layout: layout, metrics: metrics)
+                    connectorLayer(layout: layout, metrics: metrics)
+                    nodesLayer(layout: layout, metrics: metrics)
+                }
+                .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
+                .padding(.top, topInset)
+                .background(
+                    GeometryReader { contentProxy in
+                        Color.clear.preference(key: ThreadCanvasScrollOffsetPreferenceKey.self,
+                                               value: contentProxy.frame(in: .named("ThreadCanvasScroll")).minY)
+                    }
+                )
             }
-            .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
-            .padding(.top, topInset)
+            .scrollIndicators(.visible)
+            .background(canvasBackground)
+            .gesture(magnificationGesture)
+            .coordinateSpace(name: "ThreadCanvasScroll")
             .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: ThreadCanvasScrollOffsetPreferenceKey.self,
-                                           value: proxy.frame(in: .named("ThreadCanvasScroll")).minY)
+                GeometryReader { sizeProxy in
+                    Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
+                                           value: sizeProxy.size.height)
                 }
             )
-        }
-        .scrollIndicators(.visible)
-        .background(canvasBackground)
-        .gesture(magnificationGesture)
-        .coordinateSpace(name: "ThreadCanvasScroll")
-        .background(viewportReader(layout: layout, metrics: metrics, today: today))
-        .onPreferenceChange(ThreadCanvasScrollOffsetPreferenceKey.self) { minY in
-            let offset = max(0, -minY)
-            scrollOffset = offset
-            viewModel.updateVisibleDayRange(scrollOffset: offset,
-                                            viewportHeight: viewportHeight,
-                                            layout: layout,
-                                            metrics: metrics,
-                                            today: today,
-                                            calendar: calendar)
-        }
-        .onChange(of: layout.contentSize.height) { _ in
-            viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                            viewportHeight: viewportHeight,
-                                            layout: layout,
-                                            metrics: metrics,
-                                            today: today,
-                                            calendar: calendar)
-        }
-        .onAppear {
-            accumulatedZoom = zoomScale
-            viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                            viewportHeight: viewportHeight,
-                                            layout: layout,
-                                            metrics: metrics,
-                                            today: today,
-                                            calendar: calendar)
+            .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
+                let effectiveHeight = max(height, proxy.size.height) - topInset
+                let clampedHeight = max(effectiveHeight, 1)
+                viewportHeight = effectiveHeight
+#if DEBUG
+                Log.app.info("ThreadCanvas viewport height=\(clampedHeight, privacy: .public)")
+                print("ThreadCanvas viewport height=\(clampedHeight)")
+#endif
+                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                                viewportHeight: clampedHeight,
+                                                layout: layout,
+                                                metrics: metrics,
+                                                today: today,
+                                                calendar: calendar)
+            }
+            .onPreferenceChange(ThreadCanvasScrollOffsetPreferenceKey.self) { minY in
+                let rawOffset = -minY
+                let adjustedOffset = max(0, rawOffset + topInset)
+                scrollOffset = adjustedOffset
+#if DEBUG
+                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - topInset, 1)
+                Log.app.info("ThreadCanvas scroll minY=\(minY, privacy: .public) topInset=\(topInset, privacy: .public) offset=\(adjustedOffset, privacy: .public) viewport=\(effectiveHeight, privacy: .public)")
+                print("ThreadCanvas scroll minY=\(minY) topInset=\(topInset) offset=\(adjustedOffset) viewport=\(effectiveHeight)")
+#endif
+                viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
+                                                viewportHeight: effectiveHeight,
+                                                layout: layout,
+                                                metrics: metrics,
+                                                today: today,
+                                                calendar: calendar)
+            }
+            .onChange(of: layout.contentSize.height) { _ in
+                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - topInset, 1),
+                                                layout: layout,
+                                                metrics: metrics,
+                                                today: today,
+                                                calendar: calendar)
+            }
+            .onAppear {
+                accumulatedZoom = zoomScale
+                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
+                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - topInset, 1),
+                                                layout: layout,
+                                                metrics: metrics,
+                                                today: today,
+                                                calendar: calendar)
+            }
         }
     }
 
@@ -145,31 +174,6 @@ struct ThreadCanvasView: View {
         return flags.contains(.command)
     }
 
-    private func viewportReader(layout: ThreadCanvasLayout,
-                                metrics: ThreadCanvasLayoutMetrics,
-                                today: Date) -> some View {
-        GeometryReader { proxy in
-            Color.clear
-                .onAppear {
-                    viewportHeight = proxy.size.height
-                    viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                    viewportHeight: viewportHeight,
-                                                    layout: layout,
-                                                    metrics: metrics,
-                                                    today: today,
-                                                    calendar: calendar)
-                }
-                .onChange(of: proxy.size.height) { height in
-                    viewportHeight = height
-                    viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                    viewportHeight: height,
-                                                    layout: layout,
-                                                    metrics: metrics,
-                                                    today: today,
-                                                    calendar: calendar)
-                }
-        }
-    }
 }
 
 private struct ThreadCanvasDayBand: View {
@@ -427,6 +431,14 @@ private struct ThreadCanvasConnectorColumn: View {
 }
 
 private struct ThreadCanvasScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ThreadCanvasViewportHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

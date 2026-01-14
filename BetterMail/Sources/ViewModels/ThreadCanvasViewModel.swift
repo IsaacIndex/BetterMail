@@ -771,6 +771,10 @@ final class ThreadCanvasViewModel: ObservableObject {
             targetDayCount += dayWindowIncrement
         }
         guard targetDayCount > dayWindowCount else { return }
+#if DEBUG
+        Log.app.info("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount, privacy: .public) -> \(targetDayCount, privacy: .public) visibleRange=\(String(describing: visibleRange), privacy: .public) forceIncrement=\(forceIncrement, privacy: .public)")
+        print("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount) -> \(targetDayCount) visibleRange=\(String(describing: visibleRange)) forceIncrement=\(forceIncrement)")
+#endif
         dayWindowCount = targetDayCount
         scheduleRethread()
     }
