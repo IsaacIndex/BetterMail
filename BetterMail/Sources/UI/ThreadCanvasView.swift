@@ -209,24 +209,34 @@ struct ThreadCanvasView: View {
                                   calendar: Calendar) -> some View {
         if let mode = dayLabelMode(rawZoom: rawZoom) {
             let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
-            ForEach(items) { item in
-                ZStack {
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(items.dropFirst().enumerated()), id: \.offset) { _, item in
                     Rectangle()
                         .fill(legendGuideColor)
-                        .frame(width: 1)
-                        .frame(maxHeight: .infinity)
-                    Text(item.label)
-                        .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(-90))
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .accessibilityAddTraits(.isHeader)
-                        .allowsHitTesting(false)
+                        .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset, height: 1)
+                        .offset(x: metrics.nodeHorizontalInset, y: item.startY)
                 }
-                .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset,
-                       height: item.height,
-                       alignment: .center)
-                .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+                ForEach(items) { item in
+                    ZStack(alignment: .topLeading) {
+                        Rectangle()
+                            .fill(legendGuideColor)
+                            .frame(width: 1)
+                            .frame(maxHeight: .infinity)
+                        Text(item.label)
+                            .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(-90))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .frame(height: item.firstDayHeight, alignment: .topTrailing)
+                            .offset(y: metrics.nodeVerticalSpacing)
+                            .accessibilityAddTraits(.isHeader)
+                            .allowsHitTesting(false)
+                    }
+                    .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset,
+                           height: item.height,
+                           alignment: .topLeading)
+                    .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+                }
             }
         } else {
             EmptyView()
@@ -246,6 +256,7 @@ struct ThreadCanvasView: View {
         var currentLabel: String = ""
         var groupStartY: CGFloat = 0
         var groupEndY: CGFloat = 0
+        var groupFirstHeight: CGFloat = 0
 
         func flushGroup() {
             guard let key = currentKey else { return }
@@ -253,7 +264,8 @@ struct ThreadCanvasView: View {
             items.append(ThreadCanvasLegendItem(id: key,
                                                 label: currentLabel,
                                                 startY: groupStartY,
-                                                height: height))
+                                                height: height,
+                                                firstDayHeight: groupFirstHeight))
         }
 
         for day in sorted {
@@ -278,6 +290,7 @@ struct ThreadCanvasView: View {
                 currentLabel = label
                 groupStartY = dayStartY
                 groupEndY = dayEndY
+                groupFirstHeight = day.height
             } else {
                 groupEndY = dayEndY
             }
@@ -716,6 +729,7 @@ private struct ThreadCanvasLegendItem: Identifiable {
     let label: String
     let startY: CGFloat
     let height: CGFloat
+    let firstDayHeight: CGFloat
 }
 
 private extension Comparable {
