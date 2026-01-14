@@ -31,8 +31,28 @@ struct ThreadCanvasView: View {
                 .padding(.top, topInset)
                 .background(
                     GeometryReader { contentProxy in
-                        Color.clear.preference(key: ThreadCanvasScrollOffsetPreferenceKey.self,
-                                               value: contentProxy.frame(in: .named("ThreadCanvasScroll")).minY)
+                        let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
+                        Color.clear
+                            .onChange(of: minY) { _, newValue in
+#if DEBUG
+                                let rawOffset = -newValue
+                                let adjustedOffset = max(0, rawOffset + topInset)
+                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - topInset, 1)
+                                let visibleBottom = adjustedOffset + effectiveHeight
+                                let contentHeight = max(layout.contentSize.height, 1)
+                                let distanceToBottom = max(0, contentHeight - visibleBottom)
+                                let remainingRatio = min(max(distanceToBottom / contentHeight, 0), 1)
+                                Log.app.info("ThreadCanvas geom scroll minY=\(newValue, privacy: .public) offset=\(adjustedOffset, privacy: .public) distanceToBottom=\(distanceToBottom, privacy: .public) remainingRatio=\(remainingRatio, privacy: .public)")
+                                print("ThreadCanvas geom scroll minY=\(newValue) offset=\(adjustedOffset) distanceToBottom=\(distanceToBottom) remainingRatio=\(remainingRatio)")
+#endif
+                                scrollOffset = adjustedOffset
+                                viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
+                                                                viewportHeight: effectiveHeight,
+                                                                layout: layout,
+                                                                metrics: metrics,
+                                                                today: today,
+                                                                calendar: calendar)
+                            }
                     }
                 )
             }
@@ -56,22 +76,6 @@ struct ThreadCanvasView: View {
 #endif
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
                                                 viewportHeight: clampedHeight,
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
-            }
-            .onPreferenceChange(ThreadCanvasScrollOffsetPreferenceKey.self) { minY in
-                let rawOffset = -minY
-                let adjustedOffset = max(0, rawOffset + topInset)
-                scrollOffset = adjustedOffset
-#if DEBUG
-                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - topInset, 1)
-                Log.app.info("ThreadCanvas scroll minY=\(minY, privacy: .public) topInset=\(topInset, privacy: .public) offset=\(adjustedOffset, privacy: .public) viewport=\(effectiveHeight, privacy: .public)")
-                print("ThreadCanvas scroll minY=\(minY) topInset=\(topInset) offset=\(adjustedOffset) viewport=\(effectiveHeight)")
-#endif
-                viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
-                                                viewportHeight: effectiveHeight,
                                                 layout: layout,
                                                 metrics: metrics,
                                                 today: today,
@@ -427,14 +431,6 @@ private struct ThreadCanvasConnectorColumn: View {
             jwzCount,
             manualCount
         ))
-    }
-}
-
-private struct ThreadCanvasScrollOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 

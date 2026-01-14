@@ -7,10 +7,6 @@ struct ThreadListView: View {
     @ObservedObject var inspectorSettings: InspectorViewSettings
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var navHeight: CGFloat = 96
-    @State private var isShowingBackfillConfirmation = false
-    @State private var backfillStartDate = Date()
-    @State private var backfillEndDate = Date()
-    @State private var backfillLimit: Int = 10
 
     private let navCornerRadius: CGFloat = 18
     private let navHorizontalPadding: CGFloat = 16
@@ -30,17 +26,6 @@ struct ThreadListView: View {
             }
             .onChange(of: settings.interval) { _, _ in
                 viewModel.applyAutoRefreshSettings()
-            }
-            .sheet(isPresented: $isShowingBackfillConfirmation) {
-                BackfillConfirmationSheet(
-                    startDate: $backfillStartDate,
-                    endDate: $backfillEndDate,
-                    limit: $backfillLimit,
-                    intervalDescription: backfillIntervalDescription ?? "",
-                    onConfirm: confirmBackfillWithOverrides,
-                    onCancel: { isShowingBackfillConfirmation = false }
-                )
-                .frame(minWidth: 360)
             }
     }
 
@@ -297,7 +282,7 @@ struct ThreadListView: View {
                             }
                             .disabled(!viewModel.canUngroupSelection)
                             if shouldShowBackfillAction {
-                                Button(action: { presentBackfillConfirmation() }) {
+                                Button(action: { viewModel.backfillVisibleRange() }) {
                                     Label(NSLocalizedString("threadlist.backfill.button",
                                                             comment: "Backfill visible days button"),
                                           systemImage: "tray.and.arrow.down")
@@ -308,7 +293,7 @@ struct ThreadListView: View {
                     } else {
                         HStack(spacing: 12) {
                             if shouldShowBackfillAction {
-                                Button(action: { presentBackfillConfirmation() }) {
+                                Button(action: { viewModel.backfillVisibleRange() }) {
                                     Label(NSLocalizedString("threadlist.backfill.button",
                                                             comment: "Backfill visible days button"),
                                           systemImage: "tray.and.arrow.down")
@@ -346,20 +331,6 @@ struct ThreadListView: View {
 
     private var actionBarMaxWidth: CGFloat? {
         viewModel.shouldShowSelectionActions ? 420 : nil
-    }
-
-    private var backfillIntervalDescription: String? {
-        guard let mergedInterval = mergedVisibleEmptyInterval else { return nil }
-        return Self.backfillIntervalFormatter.string(from: mergedInterval.start,
-                                                     to: mergedInterval.end)
-    }
-
-    private var mergedVisibleEmptyInterval: DateInterval? {
-        guard let first = viewModel.visibleEmptyDayIntervals.min(by: { $0.start < $1.start }),
-              let last = viewModel.visibleEmptyDayIntervals.max(by: { $0.end < $1.end }) else {
-            return nil
-        }
-        return DateInterval(start: first.start, end: last.end)
     }
 
     @ViewBuilder
@@ -407,82 +378,4 @@ private struct NavHeightPreferenceKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }
-}
-
-private struct BackfillConfirmationSheet: View {
-    @Binding var startDate: Date
-    @Binding var endDate: Date
-    @Binding var limit: Int
-    let intervalDescription: String
-    let onConfirm: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("threadlist.backfill.confirm.title",
-                                   comment: "Title for backfill confirmation"))
-                .font(.title3.bold())
-            Text(String.localizedStringWithFormat(
-                NSLocalizedString("threadlist.backfill.confirm.description",
-                                  comment: "Description for backfill confirmation"),
-                intervalDescription
-            ))
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 10) {
-                DatePicker(NSLocalizedString("threadlist.backfill.confirm.start",
-                                             comment: "Backfill start date"),
-                           selection: $startDate,
-                           displayedComponents: [.date])
-                DatePicker(NSLocalizedString("threadlist.backfill.confirm.end",
-                                             comment: "Backfill end date"),
-                           selection: $endDate,
-                           displayedComponents: [.date])
-                Stepper(value: $limit, in: 1...5000, step: 10) {
-                    Text(String.localizedStringWithFormat(
-                        NSLocalizedString("threadlist.backfill.confirm.limit",
-                                          comment: "Backfill limit field label"),
-                        limit))
-                }
-            }
-
-            HStack {
-                Spacer()
-                Button(NSLocalizedString("threadlist.backfill.confirm.cancel",
-                                         comment: "Cancel backfill action"), action: onCancel)
-                Button(NSLocalizedString("threadlist.backfill.confirm.action",
-                                         comment: "Confirm backfill action"), action: onConfirm)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private extension ThreadListView {
-    func presentBackfillConfirmation() {
-        guard let mergedInterval = mergedVisibleEmptyInterval else { return }
-        backfillStartDate = mergedInterval.start
-        backfillEndDate = mergedInterval.end
-        backfillLimit = viewModel.fetchLimit
-        isShowingBackfillConfirmation = true
-    }
-
-    func confirmBackfillWithOverrides() {
-        let adjustedLimit = max(1, backfillLimit)
-        let orderedRange = backfillStartDate <= backfillEndDate
-            ? DateInterval(start: backfillStartDate, end: backfillEndDate)
-            : DateInterval(start: backfillEndDate, end: backfillStartDate)
-        isShowingBackfillConfirmation = false
-        viewModel.backfillVisibleRange(rangeOverride: orderedRange, limitOverride: adjustedLimit)
-    }
-
-    static var backfillIntervalFormatter: DateIntervalFormatter = {
-        let formatter = DateIntervalFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter
-    }()
 }
