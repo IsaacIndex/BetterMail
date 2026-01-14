@@ -322,7 +322,7 @@ struct ThreadListView: View {
     }
 
     private var shouldShowBackfillAction: Bool {
-        !viewModel.visibleRangeHasMessages && !viewModel.visibleEmptyDayIntervals.isEmpty
+        !viewModel.visibleEmptyDayIntervals.isEmpty
     }
 
     private var shouldShowActionBar: Bool {
