@@ -7,6 +7,14 @@
 "threadlist.backfill.status.fetching" = "Backfilling visible days...";
 "threadlist.backfill.status.complete" = "Backfill complete: %d";
 "threadlist.backfill.status.failed" = "Backfill failed: %@";
+"threadlist.backfill.confirm.title" = "Backfill visible days?";
+"threadlist.backfill.confirm.message" = "%@ up to %d messages. Continue?";
+"threadlist.backfill.confirm.description" = "Fetching %@. Adjust the range and limit before continuing.";
+"threadlist.backfill.confirm.start" = "Start date";
+"threadlist.backfill.confirm.end" = "End date";
+"threadlist.backfill.confirm.limit" = "Limit: %d";
+"threadlist.backfill.confirm.action" = "Backfill";
+"threadlist.backfill.confirm.cancel" = "Cancel";
 "threadcanvas.subject.placeholder" = "(No Subject)";
 "threadcanvas.node.accessibility" = "%@, %@, %@";
 "threadcanvas.inspector.title" = "Inspector";

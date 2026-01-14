@@ -541,12 +541,13 @@ final class ThreadCanvasViewModel: ObservableObject {
         expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
     }
 
-    func backfillVisibleRange() {
-        guard !isBackfilling, !visibleEmptyDayIntervals.isEmpty else { return }
+    func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
+        guard !isBackfilling else { return }
+        let ranges = rangeOverride.map { [$0] } ?? visibleEmptyDayIntervals
+        guard !ranges.isEmpty else { return }
         isBackfilling = true
         status = NSLocalizedString("threadlist.backfill.status.fetching", comment: "Status when backfill begins")
-        let ranges = visibleEmptyDayIntervals
-        let limit = fetchLimit
+        let limit = limitOverride ?? fetchLimit
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         Task { [weak self] in
             guard let self else { return }
@@ -1108,4 +1109,3 @@ extension ThreadCanvasViewModel {
         return DateInterval(start: start, end: end)
     }
 }
-
