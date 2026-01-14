@@ -11,11 +11,19 @@ The system SHALL render emails on a canvas where the vertical axis represents da
 - **THEN** each email node is positioned in the day bucket matching its message date and in the column for its thread
 
 ### Requirement: Default Range and Column Order
-The system SHALL default the canvas to the most recent 7 days and SHALL order thread columns by most recent activity.
+The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward. Scroll detection SHALL be driven by GeometryReader updates of the canvas content frame so two-axis scrolling can still trigger paging.
 
 #### Scenario: Default range and ordering
 - **WHEN** the canvas loads
 - **THEN** day bands cover the last 7 days and thread columns are ordered by latest message date
+
+#### Scenario: Cache-only paging
+- **WHEN** the user scrolls near the end of the current day range
+- **THEN** the canvas expands by the next 7-day block using cached messages only
+
+#### Scenario: Two-axis scroll detection
+- **WHEN** the user scrolls the canvas vertically or diagonally
+- **THEN** GeometryReader content-frame updates drive the scroll position used for paging
 
 ### Requirement: Node Content and Selection
 The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. The inspector panel SHALL present a body preview trimmed to 10 lines with an ellipsis when the message body exceeds 10 lines, and SHALL provide an "Open in Mail" button to view the full message in Apple Mail.
@@ -70,4 +78,15 @@ The system SHALL distinguish JWZ-derived thread connectors from manual override 
 #### Scenario: Manual connector styling
 - **WHEN** a connector represents a manual override relationship
 - **THEN** it renders as a dotted line using the manual thread color while JWZ connectors remain solid
+
+### Requirement: Visible-Range Backfill Action
+The system SHALL expose a toolbar action when any visible day band has no cached messages, and SHALL backfill messages for only the currently visible day range on user request.
+
+#### Scenario: Backfill button appears
+- **WHEN** the visible viewport includes at least one day band with no cached messages
+- **THEN** a toolbar backfill action is displayed
+
+#### Scenario: Backfill fetch scope
+- **WHEN** the user triggers the backfill action
+- **THEN** the system fetches messages for only the visible day range and updates the cache before rethreading
 
