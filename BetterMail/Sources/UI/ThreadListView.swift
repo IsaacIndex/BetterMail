@@ -492,8 +492,11 @@ private extension ThreadListView {
         let orderedRange = backfillStartDate <= backfillEndDate
             ? DateInterval(start: backfillStartDate, end: backfillEndDate)
             : DateInterval(start: backfillEndDate, end: backfillStartDate)
+        let calendar = Calendar.current
+        let inclusiveEnd = calendar.date(byAdding: .day, value: 1, to: orderedRange.end) ?? orderedRange.end
+        let inclusiveRange = DateInterval(start: orderedRange.start, end: inclusiveEnd)
         isShowingBackfillConfirmation = false
-        viewModel.backfillVisibleRange(rangeOverride: orderedRange, limitOverride: adjustedLimit)
+        viewModel.backfillVisibleRange(rangeOverride: inclusiveRange, limitOverride: adjustedLimit)
     }
 
     static var backfillIntervalFormatter: DateIntervalFormatter = {
