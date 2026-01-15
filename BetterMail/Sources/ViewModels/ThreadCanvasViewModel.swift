@@ -584,7 +584,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
     var shouldShowSelectionActions: Bool {
-        selectedNodeIDs.count >= 2 || hasManualAttachmentsInSelection
+        selectedNodeIDs.count >= 2 || hasManualGroupMembershipInSelection
     }
 
     var canGroupSelection: Bool {
@@ -609,7 +609,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
     var canUngroupSelection: Bool {
-        hasManualAttachmentsInSelection
+        hasManualGroupMembershipInSelection
     }
 
     func groupSelectedMessages() {
@@ -715,17 +715,29 @@ final class ThreadCanvasViewModel: ObservableObject {
 
     func ungroupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
-        let keys = selectedNodes
-            .filter { manualAttachmentMessageIDs.contains($0.id) }
-            .map(\.message.threadKey)
-        guard !keys.isEmpty else { return }
+        guard !selectedNodes.isEmpty else { return }
+
+        var removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)] = [:]
+        for node in selectedNodes {
+            let messageKey = node.message.threadKey
+            guard let groupID = manualGroupByMessageKey[messageKey] else { continue }
+            if manualAttachmentMessageIDs.contains(node.id) {
+                removalsByGroupID[groupID, default: ([], [])].messageKeys.insert(messageKey)
+            } else {
+                let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? node.id
+                removalsByGroupID[groupID, default: ([], [])].jwzThreadIDs.insert(jwzThreadID)
+            }
+        }
+
+        guard !removalsByGroupID.isEmpty else { return }
+
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await removeManualAttachments(messageKeys: keys)
+                try await removeManualGroupMembership(removalsByGroupID: removalsByGroupID)
                 await MainActor.run { self.scheduleRethread() }
             } catch {
-                Log.app.error("Failed to remove manual thread attachments: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to remove manual thread grouping: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -735,9 +747,9 @@ final class ThreadCanvasViewModel: ObservableObject {
         nextRefreshDate = date
     }
 
-    private var hasManualAttachmentsInSelection: Bool {
-        !manualAttachmentMessageIDs.isEmpty &&
-            selectedNodes(in: roots).contains { manualAttachmentMessageIDs.contains($0.id) }
+    private var hasManualGroupMembershipInSelection: Bool {
+        !manualGroupByMessageKey.isEmpty &&
+            selectedNodes(in: roots).contains { manualGroupByMessageKey[$0.message.threadKey] != nil }
     }
 
     private func selectedNodes(in roots: [ThreadNode]) -> [ThreadNode] {
@@ -788,12 +800,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         return calendar.date(byAdding: .day, value: -(dayCount - 1), to: startOfToday)
     }
 
-    private func removeManualAttachments(messageKeys: [String]) async throws {
-        let groupedKeys = Dictionary(grouping: messageKeys, by: { manualGroupByMessageKey[$0] })
-        for (groupID, keys) in groupedKeys {
-            guard let groupID,
-                  var group = manualGroups[groupID] else { continue }
-            group.manualMessageKeys.subtract(keys)
+    private func removeManualGroupMembership(removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)]) async throws {
+        for (groupID, removals) in removalsByGroupID {
+            guard var group = manualGroups[groupID] else { continue }
+            group.jwzThreadIDs.subtract(removals.jwzThreadIDs)
+            group.manualMessageKeys.subtract(removals.messageKeys)
             if group.manualMessageKeys.isEmpty && group.jwzThreadIDs.isEmpty {
                 try await store.deleteManualThreadGroup(id: groupID)
             } else {
