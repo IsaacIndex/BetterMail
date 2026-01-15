@@ -765,7 +765,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         var targetDayCount = dayWindowCount
         if let visibleRange {
             let highestVisibleDay = visibleRange.upperBound
-            let desiredBlocks = (highestVisibleDay / dayWindowIncrement) + 2
+            let desiredBlocks = (highestVisibleDay / dayWindowIncrement) + 1
             let desiredDayCount = desiredBlocks * dayWindowIncrement
             targetDayCount = max(targetDayCount, desiredDayCount)
         }
