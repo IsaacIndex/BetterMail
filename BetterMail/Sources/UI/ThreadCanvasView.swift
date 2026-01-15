@@ -110,6 +110,7 @@ struct ThreadCanvasView: View {
                 let clamped = clampedZoom(accumulatedZoom * value)
                 zoomScale = clamped
                 accumulatedZoom = clamped
+                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
             }
     }
 
@@ -196,7 +197,7 @@ struct ThreadCanvasView: View {
         if rawFontSize >= ThreadCanvasNodeView.textEllipsisPointSize {
             return nil
         }
-        if rawFontSize >= ThreadCanvasNodeView.textHidePointSize {
+        if rawZoom >= 0.179 {
             return .month
         }
         return .year
@@ -208,6 +209,7 @@ struct ThreadCanvasView: View {
                                   rawZoom: CGFloat,
                                   calendar: Calendar) -> some View {
         if let mode = dayLabelMode(rawZoom: rawZoom) {
+            let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
             let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
             ZStack(alignment: .topLeading) {
                 ForEach(Array(items.dropFirst().enumerated()), id: \.offset) { _, item in
@@ -225,10 +227,15 @@ struct ThreadCanvasView: View {
                         Text(item.label)
                             .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                             .rotationEffect(.degrees(-90))
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .frame(height: item.firstDayHeight, alignment: .topTrailing)
-                            .offset(y: metrics.nodeVerticalSpacing)
+                            .frame(width: max(item.height - legendTopInset, 0),
+                                   alignment: .leading)
+                            .frame(maxWidth: .infinity,
+                                   maxHeight: .infinity,
+                                   alignment: .topLeading)
+                            .offset(y: legendTopInset)
                             .accessibilityAddTraits(.isHeader)
                             .allowsHitTesting(false)
                     }
