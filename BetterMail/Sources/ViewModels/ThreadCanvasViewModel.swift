@@ -943,11 +943,13 @@ extension ThreadCanvasViewModel {
                                         manualAttachmentMessageIDs: manualAttachmentMessageIDs,
                                         jwzThreadMap: jwzThreadMap)
                 let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
+                let folderID = folderMembershipByThreadID[thread.threadID]
                 columns.append(ThreadCanvasColumn(id: thread.threadID,
                                                   title: title,
                                                   xOffset: columnX,
                                                   nodes: nodes,
-                                                  latestDate: thread.latestDate))
+                                                  latestDate: thread.latestDate,
+                                                  folderID: folderID))
                 currentColumnIndex += 1
             }
         }
@@ -1142,16 +1144,20 @@ extension ThreadCanvasViewModel {
             guard !nodes.isEmpty else { continue }
             let minY = nodes.map { $0.frame.minY }.min() ?? 0
             let maxY = nodes.map { $0.frame.maxY }.max() ?? contentHeight
+            let headerInset = metrics.nodeVerticalSpacing * 1.3
+            let paddedMinY = max(0, minY - headerInset)
+            let paddedHeight = (maxY - minY) + metrics.nodeVerticalSpacing * 2 + headerInset
 
             let frame = CGRect(x: minX,
-                               y: minY - metrics.nodeVerticalSpacing,
+                               y: paddedMinY,
                                width: maxX - minX,
-                               height: (maxY - minY) + metrics.nodeVerticalSpacing * 2)
+                               height: paddedHeight)
 
             overlays.append(ThreadCanvasFolderOverlay(id: folder.id,
                                                       title: folder.title,
                                                       color: folder.color,
-                                                      frame: frame))
+                                                      frame: frame,
+                                                      columnIDs: sortedColumns.map(\.id)))
         }
 
         return overlays.sorted { lhs, rhs in
