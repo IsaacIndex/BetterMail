@@ -31,6 +31,7 @@
 "threadcanvas.connectors.accessibility" = "Thread connectors: %d standard, %d manual";
 "threadlist.selection.count" = "%d selected";
 "threadlist.selection.group" = "Group";
+"threadlist.selection.add_folder" = "Add to Folder";
 "threadlist.selection.ungroup" = "Ungroup";
 "settings.inspector.title" = "Inspector View";
 "settings.inspector.snippet_lines" = "Max snippet lines";
