@@ -31,8 +31,12 @@ actor BatchBackfillService {
 
     func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
         let now = Date()
+        if range.start > now {
+            return 0
+        }
+        let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
-        let clampedRange = DateInterval(start: range.start, end: clampedEnd)
+        let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
         return try await client.countMessages(in: clampedRange, mailbox: mailbox)
     }
 
@@ -43,11 +47,20 @@ actor BatchBackfillService {
                      snippetLineLimit: Int,
                      progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult {
         let now = Date()
+        if range.start > now || totalExpected == 0 {
+            progressHandler(BatchBackfillProgress(total: totalExpected,
+                                                  completed: 0,
+                                                  currentBatchSize: max(1, preferredBatchSize),
+                                                  state: .finished,
+                                                  errorMessage: nil))
+            return BatchBackfillResult(total: totalExpected, fetched: 0)
+        }
+        let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
-        var remainingRange = DateInterval(start: range.start, end: clampedEnd)
+        var remainingRange = DateInterval(start: clampedStart, end: clampedEnd)
         var completed = 0
         var batchSize = max(1, preferredBatchSize)
-        let maxBatchSize = max(batchSize, preferredBatchSize * 5)
+        let maxBatchSize = max(batchSize, totalExpected)
         var seenMessageIDs = Set<String>()
 
         while completed < totalExpected {
@@ -69,11 +82,10 @@ actor BatchBackfillService {
                         batchSize = min(maxBatchSize, batchSize + preferredBatchSize)
                     } else {
                         let inclusiveEnd = min(remainingRange.end, oldestDate.addingTimeInterval(1))
-                        let nextEnd = uniqueMessages.isEmpty ? oldestDate.addingTimeInterval(-1) : inclusiveEnd
-                        if nextEnd <= remainingRange.start {
+                        if inclusiveEnd <= remainingRange.start {
                             remainingRange = DateInterval(start: remainingRange.start, end: remainingRange.start)
                         } else {
-                            remainingRange = DateInterval(start: remainingRange.start, end: nextEnd)
+                            remainingRange = DateInterval(start: remainingRange.start, end: inclusiveEnd)
                         }
                     }
                 }
