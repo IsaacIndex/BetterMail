@@ -308,6 +308,11 @@ struct ThreadListView: View {
                                       systemImage: "link")
                             }
                             .disabled(!viewModel.canGroupSelection)
+                            Button(action: { viewModel.addFolderForSelection() }) {
+                                Label(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"),
+                                      systemImage: "folder.badge.plus")
+                            }
+                            .disabled(viewModel.selectedNodeIDs.isEmpty)
                             Button(action: { viewModel.ungroupSelectedMessages() }) {
                                 Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
                                       systemImage: "link.badge.minus")

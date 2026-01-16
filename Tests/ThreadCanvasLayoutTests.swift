@@ -271,4 +271,67 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                                                           threshold: 200)
         XCTAssertFalse(shouldNotExpand)
     }
+
+    func testFolderOrderingKeepsMembersAdjacentAndSortedByFolderLatestDate() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let threadA = EmailMessage(messageID: "a",
+                                   mailboxID: "inbox",
+                                   subject: "A",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: calendar.date(byAdding: .day, value: -3, to: today)!,
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-a")
+        let threadB = EmailMessage(messageID: "b",
+                                   mailboxID: "inbox",
+                                   subject: "B",
+                                   from: "b@example.com",
+                                   to: "me@example.com",
+                                   date: calendar.date(byAdding: .day, value: -1, to: today)!,
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-b")
+        let threadC = EmailMessage(messageID: "c",
+                                   mailboxID: "inbox",
+                                   subject: "C",
+                                   from: "c@example.com",
+                                   to: "me@example.com",
+                                   date: calendar.date(byAdding: .day, value: -2, to: today)!,
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-c")
+
+        let roots = [
+            ThreadNode(message: threadA),
+            ThreadNode(message: threadB),
+            ThreadNode(message: threadC)
+        ]
+
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Folder",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                                  threadIDs: ["thread-a", "thread-b"])
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: [folder])
+
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: roots,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: [folder],
+                                                        folderMembershipByThreadID: membership)
+
+        XCTAssertEqual(layout.columns.count, 3)
+        XCTAssertEqual(layout.columns.prefix(2).map(\.id).sorted(), ["thread-a", "thread-b"])
+        XCTAssertEqual(layout.columns.last?.id, "thread-c")
+    }
 }

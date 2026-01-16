@@ -23,10 +23,12 @@ struct ThreadCanvasView: View {
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     dayBands(layout: layout, metrics: metrics, rawZoom: zoomScale)
+                    folderBackgroundLayer(layout: layout, metrics: metrics)
                     groupLegendLayer(layout: layout, metrics: metrics, rawZoom: zoomScale, calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
                     nodesLayer(layout: layout, metrics: metrics)
+                    folderTitleLayer(layout: layout, metrics: metrics)
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
                 .padding(.top, topInset)
@@ -116,6 +118,57 @@ struct ThreadCanvasView: View {
 
     private func clampedZoom(_ value: CGFloat) -> CGFloat {
         min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
+    }
+
+    @ViewBuilder
+    private func folderBackgroundLayer(layout: ThreadCanvasLayout,
+                                       metrics: ThreadCanvasLayoutMetrics) -> some View {
+        ForEach(layout.folderOverlays) { overlay in
+            RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.4, style: .continuous)
+                .fill(folderColor(overlay.color).opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.4, style: .continuous)
+                        .stroke(folderColor(overlay.color).opacity(0.22), lineWidth: 1)
+                )
+                .frame(width: overlay.frame.width, height: overlay.frame.height, alignment: .topLeading)
+                .offset(x: overlay.frame.minX, y: overlay.frame.minY)
+        }
+    }
+
+    @ViewBuilder
+    private func folderTitleLayer(layout: ThreadCanvasLayout,
+                                  metrics: ThreadCanvasLayoutMetrics) -> some View {
+        ForEach(layout.folderOverlays) { overlay in
+            let titleHeight = 24 * metrics.fontScale
+            let pinnedY = pinnedTitleY(for: overlay.frame, titleHeight: titleHeight)
+            Text(overlay.title.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : overlay.title)
+                .font(.system(size: 12 * metrics.fontScale, weight: .semibold))
+                .foregroundStyle(folderColor(overlay.color).opacity(0.95))
+                .padding(.horizontal, 10 * metrics.fontScale)
+                .padding(.vertical, 6 * metrics.fontScale)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.78))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(folderColor(overlay.color).opacity(0.35), lineWidth: 1)
+                        )
+                )
+                .fixedSize()
+                .position(x: overlay.frame.midX,
+                          y: pinnedY + titleHeight / 2)
+        }
+    }
+
+    private func pinnedTitleY(for frame: CGRect, titleHeight: CGFloat) -> CGFloat {
+        let minY = frame.minY
+        let maxY = frame.maxY - titleHeight
+        let clamped = min(max(scrollOffset, minY), maxY)
+        return clamped
+    }
+
+    private func folderColor(_ color: ThreadFolderColor) -> Color {
+        Color(red: color.red, green: color.green, blue: color.blue, opacity: color.alpha)
     }
 
     @ViewBuilder
