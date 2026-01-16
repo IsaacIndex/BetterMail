@@ -77,6 +77,22 @@ final class ThreadCanvasViewModel: ObservableObject {
                                    jwzThreadMap: updatedResult.jwzThreadMap)
         }
 
+        func performBackfill(ranges: [DateInterval],
+                             limit: Int,
+                             snippetLineLimit: Int) async throws -> Int {
+            Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) limit=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
+            guard !ranges.isEmpty else { return 0 }
+            var totalFetched = 0
+            for range in ranges {
+                let fetched = try await client.fetchMessages(in: range,
+                                                             limit: limit,
+                                                             snippetLineLimit: snippetLineLimit)
+                totalFetched += fetched.count
+                try await store.upsert(messages: fetched)
+            }
+            return totalFetched
+        }
+
         func subjectsByRoot(_ roots: [ThreadNode]) -> [String: [String]] {
             roots.reduce(into: [String: [String]]()) { result, root in
                 result[root.id] = subjects(in: root)
@@ -115,6 +131,11 @@ final class ThreadCanvasViewModel: ObservableObject {
     @Published private(set) var manualAttachmentMessageIDs: Set<String> = []
     @Published private(set) var manualGroups: [String: ManualThreadGroup] = [:]
     @Published private(set) var jwzThreadMap: [String: String] = [:]
+    @Published private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
+    @Published private(set) var visibleDayRange: ClosedRange<Int>?
+    @Published private(set) var visibleEmptyDayIntervals: [DateInterval] = []
+    @Published private(set) var visibleRangeHasMessages = false
+    @Published private(set) var isBackfilling = false
     @Published var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -139,6 +160,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var didStart = false
     private var shouldForceFullReload = false
+    private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
 
     init(settings: AutoRefreshSettings,
          inspectorSettings: InspectorViewSettings,
@@ -481,8 +503,88 @@ final class ThreadCanvasViewModel: ObservableObject {
                           jwzThreadMap: jwzThreadMap)
     }
 
+    var canBackfillVisibleRange: Bool {
+        !visibleEmptyDayIntervals.isEmpty && !isBackfilling
+    }
+
+    func updateVisibleDayRange(scrollOffset: CGFloat,
+                               viewportHeight: CGFloat,
+                               layout: ThreadCanvasLayout,
+                               metrics: ThreadCanvasLayoutMetrics,
+                               today: Date = Date(),
+                               calendar: Calendar = .current) {
+        guard viewportHeight > 0 else { return }
+        let range = Self.visibleDayRange(for: layout,
+                                         scrollOffset: scrollOffset,
+                                         viewportHeight: viewportHeight)
+        if visibleDayRange != range {
+            visibleDayRange = range
+        }
+        let emptyIntervals = Self.emptyDayIntervals(for: layout,
+                                                    visibleRange: range,
+                                                    today: today,
+                                                    calendar: calendar)
+        if visibleEmptyDayIntervals != emptyIntervals {
+            visibleEmptyDayIntervals = emptyIntervals
+        }
+        let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
+        let hasMessages = range.map { range in
+            range.contains { populatedDays.contains($0) }
+        } ?? false
+        if visibleRangeHasMessages != hasMessages {
+            visibleRangeHasMessages = hasMessages
+        }
+        let nearBottom = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
+                                                    viewportHeight: viewportHeight,
+                                                    contentHeight: layout.contentSize.height,
+                                                    threshold: metrics.dayHeight * 2)
+        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
+    }
+
+    func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
+        guard !isBackfilling else { return }
+        let ranges = rangeOverride.map { [$0] } ?? visibleEmptyDayIntervals
+        guard !ranges.isEmpty else { return }
+        isBackfilling = true
+        status = NSLocalizedString("threadlist.backfill.status.fetching", comment: "Status when backfill begins")
+        let limit = limitOverride ?? fetchLimit
+        let snippetLineLimit = inspectorSettings.snippetLineLimit
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let fetchedCount = try await worker.performBackfill(ranges: ranges,
+                                                                    limit: limit,
+                                                                    snippetLineLimit: snippetLineLimit)
+                await MainActor.run {
+                    self.isBackfilling = false
+                    self.status = String.localizedStringWithFormat(
+                        NSLocalizedString("threadlist.backfill.status.complete",
+                                          comment: "Status after backfill completes"),
+                        fetchedCount
+                    )
+                    if fetchedCount > 0 {
+                        self.scheduleRethread()
+                    }
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.isBackfilling = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isBackfilling = false
+                    self.status = String.localizedStringWithFormat(
+                        NSLocalizedString("threadlist.backfill.status.failed",
+                                          comment: "Status when backfill fails"),
+                        error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
     var shouldShowSelectionActions: Bool {
-        selectedNodeIDs.count >= 2 || hasManualAttachmentsInSelection
+        selectedNodeIDs.count >= 2 || hasManualGroupMembershipInSelection
     }
 
     var canGroupSelection: Bool {
@@ -507,7 +609,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
     var canUngroupSelection: Bool {
-        hasManualAttachmentsInSelection
+        hasManualGroupMembershipInSelection
     }
 
     func groupSelectedMessages() {
@@ -613,17 +715,29 @@ final class ThreadCanvasViewModel: ObservableObject {
 
     func ungroupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
-        let keys = selectedNodes
-            .filter { manualAttachmentMessageIDs.contains($0.id) }
-            .map(\.message.threadKey)
-        guard !keys.isEmpty else { return }
+        guard !selectedNodes.isEmpty else { return }
+
+        var removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)] = [:]
+        for node in selectedNodes {
+            let messageKey = node.message.threadKey
+            guard let groupID = manualGroupByMessageKey[messageKey] else { continue }
+            if manualAttachmentMessageIDs.contains(node.id) {
+                removalsByGroupID[groupID, default: ([], [])].messageKeys.insert(messageKey)
+            } else {
+                let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? node.id
+                removalsByGroupID[groupID, default: ([], [])].jwzThreadIDs.insert(jwzThreadID)
+            }
+        }
+
+        guard !removalsByGroupID.isEmpty else { return }
+
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await removeManualAttachments(messageKeys: keys)
+                try await removeManualGroupMembership(removalsByGroupID: removalsByGroupID)
                 await MainActor.run { self.scheduleRethread() }
             } catch {
-                Log.app.error("Failed to remove manual thread attachments: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to remove manual thread grouping: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -633,9 +747,9 @@ final class ThreadCanvasViewModel: ObservableObject {
         nextRefreshDate = date
     }
 
-    private var hasManualAttachmentsInSelection: Bool {
-        !manualAttachmentMessageIDs.isEmpty &&
-            selectedNodes(in: roots).contains { manualAttachmentMessageIDs.contains($0.id) }
+    private var hasManualGroupMembershipInSelection: Bool {
+        !manualGroupByMessageKey.isEmpty &&
+            selectedNodes(in: roots).contains { manualGroupByMessageKey[$0.message.threadKey] != nil }
     }
 
     private func selectedNodes(in roots: [ThreadNode]) -> [ThreadNode] {
@@ -658,20 +772,39 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    private func expandDayWindowIfNeeded(visibleRange: ClosedRange<Int>?,
+                                         forceIncrement: Bool) {
+        var targetDayCount = dayWindowCount
+        if let visibleRange {
+            let highestVisibleDay = visibleRange.upperBound
+            let desiredBlocks = (highestVisibleDay / dayWindowIncrement) + 1
+            let desiredDayCount = desiredBlocks * dayWindowIncrement
+            targetDayCount = max(targetDayCount, desiredDayCount)
+        }
+        if forceIncrement && targetDayCount == dayWindowCount {
+            targetDayCount += dayWindowIncrement
+        }
+        guard targetDayCount > dayWindowCount else { return }
+#if DEBUG
+        Log.app.info("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount, privacy: .public) -> \(targetDayCount, privacy: .public) visibleRange=\(String(describing: visibleRange), privacy: .public) forceIncrement=\(forceIncrement, privacy: .public)")
+        print("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount) -> \(targetDayCount) visibleRange=\(String(describing: visibleRange)) forceIncrement=\(forceIncrement)")
+#endif
+        dayWindowCount = targetDayCount
+        scheduleRethread()
+    }
+
     private func cachedMessageCutoffDate(today: Date = Date(),
                                          calendar: Calendar = .current) -> Date? {
-        let dayCount = ThreadCanvasLayoutMetrics.dayCount
-        guard dayCount > 0 else { return nil }
+        let dayCount = max(dayWindowCount, 1)
         let startOfToday = calendar.startOfDay(for: today)
         return calendar.date(byAdding: .day, value: -(dayCount - 1), to: startOfToday)
     }
 
-    private func removeManualAttachments(messageKeys: [String]) async throws {
-        let groupedKeys = Dictionary(grouping: messageKeys, by: { manualGroupByMessageKey[$0] })
-        for (groupID, keys) in groupedKeys {
-            guard let groupID,
-                  var group = manualGroups[groupID] else { continue }
-            group.manualMessageKeys.subtract(keys)
+    private func removeManualGroupMembership(removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)]) async throws {
+        for (groupID, removals) in removalsByGroupID {
+            guard var group = manualGroups[groupID] else { continue }
+            group.jwzThreadIDs.subtract(removals.jwzThreadIDs)
+            group.manualMessageKeys.subtract(removals.messageKeys)
             if group.manualMessageKeys.isEmpty && group.jwzThreadIDs.isEmpty {
                 try await store.deleteManualThreadGroup(id: groupID)
             } else {
@@ -696,7 +829,7 @@ extension ThreadCanvasViewModel {
                              jwzThreadMap: [String: String] = [:]) -> ThreadCanvasLayout {
         let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
         var currentYOffset = metrics.contentPadding
-        let days = (0..<ThreadCanvasLayoutMetrics.dayCount).map { index -> ThreadCanvasDay in
+        let days = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
             let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
             let label = ThreadCanvasDateHelper.label(for: date)
             let height = dayHeights[index] ?? metrics.dayHeight
@@ -780,7 +913,8 @@ extension ThreadCanvasViewModel {
         for node in allNodes {
             guard let dayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
                                                                  today: today,
-                                                                 calendar: calendar) else {
+                                                                 calendar: calendar,
+                                                                 dayCount: metrics.dayCount) else {
                 continue
             }
             grouped[dayIndex, default: []].append(node)
@@ -864,7 +998,8 @@ extension ThreadCanvasViewModel {
             for node in flatten(node: root) {
                 guard let dayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
                                                                      today: today,
-                                                                     calendar: calendar) else {
+                                                                     calendar: calendar,
+                                                                     dayCount: metrics.dayCount) else {
                     continue
                 }
                 countsByDay[dayIndex, default: 0] += 1
@@ -875,7 +1010,7 @@ extension ThreadCanvasViewModel {
         }
 
         var heights: [Int: CGFloat] = [:]
-        for dayIndex in 0..<ThreadCanvasLayoutMetrics.dayCount {
+        for dayIndex in 0..<metrics.dayCount {
             let count = maxCountsByDay[dayIndex, default: 0]
             heights[dayIndex] = max(metrics.dayHeight, requiredDayHeight(nodeCount: count, metrics: metrics))
         }
@@ -904,5 +1039,84 @@ extension ThreadCanvasViewModel {
             results.append(contentsOf: flatten(node: node))
         }
         return results
+    }
+
+    static func visibleDayRange(for layout: ThreadCanvasLayout,
+                                scrollOffset: CGFloat,
+                                viewportHeight: CGFloat) -> ClosedRange<Int>? {
+        let visibleStart = scrollOffset
+        let visibleEnd = scrollOffset + viewportHeight
+        let visibleDays = layout.days.filter { day in
+            let dayStart = day.yOffset
+            let dayEnd = day.yOffset + day.height
+            return dayEnd >= visibleStart && dayStart <= visibleEnd
+        }
+        guard let minID = visibleDays.map(\.id).min(),
+              let maxID = visibleDays.map(\.id).max() else {
+            return nil
+        }
+        return minID...maxID
+    }
+
+    static func emptyDayIntervals(for layout: ThreadCanvasLayout,
+                                  visibleRange: ClosedRange<Int>?,
+                                  today: Date,
+                                  calendar: Calendar) -> [DateInterval] {
+        guard let visibleRange else { return [] }
+        let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
+        let emptyDayIndices = (visibleRange.lowerBound...visibleRange.upperBound)
+            .filter { !populatedDays.contains($0) }
+        guard !emptyDayIndices.isEmpty else { return [] }
+        let sorted = emptyDayIndices.sorted()
+
+        var intervals: [DateInterval] = []
+        var startIndex = sorted[0]
+        var previousIndex = startIndex
+
+        for index in sorted.dropFirst() {
+            if index == previousIndex + 1 {
+                previousIndex = index
+                continue
+            }
+            if let interval = dayInterval(startIndex: startIndex,
+                                          endIndex: previousIndex,
+                                          today: today,
+                                          calendar: calendar) {
+                intervals.append(interval)
+            }
+            startIndex = index
+            previousIndex = index
+        }
+
+        if let interval = dayInterval(startIndex: startIndex,
+                                      endIndex: previousIndex,
+                                      today: today,
+                                      calendar: calendar) {
+            intervals.append(interval)
+        }
+        return intervals
+    }
+
+    static func shouldExpandDayWindow(scrollOffset: CGFloat,
+                                      viewportHeight: CGFloat,
+                                      contentHeight: CGFloat,
+                                      threshold: CGFloat) -> Bool {
+        let visibleBottom = scrollOffset + viewportHeight
+        return visibleBottom >= contentHeight - threshold
+    }
+
+    private static func dayInterval(startIndex: Int,
+                                    endIndex: Int,
+                                    today: Date,
+                                    calendar: Calendar) -> DateInterval? {
+        guard startIndex <= endIndex else { return nil }
+        let newerDate = ThreadCanvasDateHelper.dayDate(for: startIndex, today: today, calendar: calendar)
+        let olderDate = ThreadCanvasDateHelper.dayDate(for: endIndex, today: today, calendar: calendar)
+        guard let endDate = calendar.date(byAdding: .day, value: 1, to: newerDate) else {
+            return nil
+        }
+        let start = min(olderDate, newerDate)
+        let end = max(endDate, start)
+        return DateInterval(start: start, end: end)
     }
 }

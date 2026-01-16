@@ -3,7 +3,7 @@
 BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox over Apple Events, stores a lightweight cache in Core Data, threads conversations with the JWZ algorithm, and can summarize what matters using Apple Intelligence when it is available on the device. The repository also ships a MailKit helper extension with sample content blocking, compose, and message action hooks that can evolve into automation shortcuts.
 
 ## Highlights
-- Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual limits, and background auto-refresh.
+- Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
@@ -126,6 +126,21 @@ sequenceDiagram
         VM->>VM: isRefreshing = false
     end
 ```
+
+### Infinite Canvas Paging
+- The thread canvas expands in 7-day blocks when you scroll near the bottom of the current range.
+- Scroll detection for paging is driven by `GeometryReader` content-frame updates so two-axis scrolling (horizontal + vertical) still triggers expansion.
+
+### Manual Grouping & Ungrouping
+**User-facing**
+- Multi-select two or more nodes to enable the Group action in the bottom selection bar.
+- Select any node that is already part of a manual group (including grouped JWZ threads or manual attachments) to enable Ungroup.
+- Ungroup removes the selected node(s) from the manual group without altering the underlying JWZ thread relationships.
+
+**Technical**
+- Manual grouping is stored in `ManualThreadGroup` records with two sets: `jwzThreadIDs` (grouped JWZ threads) and `manualMessageKeys` (manual attachments).
+- `JWZThreader.applyManualGroups` overlays these manual groups onto the JWZ thread map so the UI renders combined groups.
+- Ungrouping updates the owning `ManualThreadGroup` by removing selected `jwzThreadIDs` or `manualMessageKeys`; empty groups are deleted from `MessageStore`.
 
 ### JWZ Threading Algorithm
 BetterMail’s threading model follows Jamie Zawinski’s canonical algorithm that many email clients rely on:

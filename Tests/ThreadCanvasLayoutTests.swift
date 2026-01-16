@@ -19,10 +19,23 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         let eightDaysAgo = calendar.date(byAdding: .day, value: -8, to: today)!
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
 
-        XCTAssertEqual(ThreadCanvasDateHelper.dayIndex(for: sameDay, today: today, calendar: calendar), 0)
-        XCTAssertEqual(ThreadCanvasDateHelper.dayIndex(for: threeDaysAgo, today: today, calendar: calendar), 3)
-        XCTAssertNil(ThreadCanvasDateHelper.dayIndex(for: eightDaysAgo, today: today, calendar: calendar))
-        XCTAssertNil(ThreadCanvasDateHelper.dayIndex(for: tomorrow, today: today, calendar: calendar))
+        let dayCount = ThreadCanvasLayoutMetrics.defaultDayCount
+        XCTAssertEqual(ThreadCanvasDateHelper.dayIndex(for: sameDay,
+                                                       today: today,
+                                                       calendar: calendar,
+                                                       dayCount: dayCount), 0)
+        XCTAssertEqual(ThreadCanvasDateHelper.dayIndex(for: threeDaysAgo,
+                                                       today: today,
+                                                       calendar: calendar,
+                                                       dayCount: dayCount), 3)
+        XCTAssertNil(ThreadCanvasDateHelper.dayIndex(for: eightDaysAgo,
+                                                     today: today,
+                                                     calendar: calendar,
+                                                     dayCount: dayCount))
+        XCTAssertNil(ThreadCanvasDateHelper.dayIndex(for: tomorrow,
+                                                     today: today,
+                                                     calendar: calendar,
+                                                     dayCount: dayCount))
     }
 
     func testColumnOrderingUsesLatestThreadActivity() {
@@ -223,5 +236,39 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let jwzIDs = Set(layout.columns.first?.nodes.map(\.jwzThreadID) ?? [])
         XCTAssertEqual(jwzIDs, Set([threadAID, threadBID]))
+    }
+
+    func testVisibleDayRangeFromScrollOffset() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [],
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar)
+
+        let rangeAtTop = ThreadCanvasViewModel.visibleDayRange(for: layout,
+                                                               scrollOffset: 0,
+                                                               viewportHeight: metrics.dayHeight * 2)
+        XCTAssertEqual(rangeAtTop, 0...1)
+
+        let scrolledRange = ThreadCanvasViewModel.visibleDayRange(for: layout,
+                                                                  scrollOffset: metrics.dayHeight * 2,
+                                                                  viewportHeight: metrics.dayHeight * 1.5)
+        XCTAssertEqual(scrolledRange, 1...3)
+    }
+
+    func testPagingThresholdDetection() {
+        let shouldExpand = ThreadCanvasViewModel.shouldExpandDayWindow(scrollOffset: 880,
+                                                                       viewportHeight: 200,
+                                                                       contentHeight: 1100,
+                                                                       threshold: 200)
+        XCTAssertTrue(shouldExpand)
+
+        let shouldNotExpand = ThreadCanvasViewModel.shouldExpandDayWindow(scrollOffset: 200,
+                                                                          viewportHeight: 200,
+                                                                          contentHeight: 1100,
+                                                                          threshold: 200)
+        XCTAssertFalse(shouldNotExpand)
     }
 }

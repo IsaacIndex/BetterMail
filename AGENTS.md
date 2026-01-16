@@ -167,7 +167,7 @@ xcodebuild \
   -project BetterMail.xcodeproj \
   -scheme BetterMail \
   -configuration Debug \
-  -destination 'platform=macOS' \
+  -destination 'platform=macOS,arch=arm64' \
   build
 ```
 ---
