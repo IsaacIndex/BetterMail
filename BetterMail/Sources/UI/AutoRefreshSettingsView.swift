@@ -4,7 +4,16 @@ import SwiftUI
 struct AutoRefreshSettingsView: View {
     @ObservedObject var settings: AutoRefreshSettings
     @ObservedObject var inspectorSettings: InspectorViewSettings
+    @StateObject private var backfillViewModel: BatchBackfillSettingsViewModel
     @State private var isResetConfirmationPresented = false
+
+    init(settings: AutoRefreshSettings, inspectorSettings: InspectorViewSettings) {
+        self.settings = settings
+        self.inspectorSettings = inspectorSettings
+        _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
+            snippetLineLimitProvider: { inspectorSettings.snippetLineLimit }
+        ))
+    }
 
     var body: some View {
         Form {
@@ -61,6 +70,56 @@ struct AutoRefreshSettingsView: View {
                 Text(NSLocalizedString("settings.inspector.title", comment: "Header for inspector settings section"))
             } footer: {
                 Text(NSLocalizedString("settings.inspector.stop_words.footer", comment: "Footer describing stop words behavior"))
+            }
+
+            Section {
+                DatePicker(NSLocalizedString("settings.backfill.start", comment: "Label for backfill start date"),
+                           selection: $backfillViewModel.startDate,
+                           displayedComponents: .date)
+                DatePicker(NSLocalizedString("settings.backfill.end", comment: "Label for backfill end date"),
+                           selection: $backfillViewModel.endDate,
+                           displayedComponents: .date)
+
+                Button {
+                    backfillViewModel.startBackfill()
+                } label: {
+                    HStack {
+                        if backfillViewModel.isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(NSLocalizedString("settings.backfill.button", comment: "Button label to start batch backfill"))
+                    }
+                }
+                .disabled(backfillViewModel.isRunning)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(backfillViewModel.statusText)
+                        .font(.subheadline)
+                    if let total = backfillViewModel.totalCount {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("settings.backfill.progress", comment: "Progress detail for backfill"),
+                            backfillViewModel.completedCount,
+                            total,
+                            backfillViewModel.currentBatchSize
+                        ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    if let error = backfillViewModel.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    if let progressValue = backfillViewModel.progressValue {
+                        ProgressView(value: progressValue)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            } header: {
+                Text(NSLocalizedString("settings.backfill.title", comment: "Header for batch backfill settings section"))
+            } footer: {
+                Text(NSLocalizedString("settings.backfill.footer", comment: "Footer describing batch backfill behavior"))
             }
 
             Section {
