@@ -310,12 +310,12 @@ struct ThreadListView: View {
                             .disabled(!viewModel.canGroupSelection)
                             Button(action: { viewModel.addFolderForSelection() }) {
                                 Label(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"),
-                                      systemImage: "folder.badge.plus")
+                                      systemImage: "folder")
                             }
                             .disabled(viewModel.selectedNodeIDs.isEmpty)
                             Button(action: { viewModel.ungroupSelectedMessages() }) {
                                 Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
-                                      systemImage: "link.badge.minus")
+                                      systemImage: "personalhotspot.slash")
                             }
                             .disabled(!viewModel.canUngroupSelection)
                             if shouldShowBackfillAction {
@@ -367,7 +367,7 @@ struct ThreadListView: View {
     }
 
     private var actionBarMaxWidth: CGFloat? {
-        viewModel.shouldShowSelectionActions ? 420 : nil
+        viewModel.shouldShowSelectionActions ? 600 : nil
     }
 
     private var backfillIntervalDescription: String? {
