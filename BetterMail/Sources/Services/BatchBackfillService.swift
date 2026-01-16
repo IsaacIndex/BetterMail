@@ -47,6 +47,8 @@ actor BatchBackfillService {
         var remainingRange = DateInterval(start: range.start, end: clampedEnd)
         var completed = 0
         var batchSize = max(1, preferredBatchSize)
+        let maxBatchSize = max(batchSize, preferredBatchSize * 5)
+        var seenMessageIDs = Set<String>()
 
         while completed < totalExpected {
             do {
@@ -55,15 +57,24 @@ actor BatchBackfillService {
                                                               mailbox: mailbox,
                                                               snippetLineLimit: snippetLineLimit)
                 guard !messages.isEmpty else { break }
-                try await store.upsert(messages: messages)
-                completed += messages.count
+                let uniqueMessages = messages.filter { seenMessageIDs.insert($0.messageID).inserted }
+                if !uniqueMessages.isEmpty {
+                    try await store.upsert(messages: uniqueMessages)
+                    completed += uniqueMessages.count
+                }
 
                 if let oldestDate = messages.map(\.date).min() {
-                    let nextEnd = oldestDate.addingTimeInterval(-1)
-                    if nextEnd <= remainingRange.start {
-                        remainingRange = DateInterval(start: remainingRange.start, end: remainingRange.start)
+                    let shouldExpandBatch = uniqueMessages.isEmpty && messages.count == batchSize && batchSize < maxBatchSize
+                    if shouldExpandBatch {
+                        batchSize = min(maxBatchSize, batchSize + preferredBatchSize)
                     } else {
-                        remainingRange = DateInterval(start: remainingRange.start, end: nextEnd)
+                        let inclusiveEnd = min(remainingRange.end, oldestDate.addingTimeInterval(1))
+                        let nextEnd = uniqueMessages.isEmpty ? oldestDate.addingTimeInterval(-1) : inclusiveEnd
+                        if nextEnd <= remainingRange.start {
+                            remainingRange = DateInterval(start: remainingRange.start, end: remainingRange.start)
+                        } else {
+                            remainingRange = DateInterval(start: remainingRange.start, end: nextEnd)
+                        }
                     }
                 }
 
@@ -72,7 +83,9 @@ actor BatchBackfillService {
                                                       currentBatchSize: batchSize,
                                                       state: .running,
                                                       errorMessage: nil))
-                batchSize = max(1, preferredBatchSize)
+                if !uniqueMessages.isEmpty {
+                    batchSize = max(1, preferredBatchSize)
+                }
 
                 if remainingRange.duration <= 0 {
                     break
