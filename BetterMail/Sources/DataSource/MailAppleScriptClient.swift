@@ -54,6 +54,26 @@ struct MailAppleScriptClient {
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
+    func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
+        let now = Date()
+        let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
+        let clampedEnd = min(range.end, now)
+        let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
+        Log.appleScript.info("countMessages requested. mailbox=\(mailbox, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        let script = buildCountScript(mailbox: mailbox,
+                                      startWindow: startWindow,
+                                      endWindow: endWindow)
+        Log.appleScript.debug("Generated count AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script)
+        if descriptor.descriptorType != typeSInt32 && descriptor.descriptorType != typeSInt16 {
+            Log.appleScript.error("countMessages failed to decode count; descriptorType=\(descriptor.descriptorType, privacy: .public)")
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+        let countValue = descriptor.int32Value
+        Log.appleScript.info("countMessages result=\(countValue, privacy: .public)")
+        return Int(countValue)
+    }
+
     private func buildScript(mailbox: String, limit: Int, since: Date?) -> String {
         let windowSeconds: Int
         if let since {
@@ -158,6 +178,43 @@ struct MailAppleScriptClient {
           end timeout
         end tell
         return _rows
+        """
+    }
+
+    private func buildCountScript(mailbox: String, startWindow: Int, endWindow: Int) -> String {
+        let escapedPath = MailControl.mailboxReference(path: mailbox, account: nil)
+        return """
+        set _count to 0
+        set _startWindow to \(startWindow)
+        set _endWindow to \(endWindow)
+        set _now to (current date)
+        set _startCutoff to _now
+        set _endCutoff to _now
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
+            set _mbx to \(escapedPath)
+            set _msgs to messages of _mbx
+            if _startWindow > 0 then
+              set _startCutoff to _now - _startWindow
+            end if
+            if _endWindow > 0 then
+              set _endCutoff to _now - _endWindow
+            end if
+            repeat with m in _msgs
+              set _shouldInclude to true
+              if _startWindow > 0 then
+                set _shouldInclude to ((date received of m) is greater than or equal to _startCutoff)
+              end if
+              if _shouldInclude and _endWindow > 0 then
+                set _shouldInclude to ((date received of m) is less than _endCutoff)
+              end if
+              if _shouldInclude then
+                set _count to _count + 1
+              end if
+            end repeat
+          end timeout
+        end tell
+        return _count
         """
     }
 
