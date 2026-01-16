@@ -2,11 +2,12 @@ import Foundation
 import CoreGraphics
 
 struct ThreadCanvasLayoutMetrics {
-    static let dayCount = 7
+    static let defaultDayCount = 7
     static let minZoom: CGFloat = 0.01
     static let maxZoom: CGFloat = 1.6
 
     let zoom: CGFloat
+    let dayCount: Int
 
     var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
@@ -53,7 +54,12 @@ struct ThreadCanvasLayoutMetrics {
     }
 
     var nodeWidth: CGFloat {
-        max(columnWidth - (nodeHorizontalInset * 2), 140)
+        max(columnWidth - (nodeHorizontalInset * 2), 24)
+    }
+
+    init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
+        self.zoom = zoom
+        self.dayCount = max(dayCount, 1)
     }
 }
 
@@ -96,14 +102,24 @@ enum ThreadCanvasDateHelper {
         formatter.timeStyle = .none
         return formatter
     }()
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter
+    }()
+    private static let yearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy"
+        return formatter
+    }()
 
-    static func dayIndex(for date: Date, today: Date, calendar: Calendar) -> Int? {
+    static func dayIndex(for date: Date, today: Date, calendar: Calendar, dayCount: Int) -> Int? {
         let startOfToday = calendar.startOfDay(for: today)
         let startOfDate = calendar.startOfDay(for: date)
         guard let diff = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day else {
             return nil
         }
-        guard diff >= 0, diff < ThreadCanvasLayoutMetrics.dayCount else {
+        guard diff >= 0, diff < dayCount else {
             return nil
         }
         return diff
@@ -115,5 +131,13 @@ enum ThreadCanvasDateHelper {
 
     static func label(for date: Date) -> String {
         dayFormatter.string(from: date)
+    }
+
+    static func monthLabel(for date: Date) -> String {
+        monthFormatter.string(from: date)
+    }
+
+    static func yearLabel(for date: Date) -> String {
+        yearFormatter.string(from: date)
     }
 }
