@@ -169,8 +169,6 @@ struct ThreadCanvasView: View {
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14 * metrics.fontScale)
                 .padding(.vertical, 10 * metrics.fontScale)
                 .frame(width: chrome.frame.width, alignment: .leading)
                 .offset(x: chrome.frame.minX, y: 0)
@@ -549,6 +547,7 @@ private struct FolderColumnHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
     }
