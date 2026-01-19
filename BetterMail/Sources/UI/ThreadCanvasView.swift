@@ -11,6 +11,8 @@ struct ThreadCanvasView: View {
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var scrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var headerHeight: CGFloat = 60
+    private let headerSpacing: CGFloat = 10
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -26,9 +28,7 @@ struct ThreadCanvasView: View {
             let today = Date()
             let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
             let chromeData = folderChromeData(layout: layout, metrics: metrics)
-            let chromeByColumnID = chromeData.reduce(into: [String: FolderChromeData]()) { result, chrome in
-                chrome.columnIDs.forEach { result[$0] = chrome }
-            }
+            let totalTopPadding = topInset + headerHeight + headerSpacing
 
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
@@ -38,18 +38,19 @@ struct ThreadCanvasView: View {
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
                     nodesLayer(layout: layout, metrics: metrics)
-                    folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, topInset: topInset)
+                    folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics)
+                        .offset(y: -(headerHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
-                .padding(.top, topInset)
+                .padding(.top, totalTopPadding)
                 .background(
                     GeometryReader { contentProxy in
                         let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
                         Color.clear
                             .onChange(of: minY) { _, newValue in
                                 let rawOffset = -newValue
-                                let adjustedOffset = max(0, rawOffset + topInset)
-                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - topInset, 1)
+                                let adjustedOffset = max(0, rawOffset + totalTopPadding)
+                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
                                 scrollOffset = adjustedOffset
                                 viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
                                                                 viewportHeight: effectiveHeight,
@@ -71,8 +72,9 @@ struct ThreadCanvasView: View {
                                            value: sizeProxy.size.height)
                 }
             )
+            .onPreferenceChange(FolderHeaderHeightPreferenceKey.self) { headerHeight = $0 }
             .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
-                let effectiveHeight = max(height, proxy.size.height) - topInset
+                let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
@@ -84,7 +86,7 @@ struct ThreadCanvasView: View {
             }
             .onChange(of: layout.contentSize.height) { _ in
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - topInset, 1),
+                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                 layout: layout,
                                                 metrics: metrics,
                                                 today: today,
@@ -93,7 +95,7 @@ struct ThreadCanvasView: View {
             .onAppear {
                 accumulatedZoom = zoomScale
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - topInset, 1),
+                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                 layout: layout,
                                                 metrics: metrics,
                                                 today: today,
@@ -159,23 +161,29 @@ struct ThreadCanvasView: View {
     }
 
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
-                                         metrics: ThreadCanvasLayoutMetrics,
-                                         topInset: CGFloat) -> some View {
-        ForEach(chromeData) { chrome in
-            FolderColumnHeader(title: chrome.title,
-                               unreadCount: chrome.unreadCount,
-                               updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
-                               accentColor: accentColor(for: chrome.color),
-                               reduceTransparency: reduceTransparency)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14 * metrics.fontScale)
-            .padding(.vertical, 10 * metrics.fontScale)
-            .frame(width: chrome.frame.width, alignment: .leading)
-            .offset(x: chrome.frame.minX,
-                    y: topInset + 4)
-            .allowsHitTesting(false)
-            .accessibilityElement(children: .combine)
+                                         metrics: ThreadCanvasLayoutMetrics) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(chromeData) { chrome in
+                FolderColumnHeader(title: chrome.title,
+                                   unreadCount: chrome.unreadCount,
+                                   updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
+                                   accentColor: accentColor(for: chrome.color),
+                                   reduceTransparency: reduceTransparency)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14 * metrics.fontScale)
+                .padding(.vertical, 10 * metrics.fontScale)
+                .frame(width: chrome.frame.width, alignment: .leading)
+                .offset(x: chrome.frame.minX, y: 0)
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .combine)
+            }
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: FolderHeaderHeightPreferenceKey.self,
+                                       value: proxy.size.height)
+            }
+        )
     }
 
     private func folderColor(_ color: ThreadFolderColor) -> Color {
@@ -411,6 +419,14 @@ struct ThreadCanvasView: View {
         }
         flushGroup()
         return items
+    }
+}
+
+private struct FolderHeaderHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
