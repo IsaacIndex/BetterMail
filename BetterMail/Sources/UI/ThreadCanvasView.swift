@@ -33,7 +33,9 @@ struct ThreadCanvasView: View {
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     dayBands(layout: layout, metrics: metrics, rawZoom: zoomScale)
-                    folderColumnBackgroundLayer(chromeData: chromeData, metrics: metrics)
+                    folderColumnBackgroundLayer(chromeData: chromeData,
+                                                 metrics: metrics,
+                                                 topExtension: headerHeight + headerSpacing)
                     groupLegendLayer(layout: layout, metrics: metrics, rawZoom: zoomScale, calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
@@ -149,13 +151,21 @@ struct ThreadCanvasView: View {
 
     @ViewBuilder
     private func folderColumnBackgroundLayer(chromeData: [FolderChromeData],
-                                             metrics: ThreadCanvasLayoutMetrics) -> some View {
+                                             metrics: ThreadCanvasLayoutMetrics,
+                                             topExtension: CGFloat) -> some View {
         ForEach(chromeData) { chrome in
+            // Extend the background upward so it visually connects with the folder header.
+            // Height also grows upward to cover the space between header and first day band.
+            let extendedMinY = -(topExtension)
+            let extendedHeight = chrome.frame.height + chrome.frame.minY + topExtension
             FolderColumnBackground(accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6)
-                .frame(width: chrome.frame.width, height: chrome.frame.height, alignment: .topLeading)
-                .offset(x: chrome.frame.minX, y: chrome.frame.minY)
+                .frame(width: chrome.frame.width,
+                       height: extendedHeight,
+                       alignment: .topLeading)
+                .offset(x: chrome.frame.minX,
+                        y: extendedMinY)
                 .allowsHitTesting(false)
         }
     }
@@ -508,13 +518,26 @@ private struct FolderColumnHeader: View {
     let reduceTransparency: Bool
 
     private var headerBackground: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(reduceTransparency ? Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9)
-                                     : Color.black.opacity(0.18))
+        let gradient = LinearGradient(colors: [
+            accentColor.opacity(reduceTransparency ? 0.26 : 0.36),
+            accentColor.opacity(reduceTransparency ? 0.22 : 0.30)
+        ], startPoint: .topLeading, endPoint: .bottomTrailing)
+
+        let backgroundStyle: AnyShapeStyle = reduceTransparency
+            ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+            : AnyShapeStyle(gradient)
+
+        return RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(backgroundStyle)
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(Color.white.opacity(0.22))
             )
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(accentColor.opacity(reduceTransparency ? 0.45 : 0.6))
+                    .frame(height: 1)
+            }
     }
 
     private var badgeBackground: some View {
