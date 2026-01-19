@@ -40,7 +40,7 @@ struct ThreadCanvasView: View {
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
                     nodesLayer(layout: layout, metrics: metrics)
-                    folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics)
+                    folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, rawZoom: zoomScale)
                         .offset(y: -(headerHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
@@ -171,14 +171,16 @@ struct ThreadCanvasView: View {
     }
 
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
-                                         metrics: ThreadCanvasLayoutMetrics) -> some View {
+                                         metrics: ThreadCanvasLayoutMetrics,
+                                         rawZoom: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(chromeData) { chrome in
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
                                    accentColor: accentColor(for: chrome.color),
-                                   reduceTransparency: reduceTransparency)
+                                   reduceTransparency: reduceTransparency,
+                                   rawZoom: rawZoom)
                 .padding(.vertical, 10 * metrics.fontScale)
                 .frame(width: chrome.frame.width, alignment: .leading)
                 .offset(x: chrome.frame.minX, y: 0)
@@ -516,6 +518,12 @@ private struct FolderColumnHeader: View {
     let updatedText: String?
     let accentColor: Color
     let reduceTransparency: Bool
+    let rawZoom: CGFloat
+
+    private var sizeScale: CGFloat {
+        // Track zoom more closely than the clamped fontScale to keep the header proportional.
+        rawZoom.clamped(to: 0.6...1.25)
+    }
 
     private var headerBackground: some View {
         let gradient = LinearGradient(colors: [
@@ -547,32 +555,85 @@ private struct FolderColumnHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 10) {
-                Text(title.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .lineLimit(1)
-                    .foregroundStyle(Color.white)
-                Spacer(minLength: 8)
-                Text("Unread \(unreadCount)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(badgeBackground)
-                    .foregroundStyle(Color.white.opacity(0.95))
-                    .contentShape(Capsule())
+        VStack(alignment: .leading, spacing: 6 * sizeScale) {
+            HStack(alignment: .center, spacing: 10 * sizeScale) {
+                textLine(title.isEmpty
+                         ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+                         : title,
+                         baseSize: 16,
+                         weight: .semibold,
+                         color: Color.white)
+                Spacer(minLength: 8 * sizeScale)
+                badge(unread: unreadCount)
             }
             if let updatedText {
-                Text("Updated \(updatedText)")
-                    .font(.caption)
-                    .foregroundStyle(Color.white.opacity(0.78))
+                textLine("Updated \(updatedText)",
+                         baseSize: 12,
+                         weight: .regular,
+                         color: Color.white.opacity(0.78))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12 * sizeScale)
+        .padding(.vertical, 10 * sizeScale)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
+    }
+
+    @ViewBuilder
+    private func textLine(_ text: String,
+                          baseSize: CGFloat,
+                          weight: Font.Weight,
+                          color: Color) -> some View {
+        switch textVisibility(for: baseSize) {
+        case .normal:
+            Text(text)
+                .font(.system(size: baseSize * sizeScale, weight: weight))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        case .ellipsis:
+            Text("…")
+                .font(.system(size: baseSize * sizeScale, weight: weight))
+                .foregroundStyle(color)
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func badge(unread: Int) -> some View {
+        switch textVisibility(for: 12) {
+        case .hidden:
+            EmptyView()
+        case .ellipsis:
+            Text("•")
+                .font(.system(size: 12 * sizeScale, weight: .semibold))
+                .padding(.horizontal, 8 * sizeScale)
+                .padding(.vertical, 5 * sizeScale)
+                .background(badgeBackground)
+                .foregroundStyle(Color.white.opacity(0.95))
+                .contentShape(Capsule())
+        case .normal:
+            Text("Unread \(unread)")
+                .font(.system(size: 12 * sizeScale, weight: .semibold))
+                .padding(.horizontal, 10 * sizeScale)
+                .padding(.vertical, 6 * sizeScale)
+                .background(badgeBackground)
+                .foregroundStyle(Color.white.opacity(0.95))
+                .contentShape(Capsule())
+        }
+    }
+
+    private func textVisibility(for baseSize: CGFloat) -> TextVisibility {
+        let rawSize = baseSize * rawZoom
+        if rawSize < ThreadCanvasNodeView.textHidePointSize {
+            return .hidden
+        }
+        if rawSize < ThreadCanvasNodeView.textEllipsisPointSize {
+            return .ellipsis
+        }
+        return .normal
     }
 }
 
