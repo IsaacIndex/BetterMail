@@ -738,23 +738,26 @@ private struct FolderColumnHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6 * sizeScale) {
+        VStack(alignment: .leading, spacing: 6 * sizeScale, ) {
+            textLine(title.isEmpty
+                     ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+                     : title,
+                     baseSize: 14,
+                     weight: .semibold,
+                     color: Color.white,
+                     allowWrap: true)
+//            Spacer(minLength: 8 * sizeScale)
             HStack(alignment: .center, spacing: 10 * sizeScale) {
-                textLine(title.isEmpty
-                         ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
-                         : title,
-                         baseSize: 16,
-                         weight: .semibold,
-                         color: Color.white)
-                Spacer(minLength: 8 * sizeScale)
+                if let updatedText {
+                    textLine("Updated \(updatedText)",
+                             baseSize: 12,
+                             weight: .regular,
+                             color: Color.white.opacity(0.78))
+                }
+                Spacer()
                 badge(unread: unreadCount)
             }
-            if let updatedText {
-                textLine("Updated \(updatedText)",
-                         baseSize: 12,
-                         weight: .regular,
-                         color: Color.white.opacity(0.78))
-            }
+            
         }
         .padding(.horizontal, 12 * sizeScale)
         .padding(.vertical, 10 * sizeScale)
@@ -767,13 +770,16 @@ private struct FolderColumnHeader: View {
     private func textLine(_ text: String,
                           baseSize: CGFloat,
                           weight: Font.Weight,
-                          color: Color) -> some View {
+                          color: Color,
+                          allowWrap: Bool = false) -> some View {
         switch textVisibility(for: baseSize) {
         case .normal:
             Text(text)
                 .font(.system(size: baseSize * sizeScale, weight: weight))
                 .foregroundStyle(color)
-                .lineLimit(1)
+                .lineLimit(allowWrap ? 3 : 1)
+                .fixedSize(horizontal: false, vertical: allowWrap)
+                .multilineTextAlignment(.leading)
                 .truncationMode(.tail)
         case .ellipsis:
             Text("…")
