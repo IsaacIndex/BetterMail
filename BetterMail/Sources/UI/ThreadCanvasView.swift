@@ -17,7 +17,8 @@ struct ThreadCanvasView: View {
     @State private var dragState: ThreadCanvasDragState?
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
-    private let headerSpacing: CGFloat = 10
+    private let headerSpacing: CGFloat = 0
+    private let headerCardHeight: CGFloat = 104
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -226,8 +227,9 @@ struct ThreadCanvasView: View {
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
-                                   rawZoom: rawZoom)
-                .padding(.vertical, 10 * metrics.fontScale)
+                                   rawZoom: rawZoom,
+                                   cornerRadius: metrics.nodeCornerRadius * 1.6,
+                                   fixedHeight: headerCardHeight)
                 .frame(width: chrome.frame.width, alignment: .leading)
                 .offset(x: chrome.frame.minX, y: 0)
                 .allowsHitTesting(false)
@@ -702,6 +704,8 @@ private struct FolderColumnHeader: View {
     let accentColor: Color
     let reduceTransparency: Bool
     let rawZoom: CGFloat
+    let cornerRadius: CGFloat
+    let fixedHeight: CGFloat
 
     private var sizeScale: CGFloat {
         // Track zoom more closely than the clamped fontScale to keep the header proportional.
@@ -718,10 +722,10 @@ private struct FolderColumnHeader: View {
             ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
             : AnyShapeStyle(gradient)
 
-        return RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(backgroundStyle)
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.22))
             )
             .overlay(alignment: .bottom) {
@@ -761,6 +765,7 @@ private struct FolderColumnHeader: View {
         }
         .padding(.horizontal, 12 * sizeScale)
         .padding(.vertical, 10 * sizeScale)
+        .frame(height: fixedHeight * sizeScale, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
