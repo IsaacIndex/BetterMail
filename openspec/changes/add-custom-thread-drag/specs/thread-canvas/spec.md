@@ -12,6 +12,10 @@ The system SHALL provide a custom drag interaction for single-thread drags on th
 - **THEN** the thread is removed from that folder
 - **AND** the preview dismisses cleanly at drop end
 
+#### Scenario: Drag manually attached node
+- **WHEN** the user drags a node that is manually attached to a thread
+- **THEN** the custom drag uses the thread for that node and supports the same folder drop outcomes
+
 #### Scenario: Drag cancel safety
 - **WHEN** the user cancels the drag (e.g., Escape or leaving the window)
 - **THEN** the custom preview disappears and no move/remove occurs
