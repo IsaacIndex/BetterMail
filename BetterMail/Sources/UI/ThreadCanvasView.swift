@@ -12,6 +12,8 @@ struct ThreadCanvasView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 60
     @State private var activeDropFolderID: String?
+    @State private var dropHighlightPulseToken: Int = 0
+    @State private var isDropHighlightPulsing: Bool = false
     @State private var dragState: ThreadCanvasDragState?
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
@@ -46,6 +48,9 @@ struct ThreadCanvasView: View {
                                metrics: metrics,
                                chromeData: chromeData,
                                folderHeaderExtension: headerHeight + headerSpacing)
+                    folderDropHighlightLayer(chromeData: chromeData,
+                                             metrics: metrics,
+                                             topExtension: headerHeight + headerSpacing)
                     dragPreviewLayer()
                     folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, rawZoom: zoomScale)
                         .offset(y: -(headerHeight + headerSpacing))
@@ -101,6 +106,15 @@ struct ThreadCanvasView: View {
                                                 metrics: metrics,
                                                 today: today,
                                                 calendar: calendar)
+            }
+            .onChange(of: activeDropFolderID) { oldValue, newValue in
+                guard newValue != nil else {
+                    isDropHighlightPulsing = false
+                    return
+                }
+                if newValue != oldValue {
+                    startDropHighlightPulse()
+                }
             }
             .onAppear {
                 accumulatedZoom = zoomScale
@@ -182,15 +196,24 @@ struct ThreadCanvasView: View {
                        alignment: .topLeading)
                 .offset(x: chrome.frame.minX,
                         y: extendedMinY)
-                .overlay(alignment: .topLeading) {
-                    if activeDropFolderID == chrome.id {
-                        RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
-                            .stroke(accentColor(for: chrome.color).opacity(0.9), lineWidth: 3)
-                            .padding(2)
-                            .shadow(color: accentColor(for: chrome.color).opacity(0.45), radius: 8)
-                    }
-                }
         }
+    }
+
+    @ViewBuilder
+    private func folderDropHighlightLayer(chromeData: [FolderChromeData],
+                                          metrics: ThreadCanvasLayoutMetrics,
+                                          topExtension: CGFloat) -> some View {
+        ForEach(chromeData) { chrome in
+            if activeDropFolderID == chrome.id {
+                let dropFrame = folderDropFrame(for: chrome, folderHeaderExtension: topExtension)
+                RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
+                    .stroke(accentColor(for: chrome.color).opacity(isDropHighlightPulsing ? 1.0 : 0.85),
+                            lineWidth: isDropHighlightPulsing ? 4 : 3)
+                    .frame(width: dropFrame.width, height: dropFrame.height, alignment: .topLeading)
+                    .offset(x: dropFrame.minX, y: dropFrame.minY)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
@@ -380,6 +403,20 @@ struct ThreadCanvasView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             dragState = nil
+        }
+    }
+
+    private func startDropHighlightPulse() {
+        dropHighlightPulseToken += 1
+        let token = dropHighlightPulseToken
+        withAnimation(.easeOut(duration: 0.12)) {
+            isDropHighlightPulsing = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            guard token == dropHighlightPulseToken else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                isDropHighlightPulsing = false
+            }
         }
     }
 
