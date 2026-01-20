@@ -11,11 +11,15 @@ The system SHALL render emails on a canvas where the vertical axis represents da
 - **THEN** each email node is positioned in the day bucket matching its message date and in the column for its thread
 
 ### Requirement: Default Range and Column Order
-The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward. Scroll detection SHALL be driven by GeometryReader updates of the canvas content frame so two-axis scrolling can still trigger paging.
+The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward. Scroll detection SHALL be driven by GeometryReader updates of the canvas content frame so two-axis scrolling can still trigger paging. When threads belong to a folder, the system SHALL order the folder as a unit by the folder's most recent activity and SHALL keep member threads adjacent horizontally.
 
 #### Scenario: Default range and ordering
 - **WHEN** the canvas loads
-- **THEN** day bands cover the last 7 days and thread columns are ordered by latest message date
+- **THEN** day bands cover the last 7 days and thread columns are ordered by latest message date, with foldered threads ordered by their folder's latest date
+
+#### Scenario: Folder adjacency
+- **WHEN** multiple threads belong to the same folder
+- **THEN** those threads are laid out in adjacent horizontal columns
 
 #### Scenario: Cache-only paging
 - **WHEN** the user scrolls near the end of the current day range
@@ -66,11 +70,11 @@ The system SHALL expose nodes as accessibility elements and day bands as accessi
 - **THEN** users can navigate day headers and hear each node's sender, subject, and time
 
 ### Requirement: Manual Thread Grouping Controls
-The system SHALL support multi-select with Cmd+click and SHALL present a bottom action bar when two or more nodes are selected, offering actions to group into a target thread or ungroup manual overrides.
+The system SHALL support multi-select with Cmd+click and SHALL present a bottom action bar when one or more nodes are selected, offering actions to group into a target thread, add to folder, or ungroup manual overrides.
 
 #### Scenario: Multi-select action bar
-- **WHEN** the user Cmd+clicks to select two or more nodes
-- **THEN** a bottom action bar appears with "Group" and "Ungroup" actions, and the last clicked node is treated as the target thread
+- **WHEN** the user Cmd+clicks to select one or more nodes
+- **THEN** a bottom action bar appears with "Group", "Add to Folder", and "Ungroup" actions, and the last clicked node is treated as the target thread
 
 ### Requirement: Thread Source Visualization
 The system SHALL distinguish JWZ-derived thread connectors from manual override connectors using distinct colors, with JWZ connectors rendered as solid lines and manual override connectors rendered as dotted lines.
@@ -89,4 +93,37 @@ The system SHALL expose a toolbar action when any visible day band has no cached
 #### Scenario: Backfill fetch scope
 - **WHEN** the user triggers the backfill action
 - **THEN** the system fetches messages for only the visible day range and updates the cache before rethreading
+
+### Requirement: Custom Thread Drag (Canvas)
+The system SHALL provide a custom drag interaction for single-thread drags on the thread canvas using DragGesture (not system drag), rendering a floating preview that follows the pointer without the system lift animation.
+
+#### Scenario: Drag to folder column
+- **WHEN** the user starts dragging a thread node and drops it onto a folder column
+- **THEN** that thread is moved into the target folder
+- **AND** the custom preview follows the pointer for the duration of the drag
+
+#### Scenario: Drag out of folder to canvas
+- **WHEN** the user drags a thread node currently in a folder and drops it on empty canvas area
+- **THEN** the thread is removed from that folder
+- **AND** the preview dismisses cleanly at drop end
+
+#### Scenario: Drag manually attached node
+- **WHEN** the user drags a node that is manually attached to a thread
+- **THEN** the custom drag uses the thread for that node and supports the same folder drop outcomes
+
+#### Scenario: Drag cancel safety
+- **WHEN** the user cancels the drag (e.g., Escape or leaving the window)
+- **THEN** the custom preview disappears and no move/remove occurs
+
+### Requirement: Folder Drop Target Highlight
+The system SHALL visually highlight a folder column while a thread drag is inside that folder's drop zone so users can confirm the drop target before releasing, including a brief entry pulse animation.
+
+#### Scenario: Highlight while hovering folder area
+- **WHEN** the user drags a thread node into the colored background area of a folder column (including its extended header zone)
+- **THEN** a distinct border appears on top of that folder's background for as long as the pointer remains inside, with a brief pulse animation on entry
+- **AND** the highlight clears immediately when the pointer leaves or the drag cancels/ends elsewhere
+
+#### Scenario: Single active highlight
+- **WHEN** multiple folder columns are visible
+- **THEN** only the folder whose drop frame currently contains the drag pointer shows the highlight
 
