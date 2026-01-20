@@ -334,4 +334,37 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(layout.columns.prefix(2).map(\.id).sorted(), ["thread-a", "thread-b"])
         XCTAssertEqual(layout.columns.last?.id, "thread-c")
     }
+
+    func testApplyMoveTransfersMembershipAndKeepsMapUpdated() {
+        let folderA = ThreadFolder(id: "folder-a",
+                                   title: "A",
+                                   color: ThreadFolderColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1),
+                                   threadIDs: ["thread-1"])
+        let folderB = ThreadFolder(id: "folder-b",
+                                   title: "B",
+                                   color: ThreadFolderColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1),
+                                   threadIDs: ["thread-2"])
+
+        let update = ThreadCanvasViewModel.applyMove(threadID: "thread-1",
+                                                     toFolderID: "folder-b",
+                                                     folders: [folderA, folderB])
+
+        XCTAssertEqual(update?.folders.first(where: { $0.id == "folder-a" })?.threadIDs.contains("thread-1"), false)
+        XCTAssertEqual(update?.folders.first(where: { $0.id == "folder-b" })?.threadIDs.contains("thread-1"), true)
+        XCTAssertEqual(update?.membership["thread-1"], "folder-b")
+    }
+
+    func testApplyRemovalDeletesEmptyFolder() {
+        let folder = ThreadFolder(id: "folder-a",
+                                  title: "A",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1),
+                                  threadIDs: ["thread-1"])
+
+        let update = ThreadCanvasViewModel.applyRemoval(threadID: "thread-1",
+                                                        folders: [folder])
+
+        XCTAssertEqual(update?.remainingFolders.isEmpty, true)
+        XCTAssertEqual(update?.deletedFolderIDs, ["folder-a"])
+        XCTAssertNil(update?.membership["thread-1"])
+    }
 }

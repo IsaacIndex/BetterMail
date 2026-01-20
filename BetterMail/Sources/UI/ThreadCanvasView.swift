@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import os
 
 struct ThreadCanvasView: View {
@@ -12,6 +13,7 @@ struct ThreadCanvasView: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 60
+    @State private var activeDropFolderID: String?
     private let headerSpacing: CGFloat = 10
 
     private let calendar = Calendar.current
@@ -44,6 +46,14 @@ struct ThreadCanvasView: View {
                         .offset(y: -(headerHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
+                // Dropping onto non-folder canvas removes folder membership.
+                .onDrop(of: [.plainText], isTargeted: .constant(false)) { providers in
+                    loadThreadID(from: providers) { threadID in
+                        viewModel.removeThreadFromFolder(threadID: threadID)
+                        activeDropFolderID = nil
+                    }
+                    return true
+                }
                 .padding(.top, totalTopPadding)
                 .background(
                     GeometryReader { contentProxy in
@@ -126,7 +136,7 @@ struct ThreadCanvasView: View {
                 let clamped = clampedZoom(accumulatedZoom * value)
                 zoomScale = clamped
                 accumulatedZoom = clamped
-                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
+//                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
             }
     }
 
@@ -166,7 +176,31 @@ struct ThreadCanvasView: View {
                        alignment: .topLeading)
                 .offset(x: chrome.frame.minX,
                         y: extendedMinY)
-                .allowsHitTesting(false)
+                .overlay(alignment: .topLeading) {
+                    // Invisible hit target for drag-over highlighting and drops.
+                    Color.clear
+                        .frame(width: chrome.frame.width, height: extendedHeight)
+                        .contentShape(Rectangle())
+                        .onDrop(of: [.plainText],
+                                isTargeted: Binding(get: {
+                                    activeDropFolderID == chrome.id
+                                }, set: { isTargeted in
+                                    activeDropFolderID = isTargeted ? chrome.id : nil
+                                })) { providers in
+                            loadThreadID(from: providers) { threadID in
+                                viewModel.moveThread(threadID: threadID, toFolderID: chrome.id)
+                            }
+                            return true
+                        }
+                }
+                .overlay(alignment: .topLeading) {
+                    if activeDropFolderID == chrome.id {
+                        RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
+                            .stroke(accentColor(for: chrome.color).opacity(0.9), lineWidth: 3)
+                            .padding(2)
+                            .shadow(color: accentColor(for: chrome.color).opacity(0.45), radius: 8)
+                    }
+                }
         }
     }
 
@@ -254,11 +288,36 @@ struct ThreadCanvasView: View {
                                      rawZoom: zoomScale)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
+                    .draggable(node.threadID, preview: {
+                        ThreadDragPreview(subject: latestSubject(in: column) ?? column.title,
+                                          count: column.nodes.count)
+                    })
                     .onTapGesture {
                         viewModel.selectNode(id: node.id, additive: isCommandClick())
                     }
             }
         }
+    }
+
+    // MARK: - Drag helpers
+
+    @discardableResult
+    private func loadThreadID(from providers: [NSItemProvider], handler: @escaping (String) -> Void) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }) else {
+            return false
+        }
+        provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
+            if let data = item as? Data, let threadID = String(data: data, encoding: .utf8) {
+                DispatchQueue.main.async { handler(threadID) }
+            } else if let threadID = item as? String {
+                DispatchQueue.main.async { handler(threadID) }
+            }
+        }
+        return true
+    }
+
+    private func latestSubject(in column: ThreadCanvasColumn) -> String? {
+        column.nodes.max(by: { $0.message.date < $1.message.date })?.message.subject
     }
 
     private func isColumnSelected(_ column: ThreadCanvasColumn) -> Bool {
@@ -326,8 +385,6 @@ struct ThreadCanvasView: View {
                                 unreadCount: unread,
                                 updated: latest)
     }
-
-
     @ViewBuilder
     private func groupLegendLayer(layout: ThreadCanvasLayout,
                                   metrics: ThreadCanvasLayoutMetrics,
@@ -995,6 +1052,30 @@ private struct ThreadCanvasNodeView: View {
             return .ellipsis
         }
         return .normal
+    }
+}
+
+// MARK: - Drag preview
+
+private struct ThreadDragPreview: View {
+    let subject: String
+    let count: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder",
+                                                     comment: "Placeholder subject when missing") : subject)
+                .font(.headline)
+            Text("\(count) message\(count == 1 ? "" : "s")")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(radius: 6)
+        )
     }
 }
 
