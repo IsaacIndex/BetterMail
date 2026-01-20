@@ -495,6 +495,43 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    func moveThread(threadID: String, toFolderID folderID: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let updated = Self.applyMove(threadID: threadID,
+                                               toFolderID: folderID,
+                                               folders: threadFolders) else { return }
+            do {
+                try await store.upsertThreadFolders(updated.folders)
+                await MainActor.run {
+                    self.threadFolders = updated.folders
+                    self.folderMembershipByThreadID = updated.membership
+                }
+            } catch {
+                Log.app.error("Failed to move thread into folder: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    func removeThreadFromFolder(threadID: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let updated = Self.applyRemoval(threadID: threadID, folders: threadFolders) else { return }
+            do {
+                try await store.upsertThreadFolders(updated.remainingFolders)
+                if !updated.deletedFolderIDs.isEmpty {
+                    try await store.deleteThreadFolders(ids: Array(updated.deletedFolderIDs))
+                }
+                await MainActor.run {
+                    self.threadFolders = updated.remainingFolders
+                    self.folderMembershipByThreadID = updated.membership
+                }
+            } catch {
+                Log.app.error("Failed to remove thread from folder: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     var selectedNode: ThreadNode? {
         Self.node(matching: selectedNodeID, in: roots)
     }
@@ -1182,6 +1219,55 @@ extension ThreadCanvasViewModel {
         folders.reduce(into: [String: String]()) { result, folder in
             folder.threadIDs.forEach { result[$0] = folder.id }
         }
+    }
+
+    struct FolderUpdate {
+        let folders: [ThreadFolder]
+        let membership: [String: String]
+    }
+
+    struct FolderRemovalUpdate {
+        let remainingFolders: [ThreadFolder]
+        let deletedFolderIDs: Set<String>
+        let membership: [String: String]
+    }
+
+    static func applyMove(threadID: String,
+                          toFolderID folderID: String,
+                          folders: [ThreadFolder]) -> FolderUpdate? {
+        guard let targetIndex = folders.firstIndex(where: { $0.id == folderID }) else { return nil }
+        var updatedFolders = folders
+
+        // Remove the thread from any existing folder memberships first.
+        for index in updatedFolders.indices {
+            if updatedFolders[index].threadIDs.contains(threadID) {
+                updatedFolders[index].threadIDs.remove(threadID)
+            }
+        }
+
+        updatedFolders[targetIndex].threadIDs.insert(threadID)
+        let membership = folderMembershipMap(for: updatedFolders)
+        return FolderUpdate(folders: updatedFolders, membership: membership)
+    }
+
+    static func applyRemoval(threadID: String,
+                             folders: [ThreadFolder]) -> FolderRemovalUpdate? {
+        guard let folderIndex = folders.firstIndex(where: { $0.threadIDs.contains(threadID) }) else {
+            return nil
+        }
+        var updatedFolders = folders
+        var deletedFolderIDs: Set<String> = []
+
+        updatedFolders[folderIndex].threadIDs.remove(threadID)
+        if updatedFolders[folderIndex].threadIDs.isEmpty {
+            deletedFolderIDs.insert(updatedFolders[folderIndex].id)
+            updatedFolders.remove(at: folderIndex)
+        }
+
+        let membership = folderMembershipMap(for: updatedFolders)
+        return FolderRemovalUpdate(remainingFolders: updatedFolders,
+                                   deletedFolderIDs: deletedFolderIDs,
+                                   membership: membership)
     }
 
     static func visibleDayRange(for layout: ThreadCanvasLayout,
