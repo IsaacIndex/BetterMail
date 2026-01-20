@@ -1050,7 +1050,7 @@ extension ThreadCanvasViewModel {
         for (dayIndex, dayNodes) in grouped {
             guard let day = dayLookup[dayIndex] else { continue }
             let sorted = dayNodes.sorted { lhs, rhs in
-                lhs.message.date < rhs.message.date
+                lhs.message.date > rhs.message.date
             }
             let count = sorted.count
             let dayBaseY = day.yOffset + metrics.nodeVerticalSpacing
@@ -1079,7 +1079,7 @@ extension ThreadCanvasViewModel {
 
         return nodes.sorted { lhs, rhs in
             if lhs.dayIndex == rhs.dayIndex {
-                return lhs.message.date < rhs.message.date
+                return lhs.message.date > rhs.message.date
             }
             return lhs.dayIndex < rhs.dayIndex
         }
