@@ -51,6 +51,7 @@ struct ThreadCanvasView: View {
                         .offset(y: -(headerHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
+                .coordinateSpace(name: "ThreadCanvasContent")
                 .padding(.top, totalTopPadding)
                 .background(
                     GeometryReader { contentProxy in
@@ -290,7 +291,7 @@ struct ThreadCanvasView: View {
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .gesture(
-                        DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasScroll"))
+                        DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasContent"))
                             .onChanged { value in
                                 updateDragState(node: node,
                                                 column: column,
