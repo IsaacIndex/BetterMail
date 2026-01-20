@@ -1,7 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
-import os
 
 struct ThreadCanvasView: View {
     @ObservedObject var viewModel: ThreadCanvasViewModel
@@ -14,6 +12,9 @@ struct ThreadCanvasView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 60
     @State private var activeDropFolderID: String?
+    @State private var dragState: ThreadCanvasDragState?
+    @State private var dragPreviewOpacity: Double = 0
+    @State private var dragPreviewScale: CGFloat = 0.94
     private let headerSpacing: CGFloat = 10
 
     private let calendar = Calendar.current
@@ -41,19 +42,15 @@ struct ThreadCanvasView: View {
                     groupLegendLayer(layout: layout, metrics: metrics, rawZoom: zoomScale, calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
-                    nodesLayer(layout: layout, metrics: metrics)
+                    nodesLayer(layout: layout,
+                               metrics: metrics,
+                               chromeData: chromeData,
+                               folderHeaderExtension: headerHeight + headerSpacing)
+                    dragPreviewLayer()
                     folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, rawZoom: zoomScale)
                         .offset(y: -(headerHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
-                // Dropping onto non-folder canvas removes folder membership.
-                .onDrop(of: [.plainText], isTargeted: .constant(false)) { providers in
-                    loadThreadID(from: providers) { threadID in
-                        viewModel.removeThreadFromFolder(threadID: threadID)
-                        activeDropFolderID = nil
-                    }
-                    return true
-                }
                 .padding(.top, totalTopPadding)
                 .background(
                     GeometryReader { contentProxy in
@@ -112,6 +109,14 @@ struct ThreadCanvasView: View {
                                                 metrics: metrics,
                                                 today: today,
                                                 calendar: calendar)
+            }
+            .onHover { isInside in
+                if !isInside {
+                    cancelDrag()
+                }
+            }
+            .onExitCommand {
+                cancelDrag()
             }
         }
         .contentShape(Rectangle())
@@ -177,23 +182,6 @@ struct ThreadCanvasView: View {
                 .offset(x: chrome.frame.minX,
                         y: extendedMinY)
                 .overlay(alignment: .topLeading) {
-                    // Invisible hit target for drag-over highlighting and drops.
-                    Color.clear
-                        .frame(width: chrome.frame.width, height: extendedHeight)
-                        .contentShape(Rectangle())
-                        .onDrop(of: [.plainText],
-                                isTargeted: Binding(get: {
-                                    activeDropFolderID == chrome.id
-                                }, set: { isTargeted in
-                                    activeDropFolderID = isTargeted ? chrome.id : nil
-                                })) { providers in
-                            loadThreadID(from: providers) { threadID in
-                                viewModel.moveThread(threadID: threadID, toFolderID: chrome.id)
-                            }
-                            return true
-                        }
-                }
-                .overlay(alignment: .topLeading) {
                     if activeDropFolderID == chrome.id {
                         RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
                             .stroke(accentColor(for: chrome.color).opacity(0.9), lineWidth: 3)
@@ -228,6 +216,17 @@ struct ThreadCanvasView: View {
                                        value: proxy.size.height)
             }
         )
+    }
+
+    @ViewBuilder
+    private func dragPreviewLayer() -> some View {
+        if let dragState {
+            ThreadDragPreview(subject: dragState.subject, count: dragState.count)
+                .scaleEffect(dragPreviewScale)
+                .opacity(dragPreviewOpacity)
+                .position(x: dragState.location.x, y: dragState.location.y)
+                .allowsHitTesting(false)
+        }
     }
 
     private func folderColor(_ color: ThreadFolderColor) -> Color {
@@ -279,7 +278,9 @@ struct ThreadCanvasView: View {
 
     @ViewBuilder
     private func nodesLayer(layout: ThreadCanvasLayout,
-                            metrics: ThreadCanvasLayoutMetrics) -> some View {
+                            metrics: ThreadCanvasLayoutMetrics,
+                            chromeData: [FolderChromeData],
+                            folderHeaderExtension: CGFloat) -> some View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
                 ThreadCanvasNodeView(node: node,
@@ -288,10 +289,21 @@ struct ThreadCanvasView: View {
                                      rawZoom: zoomScale)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
-                    .draggable(node.threadID, preview: {
-                        ThreadDragPreview(subject: latestSubject(in: column) ?? column.title,
-                                          count: column.nodes.count)
-                    })
+                    .gesture(
+                        DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasScroll"))
+                            .onChanged { value in
+                                updateDragState(node: node,
+                                                column: column,
+                                                location: value.location,
+                                                chromeData: chromeData,
+                                                folderHeaderExtension: folderHeaderExtension)
+                            }
+                            .onEnded { value in
+                                finishDrag(location: value.location,
+                                           chromeData: chromeData,
+                                           folderHeaderExtension: folderHeaderExtension)
+                            }
+                    )
                     .onTapGesture {
                         viewModel.selectNode(id: node.id, additive: isCommandClick())
                     }
@@ -301,19 +313,95 @@ struct ThreadCanvasView: View {
 
     // MARK: - Drag helpers
 
-    @discardableResult
-    private func loadThreadID(from providers: [NSItemProvider], handler: @escaping (String) -> Void) -> Bool {
-        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }) else {
-            return false
+    private func updateDragState(node: ThreadCanvasNode,
+                                 column: ThreadCanvasColumn,
+                                 location: CGPoint,
+                                 chromeData: [FolderChromeData],
+                                 folderHeaderExtension: CGFloat) {
+        if dragState == nil {
+            startDrag(node: node, column: column, location: location)
         }
-        provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
-            if let data = item as? Data, let threadID = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async { handler(threadID) }
-            } else if let threadID = item as? String {
-                DispatchQueue.main.async { handler(threadID) }
+
+        guard var dragState else { return }
+        dragState.location = location
+        self.dragState = dragState
+
+        activeDropFolderID = folderHitTestID(at: location,
+                                             chromeData: chromeData,
+                                             folderHeaderExtension: folderHeaderExtension)
+    }
+
+    private func startDrag(node: ThreadCanvasNode,
+                           column: ThreadCanvasColumn,
+                           location: CGPoint) {
+        let subject = latestSubject(in: column) ?? column.title
+        let count = column.nodes.count
+        let initialFolderID = viewModel.folderMembershipByThreadID[node.threadID]
+        dragState = ThreadCanvasDragState(threadID: node.threadID,
+                                          nodeID: node.id,
+                                          subject: subject,
+                                          count: count,
+                                          initialFolderID: initialFolderID,
+                                          location: location)
+        dragPreviewOpacity = 0
+        dragPreviewScale = 0.94
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            dragPreviewOpacity = 1
+            dragPreviewScale = 1
+        }
+    }
+
+    private func finishDrag(location: CGPoint,
+                            chromeData: [FolderChromeData],
+                            folderHeaderExtension: CGFloat) {
+        guard let dragState else { return }
+        let dropFolderID = folderHitTestID(at: location,
+                                           chromeData: chromeData,
+                                           folderHeaderExtension: folderHeaderExtension)
+        if let dropFolderID {
+            viewModel.moveThread(threadID: dragState.threadID, toFolderID: dropFolderID)
+        } else if dragState.initialFolderID != nil {
+            viewModel.removeThreadFromFolder(threadID: dragState.threadID)
+        }
+        endDrag()
+    }
+
+    private func cancelDrag() {
+        guard dragState != nil else { return }
+        endDrag()
+    }
+
+    private func endDrag() {
+        activeDropFolderID = nil
+        withAnimation(.easeOut(duration: 0.12)) {
+            dragPreviewOpacity = 0
+            dragPreviewScale = 0.96
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            dragState = nil
+        }
+    }
+
+    private func folderHitTestID(at location: CGPoint,
+                                 chromeData: [FolderChromeData],
+                                 folderHeaderExtension: CGFloat) -> String? {
+        for chrome in chromeData {
+            let frame = folderDropFrame(for: chrome, folderHeaderExtension: folderHeaderExtension)
+            if frame.contains(location) {
+                return chrome.id
             }
         }
-        return true
+        return nil
+    }
+
+    private func folderDropFrame(for chrome: FolderChromeData,
+                                 folderHeaderExtension: CGFloat) -> CGRect {
+        let extendedMinY = -(folderHeaderExtension)
+        let extendedHeight = chrome.frame.height + chrome.frame.minY + folderHeaderExtension
+        return CGRect(x: chrome.frame.minX,
+                      y: extendedMinY,
+                      width: chrome.frame.width,
+                      height: extendedHeight)
     }
 
     private func latestSubject(in column: ThreadCanvasColumn) -> String? {
@@ -1056,6 +1144,15 @@ private struct ThreadCanvasNodeView: View {
 }
 
 // MARK: - Drag preview
+
+private struct ThreadCanvasDragState: Equatable {
+    let threadID: String
+    let nodeID: String
+    let subject: String
+    let count: Int
+    let initialFolderID: String?
+    var location: CGPoint
+}
 
 private struct ThreadDragPreview: View {
     let subject: String
