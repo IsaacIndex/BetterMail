@@ -296,7 +296,8 @@ struct ThreadCanvasView: View {
         ForEach(layout.columns) { column in
             ThreadCanvasConnectorColumn(column: column,
                                         metrics: metrics,
-                                        isHighlighted: isColumnSelected(column))
+                                        isHighlighted: isColumnSelected(column),
+                                        rawZoom: zoomScale)
             .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
             .offset(x: column.xOffset, y: 0)
         }
@@ -835,6 +836,7 @@ private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
     let metrics: ThreadCanvasLayoutMetrics
     let isHighlighted: Bool
+    let rawZoom: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -881,11 +883,13 @@ private struct ThreadCanvasConnectorColumn: View {
             )
             .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
 
+            let circleScale = max(rawZoom, 0.05)
+            let circleSize = lineWidth * 5.8 * circleScale
             Circle()
                 .fill(segmentColor(for: segment))
-                .frame(width: lineWidth * 5.8, height: lineWidth * 5.8)
+                .frame(width: circleSize, height: circleSize)
                 .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                .position(x: localX + shift, y: segment.endY - lineWidth * 8.8 / 2)
+                .position(x: localX + shift, y: segment.endY - (lineWidth * 8.8 * circleScale) / 2)
         }
     }
 
