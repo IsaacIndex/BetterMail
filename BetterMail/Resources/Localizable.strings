@@ -27,6 +27,13 @@
 "threadcanvas.inspector.snippet.empty" = "No preview available.";
 "threadcanvas.inspector.open_in_mail" = "Open in Mail";
 "threadcanvas.inspector.summary.title" = "Thread summary";
+"threadcanvas.folder.inspector.title" = "Folder";
+"threadcanvas.folder.inspector.name" = "Name";
+"threadcanvas.folder.inspector.color" = "Color";
+"threadcanvas.folder.inspector.preview" = "Preview";
+"threadcanvas.folder.inspector.cancel" = "Cancel";
+"threadcanvas.folder.inspector.save" = "Save";
+"threadcanvas.folder.inspector.accessibility" = "Folder";
 "threadcanvas.summary.apple_intelligence" = "Apple Intelligence";
 "threadcanvas.connectors.accessibility" = "Thread connectors: %d standard, %d manual";
 "threadlist.selection.count" = "%d selected";
