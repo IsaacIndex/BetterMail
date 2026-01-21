@@ -319,7 +319,8 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         let folder = ThreadFolder(id: "folder-1",
                                   title: "Folder",
                                   color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
-                                  threadIDs: ["thread-a", "thread-b"])
+                                  threadIDs: ["thread-a", "thread-b"],
+                                  parentID: nil)
         let membership = ThreadCanvasViewModel.folderMembershipMap(for: [folder])
 
         let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
@@ -335,15 +336,87 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(layout.columns.last?.id, "thread-c")
     }
 
+    func testNestedFolderOrderingKeepsChildAdjacentToParent() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let childThread = EmailMessage(messageID: "child",
+                                       mailboxID: "inbox",
+                                       subject: "Child",
+                                       from: "a@example.com",
+                                       to: "me@example.com",
+                                       date: calendar.date(byAdding: .day, value: -1, to: today)!,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [],
+                                       threadID: "thread-child")
+        let parentThread = EmailMessage(messageID: "parent",
+                                        mailboxID: "inbox",
+                                        subject: "Parent",
+                                        from: "b@example.com",
+                                        to: "me@example.com",
+                                        date: calendar.date(byAdding: .day, value: -2, to: today)!,
+                                        snippet: "",
+                                        isUnread: false,
+                                        inReplyTo: nil,
+                                        references: [],
+                                        threadID: "thread-parent")
+        let externalThread = EmailMessage(messageID: "external",
+                                          mailboxID: "inbox",
+                                          subject: "External",
+                                          from: "c@example.com",
+                                          to: "me@example.com",
+                                          date: calendar.date(byAdding: .day, value: -3, to: today)!,
+                                          snippet: "",
+                                          isUnread: false,
+                                          inReplyTo: nil,
+                                          references: [],
+                                          threadID: "thread-external")
+
+        let roots = [
+            ThreadNode(message: childThread),
+            ThreadNode(message: parentThread),
+            ThreadNode(message: externalThread)
+        ]
+
+        let parentFolder = ThreadFolder(id: "folder-parent",
+                                        title: "Parent",
+                                        color: ThreadFolderColor(red: 0.4, green: 0.5, blue: 0.7, alpha: 1),
+                                        threadIDs: ["thread-parent"],
+                                        parentID: nil)
+        let childFolder = ThreadFolder(id: "folder-child",
+                                       title: "Child",
+                                       color: ThreadFolderColor(red: 0.6, green: 0.7, blue: 0.8, alpha: 1),
+                                       threadIDs: ["thread-child"],
+                                       parentID: parentFolder.id)
+        let folders = [parentFolder, childFolder]
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: folders)
+
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: roots,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: folders,
+                                                        folderMembershipByThreadID: membership)
+
+        XCTAssertEqual(layout.columns.count, 3)
+        XCTAssertEqual(layout.columns.prefix(2).map(\.id), ["thread-child", "thread-parent"])
+        XCTAssertEqual(layout.columns.last?.id, "thread-external")
+    }
+
     func testApplyMoveTransfersMembershipAndKeepsMapUpdated() {
         let folderA = ThreadFolder(id: "folder-a",
                                    title: "A",
                                    color: ThreadFolderColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1),
-                                   threadIDs: ["thread-1"])
+                                   threadIDs: ["thread-1"],
+                                   parentID: nil)
         let folderB = ThreadFolder(id: "folder-b",
                                    title: "B",
                                    color: ThreadFolderColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1),
-                                   threadIDs: ["thread-2"])
+                                   threadIDs: ["thread-2"],
+                                   parentID: nil)
 
         let update = ThreadCanvasViewModel.applyMove(threadID: "thread-1",
                                                      toFolderID: "folder-b",
@@ -358,7 +431,8 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         let folder = ThreadFolder(id: "folder-a",
                                   title: "A",
                                   color: ThreadFolderColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1),
-                                  threadIDs: ["thread-1"])
+                                  threadIDs: ["thread-1"],
+                                  parentID: nil)
 
         let update = ThreadCanvasViewModel.applyRemoval(threadID: "thread-1",
                                                         folders: [folder])
@@ -366,5 +440,25 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(update?.remainingFolders.isEmpty, true)
         XCTAssertEqual(update?.deletedFolderIDs, ["folder-a"])
         XCTAssertNil(update?.membership["thread-1"])
+    }
+
+    func testApplyRemovalKeepsFolderWithChild() {
+        let parentFolder = ThreadFolder(id: "folder-parent",
+                                        title: "Parent",
+                                        color: ThreadFolderColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1),
+                                        threadIDs: ["thread-parent"],
+                                        parentID: nil)
+        let childFolder = ThreadFolder(id: "folder-child",
+                                       title: "Child",
+                                       color: ThreadFolderColor(red: 0.4, green: 0.5, blue: 0.6, alpha: 1),
+                                       threadIDs: ["thread-child"],
+                                       parentID: parentFolder.id)
+
+        let update = ThreadCanvasViewModel.applyRemoval(threadID: "thread-parent",
+                                                        folders: [parentFolder, childFolder])
+
+        XCTAssertEqual(update?.deletedFolderIDs.isEmpty, true)
+        XCTAssertEqual(update?.remainingFolders.contains(where: { $0.id == parentFolder.id }), true)
+        XCTAssertEqual(update?.membership["thread-child"], childFolder.id)
     }
 }
