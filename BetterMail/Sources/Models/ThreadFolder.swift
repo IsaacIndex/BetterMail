@@ -40,4 +40,5 @@ struct ThreadFolder: Identifiable, Hashable {
     var title: String
     var color: ThreadFolderColor
     var threadIDs: Set<String>
+    var parentID: String?
 }

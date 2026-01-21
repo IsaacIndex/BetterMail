@@ -103,6 +103,8 @@ struct ThreadCanvasFolderOverlay: Identifiable, Hashable {
     let color: ThreadFolderColor
     let frame: CGRect
     let columnIDs: [String]
+    let parentID: String?
+    let depth: Int
 }
 
 enum ThreadCanvasDateHelper {

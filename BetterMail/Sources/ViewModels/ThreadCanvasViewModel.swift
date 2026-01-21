@@ -866,6 +866,9 @@ final class ThreadCanvasViewModel: ObservableObject {
         let effectiveThreadIDs = Set(selectedNodes.compactMap { effectiveThreadID(for: $0) })
         guard !effectiveThreadIDs.isEmpty else { return }
 
+        let selectedFolderIDs = Set(effectiveThreadIDs.compactMap { folderMembershipByThreadID[$0] })
+        let parentFolderID = selectedFolderIDs.count == 1 ? selectedFolderIDs.first : nil
+
         let latestSubjectNode = selectedNodes.max(by: { $0.message.date < $1.message.date })
         let defaultTitle = latestSubjectNode.map { node in
             node.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : node.message.subject
@@ -874,11 +877,16 @@ final class ThreadCanvasViewModel: ObservableObject {
         let folder = ThreadFolder(id: "folder-\(UUID().uuidString.lowercased())",
                                   title: defaultTitle,
                                   color: ThreadFolderColor.random(),
-                                  threadIDs: effectiveThreadIDs)
+                                  threadIDs: effectiveThreadIDs,
+                                  parentID: parentFolderID)
+        let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
         let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
             var updatedFolder = existingFolder
             updatedFolder.threadIDs.subtract(effectiveThreadIDs)
-            return updatedFolder.threadIDs.isEmpty ? nil : updatedFolder
+            if updatedFolder.threadIDs.isEmpty && (childIDsByParent[updatedFolder.id]?.isEmpty ?? true) {
+                return nil
+            }
+            return updatedFolder
         }
         let deletedFolderIDs = Set(threadFolders.map(\.id)).subtracting(updatedExistingFolders.map(\.id))
         let updatedFolders = updatedExistingFolders + [folder]
@@ -942,62 +950,99 @@ extension ThreadCanvasViewModel {
         }
         let dayLookup = Dictionary(uniqueKeysWithValues: days.map { ($0.id, $0) })
 
-        let columnInfos: [(root: ThreadNode, latestDate: Date, threadID: String)] = roots.map { root in
-            let latest = latestDate(in: root)
+        typealias ThreadInfo = (root: ThreadNode, latestDate: Date, threadID: String)
+        enum OrderingItem {
+            case folder(String)
+            case thread(ThreadInfo)
+        }
+
+        let columnInfos: [ThreadInfo] = roots.map { root in
+            let latest = Self.latestDate(in: root)
             let threadID = root.message.threadID ?? root.id
             return (root, latest, threadID)
         }
 
-        var remaining = columnInfos
-        var groupedItems: [(latest: Date, threads: [(root: ThreadNode, latestDate: Date, threadID: String)], folder: ThreadFolder?)] = []
-
-        let folderLookup = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
-
-        for folder in folders {
-            let members = remaining.filter { folder.threadIDs.contains($0.threadID) }
-            guard !members.isEmpty else { continue }
-            remaining.removeAll { folder.threadIDs.contains($0.threadID) }
-            let folderLatest = members.map(\.latestDate).max() ?? Date.distantPast
-            groupedItems.append((latest: folderLatest, threads: members.sorted { $0.latestDate > $1.latestDate }, folder: folderLookup[folder.id]))
-        }
-
-        for info in remaining {
-            groupedItems.append((latest: info.latestDate, threads: [info], folder: nil))
-        }
-
-        groupedItems.sort { lhs, rhs in
-            lhs.latest > rhs.latest
-        }
-
         var columns: [ThreadCanvasColumn] = []
         columns.reserveCapacity(columnInfos.count)
-
-        var currentColumnIndex = 0
-        for item in groupedItems {
-            for thread in item.threads {
-                let columnX = metrics.contentPadding
-                    + metrics.dayLabelWidth
-                    + CGFloat(currentColumnIndex) * (metrics.columnWidth + metrics.columnSpacing)
-                let nodes = layoutNodes(for: thread.root,
-                                        threadID: thread.threadID,
-                                        columnX: columnX,
-                                        metrics: metrics,
-                                        today: today,
-                                        calendar: calendar,
-                                        dayLookup: dayLookup,
-                                        manualAttachmentMessageIDs: manualAttachmentMessageIDs,
-                                        jwzThreadMap: jwzThreadMap)
-                let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
-                let folderID = folderMembershipByThreadID[thread.threadID]
-                columns.append(ThreadCanvasColumn(id: thread.threadID,
-                                                  title: title,
-                                                  xOffset: columnX,
-                                                  nodes: nodes,
-                                                  latestDate: thread.latestDate,
-                                                  folderID: folderID))
-                currentColumnIndex += 1
+        let hierarchy = folderHierarchy(for: folders)
+        let normalizedMembership = folderMembershipByThreadID.reduce(into: [String: String]()) { result, entry in
+            if hierarchy.foldersByID[entry.value] != nil {
+                result[entry.key] = entry.value
             }
         }
+        let threadsByFolderID = Dictionary(grouping: columnInfos) { info -> String? in
+            normalizedMembership[info.threadID]
+        }
+
+        var latestByFolderID: [String: Date] = [:]
+        func latestDateForFolder(_ folderID: String) -> Date {
+            if let cached = latestByFolderID[folderID] {
+                return cached
+            }
+            let threadDates = threadsByFolderID[folderID]?.map(\.latestDate) ?? []
+            let childDates = (hierarchy.childrenByParentID[folderID] ?? []).map { latestDateForFolder($0) }
+            let latest = (threadDates + childDates).max() ?? Date.distantPast
+            latestByFolderID[folderID] = latest
+            return latest
+        }
+
+        func orderedItems(for parentID: String?) -> [OrderingItem] {
+            let folderIDs: [String]
+            if let parentID {
+                folderIDs = hierarchy.childrenByParentID[parentID] ?? []
+            } else {
+                folderIDs = hierarchy.rootFolderIDs
+            }
+
+            var items: [(latest: Date, item: OrderingItem)] = []
+            items.reserveCapacity(folderIDs.count + (threadsByFolderID[parentID]?.count ?? 0))
+
+            for folderID in folderIDs {
+                items.append((latest: latestDateForFolder(folderID), item: .folder(folderID)))
+            }
+
+            for thread in threadsByFolderID[parentID] ?? [] {
+                items.append((latest: thread.latestDate, item: .thread(thread)))
+            }
+
+            return items.sorted { lhs, rhs in
+                lhs.latest > rhs.latest
+            }.map(\.item)
+        }
+
+        var currentColumnIndex = 0
+        func appendColumns(for items: [OrderingItem]) {
+            for item in items {
+                switch item {
+                case .folder(let folderID):
+                    appendColumns(for: orderedItems(for: folderID))
+                case .thread(let thread):
+                    let columnX = metrics.contentPadding
+                        + metrics.dayLabelWidth
+                        + CGFloat(currentColumnIndex) * (metrics.columnWidth + metrics.columnSpacing)
+                    let nodes = layoutNodes(for: thread.root,
+                                            threadID: thread.threadID,
+                                            columnX: columnX,
+                                            metrics: metrics,
+                                            today: today,
+                                            calendar: calendar,
+                                            dayLookup: dayLookup,
+                                            manualAttachmentMessageIDs: manualAttachmentMessageIDs,
+                                            jwzThreadMap: jwzThreadMap)
+                    let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
+                    let folderID = normalizedMembership[thread.threadID]
+                    columns.append(ThreadCanvasColumn(id: thread.threadID,
+                                                      title: title,
+                                                      xOffset: columnX,
+                                                      nodes: nodes,
+                                                      latestDate: thread.latestDate,
+                                                      folderID: folderID))
+                    currentColumnIndex += 1
+                }
+            }
+        }
+
+        appendColumns(for: orderedItems(for: nil))
 
         let columnCount = CGFloat(columns.count)
         let totalWidth = metrics.contentPadding * 2
@@ -1008,7 +1053,7 @@ extension ThreadCanvasViewModel {
             + days.reduce(0) { $0 + $1.height }
         let folderOverlays = folderOverlaysForLayout(columns: columns,
                                                      folders: folders,
-                                                     membership: folderMembershipByThreadID,
+                                                     membership: normalizedMembership,
                                                      contentHeight: totalHeight,
                                                      metrics: metrics)
         return ThreadCanvasLayout(days: days,
@@ -1162,25 +1207,96 @@ extension ThreadCanvasViewModel {
             + CGFloat(nodeCount - 1) * maxStep
     }
 
+    private struct FolderHierarchy {
+        let foldersByID: [String: ThreadFolder]
+        let childrenByParentID: [String: [String]]
+        let rootFolderIDs: [String]
+        let depthByID: [String: Int]
+    }
+
+    private static func folderHierarchy(for folders: [ThreadFolder]) -> FolderHierarchy {
+        let foldersByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        var childrenByParentID: [String: [String]] = [:]
+        var rootFolderIDs: [String] = []
+
+        for folder in folders {
+            if let parentID = folder.parentID, foldersByID[parentID] != nil {
+                childrenByParentID[parentID, default: []].append(folder.id)
+            } else {
+                rootFolderIDs.append(folder.id)
+            }
+        }
+
+        var depthByID: [String: Int] = [:]
+        func resolveDepth(for folderID: String, visiting: inout Set<String>) -> Int {
+            if let cached = depthByID[folderID] {
+                return cached
+            }
+            guard let folder = foldersByID[folderID] else {
+                depthByID[folderID] = 0
+                return 0
+            }
+            guard let parentID = folder.parentID, foldersByID[parentID] != nil else {
+                depthByID[folderID] = 0
+                return 0
+            }
+            if visiting.contains(folderID) {
+                depthByID[folderID] = 0
+                return 0
+            }
+            visiting.insert(folderID)
+            let parentDepth = resolveDepth(for: parentID, visiting: &visiting)
+            visiting.remove(folderID)
+            let depth = parentDepth + 1
+            depthByID[folderID] = depth
+            return depth
+        }
+
+        for folder in folders {
+            var visiting: Set<String> = []
+            _ = resolveDepth(for: folder.id, visiting: &visiting)
+        }
+
+        return FolderHierarchy(foldersByID: foldersByID,
+                               childrenByParentID: childrenByParentID,
+                               rootFolderIDs: rootFolderIDs,
+                               depthByID: depthByID)
+    }
+
+    static func childFolderIDsByParent(folders: [ThreadFolder]) -> [String: [String]] {
+        folderHierarchy(for: folders).childrenByParentID
+    }
+
     private static func folderOverlaysForLayout(columns: [ThreadCanvasColumn],
                                                 folders: [ThreadFolder],
                                                 membership: [String: String],
                                                 contentHeight: CGFloat,
                                                 metrics: ThreadCanvasLayoutMetrics) -> [ThreadCanvasFolderOverlay] {
         guard !folders.isEmpty else { return [] }
-        let foldersByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        let hierarchy = folderHierarchy(for: folders)
+        let columnsByFolderID = Dictionary(grouping: columns) { column -> String? in
+            membership[column.id]
+        }
 
-        let groupedColumns = Dictionary(grouping: columns, by: { membership[$0.id] })
-            .compactMap { (key, value) -> (String, [ThreadCanvasColumn])? in
-                guard let key else { return nil }
-                return (key, value)
+        var columnCache: [String: [ThreadCanvasColumn]] = [:]
+        func columnsForFolder(_ folderID: String) -> [ThreadCanvasColumn] {
+            if let cached = columnCache[folderID] {
+                return cached
             }
+            var result = columnsByFolderID[folderID] ?? []
+            for childID in hierarchy.childrenByParentID[folderID] ?? [] {
+                result.append(contentsOf: columnsForFolder(childID))
+            }
+            columnCache[folderID] = result
+            return result
+        }
 
         var overlays: [ThreadCanvasFolderOverlay] = []
-        overlays.reserveCapacity(groupedColumns.count)
+        overlays.reserveCapacity(folders.count)
 
-        for (folderID, columns) in groupedColumns {
-            guard let folder = foldersByID[folderID] else { continue }
+        for folder in folders {
+            let columns = columnsForFolder(folder.id)
+            guard !columns.isEmpty else { continue }
             let sortedColumns = columns.sorted { $0.xOffset < $1.xOffset }
             let minX = (sortedColumns.first?.xOffset ?? 0)
             let maxX = (sortedColumns.last.map { $0.xOffset + metrics.columnWidth } ?? 0)
@@ -1202,7 +1318,9 @@ extension ThreadCanvasViewModel {
                                                       title: folder.title,
                                                       color: folder.color,
                                                       frame: frame,
-                                                      columnIDs: sortedColumns.map(\.id)))
+                                                      columnIDs: sortedColumns.map(\.id),
+                                                      parentID: folder.parentID,
+                                                      depth: hierarchy.depthByID[folder.id] ?? 0))
         }
 
         return overlays.sorted { lhs, rhs in
@@ -1268,8 +1386,12 @@ extension ThreadCanvasViewModel {
 
         updatedFolders[folderIndex].threadIDs.remove(threadID)
         if updatedFolders[folderIndex].threadIDs.isEmpty {
-            deletedFolderIDs.insert(updatedFolders[folderIndex].id)
-            updatedFolders.remove(at: folderIndex)
+            let childIDsByParent = childFolderIDsByParent(folders: updatedFolders)
+            let folderID = updatedFolders[folderIndex].id
+            if (childIDsByParent[folderID]?.isEmpty ?? true) {
+                deletedFolderIDs.insert(folderID)
+                updatedFolders.remove(at: folderIndex)
+            }
         }
 
         let membership = folderMembershipMap(for: updatedFolders)

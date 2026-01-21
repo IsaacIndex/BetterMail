@@ -164,7 +164,8 @@ final class MessageStore {
                 ThreadFolder(id: folder.id,
                              title: folder.title,
                              color: colorsByFolder[folder.id] ?? ThreadFolderColor(red: 0.6, green: 0.6, blue: 0.7, alpha: 1),
-                             threadIDs: threadIDsByFolder[folder.id, default: []])
+                             threadIDs: threadIDsByFolder[folder.id, default: []],
+                             parentID: folder.parentID)
             }
         }
     }
@@ -194,6 +195,7 @@ final class MessageStore {
                 let entity = folderLookup[folder.id] ?? ThreadFolderEntity(context: context)
                 entity.id = folder.id
                 entity.title = folder.title
+                entity.parentID = folder.parentID
                 folderLookup[folder.id] = entity
 
                 let color = ThreadFolderColorEntity(context: context)
@@ -643,7 +645,13 @@ final class MessageStore {
         threadFolderTitleAttr.attributeType = .stringAttributeType
         threadFolderTitleAttr.isOptional = false
 
-        threadFolderEntity.properties = [threadFolderIDAttr, threadFolderTitleAttr]
+        let threadFolderParentIDAttr = NSAttributeDescription()
+        threadFolderParentIDAttr.name = "parentID"
+        threadFolderParentIDAttr.attributeType = .stringAttributeType
+        threadFolderParentIDAttr.isOptional = true
+        threadFolderParentIDAttr.isIndexed = true
+
+        threadFolderEntity.properties = [threadFolderIDAttr, threadFolderTitleAttr, threadFolderParentIDAttr]
 
         let threadFolderColorEntity = NSEntityDescription()
         threadFolderColorEntity.name = "ThreadFolderColorEntity"
@@ -888,6 +896,7 @@ extension ManualThreadGroupMessageEntity {
 final class ThreadFolderEntity: NSManagedObject {
     @NSManaged var id: String
     @NSManaged var title: String
+    @NSManaged var parentID: String?
 }
 
 extension ThreadFolderEntity {
