@@ -875,16 +875,24 @@ final class ThreadCanvasViewModel: ObservableObject {
                                   title: defaultTitle,
                                   color: ThreadFolderColor.random(),
                                   threadIDs: effectiveThreadIDs)
+        let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
+            var updatedFolder = existingFolder
+            updatedFolder.threadIDs.subtract(effectiveThreadIDs)
+            return updatedFolder.threadIDs.isEmpty ? nil : updatedFolder
+        }
+        let deletedFolderIDs = Set(threadFolders.map(\.id)).subtracting(updatedExistingFolders.map(\.id))
+        let updatedFolders = updatedExistingFolders + [folder]
 
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await store.upsertThreadFolders([folder])
+                try await store.upsertThreadFolders(updatedFolders)
+                if !deletedFolderIDs.isEmpty {
+                    try await store.deleteThreadFolders(ids: Array(deletedFolderIDs))
+                }
                 await MainActor.run {
-                    self.threadFolders.append(folder)
-                    for threadID in effectiveThreadIDs {
-                        self.folderMembershipByThreadID[threadID] = folder.id
-                    }
+                    self.threadFolders = updatedFolders
+                    self.folderMembershipByThreadID = Self.folderMembershipMap(for: updatedFolders)
                 }
             } catch {
                 Log.app.error("Failed to save thread folder: \(error.localizedDescription, privacy: .public)")
