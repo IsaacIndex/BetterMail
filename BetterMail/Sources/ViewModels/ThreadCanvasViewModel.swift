@@ -502,6 +502,10 @@ final class ThreadCanvasViewModel: ObservableObject {
         if let selectedFolderID, selectedFolderID != id {
             clearFolderEdits(id: selectedFolderID)
         }
+        if id != nil {
+            selectedNodeID = nil
+            selectedNodeIDs = []
+        }
         selectedFolderID = id
     }
 
