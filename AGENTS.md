@@ -162,6 +162,8 @@ AI agents should explicitly refuse to:
 At the last step of a change, always try to build the app and resolve any compilation errors. Capture the full build log in /tmp so agents (e.g., Codex) can read it.
 
 ```bash
+# Clear cache first
+xcrun simctl erase all
 # Build and capture *all* output (stdout + stderr) so agents can review failures.
 xcodebuild \
   -project BetterMail.xcodeproj \
