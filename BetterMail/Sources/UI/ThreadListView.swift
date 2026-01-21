@@ -111,10 +111,8 @@ struct ThreadListView: View {
                                               viewModel.saveFolderEdits(id: selectedFolder.id,
                                                                         title: title,
                                                                         color: color)
-                                          },
-                                          onCancel: {
-                                              viewModel.clearFolderEdits(id: selectedFolder.id)
                                           })
+                    .id(selectedFolder.id)
                     .frame(width: inspectorWidth)
                     .padding(.top, navInsetHeight)
                     .padding(.trailing, navHorizontalPadding)
