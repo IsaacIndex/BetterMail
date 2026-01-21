@@ -552,6 +552,9 @@ final class ThreadCanvasViewModel: ObservableObject {
                                                folders: threadFolders) else { return }
             do {
                 try await store.upsertThreadFolders(updated.folders)
+                if !updated.deletedFolderIDs.isEmpty {
+                    try await store.deleteThreadFolders(ids: Array(updated.deletedFolderIDs))
+                }
                 await MainActor.run {
                     self.threadFolders = updated.folders
                     self.folderMembershipByThreadID = updated.membership
@@ -1419,8 +1422,9 @@ extension ThreadCanvasViewModel {
         }
     }
 
-    struct FolderUpdate {
+    struct FolderMoveUpdate {
         let folders: [ThreadFolder]
+        let deletedFolderIDs: Set<String>
         let membership: [String: String]
     }
 
@@ -1432,9 +1436,10 @@ extension ThreadCanvasViewModel {
 
     static func applyMove(threadID: String,
                           toFolderID folderID: String,
-                          folders: [ThreadFolder]) -> FolderUpdate? {
-        guard let targetIndex = folders.firstIndex(where: { $0.id == folderID }) else { return nil }
+                          folders: [ThreadFolder]) -> FolderMoveUpdate? {
+        guard folders.contains(where: { $0.id == folderID }) else { return nil }
         var updatedFolders = folders
+        var deletedFolderIDs: Set<String> = []
 
         // Remove the thread from any existing folder memberships first.
         for index in updatedFolders.indices {
@@ -1443,9 +1448,21 @@ extension ThreadCanvasViewModel {
             }
         }
 
+        let childIDsByParent = childFolderIDsByParent(folders: updatedFolders)
+        updatedFolders.removeAll { folder in
+            guard folder.id != folderID else { return false }
+            guard folder.threadIDs.isEmpty else { return false }
+            guard (childIDsByParent[folder.id]?.isEmpty ?? true) else { return false }
+            deletedFolderIDs.insert(folder.id)
+            return true
+        }
+
+        guard let targetIndex = updatedFolders.firstIndex(where: { $0.id == folderID }) else { return nil }
         updatedFolders[targetIndex].threadIDs.insert(threadID)
         let membership = folderMembershipMap(for: updatedFolders)
-        return FolderUpdate(folders: updatedFolders, membership: membership)
+        return FolderMoveUpdate(folders: updatedFolders,
+                                deletedFolderIDs: deletedFolderIDs,
+                                membership: membership)
     }
 
     static func applyRemoval(threadID: String,
