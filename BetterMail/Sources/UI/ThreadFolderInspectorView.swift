@@ -5,7 +5,6 @@ struct ThreadFolderInspectorView: View {
     let folder: ThreadFolder
     let onPreview: (String, ThreadFolderColor) -> Void
     let onSave: (String, ThreadFolderColor) -> Void
-    let onCancel: () -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -14,15 +13,14 @@ struct ThreadFolderInspectorView: View {
     @State private var baselineTitle: String
     @State private var baselineColor: ThreadFolderColor
     @State private var isResettingDraft = false
+    @State private var pendingSaveTask: Task<Void, Never>?
 
     init(folder: ThreadFolder,
          onPreview: @escaping (String, ThreadFolderColor) -> Void,
-         onSave: @escaping (String, ThreadFolderColor) -> Void,
-         onCancel: @escaping () -> Void) {
+         onSave: @escaping (String, ThreadFolderColor) -> Void) {
         self.folder = folder
         self.onPreview = onPreview
         self.onSave = onSave
-        self.onCancel = onCancel
         let initialColor = Color(red: folder.color.red,
                                  green: folder.color.green,
                                  blue: folder.color.blue,
@@ -46,7 +44,6 @@ struct ThreadFolderInspectorView: View {
                     folderNameField
                     folderColorPicker
                     folderPreview
-                    actionButtons
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -59,6 +56,9 @@ struct ThreadFolderInspectorView: View {
         .modifier(FolderInspectorColorSchemeModifier(isEnabled: isGlassInspectorEnabled))
         .onChange(of: folder.id) { _, _ in
             resetDraft(with: folder)
+        }
+        .onDisappear {
+            flushPendingSave()
         }
     }
 
@@ -116,31 +116,6 @@ struct ThreadFolderInspectorView: View {
         }
     }
 
-    private var actionButtons: some View {
-        let hasChanges = draftTitle != baselineTitle || draftFolderColor != baselineColor
-        return HStack {
-            Button(NSLocalizedString("threadcanvas.folder.inspector.cancel",
-                                     comment: "Cancel button title")) {
-                onCancel()
-                resetDraft(with: folder)
-            }
-            .keyboardShortcut(.cancelAction)
-
-            Spacer()
-
-            Button(NSLocalizedString("threadcanvas.folder.inspector.save",
-                                     comment: "Save button title")) {
-                let color = draftFolderColor
-                onSave(draftTitle, color)
-                baselineTitle = draftTitle
-                baselineColor = color
-            }
-            .keyboardShortcut(.defaultAction)
-            .disabled(!hasChanges)
-        }
-        .padding(.top, 4)
-    }
-
     private var isGlassInspectorEnabled: Bool {
         if #available(macOS 26, *) {
             return !reduceTransparency
@@ -191,10 +166,14 @@ struct ThreadFolderInspectorView: View {
 
     private func updatePreviewIfNeeded() {
         guard !isResettingDraft else { return }
-        onPreview(draftTitle, draftFolderColor)
+        let color = draftFolderColor
+        onPreview(draftTitle, color)
+        scheduleSaveIfNeeded(title: draftTitle, color: color)
     }
 
     private func resetDraft(with folder: ThreadFolder) {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
         isResettingDraft = true
         draftTitle = folder.title
         draftColor = Color(red: folder.color.red,
@@ -206,6 +185,29 @@ struct ThreadFolderInspectorView: View {
         DispatchQueue.main.async {
             isResettingDraft = false
         }
+    }
+
+    private func scheduleSaveIfNeeded(title: String, color: ThreadFolderColor) {
+        guard title != baselineTitle || color != baselineColor else { return }
+        pendingSaveTask?.cancel()
+        pendingSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            onSave(title, color)
+            baselineTitle = title
+            baselineColor = color
+        }
+    }
+
+    private func flushPendingSave() {
+        guard !isResettingDraft else { return }
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
+        let color = draftFolderColor
+        guard draftTitle != baselineTitle || color != baselineColor else { return }
+        onSave(draftTitle, color)
+        baselineTitle = draftTitle
+        baselineColor = color
     }
 }
 
