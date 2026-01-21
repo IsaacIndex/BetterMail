@@ -27,11 +27,16 @@ struct ThreadListView: View {
                 viewModel.start()
             }
             .onAppear {
-                isInspectorVisible = viewModel.selectedNode != nil
+                isInspectorVisible = viewModel.selectedNodeID != nil || viewModel.selectedFolderID != nil
             }
             .onChange(of: viewModel.selectedNodeID) { _, newValue in
                 withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
-                    isInspectorVisible = newValue != nil
+                    isInspectorVisible = newValue != nil || viewModel.selectedFolderID != nil
+                }
+            }
+            .onChange(of: viewModel.selectedFolderID) { _, newValue in
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                    isInspectorVisible = newValue != nil || viewModel.selectedNodeID != nil
                 }
             }
             .onChange(of: settings.isEnabled) { _, _ in
@@ -94,22 +99,49 @@ struct ThreadListView: View {
 
     @ViewBuilder
     private var inspectorOverlay: some View {
-        if isInspectorVisible, let selectedNode = viewModel.selectedNode {
-            ThreadInspectorView(node: selectedNode,
-                                summaryState: selectedSummaryState,
-                                summaryExpansion: selectedSummaryExpansion,
-                                inspectorSettings: inspectorSettings,
-                                onOpenInMail: viewModel.openMessageInMail)
-                .frame(width: inspectorWidth)
-                .padding(.top, navInsetHeight)
-                .padding(.trailing, navHorizontalPadding)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .zIndex(0.5)
-                .transition(
-                    .scale(scale: 0.96, anchor: .topTrailing)
-                    .combined(with: .opacity)
-                )
-                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: viewModel.selectedNodeID)
+        if isInspectorVisible {
+            if let selectedFolder = viewModel.selectedFolder {
+                ThreadFolderInspectorView(folder: selectedFolder,
+                                          onPreview: { title, color in
+                                              viewModel.previewFolderEdits(id: selectedFolder.id,
+                                                                           title: title,
+                                                                           color: color)
+                                          },
+                                          onSave: { title, color in
+                                              viewModel.saveFolderEdits(id: selectedFolder.id,
+                                                                        title: title,
+                                                                        color: color)
+                                          })
+                    .id(selectedFolder.id)
+                    .frame(width: inspectorWidth)
+                    .padding(.top, navInsetHeight)
+                    .padding(.trailing, navHorizontalPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .zIndex(0.5)
+                    .transition(
+                        .scale(scale: 0.96, anchor: .topTrailing)
+                        .combined(with: .opacity)
+                    )
+                    .animation(.spring(response: 0.24, dampingFraction: 0.82),
+                               value: viewModel.selectedFolderID ?? viewModel.selectedNodeID)
+            } else if let selectedNode = viewModel.selectedNode {
+                ThreadInspectorView(node: selectedNode,
+                                    summaryState: selectedSummaryState,
+                                    summaryExpansion: selectedSummaryExpansion,
+                                    inspectorSettings: inspectorSettings,
+                                    onOpenInMail: viewModel.openMessageInMail)
+                    .frame(width: inspectorWidth)
+                    .padding(.top, navInsetHeight)
+                    .padding(.trailing, navHorizontalPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .zIndex(0.5)
+                    .transition(
+                        .scale(scale: 0.96, anchor: .topTrailing)
+                        .combined(with: .opacity)
+                    )
+                    .animation(.spring(response: 0.24, dampingFraction: 0.82),
+                               value: viewModel.selectedFolderID ?? viewModel.selectedNodeID)
+            }
         }
     }
 
@@ -308,9 +340,14 @@ struct ThreadListView: View {
                                       systemImage: "link")
                             }
                             .disabled(!viewModel.canGroupSelection)
+                            Button(action: { viewModel.addFolderForSelection() }) {
+                                Label(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"),
+                                      systemImage: "folder")
+                            }
+                            .disabled(viewModel.selectedNodeIDs.isEmpty)
                             Button(action: { viewModel.ungroupSelectedMessages() }) {
                                 Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
-                                      systemImage: "link.badge.minus")
+                                      systemImage: "personalhotspot.slash")
                             }
                             .disabled(!viewModel.canUngroupSelection)
                             if shouldShowBackfillAction {
@@ -362,7 +399,7 @@ struct ThreadListView: View {
     }
 
     private var actionBarMaxWidth: CGFloat? {
-        viewModel.shouldShowSelectionActions ? 420 : nil
+        viewModel.shouldShowSelectionActions ? 600 : nil
     }
 
     private var backfillIntervalDescription: String? {

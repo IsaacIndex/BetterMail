@@ -13,6 +13,7 @@ final class MessageStore {
     private let userDefaults: UserDefaults
     private let lastSyncKey = "MessageStore.lastSync"
     private let manualGroupMigrationKey = "MessageStore.manualGroupMigrationV1"
+    private let folderMigrationKey = "MessageStore.threadFolderMigrationV1"
 
     var lastSyncDate: Date? {
         get { userDefaults.object(forKey: lastSyncKey) as? Date }
@@ -38,6 +39,7 @@ final class MessageStore {
         }
         Task { [weak self] in
             await self?.migrateLegacyOverridesIfNeeded()
+            await self?.migrateFoldersIfNeeded()
         }
     }
 
@@ -134,6 +136,111 @@ final class MessageStore {
                 ManualThreadGroup(id: group.id,
                                   jwzThreadIDs: jwzByGroupID[group.id, default: []],
                                   manualMessageKeys: messageKeysByGroupID[group.id, default: []])
+            }
+        }
+    }
+
+    func fetchThreadFolders() async throws -> [ThreadFolder] {
+        try await container.performBackgroundTask { context in
+            let folderRequest: NSFetchRequest<ThreadFolderEntity> = ThreadFolderEntity.fetchRequest()
+            let colorRequest: NSFetchRequest<ThreadFolderColorEntity> = ThreadFolderColorEntity.fetchRequest()
+            let membershipRequest: NSFetchRequest<ThreadFolderMembershipEntity> = ThreadFolderMembershipEntity.fetchRequest()
+
+            let colors = try context.fetch(colorRequest)
+            let colorsByFolder = colors.reduce(into: [String: ThreadFolderColor]()) { result, entity in
+                result[entity.folderID] = ThreadFolderColor(red: entity.red,
+                                                            green: entity.green,
+                                                            blue: entity.blue,
+                                                            alpha: entity.alpha)
+            }
+
+            let memberships = try context.fetch(membershipRequest)
+            let threadIDsByFolder = memberships.reduce(into: [String: Set<String>]()) { result, entity in
+                result[entity.folderID, default: []].insert(entity.threadID)
+            }
+
+            let folders = try context.fetch(folderRequest)
+            return folders.map { folder in
+                ThreadFolder(id: folder.id,
+                             title: folder.title,
+                             color: colorsByFolder[folder.id] ?? ThreadFolderColor(red: 0.6, green: 0.6, blue: 0.7, alpha: 1),
+                             threadIDs: threadIDsByFolder[folder.id, default: []],
+                             parentID: folder.parentID)
+            }
+        }
+    }
+
+    func upsertThreadFolders(_ folders: [ThreadFolder]) async throws {
+        guard !folders.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let ids = folders.map(\.id)
+            let folderRequest: NSFetchRequest<ThreadFolderEntity> = ThreadFolderEntity.fetchRequest()
+            folderRequest.predicate = NSPredicate(format: "id IN %@", ids)
+            let existing = try context.fetch(folderRequest)
+            var folderLookup = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+
+            let colorRequest: NSFetchRequest<ThreadFolderColorEntity> = ThreadFolderColorEntity.fetchRequest()
+            colorRequest.predicate = NSPredicate(format: "folderID IN %@", ids)
+            for color in try context.fetch(colorRequest) {
+                context.delete(color)
+            }
+
+            let membershipRequest: NSFetchRequest<ThreadFolderMembershipEntity> = ThreadFolderMembershipEntity.fetchRequest()
+            membershipRequest.predicate = NSPredicate(format: "folderID IN %@", ids)
+            for membership in try context.fetch(membershipRequest) {
+                context.delete(membership)
+            }
+
+            for folder in folders {
+                let entity = folderLookup[folder.id] ?? ThreadFolderEntity(context: context)
+                entity.id = folder.id
+                entity.title = folder.title
+                entity.parentID = folder.parentID
+                folderLookup[folder.id] = entity
+
+                let color = ThreadFolderColorEntity(context: context)
+                color.folderID = folder.id
+                color.red = folder.color.red
+                color.green = folder.color.green
+                color.blue = folder.color.blue
+                color.alpha = folder.color.alpha
+
+                for threadID in folder.threadIDs {
+                    let membership = ThreadFolderMembershipEntity(context: context)
+                    membership.folderID = folder.id
+                    membership.threadID = threadID
+                }
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func deleteThreadFolders(ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let folderRequest: NSFetchRequest<ThreadFolderEntity> = ThreadFolderEntity.fetchRequest()
+            folderRequest.predicate = NSPredicate(format: "id IN %@", ids)
+            for folder in try context.fetch(folderRequest) {
+                context.delete(folder)
+            }
+
+            let colorRequest: NSFetchRequest<ThreadFolderColorEntity> = ThreadFolderColorEntity.fetchRequest()
+            colorRequest.predicate = NSPredicate(format: "folderID IN %@", ids)
+            for color in try context.fetch(colorRequest) {
+                context.delete(color)
+            }
+
+            let membershipRequest: NSFetchRequest<ThreadFolderMembershipEntity> = ThreadFolderMembershipEntity.fetchRequest()
+            membershipRequest.predicate = NSPredicate(format: "folderID IN %@", ids)
+            for membership in try context.fetch(membershipRequest) {
+                context.delete(membership)
+            }
+
+            if context.hasChanges {
+                try context.save()
             }
         }
     }
@@ -523,13 +630,98 @@ final class MessageStore {
             manualGroupMessageKeyAttr
         ]
 
+        let threadFolderEntity = NSEntityDescription()
+        threadFolderEntity.name = "ThreadFolderEntity"
+        threadFolderEntity.managedObjectClassName = NSStringFromClass(ThreadFolderEntity.self)
+
+        let threadFolderIDAttr = NSAttributeDescription()
+        threadFolderIDAttr.name = "id"
+        threadFolderIDAttr.attributeType = .stringAttributeType
+        threadFolderIDAttr.isOptional = false
+        threadFolderIDAttr.isIndexed = true
+
+        let threadFolderTitleAttr = NSAttributeDescription()
+        threadFolderTitleAttr.name = "title"
+        threadFolderTitleAttr.attributeType = .stringAttributeType
+        threadFolderTitleAttr.isOptional = false
+
+        let threadFolderParentIDAttr = NSAttributeDescription()
+        threadFolderParentIDAttr.name = "parentID"
+        threadFolderParentIDAttr.attributeType = .stringAttributeType
+        threadFolderParentIDAttr.isOptional = true
+        threadFolderParentIDAttr.isIndexed = true
+
+        threadFolderEntity.properties = [threadFolderIDAttr, threadFolderTitleAttr, threadFolderParentIDAttr]
+
+        let threadFolderColorEntity = NSEntityDescription()
+        threadFolderColorEntity.name = "ThreadFolderColorEntity"
+        threadFolderColorEntity.managedObjectClassName = NSStringFromClass(ThreadFolderColorEntity.self)
+
+        let colorFolderIDAttr = NSAttributeDescription()
+        colorFolderIDAttr.name = "folderID"
+        colorFolderIDAttr.attributeType = .stringAttributeType
+        colorFolderIDAttr.isOptional = false
+        colorFolderIDAttr.isIndexed = true
+
+        let colorRedAttr = NSAttributeDescription()
+        colorRedAttr.name = "red"
+        colorRedAttr.attributeType = .doubleAttributeType
+        colorRedAttr.isOptional = false
+
+        let colorGreenAttr = NSAttributeDescription()
+        colorGreenAttr.name = "green"
+        colorGreenAttr.attributeType = .doubleAttributeType
+        colorGreenAttr.isOptional = false
+
+        let colorBlueAttr = NSAttributeDescription()
+        colorBlueAttr.name = "blue"
+        colorBlueAttr.attributeType = .doubleAttributeType
+        colorBlueAttr.isOptional = false
+
+        let colorAlphaAttr = NSAttributeDescription()
+        colorAlphaAttr.name = "alpha"
+        colorAlphaAttr.attributeType = .doubleAttributeType
+        colorAlphaAttr.isOptional = false
+
+        threadFolderColorEntity.properties = [
+            colorFolderIDAttr,
+            colorRedAttr,
+            colorGreenAttr,
+            colorBlueAttr,
+            colorAlphaAttr
+        ]
+
+        let threadFolderMembershipEntity = NSEntityDescription()
+        threadFolderMembershipEntity.name = "ThreadFolderMembershipEntity"
+        threadFolderMembershipEntity.managedObjectClassName = NSStringFromClass(ThreadFolderMembershipEntity.self)
+
+        let membershipFolderIDAttr = NSAttributeDescription()
+        membershipFolderIDAttr.name = "folderID"
+        membershipFolderIDAttr.attributeType = .stringAttributeType
+        membershipFolderIDAttr.isOptional = false
+        membershipFolderIDAttr.isIndexed = true
+
+        let membershipThreadIDAttr = NSAttributeDescription()
+        membershipThreadIDAttr.name = "threadID"
+        membershipThreadIDAttr.attributeType = .stringAttributeType
+        membershipThreadIDAttr.isOptional = false
+        membershipThreadIDAttr.isIndexed = true
+
+        threadFolderMembershipEntity.properties = [
+            membershipFolderIDAttr,
+            membershipThreadIDAttr
+        ]
+
         model.entities = [
             messageEntity,
             threadEntity,
             overrideEntity,
             manualGroupEntity,
             manualGroupJWZEntity,
-            manualGroupMessageEntity
+            manualGroupMessageEntity,
+            threadFolderEntity,
+            threadFolderColorEntity,
+            threadFolderMembershipEntity
         ]
         return model
     }
@@ -573,6 +765,11 @@ final class MessageStore {
         } catch {
             Log.app.error("Manual thread override migration failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func migrateFoldersIfNeeded() async {
+        guard !userDefaults.bool(forKey: folderMigrationKey) else { return }
+        userDefaults.set(true, forKey: folderMigrationKey)
     }
 }
 
@@ -692,6 +889,46 @@ final class ManualThreadGroupMessageEntity: NSManagedObject {
 extension ManualThreadGroupMessageEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<ManualThreadGroupMessageEntity> {
         NSFetchRequest<ManualThreadGroupMessageEntity>(entityName: "ManualThreadGroupMessageEntity")
+    }
+}
+
+@objc(ThreadFolderEntity)
+final class ThreadFolderEntity: NSManagedObject {
+    @NSManaged var id: String
+    @NSManaged var title: String
+    @NSManaged var parentID: String?
+}
+
+extension ThreadFolderEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadFolderEntity> {
+        NSFetchRequest<ThreadFolderEntity>(entityName: "ThreadFolderEntity")
+    }
+}
+
+@objc(ThreadFolderColorEntity)
+final class ThreadFolderColorEntity: NSManagedObject {
+    @NSManaged var folderID: String
+    @NSManaged var red: Double
+    @NSManaged var green: Double
+    @NSManaged var blue: Double
+    @NSManaged var alpha: Double
+}
+
+extension ThreadFolderColorEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadFolderColorEntity> {
+        NSFetchRequest<ThreadFolderColorEntity>(entityName: "ThreadFolderColorEntity")
+    }
+}
+
+@objc(ThreadFolderMembershipEntity)
+final class ThreadFolderMembershipEntity: NSManagedObject {
+    @NSManaged var folderID: String
+    @NSManaged var threadID: String
+}
+
+extension ThreadFolderMembershipEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadFolderMembershipEntity> {
+        NSFetchRequest<ThreadFolderMembershipEntity>(entityName: "ThreadFolderMembershipEntity")
     }
 }
 

@@ -1,4 +1,3 @@
-<!-- OPENSPEC:START -->
 # OpenSpec Instructions
 
 These instructions are for AI assistants working in this project.
@@ -160,17 +159,22 @@ AI agents should explicitly refuse to:
 
 # Review
 
-at the last step of a change, always try to build the app and resolve any compilation error.
+At the last step of a change, always try to build the app and resolve any compilation errors. Capture the full build log in /tmp so agents (e.g., Codex) can read it.
 
 ```bash
+# Clear cache first
+xcrun simctl erase all
+# Build and capture *all* output (stdout + stderr) so agents can review failures.
 xcodebuild \
   -project BetterMail.xcodeproj \
   -scheme BetterMail \
   -configuration Debug \
   -destination 'platform=macOS,arch=arm64' \
-  build
+  build \
+  > /tmp/xcodebuild.log 2>&1
+
+# Quick triage helpers
+tail -n 200 /tmp/xcodebuild.log
+grep -n "error:" /tmp/xcodebuild.log || true
+grep -n "BUILD FAILED" /tmp/xcodebuild.log || echo "BUILD SUCCEEDED"
 ```
----
-
-_Last updated: 2025‑03‑08_
-

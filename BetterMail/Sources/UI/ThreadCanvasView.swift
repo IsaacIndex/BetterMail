@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import os
 
 struct ThreadCanvasView: View {
     @ObservedObject var viewModel: ThreadCanvasViewModel
@@ -11,33 +10,67 @@ struct ThreadCanvasView: View {
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var scrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var activeDropFolderID: String?
+    @State private var dropHighlightPulseToken: Int = 0
+    @State private var isDropHighlightPulsing: Bool = false
+    @State private var dragState: ThreadCanvasDragState?
+    @State private var dragPreviewOpacity: Double = 0
+    @State private var dragPreviewScale: CGFloat = 0.94
+    private let headerSpacing: CGFloat = 0
+    private let headerCardHeight: CGFloat = 104
 
     private let calendar = Calendar.current
+    private static let headerTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
     var body: some View {
         GeometryReader { proxy in
             let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
             let today = Date()
             let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
+            let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
+            let headerStackHeight = chromeData.isEmpty
+                ? 0
+                : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? headerCardHeight)
+            let totalTopPadding = topInset + headerStackHeight + headerSpacing
 
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     dayBands(layout: layout, metrics: metrics, rawZoom: zoomScale)
+                    folderColumnBackgroundLayer(chromeData: chromeData,
+                                                 metrics: metrics,
+                                                 headerHeight: headerStackHeight + headerSpacing)
                     groupLegendLayer(layout: layout, metrics: metrics, rawZoom: zoomScale, calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
-                    nodesLayer(layout: layout, metrics: metrics)
+                    nodesLayer(layout: layout,
+                               metrics: metrics,
+                               chromeData: chromeData,
+                               folderHeaderHeight: headerStackHeight + headerSpacing)
+                    folderDropHighlightLayer(chromeData: chromeData,
+                                             metrics: metrics,
+                                             headerHeight: headerStackHeight + headerSpacing)
+                    dragPreviewLayer()
+                    folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, rawZoom: zoomScale)
+                        .offset(y: -(headerStackHeight + headerSpacing))
+                    folderHeaderHitTargets(chromeData: chromeData, metrics: metrics)
+                        .offset(y: -(headerStackHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
-                .padding(.top, topInset)
+                .coordinateSpace(name: "ThreadCanvasContent")
+                .padding(.top, totalTopPadding)
                 .background(
                     GeometryReader { contentProxy in
                         let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
                         Color.clear
                             .onChange(of: minY) { _, newValue in
                                 let rawOffset = -newValue
-                                let adjustedOffset = max(0, rawOffset + topInset)
-                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - topInset, 1)
+                                let adjustedOffset = max(0, rawOffset + totalTopPadding)
+                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
                                 scrollOffset = adjustedOffset
                                 viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
                                                                 viewportHeight: effectiveHeight,
@@ -60,7 +93,7 @@ struct ThreadCanvasView: View {
                 }
             )
             .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
-                let effectiveHeight = max(height, proxy.size.height) - topInset
+                let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
@@ -72,25 +105,43 @@ struct ThreadCanvasView: View {
             }
             .onChange(of: layout.contentSize.height) { _ in
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - topInset, 1),
+                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                 layout: layout,
                                                 metrics: metrics,
                                                 today: today,
                                                 calendar: calendar)
             }
+            .onChange(of: activeDropFolderID) { oldValue, newValue in
+                guard newValue != nil else {
+                    isDropHighlightPulsing = false
+                    return
+                }
+                if newValue != oldValue {
+                    startDropHighlightPulse()
+                }
+            }
             .onAppear {
                 accumulatedZoom = zoomScale
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - topInset, 1),
+                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                 layout: layout,
                                                 metrics: metrics,
                                                 today: today,
                                                 calendar: calendar)
+            }
+            .onHover { isInside in
+                if !isInside {
+                    cancelDrag()
+                }
+            }
+            .onExitCommand {
+                cancelDrag()
             }
         }
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectNode(id: nil)
+            viewModel.selectFolder(id: nil)
         }
     }
 
@@ -110,12 +161,146 @@ struct ThreadCanvasView: View {
                 let clamped = clampedZoom(accumulatedZoom * value)
                 zoomScale = clamped
                 accumulatedZoom = clamped
-                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
+//                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
             }
     }
 
     private func clampedZoom(_ value: CGFloat) -> CGFloat {
         min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
+    }
+
+    @ViewBuilder
+    private func folderBackgroundLayer(layout: ThreadCanvasLayout,
+                                       metrics: ThreadCanvasLayoutMetrics) -> some View {
+        ForEach(layout.folderOverlays) { overlay in
+            RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.4, style: .continuous)
+                .fill(folderColor(overlay.color).opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.4, style: .continuous)
+                        .stroke(folderColor(overlay.color).opacity(0.22), lineWidth: 1)
+                )
+                .frame(width: overlay.frame.width, height: overlay.frame.height, alignment: .topLeading)
+                .offset(x: overlay.frame.minX, y: overlay.frame.minY)
+        }
+    }
+
+    @ViewBuilder
+    private func folderColumnBackgroundLayer(chromeData: [FolderChromeData],
+                                             metrics: ThreadCanvasLayoutMetrics,
+                                             headerHeight: CGFloat) -> some View {
+        let maxDepth = chromeData.map(\.depth).max() ?? 0
+        let ordered = chromeData.sorted { $0.depth < $1.depth }
+        ForEach(ordered) { chrome in
+            let topExtension = max(headerHeight - chrome.headerTopOffset, 0)
+            // Extend the background upward so it visually connects with the folder header.
+            // Height also grows upward to cover the space between header and first day band.
+            let extendedMinY = -(topExtension)
+            let extendedHeight = chrome.frame.height + chrome.frame.minY + topExtension
+            let expansion = folderHorizontalExpansion(for: chrome, maxDepth: maxDepth)
+            let backgroundWidth = max(chrome.frame.width + (expansion * 2), metrics.columnWidth * 0.6)
+            let backgroundMinX = chrome.frame.minX - expansion
+            FolderColumnBackground(accentColor: accentColor(for: chrome.color),
+                                   reduceTransparency: reduceTransparency,
+                                   cornerRadius: metrics.nodeCornerRadius * 1.6)
+                .frame(width: backgroundWidth,
+                       height: extendedHeight,
+                       alignment: .topLeading)
+                .offset(x: backgroundMinX,
+                        y: extendedMinY)
+        }
+    }
+
+    @ViewBuilder
+    private func folderDropHighlightLayer(chromeData: [FolderChromeData],
+                                          metrics: ThreadCanvasLayoutMetrics,
+                                          headerHeight: CGFloat) -> some View {
+        let maxDepth = chromeData.map(\.depth).max() ?? 0
+        ForEach(chromeData) { chrome in
+            if activeDropFolderID == chrome.id {
+                let dropFrame = folderDropFrame(for: chrome,
+                                                headerHeight: headerHeight,
+                                                maxDepth: maxDepth)
+                RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
+                    .stroke(accentColor(for: chrome.color).opacity(isDropHighlightPulsing ? 1.0 : 0.85),
+                            lineWidth: isDropHighlightPulsing ? 4 : 3)
+                    .frame(width: dropFrame.width, height: dropFrame.height, alignment: .topLeading)
+                    .offset(x: dropFrame.minX, y: dropFrame.minY)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
+                                         metrics: ThreadCanvasLayoutMetrics,
+                                         rawZoom: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            let maxDepth = chromeData.map(\.depth).max() ?? 0
+            ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
+                let headerFrame = folderHeaderFrame(for: chrome,
+                                                    metrics: metrics,
+                                                    maxDepth: maxDepth)
+                FolderColumnHeader(title: chrome.title,
+                                   unreadCount: chrome.unreadCount,
+                                   updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
+                                   accentColor: accentColor(for: chrome.color),
+                                   reduceTransparency: reduceTransparency,
+                                   rawZoom: rawZoom,
+                                   cornerRadius: metrics.nodeCornerRadius * 1.6,
+                                   fixedHeight: headerCardHeight,
+                                   isSelected: viewModel.selectedFolderID == chrome.id)
+                .frame(width: headerFrame.width, alignment: .leading)
+                .offset(x: headerFrame.minX, y: headerFrame.minY)
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private func folderHeaderHitTargets(chromeData: [FolderChromeData],
+                                        metrics: ThreadCanvasLayoutMetrics) -> some View {
+        ZStack(alignment: .topLeading) {
+            let maxDepth = chromeData.map(\.depth).max() ?? 0
+            ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
+                let headerFrame = folderHeaderFrame(for: chrome,
+                                                    metrics: metrics,
+                                                    maxDepth: maxDepth)
+                Button {
+                    viewModel.selectFolder(id: chrome.id)
+                } label: {
+                    Color.clear
+                        .frame(width: headerFrame.width, height: headerFrame.height)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: headerFrame.minX, y: headerFrame.minY)
+                .accessibilityLabel(chrome.title.isEmpty
+                                    ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
+                                                        comment: "Accessibility label for a folder header")
+                                    : chrome.title)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAddTraits(viewModel.selectedFolderID == chrome.id ? .isSelected : [])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func dragPreviewLayer() -> some View {
+        if let dragState {
+            ThreadDragPreview(subject: dragState.subject, count: dragState.count)
+                .scaleEffect(dragPreviewScale)
+                .opacity(dragPreviewOpacity)
+                .position(x: dragState.location.x, y: dragState.location.y)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func folderColor(_ color: ThreadFolderColor) -> Color {
+        Color(red: color.red, green: color.green, blue: color.blue, opacity: color.alpha)
+    }
+
+    private func accentColor(for folderColor: ThreadFolderColor) -> Color {
+        let base = self.folderColor(folderColor)
+        return base.opacity(reduceTransparency ? 1.0 : 0.95)
     }
 
     @ViewBuilder
@@ -133,7 +318,8 @@ struct ThreadCanvasView: View {
     }
 
     @ViewBuilder
-    private func columnDividers(layout: ThreadCanvasLayout, metrics: ThreadCanvasLayoutMetrics) -> some View {
+    private func columnDividers(layout: ThreadCanvasLayout,
+                                metrics: ThreadCanvasLayoutMetrics) -> some View {
         let lineColor = reduceTransparency ? Color.secondary.opacity(0.2) : Color.white.opacity(0.12)
         ForEach(layout.columns) { column in
             Rectangle()
@@ -144,16 +330,23 @@ struct ThreadCanvasView: View {
     }
 
     @ViewBuilder
-    private func connectorLayer(layout: ThreadCanvasLayout, metrics: ThreadCanvasLayoutMetrics) -> some View {
+    private func connectorLayer(layout: ThreadCanvasLayout,
+                                metrics: ThreadCanvasLayoutMetrics) -> some View {
         ForEach(layout.columns) { column in
-            ThreadCanvasConnectorColumn(column: column, metrics: metrics, isHighlighted: isColumnSelected(column))
-                .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
-                .offset(x: column.xOffset, y: 0)
+            ThreadCanvasConnectorColumn(column: column,
+                                        metrics: metrics,
+                                        isHighlighted: isColumnSelected(column),
+                                        rawZoom: zoomScale)
+            .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
+            .offset(x: column.xOffset, y: 0)
         }
     }
 
     @ViewBuilder
-    private func nodesLayer(layout: ThreadCanvasLayout, metrics: ThreadCanvasLayoutMetrics) -> some View {
+    private func nodesLayer(layout: ThreadCanvasLayout,
+                            metrics: ThreadCanvasLayoutMetrics,
+                            chromeData: [FolderChromeData],
+                            folderHeaderHeight: CGFloat) -> some View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
                 ThreadCanvasNodeView(node: node,
@@ -162,11 +355,149 @@ struct ThreadCanvasView: View {
                                      rawZoom: zoomScale)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
+                    .gesture(
+                        DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasContent"))
+                            .onChanged { value in
+                                updateDragState(node: node,
+                                                column: column,
+                                                location: value.location,
+                                                chromeData: chromeData,
+                                                folderHeaderHeight: folderHeaderHeight)
+                            }
+                            .onEnded { value in
+                                finishDrag(location: value.location,
+                                           chromeData: chromeData,
+                                           folderHeaderHeight: folderHeaderHeight)
+                            }
+                    )
                     .onTapGesture {
                         viewModel.selectNode(id: node.id, additive: isCommandClick())
                     }
             }
         }
+    }
+
+    // MARK: - Drag helpers
+
+    private func updateDragState(node: ThreadCanvasNode,
+                                 column: ThreadCanvasColumn,
+                                 location: CGPoint,
+                                 chromeData: [FolderChromeData],
+                                 folderHeaderHeight: CGFloat) {
+        if dragState == nil {
+            startDrag(node: node, column: column, location: location)
+        }
+
+        guard var dragState else { return }
+        dragState.location = location
+        self.dragState = dragState
+
+        activeDropFolderID = folderHitTestID(at: location,
+                                             chromeData: chromeData,
+                                             headerHeight: folderHeaderHeight)
+    }
+
+    private func startDrag(node: ThreadCanvasNode,
+                           column: ThreadCanvasColumn,
+                           location: CGPoint) {
+        let subject = latestSubject(in: column) ?? column.title
+        let count = column.nodes.count
+        let initialFolderID = viewModel.folderMembershipByThreadID[node.threadID]
+        dragState = ThreadCanvasDragState(threadID: node.threadID,
+                                          nodeID: node.id,
+                                          subject: subject,
+                                          count: count,
+                                          initialFolderID: initialFolderID,
+                                          location: location)
+        dragPreviewOpacity = 0
+        dragPreviewScale = 0.94
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            dragPreviewOpacity = 1
+            dragPreviewScale = 1
+        }
+    }
+
+    private func finishDrag(location: CGPoint,
+                            chromeData: [FolderChromeData],
+                            folderHeaderHeight: CGFloat) {
+        guard let dragState else { return }
+        let dropFolderID = folderHitTestID(at: location,
+                                           chromeData: chromeData,
+                                           headerHeight: folderHeaderHeight)
+        if let dropFolderID {
+            viewModel.moveThread(threadID: dragState.threadID, toFolderID: dropFolderID)
+        } else if dragState.initialFolderID != nil {
+            viewModel.removeThreadFromFolder(threadID: dragState.threadID)
+        }
+        endDrag()
+    }
+
+    private func cancelDrag() {
+        guard dragState != nil else { return }
+        endDrag()
+    }
+
+    private func endDrag() {
+        activeDropFolderID = nil
+        withAnimation(.easeOut(duration: 0.12)) {
+            dragPreviewOpacity = 0
+            dragPreviewScale = 0.96
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            dragState = nil
+        }
+    }
+
+    private func startDropHighlightPulse() {
+        dropHighlightPulseToken += 1
+        let token = dropHighlightPulseToken
+        withAnimation(.easeOut(duration: 0.12)) {
+            isDropHighlightPulsing = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            guard token == dropHighlightPulseToken else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                isDropHighlightPulsing = false
+            }
+        }
+    }
+
+    private func folderHitTestID(at location: CGPoint,
+                                 chromeData: [FolderChromeData],
+                                 headerHeight: CGFloat) -> String? {
+        let maxDepth = chromeData.map(\.depth).max() ?? 0
+        let ordered = chromeData.sorted { lhs, rhs in
+            if lhs.depth == rhs.depth {
+                return lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
+            }
+            return lhs.depth > rhs.depth
+        }
+        for chrome in ordered {
+            let frame = folderDropFrame(for: chrome,
+                                        headerHeight: headerHeight,
+                                        maxDepth: maxDepth)
+            if frame.contains(location) {
+                return chrome.id
+            }
+        }
+        return nil
+    }
+
+    private func folderDropFrame(for chrome: FolderChromeData,
+                                 headerHeight: CGFloat,
+                                 maxDepth: Int) -> CGRect {
+        let topExtension = max(headerHeight - chrome.headerTopOffset, 0)
+        let extendedMinY = -(topExtension)
+        let extendedHeight = chrome.frame.height + chrome.frame.minY + topExtension
+        let expansion = folderHorizontalExpansion(for: chrome, maxDepth: maxDepth)
+        return CGRect(x: chrome.frame.minX - expansion,
+                      y: extendedMinY,
+                      width: chrome.frame.width + (expansion * 2),
+                      height: extendedHeight)
+    }
+
+    private func latestSubject(in column: ThreadCanvasColumn) -> String? {
+        column.nodes.max(by: { $0.message.date < $1.message.date })?.message.subject
     }
 
     private func isColumnSelected(_ column: ThreadCanvasColumn) -> Bool {
@@ -203,6 +534,88 @@ struct ThreadCanvasView: View {
         return .year
     }
 
+    private struct FolderHeaderMetrics {
+        let height: CGFloat
+        let indent: CGFloat
+        let spacing: CGFloat
+    }
+
+    private func folderHeaderMetrics(metrics: ThreadCanvasLayoutMetrics,
+                                     rawZoom: CGFloat) -> FolderHeaderMetrics {
+        let sizeScale = rawZoom.clamped(to: 0.6...1.25)
+        let height = headerCardHeight * sizeScale
+        let indent = max(16 * metrics.fontScale, metrics.nodeHorizontalInset)
+        let spacing = headerSpacing * sizeScale
+        return FolderHeaderMetrics(height: height, indent: indent, spacing: spacing)
+    }
+
+    private func folderHeaderFrame(for chrome: FolderChromeData,
+                                   metrics: ThreadCanvasLayoutMetrics,
+                                   maxDepth: Int) -> CGRect {
+        let expansion = folderHorizontalExpansion(for: chrome, maxDepth: maxDepth)
+        let width = max(chrome.frame.width + (expansion * 2), metrics.columnWidth * 0.6)
+        return CGRect(x: chrome.frame.minX - expansion,
+                      y: chrome.headerTopOffset,
+                      width: width,
+                      height: chrome.headerHeight)
+    }
+
+    private func folderChromeData(layout: ThreadCanvasLayout,
+                                  metrics: ThreadCanvasLayoutMetrics,
+                                  rawZoom: CGFloat) -> [FolderChromeData] {
+        let columnsByID = Dictionary(uniqueKeysWithValues: layout.columns.map { ($0.id, $0) })
+        let headerMetrics = folderHeaderMetrics(metrics: metrics, rawZoom: rawZoom)
+        return layout.folderOverlays.compactMap { overlay in
+            let columns = overlay.columnIDs.compactMap { columnsByID[$0] }
+            guard !columns.isEmpty else { return nil }
+            let headerTopOffset = CGFloat(overlay.depth) * (headerMetrics.height + headerMetrics.spacing)
+            let headerIndent = CGFloat(overlay.depth) * headerMetrics.indent
+            return folderChrome(for: overlay.id,
+                                title: overlay.title,
+                                color: overlay.color,
+                                frame: overlay.frame,
+                                columns: columns,
+                                depth: overlay.depth,
+                                headerHeight: headerMetrics.height,
+                                headerTopOffset: headerTopOffset,
+                                headerIndent: headerIndent,
+                                indentStep: headerMetrics.indent)
+        }
+    }
+
+    private func folderChrome(for id: String,
+                              title: String,
+                              color: ThreadFolderColor,
+                              frame: CGRect,
+                              columns: [ThreadCanvasColumn],
+                              depth: Int,
+                              headerHeight: CGFloat,
+                              headerTopOffset: CGFloat,
+                              headerIndent: CGFloat,
+                              indentStep: CGFloat) -> FolderChromeData {
+        let unread = columns.flatMap(\.nodes).reduce(0) { partial, node in
+            partial + (node.message.isUnread ? 1 : 0)
+        }
+        let latest = columns.flatMap(\.nodes).map(\.message.date).max()
+        return FolderChromeData(id: id,
+                                title: title,
+                                color: color,
+                                frame: frame,
+                                columnIDs: columns.map(\.id),
+                                depth: depth,
+                                unreadCount: unread,
+                                updated: latest,
+                                headerHeight: headerHeight,
+                                headerTopOffset: headerTopOffset,
+                                headerIndent: headerIndent,
+                                indentStep: indentStep)
+    }
+
+    private func folderHorizontalExpansion(for chrome: FolderChromeData,
+                                           maxDepth: Int) -> CGFloat {
+        let levelsAbove = max(0, maxDepth - chrome.depth)
+        return CGFloat(levelsAbove) * chrome.indentStep
+    }
     @ViewBuilder
     private func groupLegendLayer(layout: ThreadCanvasLayout,
                                   metrics: ThreadCanvasLayoutMetrics,
@@ -349,10 +762,186 @@ private struct ThreadCanvasDayBand: View {
     }
 }
 
+private struct FolderColumnBackground: View {
+    let accentColor: Color
+    let reduceTransparency: Bool
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.92))
+                .overlay(shape.stroke(accentColor.opacity(0.4)))
+        } else {
+            shape
+                .fill(
+                    LinearGradient(colors: [
+                        accentColor.opacity(0.38),
+                        accentColor.opacity(0.26)
+                    ], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .overlay(
+                    shape
+                        .stroke(Color.white.opacity(0.08))
+                        .blendMode(.screen)
+                )
+                .overlay(shape.stroke(accentColor.opacity(0.44)))
+                .shadow(color: accentColor.opacity(0.28), radius: 16, y: 12)
+        }
+    }
+}
+
+private struct FolderColumnHeader: View {
+    let title: String
+    let unreadCount: Int
+    let updatedText: String?
+    let accentColor: Color
+    let reduceTransparency: Bool
+    let rawZoom: CGFloat
+    let cornerRadius: CGFloat
+    let fixedHeight: CGFloat
+    let isSelected: Bool
+
+    private var sizeScale: CGFloat {
+        // Track zoom more closely than the clamped fontScale to keep the header proportional.
+        rawZoom.clamped(to: 0.6...1.25)
+    }
+
+    private var headerBackground: some View {
+        let gradient = LinearGradient(colors: [
+            accentColor.opacity(reduceTransparency ? 0.26 : 0.36),
+            accentColor.opacity(reduceTransparency ? 0.22 : 0.30)
+        ], startPoint: .topLeading, endPoint: .bottomTrailing)
+
+        let backgroundStyle: AnyShapeStyle = reduceTransparency
+            ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+            : AnyShapeStyle(gradient)
+
+        return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(backgroundStyle)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.22))
+            )
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(accentColor.opacity(reduceTransparency ? 0.45 : 0.6))
+                    .frame(height: 1)
+            }
+    }
+
+    private var badgeBackground: some View {
+        Capsule(style: .continuous)
+            .fill(accentColor.opacity(reduceTransparency ? 0.28 : 0.4))
+            .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.28)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6 * sizeScale, ) {
+            textLine(title.isEmpty
+                     ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+                     : title,
+                     baseSize: 14,
+                     weight: .semibold,
+                     color: Color.white,
+                     allowWrap: true)
+//            Spacer(minLength: 8 * sizeScale)
+            HStack(alignment: .center, spacing: 10 * sizeScale) {
+                if let updatedText {
+                    textLine("Updated \(updatedText)",
+                             baseSize: 12,
+                             weight: .regular,
+                             color: Color.white.opacity(0.78))
+                }
+                Spacer()
+                badge(unread: unreadCount)
+            }
+            
+        }
+        .padding(.horizontal, 12 * sizeScale)
+        .padding(.vertical, 10 * sizeScale)
+        .frame(height: fixedHeight * sizeScale, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(headerBackground)
+        .overlay(selectionOverlay)
+        .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
+    }
+
+    @ViewBuilder
+    private func textLine(_ text: String,
+                          baseSize: CGFloat,
+                          weight: Font.Weight,
+                          color: Color,
+                          allowWrap: Bool = false) -> some View {
+        switch textVisibility(for: baseSize) {
+        case .normal:
+            Text(text)
+                .font(.system(size: baseSize * sizeScale, weight: weight))
+                .foregroundStyle(color)
+                .lineLimit(allowWrap ? 3 : 1)
+                .fixedSize(horizontal: false, vertical: allowWrap)
+                .multilineTextAlignment(.leading)
+                .truncationMode(.tail)
+        case .ellipsis:
+            Text("…")
+                .font(.system(size: baseSize * sizeScale, weight: weight))
+                .foregroundStyle(color)
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func badge(unread: Int) -> some View {
+        switch textVisibility(for: 12) {
+        case .hidden:
+            EmptyView()
+        case .ellipsis:
+            Text("•")
+                .font(.system(size: 12 * sizeScale, weight: .semibold))
+                .padding(.horizontal, 8 * sizeScale)
+                .padding(.vertical, 5 * sizeScale)
+                .background(badgeBackground)
+                .foregroundStyle(Color.white.opacity(0.95))
+                .contentShape(Capsule())
+        case .normal:
+            Text("Unread \(unread)")
+                .font(.system(size: 12 * sizeScale, weight: .semibold))
+                .padding(.horizontal, 10 * sizeScale)
+                .padding(.vertical, 6 * sizeScale)
+                .background(badgeBackground)
+                .foregroundStyle(Color.white.opacity(0.95))
+                .contentShape(Capsule())
+        }
+    }
+
+    private func textVisibility(for baseSize: CGFloat) -> TextVisibility {
+        let rawSize = baseSize * rawZoom
+        if rawSize < ThreadCanvasNodeView.textHidePointSize {
+            return .hidden
+        }
+        if rawSize < ThreadCanvasNodeView.textEllipsisPointSize {
+            return .ellipsis
+        }
+        return .normal
+    }
+
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.9), lineWidth: 1.8)
+                .shadow(color: Color.accentColor.opacity(0.45), radius: 8)
+        }
+    }
+}
+
 private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
     let metrics: ThreadCanvasLayoutMetrics
     let isHighlighted: Bool
+    let rawZoom: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -399,11 +988,13 @@ private struct ThreadCanvasConnectorColumn: View {
             )
             .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
 
+            let circleScale = max(rawZoom, 0.05)
+            let circleSize = lineWidth * 5.8 * circleScale
             Circle()
                 .fill(segmentColor(for: segment))
-                .frame(width: lineWidth * 5.8, height: lineWidth * 5.8)
+                .frame(width: circleSize, height: circleSize)
                 .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                .position(x: localX + shift, y: segment.endY - lineWidth * 8.8 / 2)
+                .position(x: localX + shift, y: segment.endY - (lineWidth * 8.8 * circleScale) / 2)
         }
     }
 
@@ -420,22 +1011,15 @@ private struct ThreadCanvasConnectorColumn: View {
         return isHighlighted ? baseColor.opacity(1.0) : baseColor.opacity(0.7)
     }
 
-    private func segmentGlowColor(for segment: ConnectorSegment) -> Color {
-        if segment.isManual {
-            return manualConnectorGlowColor
-        }
-        return isHighlighted ? connectorGlowColor : connectorGlowColor.opacity(0.6)
-    }
-
     private var connectorColor: Color {
         if reduceTransparency {
-            return Color.secondary.opacity(0.35)
+            return Color.blue.opacity(0.35)
         }
-        return Color.blue.opacity(0.35)
+        return Color.blue.opacity(0.55)
     }
 
     private var connectorGlowColor: Color {
-        Color.accentColor.opacity(isHighlighted ? 0.75 : 0.55)
+        Color.accentColor.opacity(isHighlighted ? 0.9 : 0.65)
     }
 
     private var manualConnectorColor: Color {
@@ -443,10 +1027,6 @@ private struct ThreadCanvasConnectorColumn: View {
             return Color.red.opacity(0.68)
         }
         return Color.red.opacity(0.95)
-    }
-
-    private var manualConnectorGlowColor: Color {
-        Color.orange.opacity(isHighlighted ? 0.92 : 0.65)
     }
 
     private func connectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {
@@ -634,17 +1214,29 @@ private struct ThreadCanvasNodeView: View {
     @ViewBuilder
     private var nodeBackground: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        shape
-            .fill(nodeSolidFillColor)
-            .overlay(shape.stroke(nodeStrokeColor))
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
+                .overlay(shape.stroke(Color.white.opacity(0.22)))
+        } else {
+            shape
+                .fill(
+                    LinearGradient(colors: [
+                        Color.black.opacity(0.55),
+                        Color.black.opacity(0.42)
+                    ], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .overlay(shape.stroke(Color.white.opacity(0.12)))
+                .shadow(color: Color.black.opacity(0.28), radius: 8, y: 6)
+        }
     }
 
     @ViewBuilder
     private var selectionOverlay: some View {
         if isSelected {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.8), lineWidth: 1.5)
-                .shadow(color: Color.accentColor.opacity(0.35), radius: 6)
+                .stroke(Color.accentColor.opacity(0.9), lineWidth: 1.8)
+                .shadow(color: Color.accentColor.opacity(0.45), radius: 8)
         }
     }
 
@@ -657,23 +1249,12 @@ private struct ThreadCanvasNodeView: View {
         )
     }
 
-    private var nodeSolidFillColor: Color {
-        if reduceTransparency {
-            return Color(nsColor: NSColor.windowBackgroundColor).opacity(0.98)
-        }
-        return colorScheme == .dark ? Color.black.opacity(0.55) : Color.white.opacity(0.92)
-    }
-
-    private var nodeStrokeColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.22) : Color.black.opacity(0.1)
-    }
-
     private var primaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.95) : Color.black.opacity(0.88)
+        Color.white.opacity(0.96)
     }
 
     private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.7) : Color.black.opacity(0.55)
+        Color.white.opacity(0.76)
     }
 
     private var textShadowColor: Color {
@@ -720,6 +1301,39 @@ private struct ThreadCanvasNodeView: View {
     }
 }
 
+// MARK: - Drag preview
+
+private struct ThreadCanvasDragState: Equatable {
+    let threadID: String
+    let nodeID: String
+    let subject: String
+    let count: Int
+    let initialFolderID: String?
+    var location: CGPoint
+}
+
+private struct ThreadDragPreview: View {
+    let subject: String
+    let count: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder",
+                                                     comment: "Placeholder subject when missing") : subject)
+                .font(.headline)
+            Text("\(count) message\(count == 1 ? "" : "s")")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(radius: 6)
+        )
+    }
+}
+
 private enum TextVisibility {
     case normal
     case ellipsis
@@ -737,6 +1351,21 @@ private struct ThreadCanvasLegendItem: Identifiable {
     let startY: CGFloat
     let height: CGFloat
     let firstDayHeight: CGFloat
+}
+
+private struct FolderChromeData: Identifiable {
+    let id: String
+    let title: String
+    let color: ThreadFolderColor
+    let frame: CGRect
+    let columnIDs: [String]
+    let depth: Int
+    let unreadCount: Int
+    let updated: Date?
+    let headerHeight: CGFloat
+    let headerTopOffset: CGFloat
+    let headerIndent: CGFloat
+    let indentStep: CGFloat
 }
 
 private extension Comparable {

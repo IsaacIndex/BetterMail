@@ -87,12 +87,24 @@ struct ThreadCanvasColumn: Identifiable, Hashable {
     let xOffset: CGFloat
     let nodes: [ThreadCanvasNode]
     let latestDate: Date
+    let folderID: String?
 }
 
 struct ThreadCanvasLayout {
     let days: [ThreadCanvasDay]
     let columns: [ThreadCanvasColumn]
     let contentSize: CGSize
+    let folderOverlays: [ThreadCanvasFolderOverlay]
+}
+
+struct ThreadCanvasFolderOverlay: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let color: ThreadFolderColor
+    let frame: CGRect
+    let columnIDs: [String]
+    let parentID: String?
+    let depth: Int
 }
 
 enum ThreadCanvasDateHelper {
