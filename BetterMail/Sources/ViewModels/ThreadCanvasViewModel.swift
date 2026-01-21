@@ -9,6 +9,11 @@ struct ThreadSummaryState {
     var isSummarizing: Bool
 }
 
+private struct ThreadFolderEdit: Hashable {
+    let title: String
+    let color: ThreadFolderColor
+}
+
 @MainActor
 final class ThreadCanvasViewModel: ObservableObject {
     private actor SidebarBackgroundWorker {
@@ -129,12 +134,14 @@ final class ThreadCanvasViewModel: ObservableObject {
     @Published private(set) var threadSummaries: [String: ThreadSummaryState] = [:]
     @Published private(set) var expandedSummaryIDs: Set<String> = []
     @Published var selectedNodeID: String?
+    @Published var selectedFolderID: String?
     @Published private(set) var selectedNodeIDs: Set<String> = []
     @Published private(set) var manualGroupByMessageKey: [String: String] = [:]
     @Published private(set) var manualAttachmentMessageIDs: Set<String> = []
     @Published private(set) var manualGroups: [String: ManualThreadGroup] = [:]
     @Published private(set) var jwzThreadMap: [String: String] = [:]
     @Published private(set) var threadFolders: [ThreadFolder] = []
+    @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:]
     @Published private(set) var folderMembershipByThreadID: [String: String] = [:]
     @Published private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
     @Published private(set) var visibleDayRange: ClosedRange<Int>?
@@ -329,7 +336,9 @@ final class ThreadCanvasViewModel: ObservableObject {
             self.jwzThreadMap = rethreadResult.jwzThreadMap
             self.threadFolders = rethreadResult.folders
             self.folderMembershipByThreadID = Self.folderMembershipMap(for: rethreadResult.folders)
+            self.folderEditsByID = [:]
             pruneSelection(using: rethreadResult.roots)
+            pruneFolderSelection(using: rethreadResult.folders)
             refreshSummaries(for: rethreadResult.roots)
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
         } catch {
@@ -468,6 +477,11 @@ final class ThreadCanvasViewModel: ObservableObject {
             return
         }
 
+        if let selectedFolderID {
+            clearFolderEdits(id: selectedFolderID)
+            self.selectedFolderID = nil
+        }
+
         if additive {
             if selectedNodeIDs.contains(id) {
                 selectedNodeIDs.remove(id)
@@ -481,6 +495,41 @@ final class ThreadCanvasViewModel: ObservableObject {
         } else {
             selectedNodeID = id
             selectedNodeIDs = [id]
+        }
+    }
+
+    func selectFolder(id: String?) {
+        if let selectedFolderID, selectedFolderID != id {
+            clearFolderEdits(id: selectedFolderID)
+        }
+        selectedFolderID = id
+    }
+
+    func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+        folderEditsByID[id] = ThreadFolderEdit(title: title, color: color)
+    }
+
+    func clearFolderEdits(id: String) {
+        folderEditsByID.removeValue(forKey: id)
+    }
+
+    func saveFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+        guard let index = threadFolders.firstIndex(where: { $0.id == id }) else { return }
+        var updated = threadFolders
+        updated[index].title = title
+        updated[index].color = color
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await store.upsertThreadFolders(updated)
+                await MainActor.run {
+                    self.threadFolders = updated
+                    self.clearFolderEdits(id: id)
+                }
+            } catch {
+                Log.app.error("Failed to save thread folder edits: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -536,6 +585,10 @@ final class ThreadCanvasViewModel: ObservableObject {
         Self.node(matching: selectedNodeID, in: roots)
     }
 
+    var selectedFolder: ThreadFolder? {
+        threadFolders.first { $0.id == selectedFolderID }
+    }
+
     func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
                       today: Date = Date(),
                       calendar: Calendar = .current) -> ThreadCanvasLayout {
@@ -545,7 +598,7 @@ final class ThreadCanvasViewModel: ObservableObject {
                           calendar: calendar,
                           manualAttachmentMessageIDs: manualAttachmentMessageIDs,
                           jwzThreadMap: jwzThreadMap,
-                          folders: threadFolders,
+                          folders: effectiveThreadFolders,
                           folderMembershipByThreadID: folderMembershipByThreadID)
     }
 
@@ -815,6 +868,25 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
         if selectedNodeIDs.isEmpty {
             selectedNodeID = nil
+        }
+    }
+
+    private func pruneFolderSelection(using folders: [ThreadFolder]) {
+        guard let selectedFolderID else { return }
+        let validIDs = Set(folders.map(\.id))
+        if !validIDs.contains(selectedFolderID) {
+            self.selectedFolderID = nil
+        }
+    }
+
+    private var effectiveThreadFolders: [ThreadFolder] {
+        guard !folderEditsByID.isEmpty else { return threadFolders }
+        return threadFolders.map { folder in
+            guard let edit = folderEditsByID[folder.id] else { return folder }
+            var updated = folder
+            updated.title = edit.title
+            updated.color = edit.color
+            return updated
         }
     }
 

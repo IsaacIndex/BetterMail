@@ -57,6 +57,8 @@ struct ThreadCanvasView: View {
                     dragPreviewLayer()
                     folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, rawZoom: zoomScale)
                         .offset(y: -(headerStackHeight + headerSpacing))
+                    folderHeaderHitTargets(chromeData: chromeData, metrics: metrics)
+                        .offset(y: -(headerStackHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
                 .coordinateSpace(name: "ThreadCanvasContent")
@@ -139,6 +141,7 @@ struct ThreadCanvasView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectNode(id: nil)
+            viewModel.selectFolder(id: nil)
         }
     }
 
@@ -243,11 +246,39 @@ struct ThreadCanvasView: View {
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
-                                   fixedHeight: headerCardHeight)
+                                   fixedHeight: headerCardHeight,
+                                   isSelected: viewModel.selectedFolderID == chrome.id)
                 .frame(width: headerFrame.width, alignment: .leading)
                 .offset(x: headerFrame.minX, y: headerFrame.minY)
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private func folderHeaderHitTargets(chromeData: [FolderChromeData],
+                                        metrics: ThreadCanvasLayoutMetrics) -> some View {
+        ZStack(alignment: .topLeading) {
+            let maxDepth = chromeData.map(\.depth).max() ?? 0
+            ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
+                let headerFrame = folderHeaderFrame(for: chrome,
+                                                    metrics: metrics,
+                                                    maxDepth: maxDepth)
+                Button {
+                    viewModel.selectFolder(id: chrome.id)
+                } label: {
+                    Color.clear
+                        .frame(width: headerFrame.width, height: headerFrame.height)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: headerFrame.minX, y: headerFrame.minY)
+                .accessibilityLabel(chrome.title.isEmpty
+                                    ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
+                                                        comment: "Accessibility label for a folder header")
+                                    : chrome.title)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAddTraits(viewModel.selectedFolderID == chrome.id ? .isSelected : [])
             }
         }
     }
@@ -770,6 +801,7 @@ private struct FolderColumnHeader: View {
     let rawZoom: CGFloat
     let cornerRadius: CGFloat
     let fixedHeight: CGFloat
+    let isSelected: Bool
 
     private var sizeScale: CGFloat {
         // Track zoom more closely than the clamped fontScale to keep the header proportional.
@@ -832,6 +864,7 @@ private struct FolderColumnHeader: View {
         .frame(height: fixedHeight * sizeScale, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
+        .overlay(selectionOverlay)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
     }
 
@@ -892,6 +925,15 @@ private struct FolderColumnHeader: View {
             return .ellipsis
         }
         return .normal
+    }
+
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.9), lineWidth: 1.8)
+                .shadow(color: Color.accentColor.opacity(0.45), radius: 8)
+        }
     }
 }
 
