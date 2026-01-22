@@ -9,6 +9,14 @@ struct ThreadSummaryState {
     var isSummarizing: Bool
 }
 
+private struct ThreadSummaryInput {
+    let rootID: String
+    let cacheKey: String
+    let subjects: [String]
+    let messageCount: Int
+    let fingerprint: String
+}
+
 private struct ThreadFolderEdit: Hashable {
     let title: String
     let color: ThreadFolderColor
@@ -20,16 +28,13 @@ final class ThreadCanvasViewModel: ObservableObject {
         private let client: MailAppleScriptClient
         private let store: MessageStore
         private let threader: JWZThreader
-        private let summaryProvider: EmailSummaryProviding?
 
         init(client: MailAppleScriptClient,
              store: MessageStore,
-             threader: JWZThreader,
-             summaryProvider: EmailSummaryProviding?) {
+             threader: JWZThreader) {
             self.client = client
             self.store = store
             self.threader = threader
-            self.summaryProvider = summaryProvider
         }
 
         struct RefreshOutcome {
@@ -101,27 +106,61 @@ final class ThreadCanvasViewModel: ObservableObject {
             return totalFetched
         }
 
-        func subjectsByRoot(_ roots: [ThreadNode]) -> [String: [String]] {
-            roots.reduce(into: [String: [String]]()) { result, root in
-                result[root.id] = subjects(in: root)
+        func summaryInputs(for roots: [ThreadNode],
+                           manualGroupByMessageKey: [String: String]) -> [String: ThreadSummaryInput] {
+            var inputs: [String: ThreadSummaryInput] = [:]
+            inputs.reserveCapacity(roots.count)
+
+            for root in roots {
+                let entries = subjectEntries(in: root)
+                let subjects = normalizedSubjects(from: entries)
+                guard !subjects.isEmpty else { continue }
+                let messageCount = messageCount(in: root)
+                let manualGroupID = manualGroupByMessageKey[root.message.threadKey]
+                let cacheKey = root.message.threadID ?? JWZThreader.threadIdentifier(for: root)
+                let fingerprint = ThreadSummaryFingerprint.make(subjects: subjects,
+                                                                messageCount: messageCount,
+                                                                manualGroupID: manualGroupID)
+                inputs[root.id] = ThreadSummaryInput(rootID: root.id,
+                                                     cacheKey: cacheKey,
+                                                     subjects: subjects,
+                                                     messageCount: messageCount,
+                                                     fingerprint: fingerprint)
             }
+
+            return inputs
         }
 
-        func summarize(subjects: [String]) async throws -> String {
-            guard let summaryProvider else { throw CancellationError() }
-            return try await summaryProvider.summarize(subjects: subjects)
-        }
-
-        private func subjects(in node: ThreadNode) -> [String] {
-            var results: [String] = []
+        private func subjectEntries(in node: ThreadNode) -> [(date: Date, subject: String)] {
+            var results: [(Date, String)] = []
             let trimmed = node.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                results.append(trimmed)
+                results.append((node.message.date, trimmed))
             }
             for child in node.children {
-                results.append(contentsOf: subjects(in: child))
+                results.append(contentsOf: subjectEntries(in: child))
             }
             return results
+        }
+
+        private func normalizedSubjects(from entries: [(date: Date, subject: String)]) -> [String] {
+            let sorted = entries.sorted { $0.date > $1.date }
+            var seen = Set<String>()
+            var results: [String] = []
+            results.reserveCapacity(min(sorted.count, 25))
+
+            for entry in sorted {
+                guard seen.insert(entry.subject).inserted else { continue }
+                results.append(entry.subject)
+                if results.count == 25 {
+                    break
+                }
+            }
+            return results
+        }
+
+        private func messageCount(in node: ThreadNode) -> Int {
+            1 + node.children.reduce(0) { $0 + messageCount(in: $1) }
         }
     }
 
@@ -162,6 +201,8 @@ final class ThreadCanvasViewModel: ObservableObject {
     private let client: MailAppleScriptClient
     private let threader: JWZThreader
     private let summaryProvider: EmailSummaryProviding?
+    private let summaryProviderID: String
+    private let summaryAvailabilityMessage: String
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
     private let worker: SidebarBackgroundWorker
@@ -178,18 +219,20 @@ final class ThreadCanvasViewModel: ObservableObject {
          inspectorSettings: InspectorViewSettings,
          store: MessageStore = .shared,
          client: MailAppleScriptClient = MailAppleScriptClient(),
-         threader: JWZThreader = JWZThreader()) {
+         threader: JWZThreader = JWZThreader(),
+         summaryCapability: EmailSummaryCapability? = nil) {
         self.store = store
         self.client = client
         self.threader = threader
         self.settings = settings
         self.inspectorSettings = inspectorSettings
-        let capability = EmailSummaryProviderFactory.makeCapability()
+        let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
+        self.summaryProviderID = capability.providerID
+        self.summaryAvailabilityMessage = capability.statusMessage
         self.worker = SidebarBackgroundWorker(client: client,
                                               store: store,
-                                              threader: threader,
-                                              summaryProvider: capability.provider)
+                                              threader: threader)
         NotificationCenter.default.publisher(for: .manualThreadGroupsReset)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -326,6 +369,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     private func performRethread() async {
         do {
             Log.refresh.debug("Beginning rethread from store.")
+            let previousCacheKeys = Set(self.roots.map { Self.summaryCacheKey(for: $0) })
             let cutoffDate = cachedMessageCutoffDate()
             let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate)
             self.roots = rethreadResult.roots
@@ -340,6 +384,18 @@ final class ThreadCanvasViewModel: ObservableObject {
             pruneSelection(using: rethreadResult.roots)
             pruneFolderSelection(using: rethreadResult.folders)
             refreshSummaries(for: rethreadResult.roots)
+            let currentCacheKeys = Set(rethreadResult.roots.map { Self.summaryCacheKey(for: $0) })
+            let removedCacheKeys = previousCacheKeys.subtracting(currentCacheKeys)
+            if !removedCacheKeys.isEmpty {
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await store.deleteThreadSummaries(for: Array(removedCacheKeys))
+                    } catch {
+                        Log.app.error("Failed to delete stale summary caches: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
@@ -359,33 +415,43 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func refreshSummaries(for roots: [ThreadNode]) {
-        guard let summaryProvider else {
-            threadSummaries = [:]
-            summaryTasks.values.forEach { $0.cancel() }
-            summaryTasks.removeAll()
-            return
-        }
-
-        let provider = summaryProvider
         let rootsSnapshot = roots
+        let manualGroupSnapshot = manualGroupByMessageKey
+        let provider = summaryProvider
+        let providerStatusMessage = summaryAvailabilityMessage
         summaryRefreshGeneration += 1
         let generation = summaryRefreshGeneration
         Task { [weak self] in
             guard let self else { return }
-            let subjectsByID = await worker.subjectsByRoot(rootsSnapshot)
+            let inputsByRootID = await worker.summaryInputs(for: rootsSnapshot,
+                                                            manualGroupByMessageKey: manualGroupSnapshot)
+            let cacheKeys = inputsByRootID.values.map(\.cacheKey)
+            var cachedByKey: [String: ThreadSummaryCacheEntry] = [:]
+            if !cacheKeys.isEmpty {
+                do {
+                    let cached = try await store.fetchThreadSummaries(for: cacheKeys)
+                    cachedByKey = Dictionary(uniqueKeysWithValues: cached.map { ($0.threadID, $0) })
+                } catch {
+                    Log.app.error("Failed to load cached summaries: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             await MainActor.run {
                 guard self.summaryRefreshGeneration == generation else { return }
                 self.prepareSummaries(for: rootsSnapshot,
-                                      subjectsByID: subjectsByID,
-                                      summaryProvider: provider)
+                                      inputsByRootID: inputsByRootID,
+                                      cachedByKey: cachedByKey,
+                                      summaryProvider: provider,
+                                      providerStatusMessage: providerStatusMessage)
             }
         }
     }
 
     @MainActor
     private func prepareSummaries(for roots: [ThreadNode],
-                                  subjectsByID: [String: [String]],
-                                  summaryProvider: EmailSummaryProviding) {
+                                  inputsByRootID: [String: ThreadSummaryInput],
+                                  cachedByKey: [String: ThreadSummaryCacheEntry],
+                                  summaryProvider: EmailSummaryProviding?,
+                                  providerStatusMessage: String) {
         let validRootIDs = Set(roots.map(\.id))
         for (id, task) in summaryTasks where !validRootIDs.contains(id) {
             task.cancel()
@@ -395,7 +461,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
 
         for root in roots {
-            guard let subjects = subjectsByID[root.id], !subjects.isEmpty else {
+            guard let input = inputsByRootID[root.id], !input.subjects.isEmpty else {
                 threadSummaries.removeValue(forKey: root.id)
                 summaryTasks[root.id]?.cancel()
                 summaryTasks.removeValue(forKey: root.id)
@@ -403,7 +469,37 @@ final class ThreadCanvasViewModel: ObservableObject {
                 continue
             }
 
-            threadSummaries[root.id] = ThreadSummaryState(text: threadSummaries[root.id]?.text ?? "",
+            let cachedEntry = cachedByKey[input.cacheKey]
+            let hasFreshCache = cachedEntry?.fingerprint == input.fingerprint
+            let isProviderAvailable = summaryProvider != nil
+
+            if let cachedEntry, hasFreshCache {
+                summaryTasks[root.id]?.cancel()
+                summaryTasks.removeValue(forKey: root.id)
+                threadSummaries[root.id] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                              statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                 prefix: "Cached"),
+                                                              isSummarizing: false)
+                continue
+            }
+
+            if !isProviderAvailable {
+                summaryTasks[root.id]?.cancel()
+                summaryTasks.removeValue(forKey: root.id)
+                if let cachedEntry {
+                    threadSummaries[root.id] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                                  statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                     prefix: "Last updated",
+                                                                                                     suffix: providerStatusMessage),
+                                                                  isSummarizing: false)
+                } else {
+                    threadSummaries.removeValue(forKey: root.id)
+                }
+                continue
+            }
+
+            let placeholderText = cachedEntry?.summaryText ?? threadSummaries[root.id]?.text ?? ""
+            threadSummaries[root.id] = ThreadSummaryState(text: placeholderText,
                                                           statusMessage: "Summarizing…",
                                                           isSummarizing: true)
 
@@ -411,7 +507,19 @@ final class ThreadCanvasViewModel: ObservableObject {
             summaryTasks[root.id] = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let text = try await worker.summarize(subjects: subjects)
+                    guard let summaryProvider else { return }
+                    let text = try await summaryProvider.summarize(subjects: input.subjects)
+                    let generatedAt = Date()
+                    let entry = ThreadSummaryCacheEntry(threadID: input.cacheKey,
+                                                        summaryText: text,
+                                                        generatedAt: generatedAt,
+                                                        fingerprint: input.fingerprint,
+                                                        provider: summaryProviderID)
+                    do {
+                        try await store.upsertThreadSummaries([entry])
+                    } catch {
+                        Log.app.error("Failed to persist summary cache: \(error.localizedDescription, privacy: .public)")
+                    }
                     let timestamp = DateFormatter.localizedString(from: Date(),
                                                                   dateStyle: .none,
                                                                   timeStyle: .short)
@@ -427,10 +535,19 @@ final class ThreadCanvasViewModel: ObservableObject {
                     }
                 } catch {
                     await MainActor.run {
-                        self.updateSummary(for: root.id,
-                                           text: "",
-                                           status: error.localizedDescription,
-                                           isSummarizing: false)
+                        if let cachedEntry {
+                            self.updateSummary(for: root.id,
+                                               text: cachedEntry.summaryText,
+                                               status: self.cachedStatusMessage(for: cachedEntry,
+                                                                                prefix: "Last updated",
+                                                                                suffix: error.localizedDescription),
+                                               isSummarizing: false)
+                        } else {
+                            self.updateSummary(for: root.id,
+                                               text: "",
+                                               status: error.localizedDescription,
+                                               isSummarizing: false)
+                        }
                     }
                 }
             }
@@ -454,6 +571,19 @@ final class ThreadCanvasViewModel: ObservableObject {
         threadSummaries[id] = state
     }
 
+    private func cachedStatusMessage(for entry: ThreadSummaryCacheEntry,
+                                     prefix: String,
+                                     suffix: String? = nil) -> String {
+        let timestamp = DateFormatter.localizedString(from: entry.generatedAt,
+                                                      dateStyle: .none,
+                                                      timeStyle: .short)
+        var message = "\(prefix) \(timestamp)"
+        if let suffix, !suffix.isEmpty {
+            message += "; \(suffix)"
+        }
+        return message
+    }
+
     func isSummaryExpanded(for id: String) -> Bool {
         expandedSummaryIDs.contains(id)
     }
@@ -465,6 +595,15 @@ final class ThreadCanvasViewModel: ObservableObject {
             expandedSummaryIDs.remove(id)
         }
     }
+
+#if DEBUG
+    func applyRethreadResultForTesting(roots: [ThreadNode],
+                                       manualGroupByMessageKey: [String: String] = [:]) {
+        self.roots = roots
+        self.manualGroupByMessageKey = manualGroupByMessageKey
+        refreshSummaries(for: roots)
+    }
+#endif
 
     func selectNode(id: String?) {
         selectNode(id: id, additive: false)
@@ -1005,6 +1144,11 @@ final class ThreadCanvasViewModel: ObservableObject {
 private extension ThreadCanvasViewModel {
     static func newManualGroupID() -> String {
         "manual-\(UUID().uuidString.lowercased())"
+    }
+
+    static func summaryCacheKey(for node: ThreadNode) -> String {
+        let candidate = node.message.threadID ?? JWZThreader.threadIdentifier(for: node)
+        return candidate.isEmpty ? node.id : candidate
     }
 }
 

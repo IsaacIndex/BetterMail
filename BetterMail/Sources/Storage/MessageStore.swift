@@ -14,21 +14,31 @@ final class MessageStore {
     private let lastSyncKey = "MessageStore.lastSync"
     private let manualGroupMigrationKey = "MessageStore.manualGroupMigrationV1"
     private let folderMigrationKey = "MessageStore.threadFolderMigrationV1"
+    private let summaryCacheMigrationKey = "MessageStore.threadSummaryCacheMigrationV1"
 
     var lastSyncDate: Date? {
         get { userDefaults.object(forKey: lastSyncKey) as? Date }
         set { userDefaults.set(newValue, forKey: lastSyncKey) }
     }
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults = .standard,
+         storeURL: URL? = nil,
+         storeType: String = NSSQLiteStoreType) {
         self.userDefaults = userDefaults
         let model = MessageStore.makeModel()
         container = NSPersistentContainer(name: "BetterMailModel", managedObjectModel: model)
-        let storeURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("BetterMail", isDirectory: true)
-        try? FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: true)
-        let sqliteURL = storeURL.appendingPathComponent("Messages.sqlite")
-        let description = NSPersistentStoreDescription(url: sqliteURL)
+        let description = NSPersistentStoreDescription()
+        description.type = storeType
+        if storeType != NSInMemoryStoreType {
+            let resolvedURL = storeURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("BetterMail", isDirectory: true)
+                .appendingPathComponent("Messages.sqlite")
+            if storeURL == nil {
+                let directoryURL = resolvedURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            }
+            description.url = resolvedURL
+        }
         description.shouldInferMappingModelAutomatically = true
         description.shouldMigrateStoreAutomatically = true
         container.persistentStoreDescriptions = [description]
@@ -40,6 +50,7 @@ final class MessageStore {
         Task { [weak self] in
             await self?.migrateLegacyOverridesIfNeeded()
             await self?.migrateFoldersIfNeeded()
+            await self?.migrateSummaryCacheIfNeeded()
         }
     }
 
@@ -239,6 +250,54 @@ final class MessageStore {
                 context.delete(membership)
             }
 
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func fetchThreadSummaries(for threadIDs: [String]) async throws -> [ThreadSummaryCacheEntry] {
+        guard !threadIDs.isEmpty else { return [] }
+        return try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "threadID IN %@", threadIDs)
+            return try context.fetch(request).map { $0.toModel() }
+        }
+    }
+
+    func upsertThreadSummaries(_ summaries: [ThreadSummaryCacheEntry]) async throws {
+        guard !summaries.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let ids = summaries.map(\.threadID)
+            let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "threadID IN %@", ids)
+            let existing = try context.fetch(request)
+            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ($0.threadID, $0) })
+
+            for summary in summaries {
+                let entity = lookup[summary.threadID] ?? ThreadSummaryEntity(context: context)
+                entity.threadID = summary.threadID
+                entity.summaryText = summary.summaryText
+                entity.generatedAt = summary.generatedAt
+                entity.fingerprint = summary.fingerprint
+                entity.provider = summary.provider
+                lookup[summary.threadID] = entity
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func deleteThreadSummaries(for threadIDs: [String]) async throws {
+        guard !threadIDs.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "threadID IN %@", threadIDs)
+            for entity in try context.fetch(request) {
+                context.delete(entity)
+            }
             if context.hasChanges {
                 try context.save()
             }
@@ -712,6 +771,44 @@ final class MessageStore {
             membershipThreadIDAttr
         ]
 
+        let threadSummaryEntity = NSEntityDescription()
+        threadSummaryEntity.name = "ThreadSummaryEntity"
+        threadSummaryEntity.managedObjectClassName = NSStringFromClass(ThreadSummaryEntity.self)
+
+        let summaryThreadIDAttr = NSAttributeDescription()
+        summaryThreadIDAttr.name = "threadID"
+        summaryThreadIDAttr.attributeType = .stringAttributeType
+        summaryThreadIDAttr.isOptional = false
+        summaryThreadIDAttr.isIndexed = true
+
+        let summaryTextAttr = NSAttributeDescription()
+        summaryTextAttr.name = "summaryText"
+        summaryTextAttr.attributeType = .stringAttributeType
+        summaryTextAttr.isOptional = false
+
+        let summaryGeneratedAtAttr = NSAttributeDescription()
+        summaryGeneratedAtAttr.name = "generatedAt"
+        summaryGeneratedAtAttr.attributeType = .dateAttributeType
+        summaryGeneratedAtAttr.isOptional = false
+
+        let summaryFingerprintAttr = NSAttributeDescription()
+        summaryFingerprintAttr.name = "fingerprint"
+        summaryFingerprintAttr.attributeType = .stringAttributeType
+        summaryFingerprintAttr.isOptional = false
+
+        let summaryProviderAttr = NSAttributeDescription()
+        summaryProviderAttr.name = "provider"
+        summaryProviderAttr.attributeType = .stringAttributeType
+        summaryProviderAttr.isOptional = false
+
+        threadSummaryEntity.properties = [
+            summaryThreadIDAttr,
+            summaryTextAttr,
+            summaryGeneratedAtAttr,
+            summaryFingerprintAttr,
+            summaryProviderAttr
+        ]
+
         model.entities = [
             messageEntity,
             threadEntity,
@@ -721,7 +818,8 @@ final class MessageStore {
             manualGroupMessageEntity,
             threadFolderEntity,
             threadFolderColorEntity,
-            threadFolderMembershipEntity
+            threadFolderMembershipEntity,
+            threadSummaryEntity
         ]
         return model
     }
@@ -770,6 +868,29 @@ final class MessageStore {
     private func migrateFoldersIfNeeded() async {
         guard !userDefaults.bool(forKey: folderMigrationKey) else { return }
         userDefaults.set(true, forKey: folderMigrationKey)
+    }
+
+    private func migrateSummaryCacheIfNeeded() async {
+        guard !userDefaults.bool(forKey: summaryCacheMigrationKey) else { return }
+        do {
+            let threads = try await fetchThreads()
+            let threadIDs = Set(threads.map(\.id))
+            let cachedIDs = try await fetchSummaryThreadIDs()
+            let orphaned = cachedIDs.filter { !threadIDs.contains($0) }
+            if !orphaned.isEmpty {
+                try await deleteThreadSummaries(for: orphaned)
+            }
+            userDefaults.set(true, forKey: summaryCacheMigrationKey)
+        } catch {
+            Log.app.error("Summary cache migration failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func fetchSummaryThreadIDs() async throws -> [String] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
+            return try context.fetch(request).map(\.threadID)
+        }
     }
 }
 
@@ -929,6 +1050,29 @@ final class ThreadFolderMembershipEntity: NSManagedObject {
 extension ThreadFolderMembershipEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadFolderMembershipEntity> {
         NSFetchRequest<ThreadFolderMembershipEntity>(entityName: "ThreadFolderMembershipEntity")
+    }
+}
+
+@objc(ThreadSummaryEntity)
+final class ThreadSummaryEntity: NSManagedObject {
+    @NSManaged var threadID: String
+    @NSManaged var summaryText: String
+    @NSManaged var generatedAt: Date
+    @NSManaged var fingerprint: String
+    @NSManaged var provider: String
+
+    func toModel() -> ThreadSummaryCacheEntry {
+        ThreadSummaryCacheEntry(threadID: threadID,
+                                summaryText: summaryText,
+                                generatedAt: generatedAt,
+                                fingerprint: fingerprint,
+                                provider: provider)
+    }
+}
+
+extension ThreadSummaryEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadSummaryEntity> {
+        NSFetchRequest<ThreadSummaryEntity>(entityName: "ThreadSummaryEntity")
     }
 }
 

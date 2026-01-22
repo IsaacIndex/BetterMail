@@ -27,6 +27,7 @@ protocol EmailSummaryProviding {
 struct EmailSummaryCapability {
     let provider: EmailSummaryProviding?
     let statusMessage: String
+    let providerID: String
 }
 
 enum EmailSummaryProviderFactory {
@@ -38,15 +39,18 @@ enum EmailSummaryProviderFactory {
             case .available:
                 let provider = FoundationModelsEmailSummaryProvider(model: model)
                 return EmailSummaryCapability(provider: provider,
-                                              statusMessage: "Apple Intelligence summary ready.")
+                                              statusMessage: "Apple Intelligence summary ready.",
+                                              providerID: "foundation-models")
             case .unavailable(let reason):
                 return EmailSummaryCapability(provider: nil,
-                                              statusMessage: reason.userFacingMessage)
+                                              statusMessage: reason.userFacingMessage,
+                                              providerID: "foundation-models")
             }
         }
 #endif
         return EmailSummaryCapability(provider: nil,
-                                      statusMessage: "Apple Intelligence summaries require a compatible Mac with Apple Intelligence enabled.")
+                                      statusMessage: "Apple Intelligence summaries require a compatible Mac with Apple Intelligence enabled.",
+                                      providerID: "foundation-models")
     }
 }
 
