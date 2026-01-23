@@ -102,6 +102,7 @@ struct ThreadListView: View {
         if isInspectorVisible {
             if let selectedFolder = viewModel.selectedFolder {
                 ThreadFolderInspectorView(folder: selectedFolder,
+                                          summaryState: viewModel.folderSummaryState(for: selectedFolder.id),
                                           onPreview: { title, color in
                                               viewModel.previewFolderEdits(id: selectedFolder.id,
                                                                            title: title,
@@ -436,21 +437,19 @@ struct ThreadListView: View {
     }
 
     private var selectedSummaryState: ThreadSummaryState? {
-        guard let selectedNodeID = viewModel.selectedNodeID,
-              let rootID = viewModel.rootID(containing: selectedNodeID) else {
+        guard let selectedNodeID = viewModel.selectedNodeID else {
             return nil
         }
-        return viewModel.summaryState(for: rootID)
+        return viewModel.summaryState(for: selectedNodeID)
     }
 
     private var selectedSummaryExpansion: Binding<Bool>? {
-        guard let selectedNodeID = viewModel.selectedNodeID,
-              let rootID = viewModel.rootID(containing: selectedNodeID) else {
+        guard let selectedNodeID = viewModel.selectedNodeID else {
             return nil
         }
         return Binding(
-            get: { viewModel.isSummaryExpanded(for: rootID) },
-            set: { viewModel.setSummaryExpanded($0, for: rootID) }
+            get: { viewModel.isSummaryExpanded(for: selectedNodeID) },
+            set: { viewModel.setSummaryExpanded($0, for: selectedNodeID) }
         )
     }
 }

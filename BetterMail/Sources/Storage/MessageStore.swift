@@ -15,6 +15,7 @@ final class MessageStore {
     private let manualGroupMigrationKey = "MessageStore.manualGroupMigrationV1"
     private let folderMigrationKey = "MessageStore.threadFolderMigrationV1"
     private let summaryCacheMigrationKey = "MessageStore.threadSummaryCacheMigrationV1"
+    private let scopedSummaryCacheMigrationKey = "MessageStore.scopedSummaryCacheMigrationV1"
 
     var lastSyncDate: Date? {
         get { userDefaults.object(forKey: lastSyncKey) as? Date }
@@ -51,6 +52,7 @@ final class MessageStore {
             await self?.migrateLegacyOverridesIfNeeded()
             await self?.migrateFoldersIfNeeded()
             await self?.migrateSummaryCacheIfNeeded()
+            await self?.migrateScopedSummaryCacheIfNeeded()
         }
     }
 
@@ -295,6 +297,57 @@ final class MessageStore {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
             request.predicate = NSPredicate(format: "threadID IN %@", threadIDs)
+            for entity in try context.fetch(request) {
+                context.delete(entity)
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func fetchSummaries(scope: SummaryScope, ids: [String]) async throws -> [SummaryCacheEntry] {
+        guard !ids.isEmpty else { return [] }
+        return try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "scope == %@ AND scopeID IN %@", scope.rawValue, ids)
+            return try context.fetch(request).map { $0.toModel() }
+        }
+    }
+
+    func upsertSummaries(_ summaries: [SummaryCacheEntry]) async throws {
+        guard !summaries.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let ids = summaries.map(\.scopeID)
+            let scopes = Set(summaries.map(\.scope))
+            let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "scope IN %@ AND scopeID IN %@", scopes.map(\.rawValue), ids)
+            let existing = try context.fetch(request)
+            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ("\($0.scope)|\($0.scopeID)", $0) })
+
+            for summary in summaries {
+                let key = "\(summary.scope.rawValue)|\(summary.scopeID)"
+                let entity = lookup[key] ?? SummaryCacheEntity(context: context)
+                entity.scope = summary.scope.rawValue
+                entity.scopeID = summary.scopeID
+                entity.summaryText = summary.summaryText
+                entity.generatedAt = summary.generatedAt
+                entity.fingerprint = summary.fingerprint
+                entity.provider = summary.provider
+                lookup[key] = entity
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    func deleteSummaries(scope: SummaryScope, ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "scope == %@ AND scopeID IN %@", scope.rawValue, ids)
             for entity in try context.fetch(request) {
                 context.delete(entity)
             }
@@ -809,6 +862,51 @@ final class MessageStore {
             summaryProviderAttr
         ]
 
+        let summaryCacheEntity = NSEntityDescription()
+        summaryCacheEntity.name = "SummaryCacheEntity"
+        summaryCacheEntity.managedObjectClassName = NSStringFromClass(SummaryCacheEntity.self)
+
+        let summaryScopeAttr = NSAttributeDescription()
+        summaryScopeAttr.name = "scope"
+        summaryScopeAttr.attributeType = .stringAttributeType
+        summaryScopeAttr.isOptional = false
+        summaryScopeAttr.isIndexed = true
+
+        let summaryScopeIDAttr = NSAttributeDescription()
+        summaryScopeIDAttr.name = "scopeID"
+        summaryScopeIDAttr.attributeType = .stringAttributeType
+        summaryScopeIDAttr.isOptional = false
+        summaryScopeIDAttr.isIndexed = true
+
+        let summaryCacheTextAttr = NSAttributeDescription()
+        summaryCacheTextAttr.name = "summaryText"
+        summaryCacheTextAttr.attributeType = .stringAttributeType
+        summaryCacheTextAttr.isOptional = false
+
+        let summaryCacheGeneratedAtAttr = NSAttributeDescription()
+        summaryCacheGeneratedAtAttr.name = "generatedAt"
+        summaryCacheGeneratedAtAttr.attributeType = .dateAttributeType
+        summaryCacheGeneratedAtAttr.isOptional = false
+
+        let summaryCacheFingerprintAttr = NSAttributeDescription()
+        summaryCacheFingerprintAttr.name = "fingerprint"
+        summaryCacheFingerprintAttr.attributeType = .stringAttributeType
+        summaryCacheFingerprintAttr.isOptional = false
+
+        let summaryCacheProviderAttr = NSAttributeDescription()
+        summaryCacheProviderAttr.name = "provider"
+        summaryCacheProviderAttr.attributeType = .stringAttributeType
+        summaryCacheProviderAttr.isOptional = false
+
+        summaryCacheEntity.properties = [
+            summaryScopeAttr,
+            summaryScopeIDAttr,
+            summaryCacheTextAttr,
+            summaryCacheGeneratedAtAttr,
+            summaryCacheFingerprintAttr,
+            summaryCacheProviderAttr
+        ]
+
         model.entities = [
             messageEntity,
             threadEntity,
@@ -819,7 +917,8 @@ final class MessageStore {
             threadFolderEntity,
             threadFolderColorEntity,
             threadFolderMembershipEntity,
-            threadSummaryEntity
+            threadSummaryEntity,
+            summaryCacheEntity
         ]
         return model
     }
@@ -886,10 +985,51 @@ final class MessageStore {
         }
     }
 
+    private func migrateScopedSummaryCacheIfNeeded() async {
+        guard !userDefaults.bool(forKey: scopedSummaryCacheMigrationKey) else { return }
+        do {
+            let messages = try await fetchMessages()
+            let messageIDs = Set(messages.map(\.messageID))
+            let folders = try await fetchThreadFolders()
+            let folderIDs = Set(folders.map(\.id))
+            let cachedIDs = try await fetchScopedSummaryIDs()
+            let orphanedNodes = cachedIDs.nodeIDs.filter { !messageIDs.contains($0) }
+            let orphanedFolders = cachedIDs.folderIDs.filter { !folderIDs.contains($0) }
+            if !orphanedNodes.isEmpty {
+                try await deleteSummaries(scope: .emailNode, ids: orphanedNodes)
+            }
+            if !orphanedFolders.isEmpty {
+                try await deleteSummaries(scope: .folder, ids: orphanedFolders)
+            }
+            userDefaults.set(true, forKey: scopedSummaryCacheMigrationKey)
+        } catch {
+            Log.app.error("Scoped summary cache migration failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func fetchSummaryThreadIDs() async throws -> [String] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
             return try context.fetch(request).map(\.threadID)
+        }
+    }
+
+    private func fetchScopedSummaryIDs() async throws -> (nodeIDs: [String], folderIDs: [String]) {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
+            let entries = try context.fetch(request)
+            var nodeIDs: [String] = []
+            var folderIDs: [String] = []
+            nodeIDs.reserveCapacity(entries.count)
+            folderIDs.reserveCapacity(entries.count)
+            for entry in entries {
+                if entry.scope == SummaryScope.emailNode.rawValue {
+                    nodeIDs.append(entry.scopeID)
+                } else if entry.scope == SummaryScope.folder.rawValue {
+                    folderIDs.append(entry.scopeID)
+                }
+            }
+            return (nodeIDs, folderIDs)
         }
     }
 }
@@ -1073,6 +1213,31 @@ final class ThreadSummaryEntity: NSManagedObject {
 extension ThreadSummaryEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<ThreadSummaryEntity> {
         NSFetchRequest<ThreadSummaryEntity>(entityName: "ThreadSummaryEntity")
+    }
+}
+
+@objc(SummaryCacheEntity)
+final class SummaryCacheEntity: NSManagedObject {
+    @NSManaged var scope: String
+    @NSManaged var scopeID: String
+    @NSManaged var summaryText: String
+    @NSManaged var generatedAt: Date
+    @NSManaged var fingerprint: String
+    @NSManaged var provider: String
+
+    func toModel() -> SummaryCacheEntry {
+        SummaryCacheEntry(scope: SummaryScope(rawValue: scope) ?? .emailNode,
+                          scopeID: scopeID,
+                          summaryText: summaryText,
+                          generatedAt: generatedAt,
+                          fingerprint: fingerprint,
+                          provider: provider)
+    }
+}
+
+extension SummaryCacheEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<SummaryCacheEntity> {
+        NSFetchRequest<SummaryCacheEntity>(entityName: "SummaryCacheEntity")
     }
 }
 

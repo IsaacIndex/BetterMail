@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ThreadFolderInspectorView: View {
     let folder: ThreadFolder
+    let summaryState: ThreadSummaryState?
     let onPreview: (String, ThreadFolderColor) -> Void
     let onSave: (String, ThreadFolderColor) -> Void
 
@@ -16,9 +17,11 @@ struct ThreadFolderInspectorView: View {
     @State private var pendingSaveTask: Task<Void, Never>?
 
     init(folder: ThreadFolder,
+         summaryState: ThreadSummaryState?,
          onPreview: @escaping (String, ThreadFolderColor) -> Void,
          onSave: @escaping (String, ThreadFolderColor) -> Void) {
         self.folder = folder
+        self.summaryState = summaryState
         self.onPreview = onPreview
         self.onSave = onSave
         let initialColor = Color(red: folder.color.red,
@@ -43,6 +46,7 @@ struct ThreadFolderInspectorView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     folderNameField
                     folderColorPicker
+                    folderSummaryField
                     folderPreview
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,6 +117,29 @@ struct ThreadFolderInspectorView: View {
                         .padding(.vertical, 10)
                 }
                 .frame(height: 72)
+        }
+    }
+
+    private var folderSummaryField: some View {
+        let summaryText = summaryState?.text ?? ""
+        let statusText = summaryState?.statusMessage ?? ""
+        let placeholder = NSLocalizedString("threadcanvas.folder.inspector.summary.empty",
+                                            comment: "Placeholder when no folder summary is available")
+        let displayText = summaryText.isEmpty ? (statusText.isEmpty ? placeholder : statusText) : summaryText
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(NSLocalizedString("threadcanvas.folder.inspector.summary",
+                                   comment: "Folder summary label"))
+                .font(.caption)
+                .foregroundStyle(inspectorSecondaryForegroundStyle)
+            TextEditor(text: .constant(displayText))
+                .font(.callout)
+                .frame(minHeight: 96)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.15))
+                .cornerRadius(8)
+                .disabled(true)
+                .opacity(summaryText.isEmpty ? 0.75 : 1)
         }
     }
 

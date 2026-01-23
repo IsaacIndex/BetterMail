@@ -242,6 +242,7 @@ struct ThreadCanvasView: View {
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
+                                   summaryState: chrome.summaryState,
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
@@ -570,12 +571,14 @@ struct ThreadCanvasView: View {
             guard !columns.isEmpty else { return nil }
             let headerTopOffset = CGFloat(overlay.depth) * (headerMetrics.height + headerMetrics.spacing)
             let headerIndent = CGFloat(overlay.depth) * headerMetrics.indent
+            let summaryState = viewModel.folderSummaryState(for: overlay.id)
             return folderChrome(for: overlay.id,
                                 title: overlay.title,
                                 color: overlay.color,
                                 frame: overlay.frame,
                                 columns: columns,
                                 depth: overlay.depth,
+                                summaryState: summaryState,
                                 headerHeight: headerMetrics.height,
                                 headerTopOffset: headerTopOffset,
                                 headerIndent: headerIndent,
@@ -589,6 +592,7 @@ struct ThreadCanvasView: View {
                               frame: CGRect,
                               columns: [ThreadCanvasColumn],
                               depth: Int,
+                              summaryState: ThreadSummaryState?,
                               headerHeight: CGFloat,
                               headerTopOffset: CGFloat,
                               headerIndent: CGFloat,
@@ -603,6 +607,7 @@ struct ThreadCanvasView: View {
                                 frame: frame,
                                 columnIDs: columns.map(\.id),
                                 depth: depth,
+                                summaryState: summaryState,
                                 unreadCount: unread,
                                 updated: latest,
                                 headerHeight: headerHeight,
@@ -796,6 +801,7 @@ private struct FolderColumnHeader: View {
     let title: String
     let unreadCount: Int
     let updatedText: String?
+    let summaryState: ThreadSummaryState?
     let accentColor: Color
     let reduceTransparency: Bool
     let rawZoom: CGFloat
@@ -846,6 +852,9 @@ private struct FolderColumnHeader: View {
                      weight: .semibold,
                      color: Color.white,
                      allowWrap: true)
+            if let summaryText = summaryPreviewText {
+                summaryLine(summaryText)
+            }
 //            Spacer(minLength: 8 * sizeScale)
             HStack(alignment: .center, spacing: 10 * sizeScale) {
                 if let updatedText {
@@ -868,6 +877,17 @@ private struct FolderColumnHeader: View {
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
     }
 
+    private var summaryPreviewText: String? {
+        guard let summaryState else { return nil }
+        if !summaryState.text.isEmpty {
+            return summaryState.text
+        }
+        if !summaryState.statusMessage.isEmpty {
+            return summaryState.statusMessage
+        }
+        return nil
+    }
+
     @ViewBuilder
     private func textLine(_ text: String,
                           baseSize: CGFloat,
@@ -887,6 +907,26 @@ private struct FolderColumnHeader: View {
             Text("…")
                 .font(.system(size: baseSize * sizeScale, weight: weight))
                 .foregroundStyle(color)
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func summaryLine(_ text: String) -> some View {
+        switch textVisibility(for: 11) {
+        case .normal:
+            Text(text)
+                .font(.system(size: 11 * sizeScale, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.82))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+                .truncationMode(.tail)
+        case .ellipsis:
+            Text("…")
+                .font(.system(size: 11 * sizeScale, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.8))
         case .hidden:
             EmptyView()
         }
@@ -1360,6 +1400,7 @@ private struct FolderChromeData: Identifiable {
     let frame: CGRect
     let columnIDs: [String]
     let depth: Int
+    let summaryState: ThreadSummaryState?
     let unreadCount: Int
     let updated: Date?
     let headerHeight: CGFloat
