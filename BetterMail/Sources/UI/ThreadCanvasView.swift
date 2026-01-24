@@ -994,7 +994,7 @@ private struct FolderColumnHeader: View {
     private func summaryLine(_ text: String) -> some View {
         switch textVisibility(for: FolderHeaderLayout.summaryBaseSize) {
         case .normal:
-            Text(text)
+            summaryText(text)
                 .font(.system(size: FolderHeaderLayout.summaryBaseSize * sizeScale, weight: .regular))
                 .foregroundStyle(Color.white.opacity(0.82))
                 .lineLimit(FolderHeaderLayout.summaryLineLimit)
@@ -1008,6 +1008,18 @@ private struct FolderColumnHeader: View {
         case .hidden:
             EmptyView()
         }
+    }
+
+    private func summaryText(_ text: String) -> Text {
+        if let attributed = markdownAttributed(text) {
+            return Text(attributed)
+        }
+        return Text(text)
+    }
+
+    private func markdownAttributed(_ text: String) -> AttributedString? {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return try? AttributedString(markdown: text, options: options)
     }
 
     @ViewBuilder
