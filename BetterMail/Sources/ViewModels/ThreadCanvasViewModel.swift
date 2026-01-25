@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CoreGraphics
 import Foundation
@@ -7,6 +8,37 @@ struct ThreadSummaryState {
     var text: String
     var statusMessage: String
     var isSummarizing: Bool
+}
+
+struct OpenInMailMatch: Identifiable, Equatable {
+    let messageID: String
+    let subject: String
+    let mailbox: String
+    let account: String
+    let date: String
+
+    var id: String {
+        [messageID, mailbox, account, date].joined(separator: "|")
+    }
+
+    var mailboxDisplay: String {
+        account.isEmpty ? mailbox : "\(account) • \(mailbox)"
+    }
+}
+
+enum OpenInMailStatus: Equatable {
+    case idle
+    case opening
+    case opened
+    case searching
+    case matches([OpenInMailMatch])
+    case notFound
+    case failed(String)
+}
+
+struct OpenInMailState: Equatable {
+    let messageID: String
+    let status: OpenInMailStatus
 }
 
 private struct NodeSummaryInput {
@@ -214,6 +246,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     @Published private(set) var threadFolders: [ThreadFolder] = []
     @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:]
     @Published private(set) var folderMembershipByThreadID: [String: String] = [:]
+    @Published private(set) var openInMailState: OpenInMailState?
     @Published private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
     @Published private(set) var visibleDayRange: ClosedRange<Int>?
     @Published private(set) var visibleEmptyDayIntervals: [DateInterval] = []
@@ -246,6 +279,7 @@ final class ThreadCanvasViewModel: ObservableObject {
     private let folderSummaryDebounceInterval: TimeInterval
     private var cancellables = Set<AnyCancellable>()
     private var didStart = false
+    private var openInMailAttemptID = UUID()
     private var shouldForceFullReload = false
     private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
 
@@ -1021,13 +1055,93 @@ final class ThreadCanvasViewModel: ObservableObject {
 
     func openMessageInMail(_ node: ThreadNode) {
         let messageID = node.message.messageID
-        Task.detached {
+        let attemptID = UUID()
+        openInMailAttemptID = attemptID
+        setOpenInMailState(.opening, messageID: messageID, attemptID: attemptID)
+        Task.detached { [weak self] in
+            guard let self else { return }
             do {
                 try MailControl.openMessage(messageID: messageID)
+                Log.appleScript.info("Open in Mail succeeded. messageID=\(messageID, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(.opened, messageID: messageID, attemptID: attemptID)
+                }
             } catch {
-                Log.appleScript.error("Open in Mail failed for messageID=\(messageID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Log.appleScript.error("Open in Mail failed. messageID=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(.searching, messageID: messageID, attemptID: attemptID)
+                }
+                do {
+                    let matches = try MailControl.searchMessages(messageID: messageID, limit: 5)
+                    Log.appleScript.info("Open in Mail fallback search finished. messageID=\(messageID, privacy: .public) matches=\(matches.count, privacy: .public)")
+                    let mapped = matches.map {
+                        OpenInMailMatch(messageID: $0.messageID,
+                                        subject: $0.subject,
+                                        mailbox: $0.mailbox,
+                                        account: $0.account,
+                                        date: $0.date)
+                    }
+                    await MainActor.run {
+                        let status: OpenInMailStatus = mapped.isEmpty ? .notFound : .matches(mapped)
+                        self.setOpenInMailState(status, messageID: messageID, attemptID: attemptID)
+                    }
+                } catch {
+                    Log.appleScript.error("Open in Mail fallback search failed. messageID=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                    await MainActor.run {
+                        self.setOpenInMailState(.failed(error.localizedDescription),
+                                                messageID: messageID,
+                                                attemptID: attemptID)
+                    }
+                }
             }
         }
+    }
+
+    func openMatchedMessage(_ match: OpenInMailMatch) {
+        let attemptID = UUID()
+        openInMailAttemptID = attemptID
+        setOpenInMailState(.opening, messageID: match.messageID, attemptID: attemptID)
+        Task.detached { [weak self] in
+            guard let self else { return }
+            do {
+                let opened = try MailControl.openMessageViaAppleScript(messageID: match.messageID)
+                let status: OpenInMailStatus = opened ? .opened : .notFound
+                Log.appleScript.info("Open in Mail fallback open result. messageID=\(match.messageID, privacy: .public) opened=\(opened, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(status, messageID: match.messageID, attemptID: attemptID)
+                }
+            } catch {
+                Log.appleScript.error("Open in Mail fallback open failed. messageID=\(match.messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(.failed(error.localizedDescription),
+                                            messageID: match.messageID,
+                                            attemptID: attemptID)
+                }
+            }
+        }
+    }
+
+    func copyToPasteboard(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+    }
+
+    func copyOpenInMailURL(messageID: String) {
+        do {
+            let url = try MailControl.messageURL(for: messageID)
+            copyToPasteboard(url.absoluteString)
+            Log.appleScript.debug("Copied message URL to pasteboard. messageID=\(messageID, privacy: .public)")
+        } catch {
+            Log.appleScript.error("Failed to build message URL for copy. messageID=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func setOpenInMailState(_ status: OpenInMailStatus,
+                                    messageID: String,
+                                    attemptID: UUID) {
+        guard openInMailAttemptID == attemptID else { return }
+        openInMailState = OpenInMailState(messageID: messageID, status: status)
     }
 
     func moveThread(threadID: String, toFolderID folderID: String) {

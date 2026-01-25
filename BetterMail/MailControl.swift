@@ -7,10 +7,12 @@
 
 import AppKit
 import Foundation
+import OSLog
 
 enum MailControlError: LocalizedError {
     case invalidMessageID
     case openFailed
+    case searchFailed
 
     var errorDescription: String? {
         switch self {
@@ -18,11 +20,21 @@ enum MailControlError: LocalizedError {
             return "Invalid Message-ID for message:// URL."
         case .openFailed:
             return "Failed to open the message in Mail."
+        case .searchFailed:
+            return "Failed to search Mail for the Message-ID."
         }
     }
 }
 
 struct MailControl {
+    struct MessageMatch: Hashable {
+        let messageID: String
+        let subject: String
+        let mailbox: String
+        let account: String
+        let date: String
+    }
+
     /// Escape arbitrary user text so embedding it inside AppleScript stays well-formed.
     private static func escapedForAppleScript(_ value: String) -> String {
         value
@@ -58,18 +70,65 @@ struct MailControl {
     }
 
     static func openMessage(messageID: String) throws {
-        let trimmed = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw MailControlError.invalidMessageID
+        // Prefer AppleScript so we can fail fast and surface fallback without Mail's alert.
+        let opened = try openMessageViaAppleScript(messageID: messageID)
+        if opened {
+            Log.appleScript.debug("Open in Mail via AppleScript succeeded. id=\(messageID, privacy: .public)")
+            return
         }
-        let normalized = (trimmed.hasPrefix("<") && trimmed.hasSuffix(">")) ? trimmed : "<\(trimmed)>"
-        guard let encoded = normalized.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+
+        let url = try messageURL(for: messageID)
+        Log.appleScript.debug("Open in Mail via message:// URL fallback. id=\(messageID, privacy: .public) url=\(url.absoluteString, privacy: .public)")
+        guard NSWorkspace.shared.open(url) else { throw MailControlError.openFailed }
+    }
+
+    static func openMessageViaAppleScript(messageID: String) throws -> Bool {
+        let normalized = try normalizedMessageID(messageID)
+        let bracketed = "<\(normalized)>"
+        let script = buildMessageOpenScript(normalized: normalized, bracketed: bracketed)
+        let result = try runAppleScript(script)
+        if result.descriptorType == typeBoolean {
+            return result.booleanValue
+        }
+        return false
+    }
+
+    static func searchMessages(messageID: String, limit: Int = 5) throws -> [MessageMatch] {
+        let normalized = try normalizedMessageID(messageID)
+        let bracketed = "<\(normalized)>"
+        let script = messageSearchScript(normalized: normalized, bracketed: bracketed, limit: limit)
+        let result = try runAppleScript(script)
+        guard result.descriptorType == typeAEList else {
+            throw MailControlError.searchFailed
+        }
+        return decodeMatches(from: result)
+    }
+
+    static func messageURL(for messageID: String) throws -> URL {
+        let normalized = try normalizedMessageID(messageID)
+        let wrapped = "<\(normalized)>"
+        let disallowed = CharacterSet(charactersIn: "/?&%#<>\"")
+        let allowed = CharacterSet.urlPathAllowed.subtracting(disallowed)
+        guard let encoded = wrapped.addingPercentEncoding(withAllowedCharacters: allowed),
               let url = URL(string: "message://\(encoded)") else {
             throw MailControlError.invalidMessageID
         }
-        guard NSWorkspace.shared.open(url) else {
-            throw MailControlError.openFailed
+        return url
+    }
+
+    static func normalizedMessageID(_ messageID: String) throws -> String {
+        let normalized = JWZThreader.normalizeIdentifier(messageID)
+        guard !normalized.isEmpty else { throw MailControlError.invalidMessageID }
+        return normalized
+    }
+
+    static func cleanMessageIDPreservingCase(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.hasPrefix("<") && trimmed.hasSuffix(">") {
+            return String(trimmed.dropFirst().dropLast())
         }
+        return trimmed
     }
 
     static func moveSelection(to mailboxPath: String, in account: String) throws {
@@ -154,5 +213,135 @@ struct MailControl {
             guard parts.count >= 3 else { return nil }
             return ["subject": parts[0], "sender": parts[1], "date": parts[2]]
         }
+    }
+
+    static func messageSearchScript(for messageID: String, limit: Int = 5) throws -> String {
+        let normalized = try normalizedMessageID(messageID)
+        let bracketed = "<\(normalized)>"
+        return messageSearchScript(normalized: normalized, bracketed: bracketed, limit: limit)
+    }
+
+    private static func messageSearchScript(normalized: String,
+                                            bracketed: String,
+                                            limit: Int) -> String {
+        let safeNormalized = escapedForAppleScript(normalized)
+        let safeBracketed = escapedForAppleScript(bracketed)
+        return """
+        set _rows to {}
+        tell application "Mail"
+          with timeout of 30 seconds
+            set _matches to {}
+            set _id1 to "\(safeBracketed)"
+            set _id2 to "\(safeNormalized)"
+            ignoring case
+              try
+                repeat with m in (every message whose message id is _id1)
+                  copy m to end of _matches
+                end repeat
+              end try
+              if _id2 is not equal to _id1 then
+                try
+                  repeat with m in (every message whose message id is _id2)
+                    copy m to end of _matches
+                  end repeat
+                end try
+              end if
+            end ignoring
+            set _count to 0
+            repeat with m in _matches
+              set _mailbox to mailbox of m
+              set _mailboxName to (name of _mailbox as string)
+              set _accountName to ""
+              try
+                set _accountName to (name of account of _mailbox as string)
+              on error
+                set _accountName to ""
+              end try
+              set _subject to ""
+              try
+                set _subject to (subject of m as string)
+              on error
+                set _subject to ""
+              end try
+              set _msgID to (message id of m as string)
+              set _date to ""
+              try
+                set _date to (date received of m as string)
+              on error
+                set _date to ""
+              end try
+              copy (_msgID & "||" & _subject & "||" & _mailboxName & "||" & _accountName & "||" & _date) to end of _rows
+              set _count to _count + 1
+              if _count is greater than or equal to \(limit) then exit repeat
+            end repeat
+          end timeout
+        end tell
+        return _rows
+        """
+    }
+
+    private static func buildMessageOpenScript(normalized: String,
+                                               bracketed: String) -> String {
+        let safeNormalized = escapedForAppleScript(normalized)
+        let safeBracketed = escapedForAppleScript(bracketed)
+        return """
+        tell application "Mail"
+          with timeout of 30 seconds
+            set _matches to {}
+            set _id1 to "\(safeBracketed)"
+            set _id2 to "\(safeNormalized)"
+            ignoring case
+              try
+                repeat with m in (every message whose message id is _id1)
+                  copy m to end of _matches
+                end repeat
+              end try
+              if _id2 is not equal to _id1 then
+                try
+                  repeat with m in (every message whose message id is _id2)
+                    copy m to end of _matches
+                  end repeat
+                end try
+              end if
+            end ignoring
+            if (count of _matches) is 0 then return false
+            set _msg to item 1 of _matches
+            try
+              open _msg
+            on error
+              try
+                set _viewer to message viewer 1
+                set selected messages of _viewer to {_msg}
+              end try
+            end try
+            activate
+            return true
+          end timeout
+        end tell
+        """
+    }
+
+    private static func decodeMatches(from result: NSAppleEventDescriptor) -> [MessageMatch] {
+        var matches: [MessageMatch] = []
+        guard result.numberOfItems > 0 else { return [] }
+        matches.reserveCapacity(result.numberOfItems)
+        for index in 1...result.numberOfItems {
+            guard let row = result.atIndex(index)?.stringValue else { continue }
+            let parts = row.components(separatedBy: "||")
+            guard parts.count >= 5 else { continue }
+            let rawID = parts[0]
+            let cleanedID = cleanMessageIDPreservingCase(rawID)
+            let messageID = cleanedID.isEmpty ? JWZThreader.normalizeIdentifier(rawID) : cleanedID
+            let subject = parts[1]
+            let mailbox = parts[2]
+            let account = parts[3]
+            let date = parts[4]
+            matches.append(MessageMatch(messageID: messageID,
+                                        subject: subject,
+                                        mailbox: mailbox,
+                                        account: account,
+                                        date: date))
+        }
+        return matches
     }
 }

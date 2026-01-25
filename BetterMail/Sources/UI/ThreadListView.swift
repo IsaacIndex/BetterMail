@@ -130,7 +130,11 @@ struct ThreadListView: View {
                                     summaryState: selectedSummaryState,
                                     summaryExpansion: selectedSummaryExpansion,
                                     inspectorSettings: inspectorSettings,
-                                    onOpenInMail: viewModel.openMessageInMail)
+                                    openInMailState: viewModel.openInMailState,
+                                    onOpenInMail: viewModel.openMessageInMail,
+                                    onOpenMatchedMessage: viewModel.openMatchedMessage,
+                                    onCopyOpenInMailText: viewModel.copyToPasteboard,
+                                    onCopyOpenInMailURL: viewModel.copyOpenInMailURL)
                     .frame(width: inspectorWidth)
                     .padding(.top, navInsetHeight)
                     .padding(.trailing, navHorizontalPadding)
