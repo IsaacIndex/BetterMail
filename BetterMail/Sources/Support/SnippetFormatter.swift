@@ -1,10 +1,10 @@
 import Foundation
 
-struct SnippetFormatter {
-    let lineLimit: Int
-    let stopPhrases: [String]
+internal struct SnippetFormatter {
+    internal let lineLimit: Int
+    internal let stopPhrases: [String]
 
-    func format(_ text: String) -> String {
+    internal func format(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let filtered = removeStopPhrases(from: trimmed)

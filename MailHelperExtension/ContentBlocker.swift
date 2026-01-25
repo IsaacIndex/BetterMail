@@ -7,11 +7,11 @@
 
 import MailKit
 
-class ContentBlocker: NSObject, MEContentBlocker {
+internal final class ContentBlocker: NSObject, MEContentBlocker {
     
-    static let shared = ContentBlocker()
+    internal static let shared = ContentBlocker()
     
-    func contentRulesJSON() -> Data {
+    internal func contentRulesJSON() -> Data {
         // Read in the JSON file that contains the content blocking
         // rules and return it as data. The example rules file uses CSS
         // to hide all URLs that link to example.com.
@@ -26,4 +26,3 @@ class ContentBlocker: NSObject, MEContentBlocker {
     }
 
 }
-

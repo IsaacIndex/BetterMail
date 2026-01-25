@@ -1,35 +1,35 @@
 import Foundation
 
-struct BatchBackfillProgress {
-    enum State {
+internal struct BatchBackfillProgress {
+    internal enum State {
         case running
         case retrying
         case finished
     }
 
-    let total: Int
-    let completed: Int
-    let currentBatchSize: Int
-    let state: State
-    let errorMessage: String?
+    internal let total: Int
+    internal let completed: Int
+    internal let currentBatchSize: Int
+    internal let state: State
+    internal let errorMessage: String?
 }
 
-struct BatchBackfillResult {
-    let total: Int
-    let fetched: Int
+internal struct BatchBackfillResult {
+    internal let total: Int
+    internal let fetched: Int
 }
 
-actor BatchBackfillService {
+internal actor BatchBackfillService {
     private let client: MailAppleScriptClient
     private let store: MessageStore
 
-    init(client: MailAppleScriptClient = MailAppleScriptClient(),
-         store: MessageStore = .shared) {
+    internal init(client: MailAppleScriptClient = MailAppleScriptClient(),
+                  store: MessageStore = .shared) {
         self.client = client
         self.store = store
     }
 
-    func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
+    internal func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
         let now = Date()
         if range.start > now {
             return 0
@@ -40,12 +40,12 @@ actor BatchBackfillService {
         return try await client.countMessages(in: clampedRange, mailbox: mailbox)
     }
 
-    func runBackfill(range: DateInterval,
-                     mailbox: String = "inbox",
-                     preferredBatchSize: Int = 5,
-                     totalExpected: Int,
-                     snippetLineLimit: Int,
-                     progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult {
+    internal func runBackfill(range: DateInterval,
+                              mailbox: String = "inbox",
+                              preferredBatchSize: Int = 5,
+                              totalExpected: Int,
+                              snippetLineLimit: Int,
+                              progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult {
         let now = Date()
         if range.start > now || totalExpected == 0 {
             progressHandler(BatchBackfillProgress(total: totalExpected,

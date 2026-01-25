@@ -7,12 +7,11 @@
 
 import MailKit
 
-class MessageSecurityViewController: MEExtensionViewController {
+internal final class MessageSecurityViewController: MEExtensionViewController {
     
-    override func viewDidLoad() {
+    internal override func viewDidLoad() {
         super.viewDidLoad()
         // Do view setup here.
     }
 
 }
-

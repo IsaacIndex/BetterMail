@@ -3,7 +3,7 @@ import Foundation
 import FoundationModels
 #endif
 
-enum EmailSummaryError: LocalizedError {
+internal enum EmailSummaryError: LocalizedError {
     case noSubjects
     case unavailable(String)
     case generationFailed(Error)
@@ -20,17 +20,37 @@ enum EmailSummaryError: LocalizedError {
     }
 }
 
-protocol EmailSummaryProviding {
+internal protocol EmailSummaryProviding {
     func summarize(subjects: [String]) async throws -> String
+    func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String
+    func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String
 }
 
-struct EmailSummaryCapability {
-    let provider: EmailSummaryProviding?
-    let statusMessage: String
+internal struct EmailSummaryCapability {
+    internal let provider: EmailSummaryProviding?
+    internal let statusMessage: String
+    internal let providerID: String
 }
 
-enum EmailSummaryProviderFactory {
-    static func makeCapability() -> EmailSummaryCapability {
+internal struct EmailSummaryContextEntry: Hashable {
+    internal let messageID: String
+    internal let subject: String
+    internal let bodySnippet: String
+}
+
+internal struct EmailSummaryRequest: Hashable {
+    internal let subject: String
+    internal let body: String
+    internal let priorMessages: [EmailSummaryContextEntry]
+}
+
+internal struct FolderSummaryRequest: Hashable {
+    internal let title: String
+    internal let messageSummaries: [String]
+}
+
+internal enum EmailSummaryProviderFactory {
+    internal static func makeCapability() -> EmailSummaryCapability {
 #if canImport(FoundationModels)
         if #available(macOS 15.2, *) {
             let model = FoundationModels.SystemLanguageModel.default
@@ -38,28 +58,31 @@ enum EmailSummaryProviderFactory {
             case .available:
                 let provider = FoundationModelsEmailSummaryProvider(model: model)
                 return EmailSummaryCapability(provider: provider,
-                                              statusMessage: "Apple Intelligence summary ready.")
+                                              statusMessage: "Apple Intelligence summary ready.",
+                                              providerID: "foundation-models")
             case .unavailable(let reason):
                 return EmailSummaryCapability(provider: nil,
-                                              statusMessage: reason.userFacingMessage)
+                                              statusMessage: reason.userFacingMessage,
+                                              providerID: "foundation-models")
             }
         }
 #endif
         return EmailSummaryCapability(provider: nil,
-                                      statusMessage: "Apple Intelligence summaries require a compatible Mac with Apple Intelligence enabled.")
+                                      statusMessage: "Apple Intelligence summaries require a compatible Mac with Apple Intelligence enabled.",
+                                      providerID: "foundation-models")
     }
 }
 
 #if canImport(FoundationModels)
 @available(macOS 15.2, *)
-final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
+internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
     private let model: SystemLanguageModel
 
-    init(model: SystemLanguageModel = .default) {
+    internal init(model: SystemLanguageModel = .default) {
         self.model = model
     }
 
-    func summarize(subjects: [String]) async throws -> String {
+    internal func summarize(subjects: [String]) async throws -> String {
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
@@ -76,6 +99,60 @@ final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
             var options = GenerationOptions()
             options.temperature = 0.2
             options.maximumResponseTokens = 120
+            let response = try await session.respond(to: prompt, options: options)
+            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            throw EmailSummaryError.generationFailed(error)
+        }
+    }
+
+    internal func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String {
+        guard case .available = model.availability else {
+            throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
+        }
+
+        let cleanedSubject = request.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedBody = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedSubject.isEmpty || !cleanedBody.isEmpty else {
+            throw EmailSummaryError.noSubjects
+        }
+
+        do {
+            let prompt = Self.nodePrompt(subject: cleanedSubject,
+                                         body: cleanedBody,
+                                         prior: request.priorMessages)
+            let session = LanguageModelSession(model: model,
+                                               instructions: Self.nodeInstructions)
+            var options = GenerationOptions()
+            options.temperature = 0.2
+            options.maximumResponseTokens = 140
+            let response = try await session.respond(to: prompt, options: options)
+            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            throw EmailSummaryError.generationFailed(error)
+        }
+    }
+
+    internal func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String {
+        guard case .available = model.availability else {
+            throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
+        }
+
+        let cleanedSummaries = request.messageSummaries
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleanedSummaries.isEmpty else {
+            throw EmailSummaryError.noSubjects
+        }
+
+        do {
+            let prompt = Self.folderPrompt(title: request.title,
+                                           summaries: cleanedSummaries)
+            let session = LanguageModelSession(model: model,
+                                               instructions: Self.instructions)
+            var options = GenerationOptions()
+            options.temperature = 0.2
+            options.maximumResponseTokens = 160
             let response = try await session.respond(to: prompt, options: options)
             return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
@@ -120,6 +197,60 @@ final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
     You are an organized executive assistant reviewing an email inbox.
     Provide short plain-language digests that help the user understand what to focus on.
     Avoid bullet lists and instead write one or two compact sentences.
+    """
+
+    private static func nodePrompt(subject: String,
+                                   body: String,
+                                   prior: [EmailSummaryContextEntry]) -> String {
+        let priorLines = prior.prefix(10).enumerated().map { index, entry in
+            let subjectLine = entry.subject.isEmpty ? "No subject" : entry.subject
+            let snippetLine = entry.bodySnippet.isEmpty ? "" : " — \(entry.bodySnippet)"
+            return "\(index + 1). \(subjectLine)\(snippetLine)"
+        }.joined(separator: "\n")
+
+        let priorSection = priorLines.isEmpty ? "None" : priorLines
+        let resolvedSubject = subject.isEmpty ? "No subject" : subject
+        let resolvedBody = body.isEmpty ? "No body content available." : body
+
+        return """
+        Summarize this email in one or two concise sentences.
+        Focus on what is new compared to the prior messages listed.
+        Keep the tone professional and actionable.
+
+        Email subject:
+        \(resolvedSubject)
+
+        Email body excerpt:
+        \(resolvedBody)
+
+        Prior messages in this thread:
+        \(priorSection)
+        """
+    }
+
+    private static func folderPrompt(title: String,
+                                     summaries: [String]) -> String {
+        let bullets = summaries.prefix(20).enumerated()
+            .map { "\($0.offset + 1). \($0.element)" }
+            .joined(separator: "\n")
+        let resolvedTitle = title.isEmpty ? "Folder" : title
+
+        return """
+        Summarize the following email summaries into a concise folder overview.
+        Highlight the main themes, decisions, or urgent follow ups.
+        Keep the tone professional and actionable, in two or three sentences.
+
+        Folder title: \(resolvedTitle)
+
+        Email summaries:
+        \(bullets)
+        """
+    }
+
+    private static let nodeInstructions = """
+    You are an organized executive assistant reviewing an email.
+    Write a concise summary of what this message adds or changes relative to the prior context.
+    Avoid bullet lists; use one or two short sentences.
     """
 }
 

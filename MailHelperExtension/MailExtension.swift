@@ -7,29 +7,28 @@
 
 import MailKit
 
-class MailExtension: NSObject, MEExtension {
-    func handlerForContentBlocker() -> MEContentBlocker {
+internal final class MailExtension: NSObject, MEExtension {
+    internal func handlerForContentBlocker() -> MEContentBlocker {
         // Use a shared instance for all messages, since there's
         // no state associated with a content blocker.
         return ContentBlocker.shared
     }
 
-    func handlerForMessageActions() -> MEMessageActionHandler {
+    internal func handlerForMessageActions() -> MEMessageActionHandler {
         // Use a shared instance for all messages, since there's
         // no state associated with performing actions.
         return MessageActionHandler.shared
     }
 
-    func handler(for session: MEComposeSession) -> MEComposeSessionHandler {
+    internal func handler(for session: MEComposeSession) -> MEComposeSessionHandler {
         // Create a unique instance, since each compose window is separate.
         return ComposeSessionHandler()
     }
 
-    func handlerForMessageSecurity() -> MEMessageSecurityHandler {
+    internal func handlerForMessageSecurity() -> MEMessageSecurityHandler {
         // Use a shared instance for all messages, since there's
         // no state associated with the security handler.
         return MessageSecurityHandler.shared
     }
 
 }
-

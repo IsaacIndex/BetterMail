@@ -7,12 +7,11 @@
 
 import MailKit
 
-class ComposeSessionViewController: MEExtensionViewController {
+internal final class ComposeSessionViewController: MEExtensionViewController {
     
-    override func viewDidLoad() {
+    internal override func viewDidLoad() {
         super.viewDidLoad()
         // Do view setup here.
     }
 
 }
-

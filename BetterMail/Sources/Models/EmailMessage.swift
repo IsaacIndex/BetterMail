@@ -1,33 +1,33 @@
 import Foundation
 
-struct EmailMessage: Identifiable, Hashable {
-    let id: UUID
-    let messageID: String
-    let mailboxID: String
-    let subject: String
-    let from: String
-    let to: String
-    let date: Date
-    let snippet: String
-    let isUnread: Bool
-    let inReplyTo: String?
-    let references: [String]
-    let threadID: String?
-    let rawSourceLocation: URL?
+internal struct EmailMessage: Identifiable, Hashable {
+    internal let id: UUID
+    internal let messageID: String
+    internal let mailboxID: String
+    internal let subject: String
+    internal let from: String
+    internal let to: String
+    internal let date: Date
+    internal let snippet: String
+    internal let isUnread: Bool
+    internal let inReplyTo: String?
+    internal let references: [String]
+    internal let threadID: String?
+    internal let rawSourceLocation: URL?
 
-    init(id: UUID = UUID(),
-         messageID: String,
-         mailboxID: String,
-         subject: String,
-         from: String,
-         to: String,
-         date: Date,
-         snippet: String,
-         isUnread: Bool,
-         inReplyTo: String?,
-         references: [String],
-         threadID: String? = nil,
-         rawSourceLocation: URL? = nil) {
+    internal init(id: UUID = UUID(),
+                  messageID: String,
+                  mailboxID: String,
+                  subject: String,
+                  from: String,
+                  to: String,
+                  date: Date,
+                  snippet: String,
+                  isUnread: Bool,
+                  inReplyTo: String?,
+                  references: [String],
+                  threadID: String? = nil,
+                  rawSourceLocation: URL? = nil) {
         self.id = id
         self.messageID = messageID
         self.mailboxID = mailboxID
@@ -43,16 +43,16 @@ struct EmailMessage: Identifiable, Hashable {
         self.rawSourceLocation = rawSourceLocation
     }
 
-    var normalizedMessageID: String {
+    internal var normalizedMessageID: String {
         JWZThreader.normalizeIdentifier(messageID)
     }
 
-    var threadKey: String {
+    internal var threadKey: String {
         let normalized = normalizedMessageID
         return normalized.isEmpty ? id.uuidString.lowercased() : normalized
     }
 
-    func assigning(threadID: String?) -> EmailMessage {
+    internal func assigning(threadID: String?) -> EmailMessage {
         EmailMessage(id: id,
                      messageID: messageID,
                      mailboxID: mailboxID,
@@ -69,7 +69,7 @@ struct EmailMessage: Identifiable, Hashable {
     }
 }
 
-extension EmailMessage {
+internal extension EmailMessage {
     static let placeholder = EmailMessage(messageID: UUID().uuidString,
                                           mailboxID: "inbox",
                                           subject: "",

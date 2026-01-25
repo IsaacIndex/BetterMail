@@ -3,21 +3,21 @@ import Foundation
 import SwiftUI
 
 @MainActor
-final class AutoRefreshSettings: ObservableObject {
-    static let minimumInterval: TimeInterval = 60
-    static let maximumInterval: TimeInterval = 3600
-    static let defaultInterval: TimeInterval = 300
+internal final class AutoRefreshSettings: ObservableObject {
+    internal static let minimumInterval: TimeInterval = 60
+    internal static let maximumInterval: TimeInterval = 3600
+    internal static let defaultInterval: TimeInterval = 300
 
     @AppStorage("autoRefreshEnabled") private var storedEnabled = false
     @AppStorage("autoRefreshIntervalSeconds") private var storedInterval = AutoRefreshSettings.defaultInterval
 
-    @Published var isEnabled: Bool = false {
+    @Published internal var isEnabled: Bool = false {
         didSet {
             storedEnabled = isEnabled
         }
     }
 
-    @Published var interval: TimeInterval = AutoRefreshSettings.defaultInterval {
+    @Published internal var interval: TimeInterval = AutoRefreshSettings.defaultInterval {
         didSet {
             let clamped = Self.clampInterval(interval)
             if clamped != interval {
@@ -28,7 +28,7 @@ final class AutoRefreshSettings: ObservableObject {
         }
     }
 
-    init() {
+    internal init() {
         let normalized = Self.clampInterval(_storedInterval.wrappedValue)
         storedInterval = normalized
         isEnabled = _storedEnabled.wrappedValue

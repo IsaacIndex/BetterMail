@@ -1,12 +1,12 @@
 import Foundation
 
-struct ThreadFolderColor: Hashable {
-    let red: Double
-    let green: Double
-    let blue: Double
-    let alpha: Double
+internal struct ThreadFolderColor: Hashable {
+    internal let red: Double
+    internal let green: Double
+    internal let blue: Double
+    internal let alpha: Double
 
-    static func random() -> ThreadFolderColor {
+    internal static func random() -> ThreadFolderColor {
         // Generate pleasant, non-white colors using HSV then convert to RGB.
         let hue = Double.random(in: 0...1)
         let saturation = Double.random(in: 0.45...0.75)
@@ -35,10 +35,10 @@ struct ThreadFolderColor: Hashable {
     }
 }
 
-struct ThreadFolder: Identifiable, Hashable {
-    let id: String
-    var title: String
-    var color: ThreadFolderColor
-    var threadIDs: Set<String>
-    var parentID: String?
+internal struct ThreadFolder: Identifiable, Hashable {
+    internal let id: String
+    internal var title: String
+    internal var color: ThreadFolderColor
+    internal var threadIDs: Set<String>
+    internal var parentID: String?
 }

@@ -2,15 +2,15 @@ import Carbon
 import Foundation
 import OSLog
 
-enum MailAppleScriptClientError: Error {
+private enum MailAppleScriptClientError: Error {
     case malformedDescriptor
     case missingMessageID
 }
 
-struct MailAppleScriptClient {
+internal actor MailAppleScriptClient {
     private let scriptRunner: NSAppleScriptRunner
 
-    init(scriptRunner: NSAppleScriptRunner = NSAppleScriptRunner()) {
+    internal init(scriptRunner: NSAppleScriptRunner = NSAppleScriptRunner()) {
         self.scriptRunner = scriptRunner
     }
 
@@ -24,10 +24,10 @@ struct MailAppleScriptClient {
         static let body = 7
     }
 
-    func fetchMessages(since date: Date?,
-                       limit: Int = 10,
-                       mailbox: String = "inbox",
-                       snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+    internal func fetchMessages(since date: Date?,
+                                limit: Int = 10,
+                                mailbox: String = "inbox",
+                                snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
         Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
         let script = buildScript(mailbox: mailbox, limit: limit, since: date)
@@ -36,10 +36,10 @@ struct MailAppleScriptClient {
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
-    func fetchMessages(in range: DateInterval,
-                       limit: Int = 10,
-                       mailbox: String = "inbox",
-                       snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+    internal func fetchMessages(in range: DateInterval,
+                                limit: Int = 10,
+                                mailbox: String = "inbox",
+                                snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
         let now = Date()
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
@@ -54,7 +54,7 @@ struct MailAppleScriptClient {
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
-    func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
+    internal func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
         let now = Date()
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)

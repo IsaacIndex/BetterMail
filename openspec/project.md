@@ -43,7 +43,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail. It automates Mail.app vi
 
 ## Domain Context
 - BetterMail depends on the system Apple Mail app. `AppleScriptRunner` ensures Mail.app is launched and authorized before issuing AppleScript queries through `MailAppleScriptClient`.
-- Messages and threads are cached locally in `~/Library/Application Support/BetterMail/Messages.sqlite` so the SwiftUI sidebar (`ThreadListView`, `MessageRowView`) can render instantly while background refreshes run.
+- Messages and threads are cached locally in `~/Library/Application Support/BetterMail/Messages.sqlite` so the SwiftUI canvas (`ThreadListView`) can render instantly while background refreshes run.
 - The JWZ threading implementation normalizes message ids, populates intermediate containers, and surfaces per-thread counts that drive unread badges and ordering.
 - Apple Intelligence summaries are optional: `EmailSummaryProvider` gracefully degrades with status messaging when Foundation Models are unavailable (macOS < 15.2 or unsupported hardware).
 - The MailKit helper (`MailHelperExtension/`) currently ships demonstration handlers (content filtering, compose customization, security prompts) and will eventually evolve into automation tie-ins with the main app.

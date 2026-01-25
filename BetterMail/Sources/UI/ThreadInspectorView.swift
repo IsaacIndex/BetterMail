@@ -1,12 +1,16 @@
 import AppKit
 import SwiftUI
 
-struct ThreadInspectorView: View {
-    let node: ThreadNode?
-    let summaryState: ThreadSummaryState?
-    let summaryExpansion: Binding<Bool>?
-    @ObservedObject var inspectorSettings: InspectorViewSettings
-    let onOpenInMail: (ThreadNode) -> Void
+internal struct ThreadInspectorView: View {
+    internal let node: ThreadNode?
+    internal let summaryState: ThreadSummaryState?
+    internal let summaryExpansion: Binding<Bool>?
+    @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    internal let openInMailState: OpenInMailState?
+    internal let onOpenInMail: (ThreadNode) -> Void
+    internal let onOpenMatchedMessage: (OpenInMailMatch) -> Void
+    internal let onCopyOpenInMailText: (String) -> Void
+    internal let onCopyOpenInMailURL: (String) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -16,7 +20,7 @@ struct ThreadInspectorView: View {
         formatter.timeStyle = .short
         return formatter
     }()
-    var body: some View {
+    internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
                 .font(.headline)
@@ -76,6 +80,7 @@ struct ThreadInspectorView: View {
             }
 
             openInMailButton(for: node)
+            openInMailStatus(for: node)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -149,6 +154,110 @@ struct ThreadInspectorView: View {
             button.buttonStyle(.glass)
         } else {
             button.buttonStyle(.bordered)
+        }
+    }
+
+    @ViewBuilder
+    private func openInMailStatus(for node: ThreadNode) -> some View {
+        if let state = openInMailState, state.messageID == node.message.messageID {
+            VStack(alignment: .leading, spacing: 8) {
+                statusLine(for: state.status)
+                matchDetails(for: state.status, node: node)
+            }
+            .font(.caption)
+            .foregroundStyle(inspectorSecondaryForegroundStyle)
+        } else {
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func statusLine(for status: OpenInMailStatus) -> some View {
+        switch status {
+        case .idle:
+            EmptyView()
+        case .opening:
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opening",
+                                    comment: "Open in Mail opening status"),
+                  systemImage: "arrow.up.right.square")
+        case .opened:
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened",
+                                    comment: "Open in Mail success status"),
+                  systemImage: "checkmark.circle")
+        case .searching:
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching",
+                                    comment: "Open in Mail fallback search status"),
+                  systemImage: "magnifyingglass")
+        case .matches:
+            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.matches",
+                                   comment: "Open in Mail fallback match status"))
+        case .notFound:
+            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.no_match",
+                                   comment: "Open in Mail fallback no match status"))
+        case .failed:
+            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.failed",
+                                   comment: "Open in Mail failure status"))
+        }
+    }
+
+    @ViewBuilder
+    private func matchDetails(for status: OpenInMailStatus, node: ThreadNode) -> some View {
+        switch status {
+        case .matches(let matches):
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(matches) { match in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(match.subject.isEmpty
+                             ? NSLocalizedString("threadcanvas.subject.placeholder",
+                                                 comment: "Placeholder subject when missing")
+                             : match.subject)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(inspectorPrimaryForegroundStyle)
+                        Text(match.mailboxDisplay)
+                        if !match.date.isEmpty {
+                            Text(match.date)
+                        }
+                        HStack(spacing: 8) {
+                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.open_match",
+                                                     comment: "Open matched message action"),
+                                   action: { onOpenMatchedMessage(match) })
+                                .controlSize(.mini)
+                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
+                                                     comment: "Copy Message-ID action"),
+                                   action: { onCopyOpenInMailText(match.messageID) })
+                                .controlSize(.mini)
+                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_url",
+                                                     comment: "Copy Message URL action"),
+                                   action: { onCopyOpenInMailURL(match.messageID) })
+                                .controlSize(.mini)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    Divider()
+                }
+            }
+        case .notFound, .failed:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.manual_hint",
+                                       comment: "Open in Mail fallback guidance"))
+                HStack(spacing: 8) {
+                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
+                                             comment: "Copy Message-ID action"),
+                           action: { onCopyOpenInMailText(node.message.messageID) })
+                        .controlSize(.mini)
+                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_url",
+                                             comment: "Copy Message URL action"),
+                           action: { onCopyOpenInMailURL(node.message.messageID) })
+                        .controlSize(.mini)
+                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
+                                             comment: "Copy subject action"),
+                           action: { onCopyOpenInMailText(node.message.subject) })
+                        .controlSize(.mini)
+                }
+                .buttonStyle(.borderless)
+            }
+        default:
+            EmptyView()
         }
     }
 
