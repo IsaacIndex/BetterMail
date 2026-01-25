@@ -1,13 +1,13 @@
 import AppKit
 import SwiftUI
 
-struct ThreadSummaryDisclosureView: View {
-    let title: String
-    let state: ThreadSummaryState
-    @Binding var isExpanded: Bool
+internal struct ThreadSummaryDisclosureView: View {
+    internal let title: String
+    internal let state: ThreadSummaryState
+    @Binding internal var isExpanded: Bool
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    var body: some View {
+    internal var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 isExpanded.toggle()

@@ -4,29 +4,29 @@ import CoreGraphics
 import Foundation
 import OSLog
 
-struct ThreadSummaryState {
-    var text: String
-    var statusMessage: String
-    var isSummarizing: Bool
+internal struct ThreadSummaryState {
+    internal var text: String
+    internal var statusMessage: String
+    internal var isSummarizing: Bool
 }
 
-struct OpenInMailMatch: Identifiable, Equatable {
-    let messageID: String
-    let subject: String
-    let mailbox: String
-    let account: String
-    let date: String
+internal struct OpenInMailMatch: Identifiable, Equatable {
+    internal let messageID: String
+    internal let subject: String
+    internal let mailbox: String
+    internal let account: String
+    internal let date: String
 
-    var id: String {
+    internal var id: String {
         [messageID, mailbox, account, date].joined(separator: "|")
     }
 
-    var mailboxDisplay: String {
+    internal var mailboxDisplay: String {
         account.isEmpty ? mailbox : "\(account) • \(mailbox)"
     }
 }
 
-enum OpenInMailStatus: Equatable {
+internal enum OpenInMailStatus: Equatable {
     case idle
     case opening
     case opened
@@ -36,9 +36,9 @@ enum OpenInMailStatus: Equatable {
     case failed(String)
 }
 
-struct OpenInMailState: Equatable {
-    let messageID: String
-    let status: OpenInMailStatus
+internal struct OpenInMailState: Equatable {
+    internal let messageID: String
+    internal let status: OpenInMailStatus
 }
 
 private struct NodeSummaryInput {
@@ -63,7 +63,7 @@ private struct ThreadFolderEdit: Hashable {
 }
 
 @MainActor
-final class ThreadCanvasViewModel: ObservableObject {
+internal final class ThreadCanvasViewModel: ObservableObject {
     private actor SidebarBackgroundWorker {
         private let client: MailAppleScriptClient
         private let store: MessageStore
@@ -227,32 +227,32 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    @Published private(set) var roots: [ThreadNode] = []
-    @Published private(set) var isRefreshing = false
-    @Published private(set) var status: String = ""
-    @Published private(set) var unreadTotal: Int = 0
-    @Published private(set) var lastRefreshDate: Date?
-    @Published private(set) var nextRefreshDate: Date?
-    @Published private(set) var nodeSummaries: [String: ThreadSummaryState] = [:]
-    @Published private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
-    @Published private(set) var expandedSummaryIDs: Set<String> = []
-    @Published var selectedNodeID: String?
-    @Published var selectedFolderID: String?
-    @Published private(set) var selectedNodeIDs: Set<String> = []
-    @Published private(set) var manualGroupByMessageKey: [String: String] = [:]
-    @Published private(set) var manualAttachmentMessageIDs: Set<String> = []
-    @Published private(set) var manualGroups: [String: ManualThreadGroup] = [:]
-    @Published private(set) var jwzThreadMap: [String: String] = [:]
-    @Published private(set) var threadFolders: [ThreadFolder] = []
+    @Published internal private(set) var roots: [ThreadNode] = []
+    @Published internal private(set) var isRefreshing = false
+    @Published internal private(set) var status: String = ""
+    @Published internal private(set) var unreadTotal: Int = 0
+    @Published internal private(set) var lastRefreshDate: Date?
+    @Published internal private(set) var nextRefreshDate: Date?
+    @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:]
+    @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
+    @Published internal private(set) var expandedSummaryIDs: Set<String> = []
+    @Published internal var selectedNodeID: String?
+    @Published internal var selectedFolderID: String?
+    @Published internal private(set) var selectedNodeIDs: Set<String> = []
+    @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
+    @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = []
+    @Published internal private(set) var manualGroups: [String: ManualThreadGroup] = [:]
+    @Published internal private(set) var jwzThreadMap: [String: String] = [:]
+    @Published internal private(set) var threadFolders: [ThreadFolder] = []
     @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:]
-    @Published private(set) var folderMembershipByThreadID: [String: String] = [:]
-    @Published private(set) var openInMailState: OpenInMailState?
-    @Published private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
-    @Published private(set) var visibleDayRange: ClosedRange<Int>?
-    @Published private(set) var visibleEmptyDayIntervals: [DateInterval] = []
-    @Published private(set) var visibleRangeHasMessages = false
-    @Published private(set) var isBackfilling = false
-    @Published var fetchLimit: Int = 10 {
+    @Published internal private(set) var folderMembershipByThreadID: [String: String] = [:]
+    @Published internal private(set) var openInMailState: OpenInMailState?
+    @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
+    @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
+    @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
+    @Published internal private(set) var visibleRangeHasMessages = false
+    @Published internal private(set) var isBackfilling = false
+    @Published internal var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
                 fetchLimit = 1
@@ -283,13 +283,13 @@ final class ThreadCanvasViewModel: ObservableObject {
     private var shouldForceFullReload = false
     private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
 
-    init(settings: AutoRefreshSettings,
-         inspectorSettings: InspectorViewSettings,
-         store: MessageStore = .shared,
-         client: MailAppleScriptClient = MailAppleScriptClient(),
-         threader: JWZThreader = JWZThreader(),
-         summaryCapability: EmailSummaryCapability? = nil,
-         folderSummaryDebounceInterval: TimeInterval = 30) {
+    internal init(settings: AutoRefreshSettings,
+                  inspectorSettings: InspectorViewSettings,
+                  store: MessageStore = .shared,
+                  client: MailAppleScriptClient = MailAppleScriptClient(),
+                  threader: JWZThreader = JWZThreader(),
+                  summaryCapability: EmailSummaryCapability? = nil,
+                  folderSummaryDebounceInterval: TimeInterval = 30) {
         self.store = store
         self.client = client
         self.threader = threader
@@ -318,7 +318,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         folderSummaryTasks.values.forEach { $0.cancel() }
     }
 
-    func start() {
+    internal func start() {
         guard !didStart else { return }
         didStart = true
         Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
@@ -327,7 +327,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         applyAutoRefreshSettings()
     }
 
-    func refreshNow(limit: Int? = nil) {
+    internal func refreshNow(limit: Int? = nil) {
         guard !isRefreshing else {
             Log.refresh.debug("Refresh skipped because another refresh is in progress.")
             return
@@ -384,7 +384,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func applyAutoRefreshSettings() {
+    internal func applyAutoRefreshSettings() {
         if settings.isEnabled {
             scheduleAutoRefresh(interval: settings.interval)
         } else {
@@ -485,15 +485,15 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func summaryState(for nodeID: String) -> ThreadSummaryState? {
+    internal func summaryState(for nodeID: String) -> ThreadSummaryState? {
         nodeSummaries[nodeID]
     }
 
-    func folderSummaryState(for folderID: String) -> ThreadSummaryState? {
+    internal func folderSummaryState(for folderID: String) -> ThreadSummaryState? {
         folderSummaries[folderID]
     }
 
-    func rootID(containing nodeID: String) -> String? {
+    internal func rootID(containing nodeID: String) -> String? {
         Self.rootID(for: nodeID, in: roots)
     }
 
@@ -952,11 +952,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         return node.id
     }
 
-    func isSummaryExpanded(for id: String) -> Bool {
+    internal func isSummaryExpanded(for id: String) -> Bool {
         expandedSummaryIDs.contains(id)
     }
 
-    func setSummaryExpanded(_ expanded: Bool, for id: String) {
+    internal func setSummaryExpanded(_ expanded: Bool, for id: String) {
         if expanded {
             expandedSummaryIDs.insert(id)
         } else {
@@ -965,11 +965,11 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 
 #if DEBUG
-    func applyRethreadResultForTesting(roots: [ThreadNode],
-                                       manualGroupByMessageKey: [String: String] = [:],
-                                       manualAttachmentMessageIDs: Set<String> = [],
-                                       jwzThreadMap: [String: String] = [:],
-                                       folders: [ThreadFolder] = []) {
+    internal func applyRethreadResultForTesting(roots: [ThreadNode],
+                                                manualGroupByMessageKey: [String: String] = [:],
+                                                manualAttachmentMessageIDs: Set<String> = [],
+                                                jwzThreadMap: [String: String] = [:],
+                                                folders: [ThreadFolder] = []) {
         self.roots = roots
         self.manualGroupByMessageKey = manualGroupByMessageKey
         self.manualAttachmentMessageIDs = manualAttachmentMessageIDs
@@ -981,11 +981,11 @@ final class ThreadCanvasViewModel: ObservableObject {
     }
 #endif
 
-    func selectNode(id: String?) {
+    internal func selectNode(id: String?) {
         selectNode(id: id, additive: false)
     }
 
-    func selectNode(id: String?, additive: Bool) {
+    internal func selectNode(id: String?, additive: Bool) {
         guard let id else {
             selectedNodeID = nil
             selectedNodeIDs = []
@@ -1013,7 +1013,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func selectFolder(id: String?) {
+    internal func selectFolder(id: String?) {
         if let selectedFolderID, selectedFolderID != id {
             clearFolderEdits(id: selectedFolderID)
         }
@@ -1024,15 +1024,15 @@ final class ThreadCanvasViewModel: ObservableObject {
         selectedFolderID = id
     }
 
-    func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+    internal func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
         folderEditsByID[id] = ThreadFolderEdit(title: title, color: color)
     }
 
-    func clearFolderEdits(id: String) {
+    internal func clearFolderEdits(id: String) {
         folderEditsByID.removeValue(forKey: id)
     }
 
-    func saveFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+    internal func saveFolderEdits(id: String, title: String, color: ThreadFolderColor) {
         guard let index = threadFolders.firstIndex(where: { $0.id == id }) else { return }
         var updated = threadFolders
         updated[index].title = title
@@ -1053,7 +1053,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func openMessageInMail(_ node: ThreadNode) {
+    internal func openMessageInMail(_ node: ThreadNode) {
         let messageID = node.message.messageID
         let attemptID = UUID()
         openInMailAttemptID = attemptID
@@ -1097,7 +1097,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func openMatchedMessage(_ match: OpenInMailMatch) {
+    internal func openMatchedMessage(_ match: OpenInMailMatch) {
         let attemptID = UUID()
         openInMailAttemptID = attemptID
         setOpenInMailState(.opening, messageID: match.messageID, attemptID: attemptID)
@@ -1121,13 +1121,13 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func copyToPasteboard(_ value: String) {
+    internal func copyToPasteboard(_ value: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
     }
 
-    func copyOpenInMailURL(messageID: String) {
+    internal func copyOpenInMailURL(messageID: String) {
         do {
             let url = try MailControl.messageURL(for: messageID)
             copyToPasteboard(url.absoluteString)
@@ -1144,7 +1144,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         openInMailState = OpenInMailState(messageID: messageID, status: status)
     }
 
-    func moveThread(threadID: String, toFolderID folderID: String) {
+    internal func moveThread(threadID: String, toFolderID folderID: String) {
         Task { [weak self] in
             guard let self else { return }
             guard let updated = Self.applyMove(threadID: threadID,
@@ -1166,7 +1166,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func removeThreadFromFolder(threadID: String) {
+    internal func removeThreadFromFolder(threadID: String) {
         Task { [weak self] in
             guard let self else { return }
             guard let updated = Self.applyRemoval(threadID: threadID, folders: threadFolders) else { return }
@@ -1186,17 +1186,17 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    var selectedNode: ThreadNode? {
+    internal var selectedNode: ThreadNode? {
         Self.node(matching: selectedNodeID, in: roots)
     }
 
-    var selectedFolder: ThreadFolder? {
+    internal var selectedFolder: ThreadFolder? {
         threadFolders.first { $0.id == selectedFolderID }
     }
 
-    func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
-                      today: Date = Date(),
-                      calendar: Calendar = .current) -> ThreadCanvasLayout {
+    internal func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
+                               today: Date = Date(),
+                               calendar: Calendar = .current) -> ThreadCanvasLayout {
         Self.canvasLayout(for: roots,
                           metrics: metrics,
                           today: today,
@@ -1207,16 +1207,16 @@ final class ThreadCanvasViewModel: ObservableObject {
                           folderMembershipByThreadID: folderMembershipByThreadID)
     }
 
-    var canBackfillVisibleRange: Bool {
+    internal var canBackfillVisibleRange: Bool {
         !visibleEmptyDayIntervals.isEmpty && !isBackfilling
     }
 
-    func updateVisibleDayRange(scrollOffset: CGFloat,
-                               viewportHeight: CGFloat,
-                               layout: ThreadCanvasLayout,
-                               metrics: ThreadCanvasLayoutMetrics,
-                               today: Date = Date(),
-                               calendar: Calendar = .current) {
+    internal func updateVisibleDayRange(scrollOffset: CGFloat,
+                                        viewportHeight: CGFloat,
+                                        layout: ThreadCanvasLayout,
+                                        metrics: ThreadCanvasLayoutMetrics,
+                                        today: Date = Date(),
+                                        calendar: Calendar = .current) {
         guard viewportHeight > 0 else { return }
         let range = Self.visibleDayRange(for: layout,
                                          scrollOffset: scrollOffset,
@@ -1245,7 +1245,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
     }
 
-    func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
+    internal func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
         guard !isBackfilling else { return }
         let ranges = rangeOverride.map { [$0] } ?? visibleEmptyDayIntervals
         guard !ranges.isEmpty else { return }
@@ -1287,11 +1287,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    var shouldShowSelectionActions: Bool {
+    internal var shouldShowSelectionActions: Bool {
         selectedNodeIDs.count >= 1 || hasManualGroupMembershipInSelection
     }
 
-    var canGroupSelection: Bool {
+    internal var canGroupSelection: Bool {
         guard selectedNodeIDs.count >= 2,
               let targetID = selectedNodeID,
               let targetNode = Self.node(matching: targetID, in: roots) else {
@@ -1312,11 +1312,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    var canUngroupSelection: Bool {
+    internal var canUngroupSelection: Bool {
         hasManualGroupMembershipInSelection
     }
 
-    func groupSelectedMessages() {
+    internal func groupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
         guard selectedNodes.count >= 2 else {
             return
@@ -1417,7 +1417,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func ungroupSelectedMessages() {
+    internal func ungroupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
 
@@ -1536,7 +1536,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func addFolderForSelection() {
+    internal func addFolderForSelection() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
 
@@ -1608,14 +1608,14 @@ private extension ThreadCanvasViewModel {
 }
 
 extension ThreadCanvasViewModel {
-    static func canvasLayout(for roots: [ThreadNode],
-                             metrics: ThreadCanvasLayoutMetrics,
-                             today: Date,
-                             calendar: Calendar,
-                             manualAttachmentMessageIDs: Set<String> = [],
-                             jwzThreadMap: [String: String] = [:],
-                             folders: [ThreadFolder] = [],
-                             folderMembershipByThreadID: [String: String] = [:]) -> ThreadCanvasLayout {
+    internal static func canvasLayout(for roots: [ThreadNode],
+                                      metrics: ThreadCanvasLayoutMetrics,
+                                      today: Date,
+                                      calendar: Calendar,
+                                      manualAttachmentMessageIDs: Set<String> = [],
+                                      jwzThreadMap: [String: String] = [:],
+                                      folders: [ThreadFolder] = [],
+                                      folderMembershipByThreadID: [String: String] = [:]) -> ThreadCanvasLayout {
         let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
         var currentYOffset = metrics.contentPadding
         let days = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
@@ -1740,7 +1740,7 @@ extension ThreadCanvasViewModel {
                                   folderOverlays: folderOverlays)
     }
 
-    static func node(matching id: String?, in roots: [ThreadNode]) -> ThreadNode? {
+    internal static func node(matching id: String?, in roots: [ThreadNode]) -> ThreadNode? {
         guard let id else { return nil }
         for root in roots {
             if let match = findNode(in: root, matching: id) {
@@ -1836,7 +1836,7 @@ extension ThreadCanvasViewModel {
         return nil
     }
 
-    static func rootID(for nodeID: String, in roots: [ThreadNode]) -> String? {
+    internal static func rootID(for nodeID: String, in roots: [ThreadNode]) -> String? {
         for root in roots {
             if findNode(in: root, matching: nodeID) != nil {
                 return root.id
@@ -1941,7 +1941,7 @@ extension ThreadCanvasViewModel {
                                depthByID: depthByID)
     }
 
-    static func childFolderIDsByParent(folders: [ThreadFolder]) -> [String: [String]] {
+    internal static func childFolderIDsByParent(folders: [ThreadFolder]) -> [String: [String]] {
         folderHierarchy(for: folders).childrenByParentID
     }
 
@@ -2019,27 +2019,27 @@ extension ThreadCanvasViewModel {
         return results
     }
 
-    static func folderMembershipMap(for folders: [ThreadFolder]) -> [String: String] {
+    internal static func folderMembershipMap(for folders: [ThreadFolder]) -> [String: String] {
         folders.reduce(into: [String: String]()) { result, folder in
             folder.threadIDs.forEach { result[$0] = folder.id }
         }
     }
 
-    struct FolderMoveUpdate {
-        let folders: [ThreadFolder]
-        let deletedFolderIDs: Set<String>
-        let membership: [String: String]
+    internal struct FolderMoveUpdate {
+        internal let folders: [ThreadFolder]
+        internal let deletedFolderIDs: Set<String>
+        internal let membership: [String: String]
     }
 
-    struct FolderRemovalUpdate {
-        let remainingFolders: [ThreadFolder]
-        let deletedFolderIDs: Set<String>
-        let membership: [String: String]
+    internal struct FolderRemovalUpdate {
+        internal let remainingFolders: [ThreadFolder]
+        internal let deletedFolderIDs: Set<String>
+        internal let membership: [String: String]
     }
 
-    static func applyMove(threadID: String,
-                          toFolderID folderID: String,
-                          folders: [ThreadFolder]) -> FolderMoveUpdate? {
+    internal static func applyMove(threadID: String,
+                                   toFolderID folderID: String,
+                                   folders: [ThreadFolder]) -> FolderMoveUpdate? {
         guard folders.contains(where: { $0.id == folderID }) else { return nil }
         var updatedFolders = folders
         var deletedFolderIDs: Set<String> = []
@@ -2068,8 +2068,8 @@ extension ThreadCanvasViewModel {
                                 membership: membership)
     }
 
-    static func applyRemoval(threadID: String,
-                             folders: [ThreadFolder]) -> FolderRemovalUpdate? {
+    internal static func applyRemoval(threadID: String,
+                                      folders: [ThreadFolder]) -> FolderRemovalUpdate? {
         guard let folderIndex = folders.firstIndex(where: { $0.threadIDs.contains(threadID) }) else {
             return nil
         }
@@ -2092,9 +2092,9 @@ extension ThreadCanvasViewModel {
                                    membership: membership)
     }
 
-    static func visibleDayRange(for layout: ThreadCanvasLayout,
-                                scrollOffset: CGFloat,
-                                viewportHeight: CGFloat) -> ClosedRange<Int>? {
+    internal static func visibleDayRange(for layout: ThreadCanvasLayout,
+                                         scrollOffset: CGFloat,
+                                         viewportHeight: CGFloat) -> ClosedRange<Int>? {
         let visibleStart = scrollOffset
         let visibleEnd = scrollOffset + viewportHeight
         let visibleDays = layout.days.filter { day in
@@ -2109,10 +2109,10 @@ extension ThreadCanvasViewModel {
         return minID...maxID
     }
 
-    static func emptyDayIntervals(for layout: ThreadCanvasLayout,
-                                  visibleRange: ClosedRange<Int>?,
-                                  today: Date,
-                                  calendar: Calendar) -> [DateInterval] {
+    internal static func emptyDayIntervals(for layout: ThreadCanvasLayout,
+                                           visibleRange: ClosedRange<Int>?,
+                                           today: Date,
+                                           calendar: Calendar) -> [DateInterval] {
         guard let visibleRange else { return [] }
         let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
         let emptyDayIndices = (visibleRange.lowerBound...visibleRange.upperBound)
@@ -2148,10 +2148,10 @@ extension ThreadCanvasViewModel {
         return intervals
     }
 
-    static func shouldExpandDayWindow(scrollOffset: CGFloat,
-                                      viewportHeight: CGFloat,
-                                      contentHeight: CGFloat,
-                                      threshold: CGFloat) -> Bool {
+    internal static func shouldExpandDayWindow(scrollOffset: CGFloat,
+                                               viewportHeight: CGFloat,
+                                               contentHeight: CGFloat,
+                                               threshold: CGFloat) -> Bool {
         let visibleBottom = scrollOffset + viewportHeight
         return visibleBottom >= contentHeight - threshold
     }

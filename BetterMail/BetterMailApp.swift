@@ -8,11 +8,11 @@
 import SwiftUI
 
 @main
-struct BetterMailApp: App {
+internal struct BetterMailApp: App {
     @StateObject private var settings = AutoRefreshSettings()
     @StateObject private var inspectorSettings = InspectorViewSettings()
 
-    var body: some Scene {
+    internal var body: some Scene {
         WindowGroup {
             ContentView(settings: settings, inspectorSettings: inspectorSettings)
         }

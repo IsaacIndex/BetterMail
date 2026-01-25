@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-struct ThreadCanvasView: View {
-    @ObservedObject var viewModel: ThreadCanvasViewModel
-    let topInset: CGFloat
+internal struct ThreadCanvasView: View {
+    @ObservedObject internal var viewModel: ThreadCanvasViewModel
+    internal let topInset: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
@@ -26,7 +26,7 @@ struct ThreadCanvasView: View {
         return formatter
     }()
 
-    var body: some View {
+    internal var body: some View {
         GeometryReader { proxy in
             let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
             let today = Date()

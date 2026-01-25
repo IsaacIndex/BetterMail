@@ -1,16 +1,16 @@
 import AppKit
 import SwiftUI
 
-struct ThreadInspectorView: View {
-    let node: ThreadNode?
-    let summaryState: ThreadSummaryState?
-    let summaryExpansion: Binding<Bool>?
-    @ObservedObject var inspectorSettings: InspectorViewSettings
-    let openInMailState: OpenInMailState?
-    let onOpenInMail: (ThreadNode) -> Void
-    let onOpenMatchedMessage: (OpenInMailMatch) -> Void
-    let onCopyOpenInMailText: (String) -> Void
-    let onCopyOpenInMailURL: (String) -> Void
+internal struct ThreadInspectorView: View {
+    internal let node: ThreadNode?
+    internal let summaryState: ThreadSummaryState?
+    internal let summaryExpansion: Binding<Bool>?
+    @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    internal let openInMailState: OpenInMailState?
+    internal let onOpenInMail: (ThreadNode) -> Void
+    internal let onOpenMatchedMessage: (OpenInMailMatch) -> Void
+    internal let onCopyOpenInMailText: (String) -> Void
+    internal let onCopyOpenInMailURL: (String) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -20,7 +20,7 @@ struct ThreadInspectorView: View {
         formatter.timeStyle = .short
         return formatter
     }()
-    var body: some View {
+    internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
                 .font(.headline)

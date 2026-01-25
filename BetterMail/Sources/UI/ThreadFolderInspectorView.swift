@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-struct ThreadFolderInspectorView: View {
-    let folder: ThreadFolder
-    let summaryState: ThreadSummaryState?
-    let onPreview: (String, ThreadFolderColor) -> Void
-    let onSave: (String, ThreadFolderColor) -> Void
+internal struct ThreadFolderInspectorView: View {
+    internal let folder: ThreadFolder
+    internal let summaryState: ThreadSummaryState?
+    internal let onPreview: (String, ThreadFolderColor) -> Void
+    internal let onSave: (String, ThreadFolderColor) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -16,10 +16,10 @@ struct ThreadFolderInspectorView: View {
     @State private var isResettingDraft = false
     @State private var pendingSaveTask: Task<Void, Never>?
 
-    init(folder: ThreadFolder,
-         summaryState: ThreadSummaryState?,
-         onPreview: @escaping (String, ThreadFolderColor) -> Void,
-         onSave: @escaping (String, ThreadFolderColor) -> Void) {
+    internal init(folder: ThreadFolder,
+                  summaryState: ThreadSummaryState?,
+                  onPreview: @escaping (String, ThreadFolderColor) -> Void,
+                  onSave: @escaping (String, ThreadFolderColor) -> Void) {
         self.folder = folder
         self.summaryState = summaryState
         self.onPreview = onPreview
@@ -34,7 +34,7 @@ struct ThreadFolderInspectorView: View {
         _baselineColor = State(initialValue: folder.color)
     }
 
-    var body: some View {
+    internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.title",
                                    comment: "Title for the folder inspector panel"))

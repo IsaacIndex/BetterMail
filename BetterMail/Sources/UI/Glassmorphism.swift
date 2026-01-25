@@ -1,14 +1,14 @@
 import AppKit
 import SwiftUI
 
-struct GlassBackground: View {
-    let cornerRadius: CGFloat
-    let fillOpacity: Double
-    let strokeOpacity: Double
+internal struct GlassBackground: View {
+    internal let cornerRadius: CGFloat
+    internal let fillOpacity: Double
+    internal let strokeOpacity: Double
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    var body: some View {
+    internal var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         baseFill(shape: shape)
             .overlay(
@@ -38,10 +38,10 @@ struct GlassBackground: View {
     }
 }
 
-struct GlassWindowBackground: View {
+internal struct GlassWindowBackground: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    var body: some View {
+    internal var body: some View {
         baseFill
     }
 

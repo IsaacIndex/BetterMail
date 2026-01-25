@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-struct ThreadListView: View {
-    @ObservedObject var viewModel: ThreadCanvasViewModel
-    @ObservedObject var settings: AutoRefreshSettings
-    @ObservedObject var inspectorSettings: InspectorViewSettings
+internal struct ThreadListView: View {
+    @ObservedObject internal var viewModel: ThreadCanvasViewModel
+    @ObservedObject internal var settings: AutoRefreshSettings
+    @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var navHeight: CGFloat = 96
     @State private var isShowingBackfillConfirmation = false
@@ -20,7 +20,7 @@ struct ThreadListView: View {
     private let navCanvasSpacing: CGFloat = 6
     private let inspectorWidth: CGFloat = 320
 
-    var body: some View {
+    internal var body: some View {
         content
             .frame(minWidth: 480, minHeight: 400)
             .task {

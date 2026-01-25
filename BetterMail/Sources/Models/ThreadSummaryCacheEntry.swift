@@ -1,9 +1,9 @@
 import Foundation
 
-struct ThreadSummaryCacheEntry: Hashable {
-    let threadID: String
-    let summaryText: String
-    let generatedAt: Date
-    let fingerprint: String
-    let provider: String
+internal struct ThreadSummaryCacheEntry: Hashable {
+    internal let threadID: String
+    internal let summaryText: String
+    internal let generatedAt: Date
+    internal let fingerprint: String
+    internal let provider: String
 }

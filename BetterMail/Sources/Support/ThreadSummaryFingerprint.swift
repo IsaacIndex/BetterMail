@@ -1,19 +1,19 @@
 import CryptoKit
 import Foundation
 
-enum ThreadSummaryFingerprint {
-    static func make(subjects: [String], messageCount: Int, manualGroupID: String?) -> String {
+internal enum ThreadSummaryFingerprint {
+    internal static func make(subjects: [String], messageCount: Int, manualGroupID: String?) -> String {
         let components = subjects + ["count:\(messageCount)", "group:\(manualGroupID ?? "")"]
         return sha256Hex(components.joined(separator: "|"))
     }
 
-    static func makeNode(subject: String, body: String, priorEntries: [NodeSummaryFingerprintEntry]) -> String {
+    internal static func makeNode(subject: String, body: String, priorEntries: [NodeSummaryFingerprintEntry]) -> String {
         let priorComponents = priorEntries.map { "\($0.messageID)|\($0.subject)|\($0.bodySnippet)" }
         let components = ["subject:\(subject)", "body:\(body)"] + priorComponents
         return sha256Hex(components.joined(separator: "|"))
     }
 
-    static func makeFolder(nodeEntries: [FolderSummaryFingerprintEntry]) -> String {
+    internal static func makeFolder(nodeEntries: [FolderSummaryFingerprintEntry]) -> String {
         let components = nodeEntries.map { "\($0.nodeID)|\($0.nodeFingerprint)" }
         return sha256Hex(components.joined(separator: "|"))
     }
@@ -24,13 +24,13 @@ enum ThreadSummaryFingerprint {
     }
 }
 
-struct NodeSummaryFingerprintEntry: Hashable {
-    let messageID: String
-    let subject: String
-    let bodySnippet: String
+internal struct NodeSummaryFingerprintEntry: Hashable {
+    internal let messageID: String
+    internal let subject: String
+    internal let bodySnippet: String
 }
 
-struct FolderSummaryFingerprintEntry: Hashable {
-    let nodeID: String
-    let nodeFingerprint: String
+internal struct FolderSummaryFingerprintEntry: Hashable {
+    internal let nodeID: String
+    internal let nodeFingerprint: String
 }

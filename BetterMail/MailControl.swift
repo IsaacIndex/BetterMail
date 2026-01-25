@@ -9,7 +9,7 @@ import AppKit
 import Foundation
 import OSLog
 
-enum MailControlError: LocalizedError {
+internal enum MailControlError: LocalizedError {
     case invalidMessageID
     case openFailed
     case searchFailed
@@ -26,13 +26,13 @@ enum MailControlError: LocalizedError {
     }
 }
 
-struct MailControl {
-    struct MessageMatch: Hashable {
-        let messageID: String
-        let subject: String
-        let mailbox: String
-        let account: String
-        let date: String
+internal struct MailControl {
+    internal struct MessageMatch: Hashable {
+        internal let messageID: String
+        internal let subject: String
+        internal let mailbox: String
+        internal let account: String
+        internal let date: String
     }
 
     /// Escape arbitrary user text so embedding it inside AppleScript stays well-formed.
@@ -43,7 +43,7 @@ struct MailControl {
     }
 
     /// Convert a "Projects/ACME" style path into the nested `mailbox` reference Mail expects.
-    static func mailboxReference(path: String, account: String?) -> String {
+    internal static func mailboxReference(path: String, account: String?) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowered = trimmed.lowercased()
 
@@ -69,7 +69,7 @@ struct MailControl {
         return accountSuffix(reference)
     }
 
-    static func openMessage(messageID: String) throws {
+    internal static func openMessage(messageID: String) throws {
         // Prefer AppleScript so we can fail fast and surface fallback without Mail's alert.
         let opened = try openMessageViaAppleScript(messageID: messageID)
         if opened {
@@ -82,7 +82,7 @@ struct MailControl {
         guard NSWorkspace.shared.open(url) else { throw MailControlError.openFailed }
     }
 
-    static func openMessageViaAppleScript(messageID: String) throws -> Bool {
+    internal static func openMessageViaAppleScript(messageID: String) throws -> Bool {
         let normalized = try normalizedMessageID(messageID)
         let bracketed = "<\(normalized)>"
         let script = buildMessageOpenScript(normalized: normalized, bracketed: bracketed)
@@ -93,7 +93,7 @@ struct MailControl {
         return false
     }
 
-    static func searchMessages(messageID: String, limit: Int = 5) throws -> [MessageMatch] {
+    internal static func searchMessages(messageID: String, limit: Int = 5) throws -> [MessageMatch] {
         let normalized = try normalizedMessageID(messageID)
         let bracketed = "<\(normalized)>"
         let script = messageSearchScript(normalized: normalized, bracketed: bracketed, limit: limit)
@@ -104,7 +104,7 @@ struct MailControl {
         return decodeMatches(from: result)
     }
 
-    static func messageURL(for messageID: String) throws -> URL {
+    internal static func messageURL(for messageID: String) throws -> URL {
         let normalized = try normalizedMessageID(messageID)
         let wrapped = "<\(normalized)>"
         let disallowed = CharacterSet(charactersIn: "/?&%#<>\"")
@@ -116,13 +116,13 @@ struct MailControl {
         return url
     }
 
-    static func normalizedMessageID(_ messageID: String) throws -> String {
+    internal static func normalizedMessageID(_ messageID: String) throws -> String {
         let normalized = JWZThreader.normalizeIdentifier(messageID)
         guard !normalized.isEmpty else { throw MailControlError.invalidMessageID }
         return normalized
     }
 
-    static func cleanMessageIDPreservingCase(_ raw: String) -> String {
+    internal static func cleanMessageIDPreservingCase(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         if trimmed.hasPrefix("<") && trimmed.hasSuffix(">") {
@@ -131,7 +131,7 @@ struct MailControl {
         return trimmed
     }
 
-    static func moveSelection(to mailboxPath: String, in account: String) throws {
+    internal static func moveSelection(to mailboxPath: String, in account: String) throws {
         let destReference = mailboxReference(path: mailboxPath, account: account)
         let script = """
         tell application "Mail"
@@ -144,7 +144,7 @@ struct MailControl {
         _ = try runAppleScript(script)
     }
 
-    static func flagSelection(colorIndex: Int = 4) throws {
+    internal static func flagSelection(colorIndex: Int = 4) throws {
         // Apple Mail uses 0..7; common mapping: 1=red 2=orange 3=yellow 4=green 5=blue 6=purple 7=gray
         let script = """
         tell application "Mail"
@@ -157,7 +157,7 @@ struct MailControl {
         _ = try runAppleScript(script)
     }
 
-    static func searchInboxSubject(contains text: String, limit: Int = 50) throws -> [String] {
+    internal static func searchInboxSubject(contains text: String, limit: Int = 50) throws -> [String] {
         // Returns subjects for simplicity (you can expand to return more fields)
         let safeText = escapedForAppleScript(text)
         let script = """
@@ -174,10 +174,10 @@ struct MailControl {
         return (0..<r.numberOfItems).map { r.atIndex($0+1)?.stringValue ?? "" }
     }
 
-    static func fetchRecent(from mailbox: String = "inbox",
-                            account: String? = nil,
-                            daysBack: Int = 7,
-                            limit: Int = 200) throws -> [[String: String]] {
+    internal static func fetchRecent(from mailbox: String = "inbox",
+                                     account: String? = nil,
+                                     daysBack: Int = 7,
+                                     limit: Int = 200) throws -> [[String: String]] {
         // Pulls a lightweight timeline: subject, sender, date received
         print("fetchRecent bundle id:", Bundle.main.bundleIdentifier ?? "nil",
               "mailbox:", mailbox,
@@ -215,7 +215,7 @@ struct MailControl {
         }
     }
 
-    static func messageSearchScript(for messageID: String, limit: Int = 5) throws -> String {
+    internal static func messageSearchScript(for messageID: String, limit: Int = 5) throws -> String {
         let normalized = try normalizedMessageID(messageID)
         let bracketed = "<\(normalized)>"
         return messageSearchScript(normalized: normalized, bracketed: bracketed, limit: limit)

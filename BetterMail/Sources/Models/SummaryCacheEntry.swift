@@ -1,15 +1,15 @@
 import Foundation
 
-enum SummaryScope: String, Hashable {
+internal enum SummaryScope: String, Hashable {
     case emailNode = "email-node"
     case folder = "folder"
 }
 
-struct SummaryCacheEntry: Hashable {
-    let scope: SummaryScope
-    let scopeID: String
-    let summaryText: String
-    let generatedAt: Date
-    let fingerprint: String
-    let provider: String
+internal struct SummaryCacheEntry: Hashable {
+    internal let scope: SummaryScope
+    internal let scopeID: String
+    internal let summaryText: String
+    internal let generatedAt: Date
+    internal let fingerprint: String
+    internal let provider: String
 }

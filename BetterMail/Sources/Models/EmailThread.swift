@@ -1,26 +1,26 @@
 import Foundation
 
-struct EmailThread: Identifiable, Hashable {
-    let id: String
-    let rootMessageID: String?
-    let subject: String
-    let lastUpdated: Date
-    let unreadCount: Int
-    let messageCount: Int
+internal struct EmailThread: Identifiable, Hashable {
+    internal let id: String
+    internal let rootMessageID: String?
+    internal let subject: String
+    internal let lastUpdated: Date
+    internal let unreadCount: Int
+    internal let messageCount: Int
 }
 
-struct ThreadNode: Identifiable {
-    let id: String
-    let message: EmailMessage
-    var children: [ThreadNode]
+internal struct ThreadNode: Identifiable {
+    internal let id: String
+    internal let message: EmailMessage
+    internal var children: [ThreadNode]
 
-    init(message: EmailMessage, children: [ThreadNode] = []) {
+    internal init(message: EmailMessage, children: [ThreadNode] = []) {
         self.id = message.messageID
         self.message = message
         self.children = children
     }
 
-    var childNodes: [ThreadNode]? {
+    internal var childNodes: [ThreadNode]? {
         children.isEmpty ? nil : children
     }
 }

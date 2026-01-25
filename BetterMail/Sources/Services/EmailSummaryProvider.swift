@@ -3,7 +3,7 @@ import Foundation
 import FoundationModels
 #endif
 
-enum EmailSummaryError: LocalizedError {
+internal enum EmailSummaryError: LocalizedError {
     case noSubjects
     case unavailable(String)
     case generationFailed(Error)
@@ -20,37 +20,37 @@ enum EmailSummaryError: LocalizedError {
     }
 }
 
-protocol EmailSummaryProviding {
+internal protocol EmailSummaryProviding {
     func summarize(subjects: [String]) async throws -> String
     func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String
     func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String
 }
 
-struct EmailSummaryCapability {
-    let provider: EmailSummaryProviding?
-    let statusMessage: String
-    let providerID: String
+internal struct EmailSummaryCapability {
+    internal let provider: EmailSummaryProviding?
+    internal let statusMessage: String
+    internal let providerID: String
 }
 
-struct EmailSummaryContextEntry: Hashable {
-    let messageID: String
-    let subject: String
-    let bodySnippet: String
+internal struct EmailSummaryContextEntry: Hashable {
+    internal let messageID: String
+    internal let subject: String
+    internal let bodySnippet: String
 }
 
-struct EmailSummaryRequest: Hashable {
-    let subject: String
-    let body: String
-    let priorMessages: [EmailSummaryContextEntry]
+internal struct EmailSummaryRequest: Hashable {
+    internal let subject: String
+    internal let body: String
+    internal let priorMessages: [EmailSummaryContextEntry]
 }
 
-struct FolderSummaryRequest: Hashable {
-    let title: String
-    let messageSummaries: [String]
+internal struct FolderSummaryRequest: Hashable {
+    internal let title: String
+    internal let messageSummaries: [String]
 }
 
-enum EmailSummaryProviderFactory {
-    static func makeCapability() -> EmailSummaryCapability {
+internal enum EmailSummaryProviderFactory {
+    internal static func makeCapability() -> EmailSummaryCapability {
 #if canImport(FoundationModels)
         if #available(macOS 15.2, *) {
             let model = FoundationModels.SystemLanguageModel.default
@@ -75,14 +75,14 @@ enum EmailSummaryProviderFactory {
 
 #if canImport(FoundationModels)
 @available(macOS 15.2, *)
-final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
+internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
     private let model: SystemLanguageModel
 
-    init(model: SystemLanguageModel = .default) {
+    internal init(model: SystemLanguageModel = .default) {
         self.model = model
     }
 
-    func summarize(subjects: [String]) async throws -> String {
+    internal func summarize(subjects: [String]) async throws -> String {
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
@@ -106,7 +106,7 @@ final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
         }
     }
 
-    func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String {
+    internal func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String {
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
@@ -133,7 +133,7 @@ final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
         }
     }
 
-    func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String {
+    internal func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String {
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }

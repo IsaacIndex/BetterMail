@@ -22,6 +22,7 @@ Use this document to stay aligned with BetterMail's expectations when assisting 
    - Honor the existing MVVM-ish structure; do not reorganize folders or targets.
    - When changing logic, add or update XCTest-based unit tests (no network calls—mock instead).
    - All user-facing strings must be localizable-ready.
+   - Reference `TechDocs/index.md` for architecture and migration notes; keep it current during refactors.
 
 5. **Accessibility & Performance**
    - Respect Dynamic Type, VoiceOver, and color contrast requirements.

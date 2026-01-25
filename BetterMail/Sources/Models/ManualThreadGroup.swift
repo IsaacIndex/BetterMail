@@ -1,7 +1,7 @@
 import Foundation
 
-struct ManualThreadGroup: Identifiable, Hashable {
-    let id: String
-    var jwzThreadIDs: Set<String>
-    var manualMessageKeys: Set<String>
+internal struct ManualThreadGroup: Identifiable, Hashable {
+    internal let id: String
+    internal var jwzThreadIDs: Set<String>
+    internal var manualMessageKeys: Set<String>
 }
