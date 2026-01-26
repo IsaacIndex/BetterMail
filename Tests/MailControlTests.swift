@@ -26,4 +26,15 @@ final class MailControlTests: XCTestCase {
         let cleaned = MailControl.cleanMessageIDPreservingCase("  <CaseSensitive@Host.COM> ")
         XCTAssertEqual(cleaned, "CaseSensitive@Host.COM")
     }
+
+    func test_openMessage_whenAppleScriptThrows_usesURLFallback() throws {
+        var openedURL: URL?
+        try MailControl.openMessage(messageID: "Test@Example.com",
+                                    openViaAppleScript: { _ in throw MailControlError.searchFailed },
+                                    openViaURL: { url in
+                                        openedURL = url
+                                        return true
+                                    })
+        XCTAssertEqual(openedURL?.absoluteString, "message://%3Ctest@example.com%3E")
+    }
 }

@@ -70,8 +70,23 @@ internal struct MailControl {
     }
 
     internal static func openMessage(messageID: String) throws {
+        try openMessage(messageID: messageID,
+                        openViaAppleScript: openMessageViaAppleScript,
+                        openViaURL: { NSWorkspace.shared.open($0) })
+    }
+
+    internal static func openMessage(messageID: String,
+                                     openViaAppleScript: (String) throws -> Bool,
+                                     openViaURL: (URL) -> Bool) throws {
         // Prefer AppleScript so we can fail fast and surface fallback without Mail's alert.
-        let opened = try openMessageViaAppleScript(messageID: messageID)
+        let opened: Bool
+        do {
+            opened = try openViaAppleScript(messageID)
+        } catch {
+            Log.appleScript.error("Open in Mail via AppleScript failed; falling back to message:// URL. id=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            opened = false
+        }
+
         if opened {
             Log.appleScript.debug("Open in Mail via AppleScript succeeded. id=\(messageID, privacy: .public)")
             return
@@ -79,7 +94,7 @@ internal struct MailControl {
 
         let url = try messageURL(for: messageID)
         Log.appleScript.debug("Open in Mail via message:// URL fallback. id=\(messageID, privacy: .public) url=\(url.absoluteString, privacy: .public)")
-        guard NSWorkspace.shared.open(url) else { throw MailControlError.openFailed }
+        guard openViaURL(url) else { throw MailControlError.openFailed }
     }
 
     internal static func openMessageViaAppleScript(messageID: String) throws -> Bool {
