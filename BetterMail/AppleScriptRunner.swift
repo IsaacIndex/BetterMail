@@ -9,12 +9,12 @@ import Foundation
 import Cocoa
 import OSLog
 
-enum AppleScriptError: Error {
+internal enum AppleScriptError: Error {
     case executionFailed(String)
 }
 
-actor NSAppleScriptRunner {
-    enum ScriptError: Error, LocalizedError {
+internal actor NSAppleScriptRunner {
+    internal enum ScriptError: Error, LocalizedError {
         case compileFailed
         case executionFailed(NSDictionary)
 
@@ -28,7 +28,7 @@ actor NSAppleScriptRunner {
         }
     }
 
-    func run(_ source: String) throws -> NSAppleEventDescriptor {
+    internal func run(_ source: String) throws -> NSAppleEventDescriptor {
         try ensureMailRunning()
 
         guard let script = NSAppleScript(source: source) else { throw ScriptError.compileFailed }
@@ -40,7 +40,7 @@ actor NSAppleScriptRunner {
     }
 }
 
-func ensureMailRunning(timeout: TimeInterval = 10) throws {
+private func ensureMailRunning(timeout: TimeInterval = 10) throws {
     let bundleID = "com.apple.mail"
 
     // If Mail is already running, return
@@ -71,13 +71,13 @@ func ensureMailRunning(timeout: TimeInterval = 10) throws {
 }
 
 
-func debugContext(_ whereAmI: String) {
+private func debugContext(_ whereAmI: String) {
     print("🔍 [\(whereAmI)]")
     print("  bundleIdentifier =", Bundle.main.bundleIdentifier ?? "nil")
     print("  processName      =", ProcessInfo.processInfo.processName)
 }
 
-func runAppleScript(_ script: String) throws -> NSAppleEventDescriptor {
+internal func runAppleScript(_ script: String) throws -> NSAppleEventDescriptor {
     try ensureMailRunning()
     
     debugContext("runAppleScript caller")

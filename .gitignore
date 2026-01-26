@@ -12,3 +12,13 @@ BetterMail.xcodeproj/project.xcworkspace/xcuserdata/isaacibm.xcuserdatad/Bookmar
 Config/*.xcconfig
 !Config/*.xcconfig.example
 DerivedData/**
+
+# Xcode user-specific settings / UI state
+*.xcuserstate
+**/xcuserdata/
+
+# Build artifacts
+DerivedData/
+build/
+*.ipa
+*.dSYM*

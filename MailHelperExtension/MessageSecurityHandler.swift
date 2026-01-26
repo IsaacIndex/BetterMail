@@ -7,13 +7,13 @@
 
 import MailKit
 
-class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
+internal final class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
-    static let shared = MessageSecurityHandler()
+    internal static let shared = MessageSecurityHandler()
 
     // MARK: - Encoding Messages
 
-    func getEncodingStatus(for message: MEMessage, composeContext: MEComposeContext, completionHandler: @escaping (MEOutgoingMessageEncodingStatus) -> Void) {
+    internal func getEncodingStatus(for message: MEMessage, composeContext: MEComposeContext, completionHandler: @escaping (MEOutgoingMessageEncodingStatus) -> Void) {
         // Indicate whether you support signing, encrypting, or both. If the
         // message contains recipients that you can't sign or encrypt for,
         // specify an error and include the addresses in the
@@ -25,7 +25,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         completionHandler(status)
     }
 
-    func encode(_ message: MEMessage, composeContext: MEComposeContext, completionHandler: @escaping (MEMessageEncodingResult) -> Void) {
+    internal func encode(_ message: MEMessage, composeContext: MEComposeContext, completionHandler: @escaping (MEMessageEncodingResult) -> Void) {
         // The result of the encoding operation. This object contains
         // the encoded message or an error to indicate what failed.
         let result: MEMessageEncodingResult
@@ -52,7 +52,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     // MARK: - Decoding Messages
 
-    func decodedMessage(forMessageData data: Data) -> MEDecodedMessage? {
+    internal func decodedMessage(forMessageData data: Data) -> MEDecodedMessage? {
         // In this method, you decode the message data. Create an
         // MEMessageSecurityInformation object to capture details about the decoded
         // message. If an error occurs, create an NSError that describes the
@@ -73,7 +73,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
  
     // MARK: - Displaying Security Information
 
-    func extensionViewController(signers messageSigners: [MEMessageSigner]) -> MEExtensionViewController? {
+    internal func extensionViewController(signers messageSigners: [MEMessageSigner]) -> MEExtensionViewController? {
         // Return a view controller that shows details about the encoded message.
         return MessageSecurityViewController(nibName: "MessageSecurityViewController", bundle: Bundle.main
         )
@@ -81,12 +81,12 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     // MARK: mark - Displaying Additional Context
 
-    func extensionViewController(messageContext context: Data) -> MEExtensionViewController? {
+    internal func extensionViewController(messageContext context: Data) -> MEExtensionViewController? {
         // Return a view controller that can show additional message context.
         return nil
     }
 
-    func primaryActionClicked(forMessageContext context: Data, completionHandler: @escaping (MEExtensionViewController?) -> Void) {
+    internal func primaryActionClicked(forMessageContext context: Data, completionHandler: @escaping (MEExtensionViewController?) -> Void) {
         // Provide a view controller that is displayed when user clicks on the message banner that is displayed when viewing a decoded mail message.
         completionHandler(nil)
     }

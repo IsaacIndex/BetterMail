@@ -7,19 +7,19 @@
 
 import MailKit
 
-class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
+internal final class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
 
-    func mailComposeSessionDidBegin(_ session: MEComposeSession) {
+    internal func mailComposeSessionDidBegin(_ session: MEComposeSession) {
         // Perform any setup necessary for handling the compose session.
     }
     
-    func mailComposeSessionDidEnd(_ session: MEComposeSession) {
+    internal func mailComposeSessionDidEnd(_ session: MEComposeSession) {
         // Perform any cleanup now that the compose session is over.
     }
     
     // MARK: - Annotating Address Tokens
 
-    func annotateAddressesForSession(_ session: MEComposeSession) async -> [MEEmailAddress: MEAddressAnnotation] {
+    internal func annotateAddressesForSession(_ session: MEComposeSession) async -> [MEEmailAddress: MEAddressAnnotation] {
         var annotations: [MEEmailAddress: MEAddressAnnotation] = [:]
         
         // Iterate through all the receipients in the message.
@@ -44,13 +44,13 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
 
     // MARK: - Displaying Custom Compose Options
 
-    func viewController(for session: MEComposeSession) -> MEExtensionViewController {
+    internal func viewController(for session: MEComposeSession) -> MEExtensionViewController {
         return ComposeSessionViewController(nibName: "ComposeSessionViewController", bundle: Bundle.main)
     }
     
     // MARK: - Adding Custom Headers
 
-    func additionalHeaders(for session: MEComposeSession) -> [String : [String]] {
+    internal func additionalHeaders(for session: MEComposeSession) -> [String : [String]] {
         // To insert custom headers into a message, return a dictionary with
         // the key and an array of one or more values.
         return ["X-CustomHeader": ["This ia a custom header."]]
@@ -58,7 +58,7 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
     
     // MARK: - Confirming Message Delivery
 
-    enum ComposeSessionError: LocalizedError {
+    internal enum ComposeSessionError: LocalizedError {
         case invalidRecipientDomain
         
         var errorDescription: String? {
@@ -69,7 +69,7 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
         }
     }
     
-    func allowMessageSendForSession(_ session: MEComposeSession, completion: @escaping (Error?) -> Void) {
+    internal func allowMessageSendForSession(_ session: MEComposeSession, completion: @escaping (Error?) -> Void) {
         // Before Mail sends a message, your extension can validate the
         // contents of the compose session. If the message is ready to be sent,
         // call the compltion block with nil. If the message isn't ready to be
@@ -81,4 +81,3 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
         }
     }
 }
-

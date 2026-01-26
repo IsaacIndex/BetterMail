@@ -1,12 +1,60 @@
+import AppKit
 import Combine
 import CoreGraphics
 import Foundation
 import OSLog
 
-struct ThreadSummaryState {
-    var text: String
-    var statusMessage: String
-    var isSummarizing: Bool
+internal struct ThreadSummaryState {
+    internal var text: String
+    internal var statusMessage: String
+    internal var isSummarizing: Bool
+}
+
+internal struct OpenInMailMatch: Identifiable, Equatable {
+    internal let messageID: String
+    internal let subject: String
+    internal let mailbox: String
+    internal let account: String
+    internal let date: String
+
+    internal var id: String {
+        [messageID, mailbox, account, date].joined(separator: "|")
+    }
+
+    internal var mailboxDisplay: String {
+        account.isEmpty ? mailbox : "\(account) • \(mailbox)"
+    }
+}
+
+internal enum OpenInMailStatus: Equatable {
+    case idle
+    case opening
+    case opened
+    case searching
+    case matches([OpenInMailMatch])
+    case notFound
+    case failed(String)
+}
+
+internal struct OpenInMailState: Equatable {
+    internal let messageID: String
+    internal let status: OpenInMailStatus
+}
+
+private struct NodeSummaryInput {
+    let nodeID: String
+    let cacheKey: String
+    let subject: String
+    let body: String
+    let priorMessages: [EmailSummaryContextEntry]
+    let fingerprint: String
+}
+
+private struct FolderSummaryInput {
+    let folderID: String
+    let title: String
+    let summaryTexts: [String]
+    let fingerprint: String
 }
 
 private struct ThreadFolderEdit: Hashable {
@@ -15,21 +63,18 @@ private struct ThreadFolderEdit: Hashable {
 }
 
 @MainActor
-final class ThreadCanvasViewModel: ObservableObject {
+internal final class ThreadCanvasViewModel: ObservableObject {
     private actor SidebarBackgroundWorker {
         private let client: MailAppleScriptClient
         private let store: MessageStore
         private let threader: JWZThreader
-        private let summaryProvider: EmailSummaryProviding?
 
         init(client: MailAppleScriptClient,
              store: MessageStore,
-             threader: JWZThreader,
-             summaryProvider: EmailSummaryProviding?) {
+             threader: JWZThreader) {
             self.client = client
             self.store = store
             self.threader = threader
-            self.summaryProvider = summaryProvider
         }
 
         struct RefreshOutcome {
@@ -101,54 +146,113 @@ final class ThreadCanvasViewModel: ObservableObject {
             return totalFetched
         }
 
-        func subjectsByRoot(_ roots: [ThreadNode]) -> [String: [String]] {
-            roots.reduce(into: [String: [String]]()) { result, root in
-                result[root.id] = subjects(in: root)
+        func nodeSummaryInputs(for roots: [ThreadNode],
+                               manualAttachmentMessageIDs: Set<String>,
+                               snippetLineLimit: Int,
+                               stopPhrases: [String]) -> [String: NodeSummaryInput] {
+            let formatter = SnippetFormatter(lineLimit: snippetLineLimit,
+                                             stopPhrases: stopPhrases)
+            var inputs: [String: NodeSummaryInput] = [:]
+
+            for root in roots {
+                let timeline = Self.timelineNodes(for: root)
+                var priorEntries: [EmailSummaryContextEntry] = []
+                priorEntries.reserveCapacity(timeline.count)
+
+                for node in timeline {
+                    let subject = Self.normalizedText(node.message.subject,
+                                                      maxCharacters: 140)
+                    let body = Self.normalizedText(formatter.format(node.message.snippet),
+                                                   maxCharacters: 600)
+                    let priorContext = Array(priorEntries.suffix(8))
+                    if !subject.isEmpty || !body.isEmpty {
+                        let fingerprintEntries = priorContext.map {
+                            NodeSummaryFingerprintEntry(messageID: $0.messageID,
+                                                        subject: $0.subject,
+                                                        bodySnippet: $0.bodySnippet)
+                        }
+                        let fingerprint = ThreadSummaryFingerprint.makeNode(subject: subject,
+                                                                            body: body,
+                                                                            priorEntries: fingerprintEntries)
+                        inputs[node.id] = NodeSummaryInput(nodeID: node.id,
+                                                           cacheKey: node.id,
+                                                           subject: subject,
+                                                           body: body,
+                                                           priorMessages: priorContext,
+                                                           fingerprint: fingerprint)
+                    }
+
+                    let priorSnippet = Self.normalizedText(formatter.format(node.message.snippet),
+                                                           maxCharacters: 220)
+                    if !subject.isEmpty || !priorSnippet.isEmpty {
+                        priorEntries.append(EmailSummaryContextEntry(messageID: node.message.messageID,
+                                                                     subject: subject,
+                                                                     bodySnippet: priorSnippet))
+                    } else if manualAttachmentMessageIDs.contains(node.id) {
+                        priorEntries.append(EmailSummaryContextEntry(messageID: node.message.messageID,
+                                                                     subject: "Manual attachment",
+                                                                     bodySnippet: ""))
+                    }
+                }
+            }
+
+            return inputs
+        }
+
+        private static func timelineNodes(for root: ThreadNode) -> [ThreadNode] {
+            let nodes = flatten(node: root)
+            return nodes.sorted {
+                if $0.message.date == $1.message.date {
+                    return $0.message.messageID < $1.message.messageID
+                }
+                return $0.message.date < $1.message.date
             }
         }
 
-        func summarize(subjects: [String]) async throws -> String {
-            guard let summaryProvider else { throw CancellationError() }
-            return try await summaryProvider.summarize(subjects: subjects)
-        }
-
-        private func subjects(in node: ThreadNode) -> [String] {
-            var results: [String] = []
-            let trimmed = node.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                results.append(trimmed)
-            }
+        private static func flatten(node: ThreadNode) -> [ThreadNode] {
+            var results: [ThreadNode] = [node]
             for child in node.children {
-                results.append(contentsOf: subjects(in: child))
+                results.append(contentsOf: flatten(node: child))
             }
             return results
         }
+
+        private static func normalizedText(_ text: String, maxCharacters: Int) -> String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return "" }
+            let collapsed = trimmed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard collapsed.count > maxCharacters else { return collapsed }
+            let endIndex = collapsed.index(collapsed.startIndex, offsetBy: maxCharacters)
+            return String(collapsed[..<endIndex]) + "…"
+        }
     }
 
-    @Published private(set) var roots: [ThreadNode] = []
-    @Published private(set) var isRefreshing = false
-    @Published private(set) var status: String = ""
-    @Published private(set) var unreadTotal: Int = 0
-    @Published private(set) var lastRefreshDate: Date?
-    @Published private(set) var nextRefreshDate: Date?
-    @Published private(set) var threadSummaries: [String: ThreadSummaryState] = [:]
-    @Published private(set) var expandedSummaryIDs: Set<String> = []
-    @Published var selectedNodeID: String?
-    @Published var selectedFolderID: String?
-    @Published private(set) var selectedNodeIDs: Set<String> = []
-    @Published private(set) var manualGroupByMessageKey: [String: String] = [:]
-    @Published private(set) var manualAttachmentMessageIDs: Set<String> = []
-    @Published private(set) var manualGroups: [String: ManualThreadGroup] = [:]
-    @Published private(set) var jwzThreadMap: [String: String] = [:]
-    @Published private(set) var threadFolders: [ThreadFolder] = []
+    @Published internal private(set) var roots: [ThreadNode] = []
+    @Published internal private(set) var isRefreshing = false
+    @Published internal private(set) var status: String = ""
+    @Published internal private(set) var unreadTotal: Int = 0
+    @Published internal private(set) var lastRefreshDate: Date?
+    @Published internal private(set) var nextRefreshDate: Date?
+    @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:]
+    @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
+    @Published internal private(set) var expandedSummaryIDs: Set<String> = []
+    @Published internal var selectedNodeID: String?
+    @Published internal var selectedFolderID: String?
+    @Published internal private(set) var selectedNodeIDs: Set<String> = []
+    @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
+    @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = []
+    @Published internal private(set) var manualGroups: [String: ManualThreadGroup] = [:]
+    @Published internal private(set) var jwzThreadMap: [String: String] = [:]
+    @Published internal private(set) var threadFolders: [ThreadFolder] = []
     @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:]
-    @Published private(set) var folderMembershipByThreadID: [String: String] = [:]
-    @Published private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
-    @Published private(set) var visibleDayRange: ClosedRange<Int>?
-    @Published private(set) var visibleEmptyDayIntervals: [DateInterval] = []
-    @Published private(set) var visibleRangeHasMessages = false
-    @Published private(set) var isBackfilling = false
-    @Published var fetchLimit: Int = 10 {
+    @Published internal private(set) var folderMembershipByThreadID: [String: String] = [:]
+    @Published internal private(set) var openInMailState: OpenInMailState?
+    @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
+    @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
+    @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
+    @Published internal private(set) var visibleRangeHasMessages = false
+    @Published internal private(set) var isBackfilling = false
+    @Published internal var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
                 fetchLimit = 1
@@ -162,34 +266,43 @@ final class ThreadCanvasViewModel: ObservableObject {
     private let client: MailAppleScriptClient
     private let threader: JWZThreader
     private let summaryProvider: EmailSummaryProviding?
+    private let summaryProviderID: String
+    private let summaryAvailabilityMessage: String
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
-    private var summaryTasks: [String: Task<Void, Never>] = [:]
-    private var summaryRefreshGeneration = 0
+    private var nodeSummaryTasks: [String: Task<Void, Never>] = [:]
+    private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
+    private var nodeSummaryRefreshGeneration = 0
+    private let folderSummaryDebounceInterval: TimeInterval
     private var cancellables = Set<AnyCancellable>()
     private var didStart = false
+    private var openInMailAttemptID = UUID()
     private var shouldForceFullReload = false
     private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
 
-    init(settings: AutoRefreshSettings,
-         inspectorSettings: InspectorViewSettings,
-         store: MessageStore = .shared,
-         client: MailAppleScriptClient = MailAppleScriptClient(),
-         threader: JWZThreader = JWZThreader()) {
+    internal init(settings: AutoRefreshSettings,
+                  inspectorSettings: InspectorViewSettings,
+                  store: MessageStore = .shared,
+                  client: MailAppleScriptClient = MailAppleScriptClient(),
+                  threader: JWZThreader = JWZThreader(),
+                  summaryCapability: EmailSummaryCapability? = nil,
+                  folderSummaryDebounceInterval: TimeInterval = 30) {
         self.store = store
         self.client = client
         self.threader = threader
         self.settings = settings
         self.inspectorSettings = inspectorSettings
-        let capability = EmailSummaryProviderFactory.makeCapability()
+        self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
+        let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
+        self.summaryProviderID = capability.providerID
+        self.summaryAvailabilityMessage = capability.statusMessage
         self.worker = SidebarBackgroundWorker(client: client,
                                               store: store,
-                                              threader: threader,
-                                              summaryProvider: capability.provider)
+                                              threader: threader)
         NotificationCenter.default.publisher(for: .manualThreadGroupsReset)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -201,10 +314,11 @@ final class ThreadCanvasViewModel: ObservableObject {
     deinit {
         rethreadTask?.cancel()
         autoRefreshTask?.cancel()
-        summaryTasks.values.forEach { $0.cancel() }
+        nodeSummaryTasks.values.forEach { $0.cancel() }
+        folderSummaryTasks.values.forEach { $0.cancel() }
     }
 
-    func start() {
+    internal func start() {
         guard !didStart else { return }
         didStart = true
         Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
@@ -213,7 +327,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         applyAutoRefreshSettings()
     }
 
-    func refreshNow(limit: Int? = nil) {
+    internal func refreshNow(limit: Int? = nil) {
         guard !isRefreshing else {
             Log.refresh.debug("Refresh skipped because another refresh is in progress.")
             return
@@ -270,7 +384,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func applyAutoRefreshSettings() {
+    internal func applyAutoRefreshSettings() {
         if settings.isEnabled {
             scheduleAutoRefresh(interval: settings.interval)
         } else {
@@ -326,6 +440,8 @@ final class ThreadCanvasViewModel: ObservableObject {
     private func performRethread() async {
         do {
             Log.refresh.debug("Beginning rethread from store.")
+            let previousNodeIDs = Set(Self.flatten(nodes: self.roots).map(\.id))
+            let previousFolderIDs = Set(self.threadFolders.map(\.id))
             let cutoffDate = cachedMessageCutoffDate()
             let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate)
             self.roots = rethreadResult.roots
@@ -339,7 +455,26 @@ final class ThreadCanvasViewModel: ObservableObject {
             self.folderEditsByID = [:]
             pruneSelection(using: rethreadResult.roots)
             pruneFolderSelection(using: rethreadResult.folders)
-            refreshSummaries(for: rethreadResult.roots)
+            refreshNodeSummaries(for: rethreadResult.roots)
+            refreshFolderSummaries(for: rethreadResult.roots, folders: rethreadResult.folders)
+            let currentNodeIDs = Set(Self.flatten(nodes: rethreadResult.roots).map(\.id))
+            let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
+            let removedFolderIDs = previousFolderIDs.subtracting(rethreadResult.folders.map(\.id))
+            if !removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty {
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        if !removedNodeIDs.isEmpty {
+                            try await store.deleteSummaries(scope: .emailNode, ids: Array(removedNodeIDs))
+                        }
+                        if !removedFolderIDs.isEmpty {
+                            try await store.deleteSummaries(scope: .folder, ids: Array(removedFolderIDs))
+                        }
+                    } catch {
+                        Log.app.error("Failed to delete stale summary caches: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
@@ -350,87 +485,164 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func summaryState(for nodeID: String) -> ThreadSummaryState? {
-        threadSummaries[nodeID]
+    internal func summaryState(for nodeID: String) -> ThreadSummaryState? {
+        nodeSummaries[nodeID]
     }
 
-    func rootID(containing nodeID: String) -> String? {
+    internal func folderSummaryState(for folderID: String) -> ThreadSummaryState? {
+        folderSummaries[folderID]
+    }
+
+    internal func rootID(containing nodeID: String) -> String? {
         Self.rootID(for: nodeID, in: roots)
     }
 
-    private func refreshSummaries(for roots: [ThreadNode]) {
-        guard let summaryProvider else {
-            threadSummaries = [:]
-            summaryTasks.values.forEach { $0.cancel() }
-            summaryTasks.removeAll()
-            return
-        }
-
-        let provider = summaryProvider
+    private func refreshNodeSummaries(for roots: [ThreadNode]) {
         let rootsSnapshot = roots
-        summaryRefreshGeneration += 1
-        let generation = summaryRefreshGeneration
+        let manualAttachmentSnapshot = manualAttachmentMessageIDs
+        let snippetLineLimit = inspectorSettings.snippetLineLimit
+        let stopPhrases = inspectorSettings.stopPhrases
+        let provider = summaryProvider
+        let providerStatusMessage = summaryAvailabilityMessage
+        nodeSummaryRefreshGeneration += 1
+        let generation = nodeSummaryRefreshGeneration
         Task { [weak self] in
             guard let self else { return }
-            let subjectsByID = await worker.subjectsByRoot(rootsSnapshot)
+            let inputsByNodeID = await worker.nodeSummaryInputs(for: rootsSnapshot,
+                                                                manualAttachmentMessageIDs: manualAttachmentSnapshot,
+                                                                snippetLineLimit: snippetLineLimit,
+                                                                stopPhrases: stopPhrases)
+            let cacheKeys = inputsByNodeID.values.map(\.cacheKey)
+            var cachedByKey: [String: SummaryCacheEntry] = [:]
+            if !cacheKeys.isEmpty {
+                do {
+                    let cached = try await store.fetchSummaries(scope: .emailNode, ids: cacheKeys)
+                    cachedByKey = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
+                } catch {
+                    Log.app.error("Failed to load cached summaries: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             await MainActor.run {
-                guard self.summaryRefreshGeneration == generation else { return }
-                self.prepareSummaries(for: rootsSnapshot,
-                                      subjectsByID: subjectsByID,
-                                      summaryProvider: provider)
+                guard self.nodeSummaryRefreshGeneration == generation else { return }
+                self.prepareNodeSummaries(for: rootsSnapshot,
+                                          inputsByNodeID: inputsByNodeID,
+                                          cachedByKey: cachedByKey,
+                                          summaryProvider: provider,
+                                          providerStatusMessage: providerStatusMessage)
             }
         }
     }
 
     @MainActor
-    private func prepareSummaries(for roots: [ThreadNode],
-                                  subjectsByID: [String: [String]],
-                                  summaryProvider: EmailSummaryProviding) {
-        let validRootIDs = Set(roots.map(\.id))
-        for (id, task) in summaryTasks where !validRootIDs.contains(id) {
+    private func prepareNodeSummaries(for roots: [ThreadNode],
+                                      inputsByNodeID: [String: NodeSummaryInput],
+                                      cachedByKey: [String: SummaryCacheEntry],
+                                      summaryProvider: EmailSummaryProviding?,
+                                      providerStatusMessage: String) {
+        let validNodeIDs = Set(inputsByNodeID.keys)
+        for (id, task) in nodeSummaryTasks where !validNodeIDs.contains(id) {
             task.cancel()
-            summaryTasks.removeValue(forKey: id)
-            threadSummaries.removeValue(forKey: id)
+            nodeSummaryTasks.removeValue(forKey: id)
+            nodeSummaries.removeValue(forKey: id)
             expandedSummaryIDs.remove(id)
         }
 
-        for root in roots {
-            guard let subjects = subjectsByID[root.id], !subjects.isEmpty else {
-                threadSummaries.removeValue(forKey: root.id)
-                summaryTasks[root.id]?.cancel()
-                summaryTasks.removeValue(forKey: root.id)
-                expandedSummaryIDs.remove(root.id)
+        for input in inputsByNodeID.values {
+            guard !input.subject.isEmpty || !input.body.isEmpty else {
+                nodeSummaries.removeValue(forKey: input.nodeID)
+                nodeSummaryTasks[input.nodeID]?.cancel()
+                nodeSummaryTasks.removeValue(forKey: input.nodeID)
+                expandedSummaryIDs.remove(input.nodeID)
                 continue
             }
 
-            threadSummaries[root.id] = ThreadSummaryState(text: threadSummaries[root.id]?.text ?? "",
-                                                          statusMessage: "Summarizing…",
-                                                          isSummarizing: true)
+            let cachedEntry = cachedByKey[input.cacheKey]
+            let hasFreshCache = cachedEntry?.fingerprint == input.fingerprint
+            let isProviderAvailable = summaryProvider != nil
 
-            summaryTasks[root.id]?.cancel()
-            summaryTasks[root.id] = Task { [weak self] in
+            if let cachedEntry, hasFreshCache {
+                nodeSummaryTasks[input.nodeID]?.cancel()
+                nodeSummaryTasks.removeValue(forKey: input.nodeID)
+                nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                                 statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                    prefix: "Cached"),
+                                                                 isSummarizing: false)
+                continue
+            }
+
+            if !isProviderAvailable {
+                nodeSummaryTasks[input.nodeID]?.cancel()
+                nodeSummaryTasks.removeValue(forKey: input.nodeID)
+                if let cachedEntry {
+                    nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                                     statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                        prefix: "Last updated",
+                                                                                                        suffix: providerStatusMessage),
+                                                                     isSummarizing: false)
+                } else {
+                    nodeSummaries.removeValue(forKey: input.nodeID)
+                }
+                continue
+            }
+
+            let placeholderText = cachedEntry?.summaryText ?? nodeSummaries[input.nodeID]?.text ?? ""
+            nodeSummaries[input.nodeID] = ThreadSummaryState(text: placeholderText,
+                                                             statusMessage: "Summarizing…",
+                                                             isSummarizing: true)
+
+            nodeSummaryTasks[input.nodeID]?.cancel()
+            nodeSummaryTasks[input.nodeID] = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let text = try await worker.summarize(subjects: subjects)
+                    guard let summaryProvider else { return }
+                    let request = EmailSummaryRequest(subject: input.subject,
+                                                      body: input.body,
+                                                      priorMessages: input.priorMessages)
+                    let text = try await summaryProvider.summarizeEmail(request)
+                    let generatedAt = Date()
+                    let entry = SummaryCacheEntry(scope: .emailNode,
+                                                  scopeID: input.cacheKey,
+                                                  summaryText: text,
+                                                  generatedAt: generatedAt,
+                                                  fingerprint: input.fingerprint,
+                                                  provider: summaryProviderID)
+                    do {
+                        try await store.upsertSummaries([entry])
+                    } catch {
+                        Log.app.error("Failed to persist summary cache: \(error.localizedDescription, privacy: .public)")
+                    }
                     let timestamp = DateFormatter.localizedString(from: Date(),
                                                                   dateStyle: .none,
                                                                   timeStyle: .short)
                     await MainActor.run {
-                        self.updateSummary(for: root.id,
+                        self.updateSummary(for: input.nodeID,
                                            text: text,
                                            status: "Updated \(timestamp)",
-                                           isSummarizing: false)
+                                           isSummarizing: false,
+                                           in: \.nodeSummaries)
+                        self.refreshFolderSummaries(for: self.roots, folders: self.threadFolders)
                     }
                 } catch is CancellationError {
                     await MainActor.run {
-                        self.finishSummary(for: root.id)
+                        self.finishSummary(for: input.nodeID, in: \.nodeSummaries)
                     }
                 } catch {
                     await MainActor.run {
-                        self.updateSummary(for: root.id,
-                                           text: "",
-                                           status: error.localizedDescription,
-                                           isSummarizing: false)
+                        if let cachedEntry {
+                            self.updateSummary(for: input.nodeID,
+                                               text: cachedEntry.summaryText,
+                                               status: self.cachedStatusMessage(for: cachedEntry,
+                                                                                prefix: "Last updated",
+                                                                                suffix: error.localizedDescription),
+                                               isSummarizing: false,
+                                               in: \.nodeSummaries)
+                        } else {
+                            self.updateSummary(for: input.nodeID,
+                                               text: "",
+                                               status: error.localizedDescription,
+                                               isSummarizing: false,
+                                               in: \.nodeSummaries)
+                        }
                     }
                 }
             }
@@ -441,24 +653,310 @@ final class ThreadCanvasViewModel: ObservableObject {
     private func updateSummary(for id: String,
                                text: String,
                                status: String,
-                               isSummarizing: Bool) {
-        threadSummaries[id] = ThreadSummaryState(text: text,
-                                                 statusMessage: status,
-                                                 isSummarizing: isSummarizing)
+                               isSummarizing: Bool,
+                               in summaries: ReferenceWritableKeyPath<ThreadCanvasViewModel, [String: ThreadSummaryState]>) {
+        self[keyPath: summaries][id] = ThreadSummaryState(text: text,
+                                                          statusMessage: status,
+                                                          isSummarizing: isSummarizing)
     }
 
     @MainActor
-    private func finishSummary(for id: String) {
-        guard var state = threadSummaries[id] else { return }
+    private func finishSummary(for id: String,
+                               in summaries: ReferenceWritableKeyPath<ThreadCanvasViewModel, [String: ThreadSummaryState]>) {
+        guard var state = self[keyPath: summaries][id] else { return }
         state.isSummarizing = false
-        threadSummaries[id] = state
+        self[keyPath: summaries][id] = state
     }
 
-    func isSummaryExpanded(for id: String) -> Bool {
+    private func cachedStatusMessage(for entry: SummaryCacheEntry,
+                                     prefix: String,
+                                     suffix: String? = nil) -> String {
+        let timestamp = DateFormatter.localizedString(from: entry.generatedAt,
+                                                      dateStyle: .none,
+                                                      timeStyle: .short)
+        var message = "\(prefix) \(timestamp)"
+        if let suffix, !suffix.isEmpty {
+            message += "; \(suffix)"
+        }
+        return message
+    }
+
+    private func refreshFolderSummaries(for roots: [ThreadNode],
+                                        folders: [ThreadFolder]) {
+        let rootsSnapshot = roots
+        let foldersSnapshot = folders
+        let manualGroupSnapshot = manualGroupByMessageKey
+        let jwzThreadSnapshot = jwzThreadMap
+        let provider = summaryProvider
+        let providerStatusMessage = summaryAvailabilityMessage
+        let debounceInterval = folderSummaryDebounceInterval
+
+        Task { [weak self] in
+            guard let self else { return }
+            let folderNodes = Self.folderNodesByID(roots: rootsSnapshot,
+                                                   folders: foldersSnapshot,
+                                                   manualGroupByMessageKey: manualGroupSnapshot,
+                                                   jwzThreadMap: jwzThreadSnapshot)
+            let allNodeIDs = Set(folderNodes.values.flatMap { $0.map(\.id) })
+            var cachedNodeByID: [String: SummaryCacheEntry] = [:]
+            if !allNodeIDs.isEmpty {
+                do {
+                    let cachedNodes = try await store.fetchSummaries(scope: .emailNode, ids: Array(allNodeIDs))
+                    cachedNodeByID = Dictionary(uniqueKeysWithValues: cachedNodes.map { ($0.scopeID, $0) })
+                } catch {
+                    Log.app.error("Failed to load cached node summaries: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+
+            let folderIDs = foldersSnapshot.map(\.id)
+            var cachedFolderByID: [String: SummaryCacheEntry] = [:]
+            if !folderIDs.isEmpty {
+                do {
+                    let cachedFolders = try await store.fetchSummaries(scope: .folder, ids: folderIDs)
+                    cachedFolderByID = Dictionary(uniqueKeysWithValues: cachedFolders.map { ($0.scopeID, $0) })
+                } catch {
+                    Log.app.error("Failed to load cached folder summaries: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+
+            let inputsByFolderID = Self.folderSummaryInputs(for: foldersSnapshot,
+                                                            folderNodes: folderNodes,
+                                                            cachedNodeSummaries: cachedNodeByID)
+            await MainActor.run {
+                self.prepareFolderSummaries(for: foldersSnapshot,
+                                            inputsByFolderID: inputsByFolderID,
+                                            cachedByKey: cachedFolderByID,
+                                            summaryProvider: provider,
+                                            providerStatusMessage: providerStatusMessage,
+                                            debounceInterval: debounceInterval)
+            }
+        }
+    }
+
+    @MainActor
+    private func prepareFolderSummaries(for folders: [ThreadFolder],
+                                        inputsByFolderID: [String: FolderSummaryInput],
+                                        cachedByKey: [String: SummaryCacheEntry],
+                                        summaryProvider: EmailSummaryProviding?,
+                                        providerStatusMessage: String,
+                                        debounceInterval: TimeInterval) {
+        let validFolderIDs = Set(inputsByFolderID.keys)
+        for (id, task) in folderSummaryTasks where !validFolderIDs.contains(id) {
+            task.cancel()
+            folderSummaryTasks.removeValue(forKey: id)
+            folderSummaries.removeValue(forKey: id)
+        }
+
+        for folder in folders {
+            guard let input = inputsByFolderID[folder.id] else {
+                folderSummaryTasks[folder.id]?.cancel()
+                folderSummaryTasks.removeValue(forKey: folder.id)
+                folderSummaries.removeValue(forKey: folder.id)
+                continue
+            }
+
+            let cachedEntry = cachedByKey[input.folderID]
+            let hasFreshCache = cachedEntry?.fingerprint == input.fingerprint
+            let isProviderAvailable = summaryProvider != nil
+
+            if input.summaryTexts.isEmpty {
+                folderSummaryTasks[input.folderID]?.cancel()
+                folderSummaryTasks.removeValue(forKey: input.folderID)
+                if let cachedEntry {
+                    folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                                         statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                            prefix: "Last updated",
+                                                                                                            suffix: "Waiting for email summaries"),
+                                                                         isSummarizing: false)
+                } else {
+                    folderSummaries.removeValue(forKey: input.folderID)
+                }
+                continue
+            }
+
+            if let cachedEntry, hasFreshCache {
+                folderSummaryTasks[input.folderID]?.cancel()
+                folderSummaryTasks.removeValue(forKey: input.folderID)
+                folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                                     statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                        prefix: "Cached"),
+                                                                     isSummarizing: false)
+                continue
+            }
+
+            if !isProviderAvailable {
+                folderSummaryTasks[input.folderID]?.cancel()
+                folderSummaryTasks.removeValue(forKey: input.folderID)
+                if let cachedEntry {
+                    folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
+                                                                         statusMessage: cachedStatusMessage(for: cachedEntry,
+                                                                                                            prefix: "Last updated",
+                                                                                                            suffix: providerStatusMessage),
+                                                                         isSummarizing: false)
+                } else {
+                    folderSummaries.removeValue(forKey: input.folderID)
+                }
+                continue
+            }
+
+            let placeholderText = cachedEntry?.summaryText ?? folderSummaries[input.folderID]?.text ?? ""
+            folderSummaries[input.folderID] = ThreadSummaryState(text: placeholderText,
+                                                                 statusMessage: "Summarizing…",
+                                                                 isSummarizing: true)
+
+            folderSummaryTasks[input.folderID]?.cancel()
+            folderSummaryTasks[input.folderID] = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    if debounceInterval > 0 {
+                        try await Task.sleep(nanoseconds: UInt64(debounceInterval * 1_000_000_000))
+                        try Task.checkCancellation()
+                    }
+                    guard let summaryProvider else { return }
+                    let request = FolderSummaryRequest(title: input.title,
+                                                       messageSummaries: input.summaryTexts)
+                    let text = try await summaryProvider.summarizeFolder(request)
+                    let generatedAt = Date()
+                    let entry = SummaryCacheEntry(scope: .folder,
+                                                  scopeID: input.folderID,
+                                                  summaryText: text,
+                                                  generatedAt: generatedAt,
+                                                  fingerprint: input.fingerprint,
+                                                  provider: summaryProviderID)
+                    do {
+                        try await store.upsertSummaries([entry])
+                    } catch {
+                        Log.app.error("Failed to persist folder summary cache: \(error.localizedDescription, privacy: .public)")
+                    }
+                    let timestamp = DateFormatter.localizedString(from: Date(),
+                                                                  dateStyle: .none,
+                                                                  timeStyle: .short)
+                    await MainActor.run {
+                        self.updateSummary(for: input.folderID,
+                                           text: text,
+                                           status: "Updated \(timestamp)",
+                                           isSummarizing: false,
+                                           in: \.folderSummaries)
+                    }
+                } catch is CancellationError {
+                    await MainActor.run {
+                        self.finishSummary(for: input.folderID, in: \.folderSummaries)
+                    }
+                } catch {
+                    await MainActor.run {
+                        if let cachedEntry {
+                            self.updateSummary(for: input.folderID,
+                                               text: cachedEntry.summaryText,
+                                               status: self.cachedStatusMessage(for: cachedEntry,
+                                                                                prefix: "Last updated",
+                                                                                suffix: error.localizedDescription),
+                                               isSummarizing: false,
+                                               in: \.folderSummaries)
+                        } else {
+                            self.updateSummary(for: input.folderID,
+                                               text: "",
+                                               status: error.localizedDescription,
+                                               isSummarizing: false,
+                                               in: \.folderSummaries)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func folderSummaryInputs(for folders: [ThreadFolder],
+                                            folderNodes: [String: [ThreadNode]],
+                                            cachedNodeSummaries: [String: SummaryCacheEntry]) -> [String: FolderSummaryInput] {
+        var inputs: [String: FolderSummaryInput] = [:]
+        inputs.reserveCapacity(folders.count)
+
+        for folder in folders {
+            let nodes = folderNodes[folder.id] ?? []
+            let sortedNodes = nodes.sorted { $0.message.date > $1.message.date }
+            let summaryTexts = sortedNodes.compactMap { node in
+                cachedNodeSummaries[node.id]?.summaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty }
+            let fingerprintEntries = sortedNodes.map { node in
+                FolderSummaryFingerprintEntry(nodeID: node.id,
+                                              nodeFingerprint: cachedNodeSummaries[node.id]?.fingerprint ?? "missing")
+            }
+            let fingerprint = ThreadSummaryFingerprint.makeFolder(nodeEntries: fingerprintEntries)
+            inputs[folder.id] = FolderSummaryInput(folderID: folder.id,
+                                                   title: folder.title,
+                                                   summaryTexts: Array(summaryTexts.prefix(20)),
+                                                   fingerprint: fingerprint)
+        }
+        return inputs
+    }
+
+    private static func folderNodesByID(roots: [ThreadNode],
+                                        folders: [ThreadFolder],
+                                        manualGroupByMessageKey: [String: String],
+                                        jwzThreadMap: [String: String]) -> [String: [ThreadNode]] {
+        let rootsByThreadID = Dictionary(uniqueKeysWithValues: roots.compactMap { root -> (String, ThreadNode)? in
+            guard let effectiveID = effectiveThreadID(for: root,
+                                                      manualGroupByMessageKey: manualGroupByMessageKey,
+                                                      jwzThreadMap: jwzThreadMap) else { return nil }
+            return (effectiveID, root)
+        })
+        let threadIDsByFolder = folderThreadIDsByFolder(folders: folders)
+        var results: [String: [ThreadNode]] = [:]
+        results.reserveCapacity(folders.count)
+
+        for (folderID, threadIDs) in threadIDsByFolder {
+            var nodes: [ThreadNode] = []
+            for threadID in threadIDs {
+                if let root = rootsByThreadID[threadID] {
+                    nodes.append(contentsOf: flatten(node: root))
+                }
+            }
+            results[folderID] = nodes
+        }
+        return results
+    }
+
+    private static func folderThreadIDsByFolder(folders: [ThreadFolder]) -> [String: Set<String>] {
+        let foldersByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        let childrenByParent = childFolderIDsByParent(folders: folders)
+
+        func collectThreadIDs(for folderID: String) -> Set<String> {
+            var ids = foldersByID[folderID]?.threadIDs ?? []
+            for childID in childrenByParent[folderID] ?? [] {
+                ids.formUnion(collectThreadIDs(for: childID))
+            }
+            return ids
+        }
+
+        var results: [String: Set<String>] = [:]
+        results.reserveCapacity(folders.count)
+        for folder in folders {
+            results[folder.id] = collectThreadIDs(for: folder.id)
+        }
+        return results
+    }
+
+    private static func effectiveThreadID(for node: ThreadNode,
+                                          manualGroupByMessageKey: [String: String],
+                                          jwzThreadMap: [String: String]) -> String? {
+        let messageKey = node.message.threadKey
+        if let manualGroupID = manualGroupByMessageKey[messageKey] {
+            return manualGroupID
+        }
+        if let jwzID = jwzThreadMap[messageKey] {
+            return jwzID
+        }
+        if let threadID = node.message.threadID {
+            return threadID
+        }
+        return node.id
+    }
+
+    internal func isSummaryExpanded(for id: String) -> Bool {
         expandedSummaryIDs.contains(id)
     }
 
-    func setSummaryExpanded(_ expanded: Bool, for id: String) {
+    internal func setSummaryExpanded(_ expanded: Bool, for id: String) {
         if expanded {
             expandedSummaryIDs.insert(id)
         } else {
@@ -466,11 +964,28 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func selectNode(id: String?) {
+#if DEBUG
+    internal func applyRethreadResultForTesting(roots: [ThreadNode],
+                                                manualGroupByMessageKey: [String: String] = [:],
+                                                manualAttachmentMessageIDs: Set<String> = [],
+                                                jwzThreadMap: [String: String] = [:],
+                                                folders: [ThreadFolder] = []) {
+        self.roots = roots
+        self.manualGroupByMessageKey = manualGroupByMessageKey
+        self.manualAttachmentMessageIDs = manualAttachmentMessageIDs
+        self.jwzThreadMap = jwzThreadMap
+        self.threadFolders = folders
+        self.folderMembershipByThreadID = Self.folderMembershipMap(for: folders)
+        refreshNodeSummaries(for: roots)
+        refreshFolderSummaries(for: roots, folders: folders)
+    }
+#endif
+
+    internal func selectNode(id: String?) {
         selectNode(id: id, additive: false)
     }
 
-    func selectNode(id: String?, additive: Bool) {
+    internal func selectNode(id: String?, additive: Bool) {
         guard let id else {
             selectedNodeID = nil
             selectedNodeIDs = []
@@ -498,7 +1013,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func selectFolder(id: String?) {
+    internal func selectFolder(id: String?) {
         if let selectedFolderID, selectedFolderID != id {
             clearFolderEdits(id: selectedFolderID)
         }
@@ -509,15 +1024,15 @@ final class ThreadCanvasViewModel: ObservableObject {
         selectedFolderID = id
     }
 
-    func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+    internal func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
         folderEditsByID[id] = ThreadFolderEdit(title: title, color: color)
     }
 
-    func clearFolderEdits(id: String) {
+    internal func clearFolderEdits(id: String) {
         folderEditsByID.removeValue(forKey: id)
     }
 
-    func saveFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+    internal func saveFolderEdits(id: String, title: String, color: ThreadFolderColor) {
         guard let index = threadFolders.firstIndex(where: { $0.id == id }) else { return }
         var updated = threadFolders
         updated[index].title = title
@@ -530,6 +1045,7 @@ final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.threadFolders = updated
                     self.clearFolderEdits(id: id)
+                    self.refreshFolderSummaries(for: self.roots, folders: updated)
                 }
             } catch {
                 Log.app.error("Failed to save thread folder edits: \(error.localizedDescription, privacy: .public)")
@@ -537,18 +1053,98 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func openMessageInMail(_ node: ThreadNode) {
+    internal func openMessageInMail(_ node: ThreadNode) {
         let messageID = node.message.messageID
-        Task.detached {
+        let attemptID = UUID()
+        openInMailAttemptID = attemptID
+        setOpenInMailState(.opening, messageID: messageID, attemptID: attemptID)
+        Task.detached { [weak self] in
+            guard let self else { return }
             do {
                 try MailControl.openMessage(messageID: messageID)
+                Log.appleScript.info("Open in Mail succeeded. messageID=\(messageID, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(.opened, messageID: messageID, attemptID: attemptID)
+                }
             } catch {
-                Log.appleScript.error("Open in Mail failed for messageID=\(messageID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Log.appleScript.error("Open in Mail failed. messageID=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(.searching, messageID: messageID, attemptID: attemptID)
+                }
+                do {
+                    let matches = try MailControl.searchMessages(messageID: messageID, limit: 5)
+                    Log.appleScript.info("Open in Mail fallback search finished. messageID=\(messageID, privacy: .public) matches=\(matches.count, privacy: .public)")
+                    let mapped = matches.map {
+                        OpenInMailMatch(messageID: $0.messageID,
+                                        subject: $0.subject,
+                                        mailbox: $0.mailbox,
+                                        account: $0.account,
+                                        date: $0.date)
+                    }
+                    await MainActor.run {
+                        let status: OpenInMailStatus = mapped.isEmpty ? .notFound : .matches(mapped)
+                        self.setOpenInMailState(status, messageID: messageID, attemptID: attemptID)
+                    }
+                } catch {
+                    Log.appleScript.error("Open in Mail fallback search failed. messageID=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                    await MainActor.run {
+                        self.setOpenInMailState(.failed(error.localizedDescription),
+                                                messageID: messageID,
+                                                attemptID: attemptID)
+                    }
+                }
             }
         }
     }
 
-    func moveThread(threadID: String, toFolderID folderID: String) {
+    internal func openMatchedMessage(_ match: OpenInMailMatch) {
+        let attemptID = UUID()
+        openInMailAttemptID = attemptID
+        setOpenInMailState(.opening, messageID: match.messageID, attemptID: attemptID)
+        Task.detached { [weak self] in
+            guard let self else { return }
+            do {
+                let opened = try MailControl.openMessageViaAppleScript(messageID: match.messageID)
+                let status: OpenInMailStatus = opened ? .opened : .notFound
+                Log.appleScript.info("Open in Mail fallback open result. messageID=\(match.messageID, privacy: .public) opened=\(opened, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(status, messageID: match.messageID, attemptID: attemptID)
+                }
+            } catch {
+                Log.appleScript.error("Open in Mail fallback open failed. messageID=\(match.messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.setOpenInMailState(.failed(error.localizedDescription),
+                                            messageID: match.messageID,
+                                            attemptID: attemptID)
+                }
+            }
+        }
+    }
+
+    internal func copyToPasteboard(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+    }
+
+    internal func copyOpenInMailURL(messageID: String) {
+        do {
+            let url = try MailControl.messageURL(for: messageID)
+            copyToPasteboard(url.absoluteString)
+            Log.appleScript.debug("Copied message URL to pasteboard. messageID=\(messageID, privacy: .public)")
+        } catch {
+            Log.appleScript.error("Failed to build message URL for copy. messageID=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func setOpenInMailState(_ status: OpenInMailStatus,
+                                    messageID: String,
+                                    attemptID: UUID) {
+        guard openInMailAttemptID == attemptID else { return }
+        openInMailState = OpenInMailState(messageID: messageID, status: status)
+    }
+
+    internal func moveThread(threadID: String, toFolderID folderID: String) {
         Task { [weak self] in
             guard let self else { return }
             guard let updated = Self.applyMove(threadID: threadID,
@@ -562,6 +1158,7 @@ final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.threadFolders = updated.folders
                     self.folderMembershipByThreadID = updated.membership
+                    self.refreshFolderSummaries(for: self.roots, folders: updated.folders)
                 }
             } catch {
                 Log.app.error("Failed to move thread into folder: \(error.localizedDescription, privacy: .public)")
@@ -569,7 +1166,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func removeThreadFromFolder(threadID: String) {
+    internal func removeThreadFromFolder(threadID: String) {
         Task { [weak self] in
             guard let self else { return }
             guard let updated = Self.applyRemoval(threadID: threadID, folders: threadFolders) else { return }
@@ -581,6 +1178,7 @@ final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.threadFolders = updated.remainingFolders
                     self.folderMembershipByThreadID = updated.membership
+                    self.refreshFolderSummaries(for: self.roots, folders: updated.remainingFolders)
                 }
             } catch {
                 Log.app.error("Failed to remove thread from folder: \(error.localizedDescription, privacy: .public)")
@@ -588,17 +1186,17 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    var selectedNode: ThreadNode? {
+    internal var selectedNode: ThreadNode? {
         Self.node(matching: selectedNodeID, in: roots)
     }
 
-    var selectedFolder: ThreadFolder? {
+    internal var selectedFolder: ThreadFolder? {
         threadFolders.first { $0.id == selectedFolderID }
     }
 
-    func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
-                      today: Date = Date(),
-                      calendar: Calendar = .current) -> ThreadCanvasLayout {
+    internal func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
+                               today: Date = Date(),
+                               calendar: Calendar = .current) -> ThreadCanvasLayout {
         Self.canvasLayout(for: roots,
                           metrics: metrics,
                           today: today,
@@ -609,16 +1207,16 @@ final class ThreadCanvasViewModel: ObservableObject {
                           folderMembershipByThreadID: folderMembershipByThreadID)
     }
 
-    var canBackfillVisibleRange: Bool {
+    internal var canBackfillVisibleRange: Bool {
         !visibleEmptyDayIntervals.isEmpty && !isBackfilling
     }
 
-    func updateVisibleDayRange(scrollOffset: CGFloat,
-                               viewportHeight: CGFloat,
-                               layout: ThreadCanvasLayout,
-                               metrics: ThreadCanvasLayoutMetrics,
-                               today: Date = Date(),
-                               calendar: Calendar = .current) {
+    internal func updateVisibleDayRange(scrollOffset: CGFloat,
+                                        viewportHeight: CGFloat,
+                                        layout: ThreadCanvasLayout,
+                                        metrics: ThreadCanvasLayoutMetrics,
+                                        today: Date = Date(),
+                                        calendar: Calendar = .current) {
         guard viewportHeight > 0 else { return }
         let range = Self.visibleDayRange(for: layout,
                                          scrollOffset: scrollOffset,
@@ -647,7 +1245,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
     }
 
-    func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
+    internal func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
         guard !isBackfilling else { return }
         let ranges = rangeOverride.map { [$0] } ?? visibleEmptyDayIntervals
         guard !ranges.isEmpty else { return }
@@ -689,11 +1287,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    var shouldShowSelectionActions: Bool {
+    internal var shouldShowSelectionActions: Bool {
         selectedNodeIDs.count >= 1 || hasManualGroupMembershipInSelection
     }
 
-    var canGroupSelection: Bool {
+    internal var canGroupSelection: Bool {
         guard selectedNodeIDs.count >= 2,
               let targetID = selectedNodeID,
               let targetNode = Self.node(matching: targetID, in: roots) else {
@@ -714,11 +1312,11 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    var canUngroupSelection: Bool {
+    internal var canUngroupSelection: Bool {
         hasManualGroupMembershipInSelection
     }
 
-    func groupSelectedMessages() {
+    internal func groupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
         guard selectedNodes.count >= 2 else {
             return
@@ -819,7 +1417,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func ungroupSelectedMessages() {
+    internal func ungroupSelectedMessages() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
 
@@ -938,7 +1536,7 @@ final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    func addFolderForSelection() {
+    internal func addFolderForSelection() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
 
@@ -980,6 +1578,7 @@ final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.threadFolders = updatedFolders
                     self.folderMembershipByThreadID = Self.folderMembershipMap(for: updatedFolders)
+                    self.refreshFolderSummaries(for: self.roots, folders: updatedFolders)
                 }
             } catch {
                 Log.app.error("Failed to save thread folder: \(error.localizedDescription, privacy: .public)")
@@ -1009,14 +1608,14 @@ private extension ThreadCanvasViewModel {
 }
 
 extension ThreadCanvasViewModel {
-    static func canvasLayout(for roots: [ThreadNode],
-                             metrics: ThreadCanvasLayoutMetrics,
-                             today: Date,
-                             calendar: Calendar,
-                             manualAttachmentMessageIDs: Set<String> = [],
-                             jwzThreadMap: [String: String] = [:],
-                             folders: [ThreadFolder] = [],
-                             folderMembershipByThreadID: [String: String] = [:]) -> ThreadCanvasLayout {
+    internal static func canvasLayout(for roots: [ThreadNode],
+                                      metrics: ThreadCanvasLayoutMetrics,
+                                      today: Date,
+                                      calendar: Calendar,
+                                      manualAttachmentMessageIDs: Set<String> = [],
+                                      jwzThreadMap: [String: String] = [:],
+                                      folders: [ThreadFolder] = [],
+                                      folderMembershipByThreadID: [String: String] = [:]) -> ThreadCanvasLayout {
         let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
         var currentYOffset = metrics.contentPadding
         let days = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
@@ -1141,7 +1740,7 @@ extension ThreadCanvasViewModel {
                                   folderOverlays: folderOverlays)
     }
 
-    static func node(matching id: String?, in roots: [ThreadNode]) -> ThreadNode? {
+    internal static func node(matching id: String?, in roots: [ThreadNode]) -> ThreadNode? {
         guard let id else { return nil }
         for root in roots {
             if let match = findNode(in: root, matching: id) {
@@ -1237,7 +1836,7 @@ extension ThreadCanvasViewModel {
         return nil
     }
 
-    static func rootID(for nodeID: String, in roots: [ThreadNode]) -> String? {
+    internal static func rootID(for nodeID: String, in roots: [ThreadNode]) -> String? {
         for root in roots {
             if findNode(in: root, matching: nodeID) != nil {
                 return root.id
@@ -1342,7 +1941,7 @@ extension ThreadCanvasViewModel {
                                depthByID: depthByID)
     }
 
-    static func childFolderIDsByParent(folders: [ThreadFolder]) -> [String: [String]] {
+    internal static func childFolderIDsByParent(folders: [ThreadFolder]) -> [String: [String]] {
         folderHierarchy(for: folders).childrenByParentID
     }
 
@@ -1420,27 +2019,27 @@ extension ThreadCanvasViewModel {
         return results
     }
 
-    static func folderMembershipMap(for folders: [ThreadFolder]) -> [String: String] {
+    internal static func folderMembershipMap(for folders: [ThreadFolder]) -> [String: String] {
         folders.reduce(into: [String: String]()) { result, folder in
             folder.threadIDs.forEach { result[$0] = folder.id }
         }
     }
 
-    struct FolderMoveUpdate {
-        let folders: [ThreadFolder]
-        let deletedFolderIDs: Set<String>
-        let membership: [String: String]
+    internal struct FolderMoveUpdate {
+        internal let folders: [ThreadFolder]
+        internal let deletedFolderIDs: Set<String>
+        internal let membership: [String: String]
     }
 
-    struct FolderRemovalUpdate {
-        let remainingFolders: [ThreadFolder]
-        let deletedFolderIDs: Set<String>
-        let membership: [String: String]
+    internal struct FolderRemovalUpdate {
+        internal let remainingFolders: [ThreadFolder]
+        internal let deletedFolderIDs: Set<String>
+        internal let membership: [String: String]
     }
 
-    static func applyMove(threadID: String,
-                          toFolderID folderID: String,
-                          folders: [ThreadFolder]) -> FolderMoveUpdate? {
+    internal static func applyMove(threadID: String,
+                                   toFolderID folderID: String,
+                                   folders: [ThreadFolder]) -> FolderMoveUpdate? {
         guard folders.contains(where: { $0.id == folderID }) else { return nil }
         var updatedFolders = folders
         var deletedFolderIDs: Set<String> = []
@@ -1469,8 +2068,8 @@ extension ThreadCanvasViewModel {
                                 membership: membership)
     }
 
-    static func applyRemoval(threadID: String,
-                             folders: [ThreadFolder]) -> FolderRemovalUpdate? {
+    internal static func applyRemoval(threadID: String,
+                                      folders: [ThreadFolder]) -> FolderRemovalUpdate? {
         guard let folderIndex = folders.firstIndex(where: { $0.threadIDs.contains(threadID) }) else {
             return nil
         }
@@ -1493,9 +2092,9 @@ extension ThreadCanvasViewModel {
                                    membership: membership)
     }
 
-    static func visibleDayRange(for layout: ThreadCanvasLayout,
-                                scrollOffset: CGFloat,
-                                viewportHeight: CGFloat) -> ClosedRange<Int>? {
+    internal static func visibleDayRange(for layout: ThreadCanvasLayout,
+                                         scrollOffset: CGFloat,
+                                         viewportHeight: CGFloat) -> ClosedRange<Int>? {
         let visibleStart = scrollOffset
         let visibleEnd = scrollOffset + viewportHeight
         let visibleDays = layout.days.filter { day in
@@ -1510,10 +2109,10 @@ extension ThreadCanvasViewModel {
         return minID...maxID
     }
 
-    static func emptyDayIntervals(for layout: ThreadCanvasLayout,
-                                  visibleRange: ClosedRange<Int>?,
-                                  today: Date,
-                                  calendar: Calendar) -> [DateInterval] {
+    internal static func emptyDayIntervals(for layout: ThreadCanvasLayout,
+                                           visibleRange: ClosedRange<Int>?,
+                                           today: Date,
+                                           calendar: Calendar) -> [DateInterval] {
         guard let visibleRange else { return [] }
         let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
         let emptyDayIndices = (visibleRange.lowerBound...visibleRange.upperBound)
@@ -1549,10 +2148,10 @@ extension ThreadCanvasViewModel {
         return intervals
     }
 
-    static func shouldExpandDayWindow(scrollOffset: CGFloat,
-                                      viewportHeight: CGFloat,
-                                      contentHeight: CGFloat,
-                                      threshold: CGFloat) -> Bool {
+    internal static func shouldExpandDayWindow(scrollOffset: CGFloat,
+                                               viewportHeight: CGFloat,
+                                               contentHeight: CGFloat,
+                                               threshold: CGFloat) -> Bool {
         let visibleBottom = scrollOffset + viewportHeight
         return visibleBottom >= contentHeight - threshold
     }

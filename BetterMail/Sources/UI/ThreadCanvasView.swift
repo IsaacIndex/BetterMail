@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-struct ThreadCanvasView: View {
-    @ObservedObject var viewModel: ThreadCanvasViewModel
-    let topInset: CGFloat
+internal struct ThreadCanvasView: View {
+    @ObservedObject internal var viewModel: ThreadCanvasViewModel
+    internal let topInset: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
@@ -17,7 +17,6 @@ struct ThreadCanvasView: View {
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
     private let headerSpacing: CGFloat = 0
-    private let headerCardHeight: CGFloat = 104
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -27,15 +26,16 @@ struct ThreadCanvasView: View {
         return formatter
     }()
 
-    var body: some View {
+    internal var body: some View {
         GeometryReader { proxy in
             let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
             let today = Date()
             let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
             let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
+            let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale)
             let headerStackHeight = chromeData.isEmpty
                 ? 0
-                : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? headerCardHeight)
+                : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
             let totalTopPadding = topInset + headerStackHeight + headerSpacing
 
             ScrollView([.horizontal, .vertical]) {
@@ -242,11 +242,11 @@ struct ThreadCanvasView: View {
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
+                                   summaryState: chrome.summaryState,
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
-                                   fixedHeight: headerCardHeight,
                                    isSelected: viewModel.selectedFolderID == chrome.id)
                 .frame(width: headerFrame.width, alignment: .leading)
                 .offset(x: headerFrame.minX, y: headerFrame.minY)
@@ -542,8 +542,8 @@ struct ThreadCanvasView: View {
 
     private func folderHeaderMetrics(metrics: ThreadCanvasLayoutMetrics,
                                      rawZoom: CGFloat) -> FolderHeaderMetrics {
-        let sizeScale = rawZoom.clamped(to: 0.6...1.25)
-        let height = headerCardHeight * sizeScale
+        let sizeScale = FolderHeaderLayout.sizeScale(rawZoom: rawZoom)
+        let height = FolderHeaderLayout.headerHeight(rawZoom: rawZoom)
         let indent = max(16 * metrics.fontScale, metrics.nodeHorizontalInset)
         let spacing = headerSpacing * sizeScale
         return FolderHeaderMetrics(height: height, indent: indent, spacing: spacing)
@@ -570,12 +570,14 @@ struct ThreadCanvasView: View {
             guard !columns.isEmpty else { return nil }
             let headerTopOffset = CGFloat(overlay.depth) * (headerMetrics.height + headerMetrics.spacing)
             let headerIndent = CGFloat(overlay.depth) * headerMetrics.indent
+            let summaryState = viewModel.folderSummaryState(for: overlay.id)
             return folderChrome(for: overlay.id,
                                 title: overlay.title,
                                 color: overlay.color,
                                 frame: overlay.frame,
                                 columns: columns,
                                 depth: overlay.depth,
+                                summaryState: summaryState,
                                 headerHeight: headerMetrics.height,
                                 headerTopOffset: headerTopOffset,
                                 headerIndent: headerIndent,
@@ -589,6 +591,7 @@ struct ThreadCanvasView: View {
                               frame: CGRect,
                               columns: [ThreadCanvasColumn],
                               depth: Int,
+                              summaryState: ThreadSummaryState?,
                               headerHeight: CGFloat,
                               headerTopOffset: CGFloat,
                               headerIndent: CGFloat,
@@ -603,6 +606,7 @@ struct ThreadCanvasView: View {
                                 frame: frame,
                                 columnIDs: columns.map(\.id),
                                 depth: depth,
+                                summaryState: summaryState,
                                 unreadCount: unread,
                                 updated: latest,
                                 headerHeight: headerHeight,
@@ -792,20 +796,94 @@ private struct FolderColumnBackground: View {
     }
 }
 
+private struct FolderHeaderLayout {
+    static let titleBaseSize: CGFloat = 14
+    static let titleLineLimit: Int = 3
+    static let summaryBaseSize: CGFloat = 11
+    static let summaryLineLimit: Int = 5
+    static let footerBaseSize: CGFloat = 12
+    static let verticalPadding: CGFloat = 10
+    static let lineSpacing: CGFloat = 6
+    static let badgeVerticalPadding: CGFloat = 6
+    static let badgeVerticalPaddingEllipsis: CGFloat = 5
+
+    static func sizeScale(rawZoom: CGFloat) -> CGFloat {
+        rawZoom.clamped(to: 0.6...1.25)
+    }
+
+    static func headerHeight(rawZoom: CGFloat) -> CGFloat {
+        let scale = sizeScale(rawZoom: rawZoom)
+        let titleLines = lineCount(baseSize: titleBaseSize, lineLimit: titleLineLimit, rawZoom: rawZoom)
+        let summaryLines = lineCount(baseSize: summaryBaseSize, lineLimit: summaryLineLimit, rawZoom: rawZoom)
+        let footerHeight = footerRowHeight(rawZoom: rawZoom, sizeScale: scale)
+
+        let titleHeight = lineHeight(baseSize: titleBaseSize, sizeScale: scale) * CGFloat(titleLines)
+        let summaryHeight = lineHeight(baseSize: summaryBaseSize, sizeScale: scale) * CGFloat(summaryLines)
+        let visibleHeights = [titleHeight, summaryHeight, footerHeight].filter { $0 > 0 }
+        let spacingCount = max(visibleHeights.count - 1, 0)
+        let spacing = CGFloat(spacingCount) * lineSpacing * scale
+
+        return (verticalPadding * 2 * scale) + visibleHeights.reduce(0, +) + spacing
+    }
+
+    static func lineHeight(baseSize: CGFloat, sizeScale: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: baseSize * sizeScale)
+        return font.ascender - font.descender + font.leading
+    }
+
+    static func lineCount(baseSize: CGFloat, lineLimit: Int, rawZoom: CGFloat) -> Int {
+        switch textVisibility(baseSize: baseSize, rawZoom: rawZoom) {
+        case .normal:
+            return lineLimit
+        case .ellipsis:
+            return 1
+        case .hidden:
+            return 0
+        }
+    }
+
+    static func footerRowHeight(rawZoom: CGFloat, sizeScale: CGFloat) -> CGFloat {
+        let visibility = textVisibility(baseSize: footerBaseSize, rawZoom: rawZoom)
+        let lineHeight = lineHeight(baseSize: footerBaseSize, sizeScale: sizeScale)
+
+        switch visibility {
+        case .hidden:
+            return 0
+        case .ellipsis:
+            let badgeHeight = lineHeight + 2 * badgeVerticalPaddingEllipsis * sizeScale
+            return max(lineHeight, badgeHeight)
+        case .normal:
+            let badgeHeight = lineHeight + 2 * badgeVerticalPadding * sizeScale
+            return max(lineHeight, badgeHeight)
+        }
+    }
+
+    static func textVisibility(baseSize: CGFloat, rawZoom: CGFloat) -> TextVisibility {
+        let rawSize = baseSize * rawZoom
+        if rawSize < ThreadCanvasNodeView.textHidePointSize {
+            return .hidden
+        }
+        if rawSize < ThreadCanvasNodeView.textEllipsisPointSize {
+            return .ellipsis
+        }
+        return .normal
+    }
+}
+
 private struct FolderColumnHeader: View {
     let title: String
     let unreadCount: Int
     let updatedText: String?
+    let summaryState: ThreadSummaryState?
     let accentColor: Color
     let reduceTransparency: Bool
     let rawZoom: CGFloat
     let cornerRadius: CGFloat
-    let fixedHeight: CGFloat
     let isSelected: Bool
 
     private var sizeScale: CGFloat {
         // Track zoom more closely than the clamped fontScale to keep the header proportional.
-        rawZoom.clamped(to: 0.6...1.25)
+        FolderHeaderLayout.sizeScale(rawZoom: rawZoom)
     }
 
     private var headerBackground: some View {
@@ -838,34 +916,54 @@ private struct FolderColumnHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6 * sizeScale, ) {
-            textLine(title.isEmpty
-                     ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
-                     : title,
-                     baseSize: 14,
-                     weight: .semibold,
-                     color: Color.white,
-                     allowWrap: true)
-//            Spacer(minLength: 8 * sizeScale)
-            HStack(alignment: .center, spacing: 10 * sizeScale) {
-                if let updatedText {
-                    textLine("Updated \(updatedText)",
-                             baseSize: 12,
-                             weight: .regular,
-                             color: Color.white.opacity(0.78))
-                }
-                Spacer()
-                badge(unread: unreadCount)
+        let titleVisibility = textVisibility(for: FolderHeaderLayout.titleBaseSize)
+        let summaryVisibility = textVisibility(for: FolderHeaderLayout.summaryBaseSize)
+        let footerVisibility = textVisibility(for: FolderHeaderLayout.footerBaseSize)
+
+        VStack(alignment: .leading, spacing: FolderHeaderLayout.lineSpacing * sizeScale) {
+            if titleVisibility != .hidden {
+                textLine(title.isEmpty
+                         ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+                         : title,
+                         baseSize: FolderHeaderLayout.titleBaseSize,
+                         weight: .semibold,
+                         color: Color.white,
+                         allowWrap: true)
             }
-            
+            if let summaryText = summaryPreviewText, summaryVisibility != .hidden {
+                summaryLine(summaryText)
+            }
+            if footerVisibility != .hidden {
+                HStack(alignment: .center, spacing: 10 * sizeScale) {
+                    if let updatedText {
+                        textLine("Updated \(updatedText)",
+                                 baseSize: FolderHeaderLayout.footerBaseSize,
+                                 weight: .regular,
+                                 color: Color.white.opacity(0.78))
+                    }
+                    Spacer()
+                    badge(unread: unreadCount)
+                }
+            }
         }
         .padding(.horizontal, 12 * sizeScale)
-        .padding(.vertical, 10 * sizeScale)
-        .frame(height: fixedHeight * sizeScale, alignment: .leading)
+        .padding(.vertical, FolderHeaderLayout.verticalPadding * sizeScale)
+        .frame(height: FolderHeaderLayout.headerHeight(rawZoom: rawZoom), alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .overlay(selectionOverlay)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
+    }
+
+    private var summaryPreviewText: String? {
+        guard let summaryState else { return nil }
+        if !summaryState.text.isEmpty {
+            return summaryState.text
+        }
+        if !summaryState.statusMessage.isEmpty {
+            return summaryState.statusMessage
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -879,7 +977,7 @@ private struct FolderColumnHeader: View {
             Text(text)
                 .font(.system(size: baseSize * sizeScale, weight: weight))
                 .foregroundStyle(color)
-                .lineLimit(allowWrap ? 3 : 1)
+                .lineLimit(allowWrap ? FolderHeaderLayout.titleLineLimit : 1)
                 .fixedSize(horizontal: false, vertical: allowWrap)
                 .multilineTextAlignment(.leading)
                 .truncationMode(.tail)
@@ -893,23 +991,55 @@ private struct FolderColumnHeader: View {
     }
 
     @ViewBuilder
+    private func summaryLine(_ text: String) -> some View {
+        switch textVisibility(for: FolderHeaderLayout.summaryBaseSize) {
+        case .normal:
+            summaryText(text)
+                .font(.system(size: FolderHeaderLayout.summaryBaseSize * sizeScale, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.82))
+                .lineLimit(FolderHeaderLayout.summaryLineLimit)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+                .truncationMode(.tail)
+        case .ellipsis:
+            Text("…")
+                .font(.system(size: FolderHeaderLayout.summaryBaseSize * sizeScale, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.8))
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    private func summaryText(_ text: String) -> Text {
+        if let attributed = markdownAttributed(text) {
+            return Text(attributed)
+        }
+        return Text(text)
+    }
+
+    private func markdownAttributed(_ text: String) -> AttributedString? {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return try? AttributedString(markdown: text, options: options)
+    }
+
+    @ViewBuilder
     private func badge(unread: Int) -> some View {
-        switch textVisibility(for: 12) {
+        switch textVisibility(for: FolderHeaderLayout.footerBaseSize) {
         case .hidden:
             EmptyView()
         case .ellipsis:
             Text("•")
-                .font(.system(size: 12 * sizeScale, weight: .semibold))
+                .font(.system(size: FolderHeaderLayout.footerBaseSize * sizeScale, weight: .semibold))
                 .padding(.horizontal, 8 * sizeScale)
-                .padding(.vertical, 5 * sizeScale)
+                .padding(.vertical, FolderHeaderLayout.badgeVerticalPaddingEllipsis * sizeScale)
                 .background(badgeBackground)
                 .foregroundStyle(Color.white.opacity(0.95))
                 .contentShape(Capsule())
         case .normal:
             Text("Unread \(unread)")
-                .font(.system(size: 12 * sizeScale, weight: .semibold))
+                .font(.system(size: FolderHeaderLayout.footerBaseSize * sizeScale, weight: .semibold))
                 .padding(.horizontal, 10 * sizeScale)
-                .padding(.vertical, 6 * sizeScale)
+                .padding(.vertical, FolderHeaderLayout.badgeVerticalPadding * sizeScale)
                 .background(badgeBackground)
                 .foregroundStyle(Color.white.opacity(0.95))
                 .contentShape(Capsule())
@@ -917,14 +1047,7 @@ private struct FolderColumnHeader: View {
     }
 
     private func textVisibility(for baseSize: CGFloat) -> TextVisibility {
-        let rawSize = baseSize * rawZoom
-        if rawSize < ThreadCanvasNodeView.textHidePointSize {
-            return .hidden
-        }
-        if rawSize < ThreadCanvasNodeView.textEllipsisPointSize {
-            return .ellipsis
-        }
-        return .normal
+        FolderHeaderLayout.textVisibility(baseSize: baseSize, rawZoom: rawZoom)
     }
 
     @ViewBuilder
@@ -1360,6 +1483,7 @@ private struct FolderChromeData: Identifiable {
     let frame: CGRect
     let columnIDs: [String]
     let depth: Int
+    let summaryState: ThreadSummaryState?
     let unreadCount: Int
     let updated: Date?
     let headerHeight: CGFloat

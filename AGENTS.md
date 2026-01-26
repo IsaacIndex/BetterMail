@@ -1,3 +1,4 @@
+<!-- OPENSPEC:START -->
 # OpenSpec Instructions
 
 These instructions are for AI assistants working in this project.
@@ -81,6 +82,7 @@ Formatting:
 - Preserve existing folder structure
 - New files must follow existing naming conventions
 - Views, ViewModels, Models, and Services should be clearly separated
+- Use `TechDocs/index.md` for architecture references and update TechDocs when refactors change structure or behavior.
 
 Do NOT:
 

@@ -1,113 +1,113 @@
 import Foundation
 import CoreGraphics
 
-struct ThreadCanvasLayoutMetrics {
-    static let defaultDayCount = 7
-    static let minZoom: CGFloat = 0.01
-    static let maxZoom: CGFloat = 1.6
+internal struct ThreadCanvasLayoutMetrics {
+    internal static let defaultDayCount = 7
+    internal static let minZoom: CGFloat = 0.01
+    internal static let maxZoom: CGFloat = 1.6
 
-    let zoom: CGFloat
-    let dayCount: Int
+    internal let zoom: CGFloat
+    internal let dayCount: Int
 
-    var clampedZoom: CGFloat {
+    internal var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
     }
 
-    var dayHeight: CGFloat {
+    internal var dayHeight: CGFloat {
         120 * clampedZoom
     }
 
-    var columnWidth: CGFloat {
+    internal var columnWidth: CGFloat {
         260 * clampedZoom
     }
 
-    var columnSpacing: CGFloat {
+    internal var columnSpacing: CGFloat {
         24 * clampedZoom
     }
 
-    var dayLabelWidth: CGFloat {
+    internal var dayLabelWidth: CGFloat {
         96 * clampedZoom
     }
 
-    var contentPadding: CGFloat {
+    internal var contentPadding: CGFloat {
         20 * clampedZoom
     }
 
-    var nodeHeight: CGFloat {
+    internal var nodeHeight: CGFloat {
         64 * clampedZoom
     }
 
-    var nodeHorizontalInset: CGFloat {
+    internal var nodeHorizontalInset: CGFloat {
         12 * clampedZoom
     }
 
-    var nodeVerticalSpacing: CGFloat {
+    internal var nodeVerticalSpacing: CGFloat {
         30 * clampedZoom
     }
 
-    var nodeCornerRadius: CGFloat {
+    internal var nodeCornerRadius: CGFloat {
         12 * clampedZoom
     }
 
-    var fontScale: CGFloat {
+    internal var fontScale: CGFloat {
         min(max(clampedZoom, 0.85), 1.2)
     }
 
-    var nodeWidth: CGFloat {
+    internal var nodeWidth: CGFloat {
         max(columnWidth - (nodeHorizontalInset * 2), 24)
     }
 
-    init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
+    internal init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
         self.zoom = zoom
         self.dayCount = max(dayCount, 1)
     }
 }
 
-struct ThreadCanvasDay: Identifiable, Hashable {
-    let id: Int
-    let date: Date
-    let label: String
-    let yOffset: CGFloat
-    let height: CGFloat
+internal struct ThreadCanvasDay: Identifiable, Hashable {
+    internal let id: Int
+    internal let date: Date
+    internal let label: String
+    internal let yOffset: CGFloat
+    internal let height: CGFloat
 }
 
-struct ThreadCanvasNode: Identifiable, Hashable {
-    let id: String
-    let message: EmailMessage
-    let threadID: String
-    let jwzThreadID: String
-    let frame: CGRect
-    let dayIndex: Int
-    let isManualAttachment: Bool
+internal struct ThreadCanvasNode: Identifiable, Hashable {
+    internal let id: String
+    internal let message: EmailMessage
+    internal let threadID: String
+    internal let jwzThreadID: String
+    internal let frame: CGRect
+    internal let dayIndex: Int
+    internal let isManualAttachment: Bool
 }
 
-struct ThreadCanvasColumn: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let xOffset: CGFloat
-    let nodes: [ThreadCanvasNode]
-    let latestDate: Date
-    let folderID: String?
+internal struct ThreadCanvasColumn: Identifiable, Hashable {
+    internal let id: String
+    internal let title: String
+    internal let xOffset: CGFloat
+    internal let nodes: [ThreadCanvasNode]
+    internal let latestDate: Date
+    internal let folderID: String?
 }
 
-struct ThreadCanvasLayout {
-    let days: [ThreadCanvasDay]
-    let columns: [ThreadCanvasColumn]
-    let contentSize: CGSize
-    let folderOverlays: [ThreadCanvasFolderOverlay]
+internal struct ThreadCanvasLayout {
+    internal let days: [ThreadCanvasDay]
+    internal let columns: [ThreadCanvasColumn]
+    internal let contentSize: CGSize
+    internal let folderOverlays: [ThreadCanvasFolderOverlay]
 }
 
-struct ThreadCanvasFolderOverlay: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let color: ThreadFolderColor
-    let frame: CGRect
-    let columnIDs: [String]
-    let parentID: String?
-    let depth: Int
+internal struct ThreadCanvasFolderOverlay: Identifiable, Hashable {
+    internal let id: String
+    internal let title: String
+    internal let color: ThreadFolderColor
+    internal let frame: CGRect
+    internal let columnIDs: [String]
+    internal let parentID: String?
+    internal let depth: Int
 }
 
-enum ThreadCanvasDateHelper {
+internal enum ThreadCanvasDateHelper {
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -125,7 +125,7 @@ enum ThreadCanvasDateHelper {
         return formatter
     }()
 
-    static func dayIndex(for date: Date, today: Date, calendar: Calendar, dayCount: Int) -> Int? {
+    internal static func dayIndex(for date: Date, today: Date, calendar: Calendar, dayCount: Int) -> Int? {
         let startOfToday = calendar.startOfDay(for: today)
         let startOfDate = calendar.startOfDay(for: date)
         guard let diff = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day else {
@@ -137,19 +137,19 @@ enum ThreadCanvasDateHelper {
         return diff
     }
 
-    static func dayDate(for index: Int, today: Date, calendar: Calendar) -> Date {
+    internal static func dayDate(for index: Int, today: Date, calendar: Calendar) -> Date {
         calendar.date(byAdding: .day, value: -index, to: calendar.startOfDay(for: today)) ?? today
     }
 
-    static func label(for date: Date) -> String {
+    internal static func label(for date: Date) -> String {
         dayFormatter.string(from: date)
     }
 
-    static func monthLabel(for date: Date) -> String {
+    internal static func monthLabel(for date: Date) -> String {
         monthFormatter.string(from: date)
     }
 
-    static func yearLabel(for date: Date) -> String {
+    internal static func yearLabel(for date: Date) -> String {
         yearFormatter.string(from: date)
     }
 }

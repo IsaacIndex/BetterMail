@@ -1,13 +1,13 @@
 import OSLog
 import SwiftUI
 
-struct AutoRefreshSettingsView: View {
-    @ObservedObject var settings: AutoRefreshSettings
-    @ObservedObject var inspectorSettings: InspectorViewSettings
+internal struct AutoRefreshSettingsView: View {
+    @ObservedObject internal var settings: AutoRefreshSettings
+    @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @StateObject private var backfillViewModel: BatchBackfillSettingsViewModel
     @State private var isResetConfirmationPresented = false
 
-    init(settings: AutoRefreshSettings, inspectorSettings: InspectorViewSettings) {
+    internal init(settings: AutoRefreshSettings, inspectorSettings: InspectorViewSettings) {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
@@ -15,7 +15,7 @@ struct AutoRefreshSettingsView: View {
         ))
     }
 
-    var body: some View {
+    internal var body: some View {
         Form {
             Section {
                 Toggle("Enable auto refresh", isOn: $settings.isEnabled)

@@ -2,16 +2,16 @@ import Combine
 import Foundation
 
 @MainActor
-final class BatchBackfillSettingsViewModel: ObservableObject {
-    @Published var startDate: Date
-    @Published var endDate: Date
-    @Published private(set) var statusText: String = ""
-    @Published private(set) var isRunning = false
-    @Published private(set) var progressValue: Double?
-    @Published private(set) var totalCount: Int?
-    @Published private(set) var completedCount: Int = 0
-    @Published private(set) var currentBatchSize: Int = 5
-    @Published private(set) var errorMessage: String?
+internal final class BatchBackfillSettingsViewModel: ObservableObject {
+    @Published internal var startDate: Date
+    @Published internal var endDate: Date
+    @Published internal private(set) var statusText: String = ""
+    @Published internal private(set) var isRunning = false
+    @Published internal private(set) var progressValue: Double?
+    @Published internal private(set) var totalCount: Int?
+    @Published internal private(set) var completedCount: Int = 0
+    @Published internal private(set) var currentBatchSize: Int = 5
+    @Published internal private(set) var errorMessage: String?
 
     private let service: BatchBackfillService
     private let snippetLineLimitProvider: () -> Int
@@ -19,9 +19,9 @@ final class BatchBackfillSettingsViewModel: ObservableObject {
     private let defaultBatchSize = 5
     private var runTask: Task<Void, Never>?
 
-    init(service: BatchBackfillService = BatchBackfillService(),
-         snippetLineLimitProvider: @escaping () -> Int = { InspectorViewSettings.defaultSnippetLineLimit },
-         calendar: Calendar = .current) {
+    internal init(service: BatchBackfillService = BatchBackfillService(),
+                  snippetLineLimitProvider: @escaping () -> Int = { InspectorViewSettings.defaultSnippetLineLimit },
+                  calendar: Calendar = .current) {
         self.service = service
         self.snippetLineLimitProvider = snippetLineLimitProvider
         let now = Date()
@@ -34,7 +34,7 @@ final class BatchBackfillSettingsViewModel: ObservableObject {
         runTask?.cancel()
     }
 
-    func startBackfill() {
+    internal func startBackfill() {
         guard !isRunning else { return }
         runTask?.cancel()
         errorMessage = nil

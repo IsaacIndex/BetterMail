@@ -1,15 +1,15 @@
 import Foundation
 
-struct ThreadingResult {
-    let roots: [ThreadNode]
-    let threads: [EmailThread]
-    let messageThreadMap: [String: String]
-    let jwzThreadMap: [String: String]
-    let manualGroupByMessageKey: [String: String]
-    let manualAttachmentMessageIDs: Set<String>
+internal struct ThreadingResult {
+    internal let roots: [ThreadNode]
+    internal let threads: [EmailThread]
+    internal let messageThreadMap: [String: String]
+    internal let jwzThreadMap: [String: String]
+    internal let manualGroupByMessageKey: [String: String]
+    internal let manualAttachmentMessageIDs: Set<String>
 }
 
-final class JWZThreader {
+internal final class JWZThreader {
     private final class Container: Hashable {
         let identifier: String
         weak var parent: Container?
@@ -40,7 +40,7 @@ final class JWZThreader {
         }
     }
 
-    func buildThreads(from messages: [EmailMessage]) -> ThreadingResult {
+    internal func buildThreads(from messages: [EmailMessage]) -> ThreadingResult {
         var containers: [String: Container] = [:]
 
         func container(for identifier: String) -> Container {
@@ -142,7 +142,7 @@ final class JWZThreader {
         return (updatedNode, latest, unread, total)
     }
 
-    static func normalizeIdentifier(_ raw: String) -> String {
+    internal static func normalizeIdentifier(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         var candidate = trimmed
@@ -152,20 +152,20 @@ final class JWZThreader {
         return candidate.lowercased()
     }
 
-    static func threadIdentifier(for node: ThreadNode) -> String {
+    internal static func threadIdentifier(for node: ThreadNode) -> String {
         let normalized = normalizeIdentifier(node.message.messageID)
         return normalized.isEmpty ? node.message.id.uuidString.lowercased() : normalized
     }
 }
 
 extension JWZThreader {
-    struct ManualGroupApplication {
-        let result: ThreadingResult
-        let updatedGroups: [ManualThreadGroup]
+    internal struct ManualGroupApplication {
+        internal let result: ThreadingResult
+        internal let updatedGroups: [ManualThreadGroup]
     }
 
-    func applyManualGroups(_ groups: [ManualThreadGroup],
-                           to result: ThreadingResult) -> ManualGroupApplication {
+    internal func applyManualGroups(_ groups: [ManualThreadGroup],
+                                    to result: ThreadingResult) -> ManualGroupApplication {
         guard !groups.isEmpty else {
             let updatedResult = ThreadingResult(roots: result.roots,
                                                 threads: result.threads,
