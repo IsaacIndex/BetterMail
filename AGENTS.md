@@ -83,6 +83,7 @@ Formatting:
 - New files must follow existing naming conventions
 - Views, ViewModels, Models, and Services should be clearly separated
 - Use `TechDocs/index.md` for architecture references and update TechDocs when refactors change structure or behavior.
+- When logic is added, updated, or removed, update `README.md` or relevant `docs/` content to reflect the change.
 
 Do NOT:
 
@@ -161,7 +162,7 @@ AI agents should explicitly refuse to:
 
 # Review
 
-At the last step of a change, always try to build the app and resolve any compilation errors. Capture the full build log in /tmp so agents (e.g., Codex) can read it.
+At the last step of a change, if it involves logic change, always try to build the app and resolve any compilation errors. Capture the full build log in /tmp so agents (e.g., Codex) can read it.
 
 ```bash
 # Clear cache first
