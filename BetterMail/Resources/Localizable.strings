@@ -36,6 +36,7 @@
 "threadcanvas.inspector.open_in_mail.action.copy_message_id" = "Copy Message-ID";
 "threadcanvas.inspector.open_in_mail.action.copy_subject" = "Copy Subject";
 "threadcanvas.inspector.open_in_mail.action.copy_mailbox" = "Copy Mailbox Path";
+"threadcanvas.inspector.copy_toast" = "Copied to clipboard";
 "threadcanvas.inspector.summary.title" = "Message summary";
 "threadcanvas.folder.inspector.title" = "Folder";
 "threadcanvas.folder.inspector.name" = "Name";

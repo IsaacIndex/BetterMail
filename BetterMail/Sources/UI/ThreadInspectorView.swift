@@ -11,6 +11,9 @@ internal struct ThreadInspectorView: View {
     internal let onCopyOpenInMailText: (String) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var isCopyToastVisible = false
+    @State private var copyToastMessage = ""
+    @State private var copyToastHideWorkItem: DispatchWorkItem?
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -39,6 +42,9 @@ internal struct ThreadInspectorView: View {
         .shadow(color: Color.black.opacity(isGlassInspectorEnabled ? 0.35 : 0), radius: 1.2, x: 0, y: 1)
         .background(inspectorBackground)
         .modifier(InspectorColorSchemeModifier(isEnabled: isGlassInspectorEnabled))
+        .overlay(alignment: .bottom) {
+            copyToast
+        }
     }
 
     @ViewBuilder
@@ -220,21 +226,21 @@ internal struct ThreadInspectorView: View {
         return HStack(spacing: 8) {
             Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
                                      comment: "Copy Message-ID action"),
-                   action: { onCopyOpenInMailText(messageID) })
+                   action: { handleCopyAction(messageID) })
                 .controlSize(.mini)
                 .disabled(messageID.isEmpty)
             Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
                                      comment: "Copy subject action"),
-                   action: { onCopyOpenInMailText(subject) })
+                   action: { handleCopyAction(subject) })
                 .controlSize(.mini)
                 .disabled(subject.isEmpty)
             Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_mailbox",
                                      comment: "Copy mailbox path action"),
-                   action: { onCopyOpenInMailText(mailboxValue) })
+                   action: { handleCopyAction(mailboxValue) })
                 .controlSize(.mini)
                 .disabled(mailboxValue.isEmpty)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(InspectorCopyButtonStyle())
     }
 
     private func mailboxCopyValue(for node: ThreadNode) -> String {
@@ -252,6 +258,58 @@ internal struct ThreadInspectorView: View {
     private var snippetFormatter: SnippetFormatter {
         SnippetFormatter(lineLimit: inspectorSettings.snippetLineLimit,
                          stopPhrases: inspectorSettings.stopPhrases)
+    }
+
+    private func handleCopyAction(_ value: String) {
+        guard !value.isEmpty else { return }
+        onCopyOpenInMailText(value)
+        showCopyToast(message: NSLocalizedString("threadcanvas.inspector.copy_toast",
+                                                comment: "Toast text when inspector copy action succeeds"))
+    }
+
+    private func showCopyToast(message: String) {
+        copyToastMessage = message
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+            isCopyToastVisible = true
+        }
+        copyToastHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            withAnimation(.easeOut(duration: 0.2)) {
+                isCopyToastVisible = false
+            }
+        }
+        copyToastHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
+    @ViewBuilder
+    private var copyToast: some View {
+        if isCopyToastVisible {
+            Text(copyToastMessage)
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(copyToastBackground)
+                .clipShape(Capsule())
+                .shadow(color: Color.black.opacity(0.2), radius: 6, y: 3)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .accessibilityLabel(copyToastMessage)
+        }
+    }
+
+    private var copyToastBackground: some View {
+        let shape = Capsule()
+        if reduceTransparency {
+            return AnyView(shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.95))
+                .overlay(shape.stroke(Color.white.opacity(0.2))))
+        }
+        if isGlassInspectorEnabled {
+            return AnyView(shape.fill(Color.black.opacity(0.55))
+                .overlay(shape.stroke(Color.white.opacity(0.18))))
+        }
+        return AnyView(shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+            .overlay(shape.stroke(Color.black.opacity(0.1))))
     }
 }
 
@@ -277,6 +335,14 @@ private struct InspectorField: View {
             return reduceTransparency ? Color.secondary : Color.white.opacity(0.75)
         }
         return Color.secondary
+    }
+}
+
+private struct InspectorCopyButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
