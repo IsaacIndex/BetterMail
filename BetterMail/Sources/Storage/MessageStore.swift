@@ -72,6 +72,7 @@ internal final class MessageStore {
                 let normalized = message.normalizedMessageID.isEmpty ? message.id.uuidString.lowercased() : message.normalizedMessageID
                 entity.normalizedMessageID = normalized
                 entity.mailboxID = message.mailboxID
+                entity.accountName = message.accountName
                 entity.subject = message.subject
                 entity.fromAddress = message.from
                 entity.toAddress = message.to
@@ -554,6 +555,11 @@ internal final class MessageStore {
         mailboxAttr.attributeType = .stringAttributeType
         mailboxAttr.isOptional = false
 
+        let accountAttr = NSAttributeDescription()
+        accountAttr.name = "accountName"
+        accountAttr.attributeType = .stringAttributeType
+        accountAttr.isOptional = true
+
         let subjectAttr = NSAttributeDescription()
         subjectAttr.name = "subject"
         subjectAttr.attributeType = .stringAttributeType
@@ -611,6 +617,7 @@ internal final class MessageStore {
             msgIDAttr,
             normalizedAttr,
             mailboxAttr,
+            accountAttr,
             subjectAttr,
             fromAttr,
             toAttr,
@@ -1040,6 +1047,7 @@ internal final class MessageEntity: NSManagedObject {
     @NSManaged var messageID: String
     @NSManaged var normalizedMessageID: String
     @NSManaged var mailboxID: String
+    @NSManaged var accountName: String?
     @NSManaged var subject: String
     @NSManaged var fromAddress: String
     @NSManaged var toAddress: String
@@ -1062,6 +1070,7 @@ internal final class MessageEntity: NSManagedObject {
         return EmailMessage(id: id,
                             messageID: messageID,
                             mailboxID: mailboxID,
+                            accountName: accountName ?? "",
                             subject: subject,
                             from: fromAddress,
                             to: toAddress,

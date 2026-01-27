@@ -51,6 +51,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let olderRootMessage = EmailMessage(messageID: "root-older",
                                             mailboxID: "inbox",
+                                            accountName: "",
                                             subject: "Older Thread",
                                             from: "a@example.com",
                                             to: "me@example.com",
@@ -62,6 +63,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                             threadID: "thread-old")
         let newerChildMessage = EmailMessage(messageID: "child-newer",
                                              mailboxID: "inbox",
+                                             accountName: "",
                                              subject: "Older Thread",
                                              from: "b@example.com",
                                              to: "me@example.com",
@@ -75,6 +77,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let newerRootMessage = EmailMessage(messageID: "root-newer",
                                             mailboxID: "inbox",
+                                            accountName: "",
                                             subject: "Newer Thread",
                                             from: "c@example.com",
                                             to: "me@example.com",
@@ -99,6 +102,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
     func testSelectionMappingFindsNestedNode() {
         let rootMessage = EmailMessage(messageID: "root",
                                        mailboxID: "inbox",
+                                       accountName: "",
                                        subject: "Root",
                                        from: "a@example.com",
                                        to: "me@example.com",
@@ -110,6 +114,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                        threadID: "thread-root")
         let childMessage = EmailMessage(messageID: "child",
                                         mailboxID: "inbox",
+                                        accountName: "",
                                         subject: "Child",
                                         from: "b@example.com",
                                         to: "me@example.com",
@@ -141,6 +146,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let rootMessage = EmailMessage(messageID: "root-a",
                                        mailboxID: "inbox",
+                                       accountName: "",
                                        subject: "Thread A",
                                        from: "a@example.com",
                                        to: "me@example.com",
@@ -151,6 +157,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                        references: [])
         let threadBRoot = EmailMessage(messageID: "root-b",
                                        mailboxID: "inbox",
+                                       accountName: "",
                                        subject: "Thread B",
                                        from: "b@example.com",
                                        to: "me@example.com",
@@ -161,6 +168,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                        references: [])
         let threadBReply = EmailMessage(messageID: "reply-b",
                                         mailboxID: "inbox",
+                                        accountName: "",
                                         subject: "Thread B",
                                         from: "c@example.com",
                                         to: "me@example.com",
@@ -197,6 +205,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let messageA = EmailMessage(messageID: "a1",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "A",
                                     from: "a@example.com",
                                     to: "me@example.com",
@@ -207,6 +216,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                     references: [])
         let messageB = EmailMessage(messageID: "b1",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "B",
                                     from: "b@example.com",
                                     to: "me@example.com",
@@ -278,6 +288,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let threadA = EmailMessage(messageID: "a",
                                    mailboxID: "inbox",
+                                   accountName: "",
                                    subject: "A",
                                    from: "a@example.com",
                                    to: "me@example.com",
@@ -289,6 +300,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                    threadID: "thread-a")
         let threadB = EmailMessage(messageID: "b",
                                    mailboxID: "inbox",
+                                   accountName: "",
                                    subject: "B",
                                    from: "b@example.com",
                                    to: "me@example.com",
@@ -300,6 +312,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                    threadID: "thread-b")
         let threadC = EmailMessage(messageID: "c",
                                    mailboxID: "inbox",
+                                   accountName: "",
                                    subject: "C",
                                    from: "c@example.com",
                                    to: "me@example.com",
@@ -342,6 +355,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
 
         let childThread = EmailMessage(messageID: "child",
                                        mailboxID: "inbox",
+                                       accountName: "",
                                        subject: "Child",
                                        from: "a@example.com",
                                        to: "me@example.com",
@@ -353,6 +367,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                        threadID: "thread-child")
         let parentThread = EmailMessage(messageID: "parent",
                                         mailboxID: "inbox",
+                                        accountName: "",
                                         subject: "Parent",
                                         from: "b@example.com",
                                         to: "me@example.com",
@@ -364,6 +379,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                         threadID: "thread-parent")
         let externalThread = EmailMessage(messageID: "external",
                                           mailboxID: "inbox",
+                                          accountName: "",
                                           subject: "External",
                                           from: "c@example.com",
                                           to: "me@example.com",

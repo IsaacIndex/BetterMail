@@ -81,6 +81,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let messageB = EmailMessage(messageID: "<b>",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "Older",
                                     from: "b@example.com",
                                     to: "me@example.com",
@@ -91,6 +92,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
                                     references: [])
         let messageA = EmailMessage(messageID: "<a>",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "Latest",
                                     from: "a@example.com",
                                     to: "me@example.com",
@@ -136,6 +138,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let message = EmailMessage(messageID: "<a>",
                                    mailboxID: "inbox",
+                                   accountName: "",
                                    subject: "Latest",
                                    from: "a@example.com",
                                    to: "me@example.com",
@@ -180,6 +183,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let latest = EmailMessage(messageID: "<a>",
                                   mailboxID: "inbox",
+                                  accountName: "",
                                   subject: "Latest",
                                   from: "a@example.com",
                                   to: "me@example.com",
@@ -201,6 +205,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
 
         let older = EmailMessage(messageID: "<b>",
                                  mailboxID: "inbox",
+                                 accountName: "",
                                  subject: "Older",
                                  from: "b@example.com",
                                  to: "me@example.com",
@@ -211,6 +216,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
                                  references: [])
         let latestWithReply = EmailMessage(messageID: "<a>",
                                            mailboxID: "inbox",
+                                           accountName: "",
                                            subject: "Latest",
                                            from: "a@example.com",
                                            to: "me@example.com",
@@ -249,6 +255,7 @@ final class ThreadSummaryCacheTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let messageA = EmailMessage(messageID: "<a>",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "Latest",
                                     from: "a@example.com",
                                     to: "me@example.com",

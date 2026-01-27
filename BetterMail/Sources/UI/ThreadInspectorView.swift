@@ -8,9 +8,7 @@ internal struct ThreadInspectorView: View {
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     internal let openInMailState: OpenInMailState?
     internal let onOpenInMail: (ThreadNode) -> Void
-    internal let onOpenMatchedMessage: (OpenInMailMatch) -> Void
     internal let onCopyOpenInMailText: (String) -> Void
-    internal let onCopyOpenInMailURL: (String) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -176,21 +174,22 @@ internal struct ThreadInspectorView: View {
         switch status {
         case .idle:
             EmptyView()
-        case .opening:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opening",
-                                    comment: "Open in Mail opening status"),
-                  systemImage: "arrow.up.right.square")
-        case .opened:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened",
-                                    comment: "Open in Mail success status"),
-                  systemImage: "checkmark.circle")
-        case .searching:
+        case .searchingMessageID:
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching",
                                     comment: "Open in Mail fallback search status"),
                   systemImage: "magnifyingglass")
-        case .matches:
-            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.matches",
-                                   comment: "Open in Mail fallback match status"))
+        case .searchingHeuristic:
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching_heuristic",
+                                    comment: "Open in Mail heuristic search status"),
+                  systemImage: "magnifyingglass")
+        case .opened(.messageID):
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_message_id",
+                                    comment: "Open in Mail success status using Message-ID"),
+                  systemImage: "checkmark.circle")
+        case .opened(.heuristic):
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_heuristic",
+                                    comment: "Open in Mail success status using metadata heuristic"),
+                  systemImage: "checkmark.circle")
         case .notFound:
             Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.no_match",
                                    comment: "Open in Mail fallback no match status"))
@@ -203,39 +202,6 @@ internal struct ThreadInspectorView: View {
     @ViewBuilder
     private func matchDetails(for status: OpenInMailStatus, node: ThreadNode) -> some View {
         switch status {
-        case .matches(let matches):
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(matches) { match in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(match.subject.isEmpty
-                             ? NSLocalizedString("threadcanvas.subject.placeholder",
-                                                 comment: "Placeholder subject when missing")
-                             : match.subject)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(inspectorPrimaryForegroundStyle)
-                        Text(match.mailboxDisplay)
-                        if !match.date.isEmpty {
-                            Text(match.date)
-                        }
-                        HStack(spacing: 8) {
-                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.open_match",
-                                                     comment: "Open matched message action"),
-                                   action: { onOpenMatchedMessage(match) })
-                                .controlSize(.mini)
-                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
-                                                     comment: "Copy Message-ID action"),
-                                   action: { onCopyOpenInMailText(match.messageID) })
-                                .controlSize(.mini)
-                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_url",
-                                                     comment: "Copy Message URL action"),
-                                   action: { onCopyOpenInMailURL(match.messageID) })
-                                .controlSize(.mini)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    Divider()
-                }
-            }
         case .notFound, .failed:
             VStack(alignment: .leading, spacing: 6) {
                 Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.manual_hint",
@@ -245,20 +211,34 @@ internal struct ThreadInspectorView: View {
                                              comment: "Copy Message-ID action"),
                            action: { onCopyOpenInMailText(node.message.messageID) })
                         .controlSize(.mini)
-                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_url",
-                                             comment: "Copy Message URL action"),
-                           action: { onCopyOpenInMailURL(node.message.messageID) })
-                        .controlSize(.mini)
                     Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
                                              comment: "Copy subject action"),
                            action: { onCopyOpenInMailText(node.message.subject) })
                         .controlSize(.mini)
+                    if !mailboxCopyValue(for: node).isEmpty {
+                        Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_mailbox",
+                                                 comment: "Copy mailbox path action"),
+                               action: { onCopyOpenInMailText(mailboxCopyValue(for: node)) })
+                            .controlSize(.mini)
+                    }
                 }
                 .buttonStyle(.borderless)
             }
         default:
             EmptyView()
         }
+    }
+
+    private func mailboxCopyValue(for node: ThreadNode) -> String {
+        let mailbox = node.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = node.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mailbox.isEmpty {
+            return account
+        }
+        if account.isEmpty {
+            return mailbox
+        }
+        return "\(account): \(mailbox)"
     }
 
     private var snippetFormatter: SnippetFormatter {

@@ -132,9 +132,7 @@ internal struct ThreadListView: View {
                                     inspectorSettings: inspectorSettings,
                                     openInMailState: viewModel.openInMailState,
                                     onOpenInMail: viewModel.openMessageInMail,
-                                    onOpenMatchedMessage: viewModel.openMatchedMessage,
-                                    onCopyOpenInMailText: viewModel.copyToPasteboard,
-                                    onCopyOpenInMailURL: viewModel.copyOpenInMailURL)
+                                    onCopyOpenInMailText: viewModel.copyToPasteboard)
                     .frame(width: inspectorWidth)
                     .padding(.top, navInsetHeight)
                     .padding(.trailing, navHorizontalPadding)
