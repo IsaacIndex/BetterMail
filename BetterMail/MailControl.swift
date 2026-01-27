@@ -10,13 +10,13 @@ import OSLog
 
 internal enum MailControlError: LocalizedError {
     case invalidMessageID
-    case heuristicFailed
+    case filteredFallbackFailed
 
     var errorDescription: String? {
         switch self {
         case .invalidMessageID:
             return "Invalid Message-ID."
-        case .heuristicFailed:
+        case .filteredFallbackFailed:
             return "Failed to search Mail for the message."
         }
     }
@@ -31,20 +31,14 @@ internal struct MailControl {
         internal let account: String
     }
 
-    internal enum HeuristicScope: String {
-        case mailbox
-        case account
-        case global
-    }
-
-    internal enum HeuristicOutcome: Equatable {
-        case opened(HeuristicScope)
+    internal enum FilteredFallbackOutcome: Equatable {
+        case opened
         case notFound
     }
 
     internal enum TargetingResolution: Equatable {
         case openedMessageID
-        case openedHeuristic(HeuristicScope)
+        case openedFilteredFallback
         case notFound
     }
 
@@ -96,7 +90,7 @@ internal struct MailControl {
     nonisolated internal static func resolveTargetingPath(messageID: String,
                                                           metadata: OpenMessageMetadata,
                                                           openViaAppleScript: (String) throws -> Bool = openMessageViaAppleScript,
-                                                          openViaHeuristic: (OpenMessageMetadata) throws -> HeuristicOutcome = openMessageViaHeuristic,
+                                                          openViaFilteredFallback: (OpenMessageMetadata) throws -> FilteredFallbackOutcome = openMessageViaFilteredFallback,
                                                           onMessageIDFailure: (() -> Void)? = nil) throws -> TargetingResolution {
         let openedByMessageID = try openViaAppleScript(messageID)
         if openedByMessageID {
@@ -105,72 +99,33 @@ internal struct MailControl {
 
         onMessageIDFailure?()
 
-        let heuristicOutcome = try openViaHeuristic(metadata)
-        switch heuristicOutcome {
-        case .opened(let scope):
-            return .openedHeuristic(scope)
+        let filteredOutcome = try openViaFilteredFallback(metadata)
+        switch filteredOutcome {
+        case .opened:
+            return .openedFilteredFallback
         case .notFound:
             return .notFound
         }
     }
 
-    nonisolated internal static func openMessageViaHeuristic(_ metadata: OpenMessageMetadata) throws -> HeuristicOutcome {
+    nonisolated internal static func openMessageViaFilteredFallback(_ metadata: OpenMessageMetadata) throws -> FilteredFallbackOutcome {
         let subject = metadata.subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let senderToken = heuristicSenderToken(from: metadata.sender)
-        let mailbox = metadata.mailbox.trimmingCharacters(in: .whitespacesAndNewlines)
-        let account = metadata.account.trimmingCharacters(in: .whitespacesAndNewlines)
         let components = Calendar.current.dateComponents([.year, .month, .day], from: metadata.date)
         let year = components.year ?? 0
         let month = components.month ?? 0
         let day = components.day ?? 0
 
-        if !mailbox.isEmpty {
-            let script = heuristicOpenScript(subject: subject,
-                                             sender: senderToken,
-                                             year: year,
-                                             month: month,
-                                             day: day,
-                                             scope: .mailbox,
-                                             mailbox: mailbox,
-                                             account: account)
-            let result = try runAppleScript(script)
-            if result.descriptorType != typeBoolean {
-                throw MailControlError.heuristicFailed
-            }
-            if result.booleanValue {
-                return .opened(.mailbox)
-            }
-        } else if !account.isEmpty {
-            let script = heuristicOpenScript(subject: subject,
-                                             sender: senderToken,
-                                             year: year,
-                                             month: month,
-                                             day: day,
-                                             scope: .account,
-                                             mailbox: mailbox,
-                                             account: account)
-            let result = try runAppleScript(script)
-            if result.descriptorType != typeBoolean {
-                throw MailControlError.heuristicFailed
-            }
-            if result.booleanValue {
-                return .opened(.account)
-            }
-        }
-
-        let script = heuristicOpenScript(subject: subject,
-                                         sender: senderToken,
-                                         year: year,
-                                         month: month,
-                                         day: day,
-                                         scope: .global,
-                                         mailbox: mailbox,
-                                         account: account)
+        let script = filteredFallbackOpenScript(subject: subject,
+                                                sender: senderToken,
+                                                year: year,
+                                                month: month,
+                                                day: day)
         let result = try runAppleScript(script)
         if result.descriptorType == typeBoolean {
-            return result.booleanValue ? .opened(.global) : .notFound
+            return result.booleanValue ? .opened : .notFound
         }
-        throw MailControlError.heuristicFailed
+        throw MailControlError.filteredFallbackFailed
     }
 
     internal static func normalizedMessageID(_ messageID: String) throws -> String {
@@ -272,36 +227,40 @@ internal struct MailControl {
         }
     }
 
-    private static func heuristicOpenScript(subject: String,
-                                            sender: String,
-                                            year: Int,
-                                            month: Int,
-                                            day: Int,
-                                            scope: HeuristicScope,
-                                            mailbox: String,
-                                            account: String) -> String {
+    private static func filteredFallbackOpenScript(subject: String,
+                                                   sender: String,
+                                                   year: Int,
+                                                   month: Int,
+                                                   day: Int) -> String {
         let safeSubject = escapedForAppleScript(subject)
         let safeSender = escapedForAppleScript(sender)
-        let mailboxRef: String
-        switch scope {
-        case .mailbox:
-            mailboxRef = mailboxReference(path: mailbox, account: account.isEmpty ? nil : account)
-        case .account, .global:
-            mailboxRef = ""
-        }
-
-        let scopeScript: String
-        switch scope {
-        case .mailbox:
-            scopeScript = "set _scopeMessages to messages of \(mailboxRef)"
-        case .account:
-            let safeAccount = escapedForAppleScript(account)
-            scopeScript = "set _scopeMessages to messages of account \"\(safeAccount)\""
-        case .global:
-            scopeScript = "set _scopeMessages to every message"
-        }
 
         return """
+        on monthEnumFromNumber(mNum)
+          if mNum is 1 then return January
+          if mNum is 2 then return February
+          if mNum is 3 then return March
+          if mNum is 4 then return April
+          if mNum is 5 then return May
+          if mNum is 6 then return June
+          if mNum is 7 then return July
+          if mNum is 8 then return August
+          if mNum is 9 then return September
+          if mNum is 10 then return October
+          if mNum is 11 then return November
+          if mNum is 12 then return December
+          error "Invalid month number: " & mNum
+        end monthEnumFromNumber
+
+        on startOfDayForYMD(y, mNum, d)
+          set dt to current date
+          set year of dt to y
+          set month of dt to my monthEnumFromNumber(mNum)
+          set day of dt to d
+          set time of dt to 0
+          return dt
+        end startOfDayForYMD
+
         tell application "Mail"
           with timeout of 30 seconds
             set _targetSubject to "\(safeSubject)"
@@ -309,56 +268,13 @@ internal struct MailControl {
             set _targetYear to \(year)
             set _targetMonth to \(month)
             set _targetDay to \(day)
-            \(scopeScript)
-
-            on matchesDate(theDate)
-              try
-                if (year of theDate as integer) is not _targetYear then return false
-                if (month of theDate as integer) is not _targetMonth then return false
-                if (day of theDate as integer) is not _targetDay then return false
-                return true
-              on error
-                return false
-              end try
-            end matchesDate
-
-            on matchesMetadata(m)
-              set _subjectMatch to true
-              set _senderMatch to true
-              set _dateMatch to true
-              try
-                if _targetSubject is not "" then
-                  set _subjectMatch to ((subject of m as string) contains _targetSubject)
-                end if
-              on error
-                set _subjectMatch to false
-              end try
-              try
-                if _targetSender is not "" then
-                  set _senderMatch to ((sender of m as string) contains _targetSender)
-                end if
-              on error
-                set _senderMatch to false
-              end try
-              try
-                set _dateMatch to my matchesDate(date received of m)
-              on error
-                set _dateMatch to false
-              end try
-              return _subjectMatch and _senderMatch and _dateMatch
-            end matchesMetadata
-
-            set _match to missing value
+            set _startDate to my startOfDayForYMD(_targetYear, _targetMonth, _targetDay)
+            set _endDate to _startDate + (1 * days)
             ignoring case
-              repeat with m in _scopeMessages
-                if my matchesMetadata(m) then
-                  set _match to m
-                  exit repeat
-                end if
-              end repeat
+              set _matches to (every message whose subject contains _targetSubject and sender contains _targetSender and date received is greater than or equal to _startDate and date received is less than _endDate)
             end ignoring
-
-            if _match is missing value then return false
+            if (count of _matches) is 0 then return false
+            set _match to item 1 of _matches
             try
               open _match
             on error

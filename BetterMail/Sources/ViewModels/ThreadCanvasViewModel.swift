@@ -12,13 +12,13 @@ internal struct ThreadSummaryState {
 
 internal enum OpenInMailTargetingPath: Equatable {
     case messageID
-    case heuristic
+    case filteredFallback
 }
 
 internal enum OpenInMailStatus: Equatable {
     case idle
     case searchingMessageID
-    case searchingHeuristic
+    case searchingFilteredFallback
     case opened(OpenInMailTargetingPath)
     case notFound
     case failed(String)
@@ -1059,7 +1059,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                       onMessageIDFailure: { [weak self] in
                                                                           Task { @MainActor in
                                                                               guard let self else { return }
-                                                                              self.setOpenInMailState(.searchingHeuristic,
+                                                                              self.setOpenInMailState(.searchingFilteredFallback,
                                                                                                       messageID: messageID,
                                                                                                       attemptID: attemptID)
                                                                           }
@@ -1072,15 +1072,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                 messageID: messageID,
                                                 attemptID: attemptID)
                     }
-                case .openedHeuristic(let scope):
-                    Log.appleScript.info("Open in Mail succeeded by heuristic. messageID=\(messageID, privacy: .public) scope=\(scope.rawValue, privacy: .public)")
+                case .openedFilteredFallback:
+                    Log.appleScript.info("Open in Mail succeeded by filtered fallback. messageID=\(messageID, privacy: .public)")
                     await MainActor.run {
-                        self.setOpenInMailState(.opened(.heuristic),
+                        self.setOpenInMailState(.opened(.filteredFallback),
                                                 messageID: messageID,
                                                 attemptID: attemptID)
                     }
                 case .notFound:
-                    Log.appleScript.info("Open in Mail heuristic found no match. messageID=\(messageID, privacy: .public)")
+                    Log.appleScript.info("Open in Mail filtered fallback found no match. messageID=\(messageID, privacy: .public)")
                     await MainActor.run {
                         self.setOpenInMailState(.notFound, messageID: messageID, attemptID: attemptID)
                     }

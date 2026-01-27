@@ -18,21 +18,21 @@ final class MailControlTests: XCTestCase {
                                                        date: Date(),
                                                        mailbox: "Inbox",
                                                        account: "iCloud")
-        var heuristicCalled = false
+        var filteredFallbackCalled = false
 
         let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
                                                           metadata: metadata,
                                                           openViaAppleScript: { _ in true },
-                                                          openViaHeuristic: { _ in
-                                                              heuristicCalled = true
+                                                          openViaFilteredFallback: { _ in
+                                                              filteredFallbackCalled = true
                                                               return .notFound
                                                           })
 
         XCTAssertEqual(result, .openedMessageID)
-        XCTAssertFalse(heuristicCalled)
+        XCTAssertFalse(filteredFallbackCalled)
     }
 
-    func test_resolveTargetingPath_whenMessageIDFails_usesHeuristic() throws {
+    func test_resolveTargetingPath_whenMessageIDFails_usesFilteredFallback() throws {
         let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
                                                        sender: "a@example.com",
                                                        date: Date(),
@@ -43,10 +43,10 @@ final class MailControlTests: XCTestCase {
         let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
                                                           metadata: metadata,
                                                           openViaAppleScript: { _ in false },
-                                                          openViaHeuristic: { _ in .opened(.mailbox) },
+                                                          openViaFilteredFallback: { _ in .opened },
                                                           onMessageIDFailure: { failureNotified = true })
 
-        XCTAssertEqual(result, .openedHeuristic(.mailbox))
+        XCTAssertEqual(result, .openedFilteredFallback)
         XCTAssertTrue(failureNotified)
     }
 
@@ -60,7 +60,7 @@ final class MailControlTests: XCTestCase {
         let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
                                                           metadata: metadata,
                                                           openViaAppleScript: { _ in false },
-                                                          openViaHeuristic: { _ in .notFound })
+                                                          openViaFilteredFallback: { _ in .notFound })
 
         XCTAssertEqual(result, .notFound)
     }

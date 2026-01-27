@@ -27,12 +27,12 @@
 "threadcanvas.inspector.snippet.empty" = "No preview available.";
 "threadcanvas.inspector.open_in_mail" = "Open in Mail";
 "threadcanvas.inspector.open_in_mail.status.searching" = "Searching Mail by Message-ID...";
-"threadcanvas.inspector.open_in_mail.status.searching_heuristic" = "Searching Mail by metadata...";
+"threadcanvas.inspector.open_in_mail.status.searching_filtered" = "Searching Mail with filters...";
 "threadcanvas.inspector.open_in_mail.status.opened_message_id" = "Opened via Message-ID.";
-"threadcanvas.inspector.open_in_mail.status.opened_heuristic" = "Opened via metadata match.";
+"threadcanvas.inspector.open_in_mail.status.opened_filtered" = "Opened via filtered match.";
 "threadcanvas.inspector.open_in_mail.status.no_match" = "No matches found in Mail.";
 "threadcanvas.inspector.open_in_mail.status.failed" = "Mail couldn't open this message.";
-"threadcanvas.inspector.open_in_mail.status.manual_hint" = "Use Mail search with the Message-ID, subject, or mailbox.";
+"threadcanvas.inspector.open_in_mail.status.manual_hint" = "Use Mail search with the Message-ID, subject, or mailbox/account.";
 "threadcanvas.inspector.open_in_mail.action.copy_message_id" = "Copy Message-ID";
 "threadcanvas.inspector.open_in_mail.action.copy_subject" = "Copy Subject";
 "threadcanvas.inspector.open_in_mail.action.copy_mailbox" = "Copy Mailbox Path";

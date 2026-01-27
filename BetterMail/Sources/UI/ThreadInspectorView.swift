@@ -157,16 +157,19 @@ internal struct ThreadInspectorView: View {
 
     @ViewBuilder
     private func openInMailStatus(for node: ThreadNode) -> some View {
-        if let state = openInMailState, state.messageID == node.message.messageID {
-            VStack(alignment: .leading, spacing: 8) {
-                statusLine(for: state.status)
-                matchDetails(for: state.status, node: node)
-            }
-            .font(.caption)
-            .foregroundStyle(inspectorSecondaryForegroundStyle)
-        } else {
-            EmptyView()
+        let status = Self.openInMailStatus(for: openInMailState, messageID: node.message.messageID)
+        VStack(alignment: .leading, spacing: 8) {
+            statusLine(for: status)
+            hintText(for: status)
+            copyControls(for: node)
         }
+        .font(.caption)
+        .foregroundStyle(inspectorSecondaryForegroundStyle)
+    }
+
+    internal static func openInMailStatus(for state: OpenInMailState?, messageID: String) -> OpenInMailStatus {
+        guard let state, state.messageID == messageID else { return .idle }
+        return state.status
     }
 
     @ViewBuilder
@@ -178,17 +181,17 @@ internal struct ThreadInspectorView: View {
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching",
                                     comment: "Open in Mail fallback search status"),
                   systemImage: "magnifyingglass")
-        case .searchingHeuristic:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching_heuristic",
-                                    comment: "Open in Mail heuristic search status"),
+        case .searchingFilteredFallback:
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching_filtered",
+                                    comment: "Open in Mail filtered fallback search status"),
                   systemImage: "magnifyingglass")
         case .opened(.messageID):
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_message_id",
                                     comment: "Open in Mail success status using Message-ID"),
                   systemImage: "checkmark.circle")
-        case .opened(.heuristic):
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_heuristic",
-                                    comment: "Open in Mail success status using metadata heuristic"),
+        case .opened(.filteredFallback):
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_filtered",
+                                    comment: "Open in Mail success status using filtered fallback"),
                   systemImage: "checkmark.circle")
         case .notFound:
             Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.no_match",
@@ -200,33 +203,38 @@ internal struct ThreadInspectorView: View {
     }
 
     @ViewBuilder
-    private func matchDetails(for status: OpenInMailStatus, node: ThreadNode) -> some View {
+    private func hintText(for status: OpenInMailStatus) -> some View {
         switch status {
         case .notFound, .failed:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.manual_hint",
-                                       comment: "Open in Mail fallback guidance"))
-                HStack(spacing: 8) {
-                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
-                                             comment: "Copy Message-ID action"),
-                           action: { onCopyOpenInMailText(node.message.messageID) })
-                        .controlSize(.mini)
-                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
-                                             comment: "Copy subject action"),
-                           action: { onCopyOpenInMailText(node.message.subject) })
-                        .controlSize(.mini)
-                    if !mailboxCopyValue(for: node).isEmpty {
-                        Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_mailbox",
-                                                 comment: "Copy mailbox path action"),
-                               action: { onCopyOpenInMailText(mailboxCopyValue(for: node)) })
-                            .controlSize(.mini)
-                    }
-                }
-                .buttonStyle(.borderless)
-            }
+            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.manual_hint",
+                                   comment: "Open in Mail fallback guidance"))
         default:
             EmptyView()
         }
+    }
+
+    private func copyControls(for node: ThreadNode) -> some View {
+        let messageID = node.message.messageID
+        let subject = node.message.subject
+        let mailboxValue = mailboxCopyValue(for: node)
+        return HStack(spacing: 8) {
+            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
+                                     comment: "Copy Message-ID action"),
+                   action: { onCopyOpenInMailText(messageID) })
+                .controlSize(.mini)
+                .disabled(messageID.isEmpty)
+            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
+                                     comment: "Copy subject action"),
+                   action: { onCopyOpenInMailText(subject) })
+                .controlSize(.mini)
+                .disabled(subject.isEmpty)
+            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_mailbox",
+                                     comment: "Copy mailbox path action"),
+                   action: { onCopyOpenInMailText(mailboxValue) })
+                .controlSize(.mini)
+                .disabled(mailboxValue.isEmpty)
+        }
+        .buttonStyle(.borderless)
     }
 
     private func mailboxCopyValue(for node: ThreadNode) -> String {
