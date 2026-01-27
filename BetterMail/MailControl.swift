@@ -271,7 +271,7 @@ internal struct MailControl {
             set _startDate to my startOfDayForYMD(_targetYear, _targetMonth, _targetDay)
             set _endDate to _startDate + (1 * days)
             ignoring case
-              set _matches to (every message whose subject contains _targetSubject and sender contains _targetSender and date received is greater than or equal to _startDate and date received is less than _endDate)
+              set _matches to (first message of inbox whose subject contains _targetSubject and sender contains _targetSender and date received is greater than or equal to _startDate and date received is less than _endDate)
             end ignoring
             if (count of _matches) is 0 then return false
             set _match to item 1 of _matches
