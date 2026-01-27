@@ -4,6 +4,7 @@ internal struct EmailMessage: Identifiable, Hashable {
     internal let id: UUID
     internal let messageID: String
     internal let mailboxID: String
+    internal let accountName: String
     internal let subject: String
     internal let from: String
     internal let to: String
@@ -18,6 +19,7 @@ internal struct EmailMessage: Identifiable, Hashable {
     internal init(id: UUID = UUID(),
                   messageID: String,
                   mailboxID: String,
+                  accountName: String,
                   subject: String,
                   from: String,
                   to: String,
@@ -31,6 +33,7 @@ internal struct EmailMessage: Identifiable, Hashable {
         self.id = id
         self.messageID = messageID
         self.mailboxID = mailboxID
+        self.accountName = accountName
         self.subject = subject
         self.from = from
         self.to = to
@@ -56,6 +59,7 @@ internal struct EmailMessage: Identifiable, Hashable {
         EmailMessage(id: id,
                      messageID: messageID,
                      mailboxID: mailboxID,
+                     accountName: accountName,
                      subject: subject,
                      from: from,
                      to: to,
@@ -72,6 +76,7 @@ internal struct EmailMessage: Identifiable, Hashable {
 internal extension EmailMessage {
     static let placeholder = EmailMessage(messageID: UUID().uuidString,
                                           mailboxID: "inbox",
+                                          accountName: "",
                                           subject: "",
                                           from: "",
                                           to: "",

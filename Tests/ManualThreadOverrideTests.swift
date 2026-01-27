@@ -8,6 +8,7 @@ final class ManualThreadOverrideTests: XCTestCase {
 
         let messageA = EmailMessage(messageID: "a1",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "A",
                                     from: "a@example.com",
                                     to: "me@example.com",
@@ -18,6 +19,7 @@ final class ManualThreadOverrideTests: XCTestCase {
                                     references: [])
         let messageB = EmailMessage(messageID: "b1",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "B",
                                     from: "b@example.com",
                                     to: "me@example.com",
@@ -50,6 +52,7 @@ final class ManualThreadOverrideTests: XCTestCase {
 
         let messageA = EmailMessage(messageID: "a1",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "A",
                                     from: "a@example.com",
                                     to: "me@example.com",
@@ -60,6 +63,7 @@ final class ManualThreadOverrideTests: XCTestCase {
                                     references: [])
         let messageB = EmailMessage(messageID: "b1",
                                     mailboxID: "inbox",
+                                    accountName: "",
                                     subject: "B",
                                     from: "b@example.com",
                                     to: "me@example.com",

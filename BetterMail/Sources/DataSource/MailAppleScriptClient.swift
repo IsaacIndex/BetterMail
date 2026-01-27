@@ -18,10 +18,11 @@ internal actor MailAppleScriptClient {
         static let messageID = 1
         static let subject = 2
         static let mailbox = 3
-        static let date = 4
-        static let read = 5
-        static let source = 6
-        static let body = 7
+        static let account = 4
+        static let date = 5
+        static let read = 6
+        static let source = 7
+        static let body = 8
     }
 
     internal func fetchMessages(since date: Date?,
@@ -93,6 +94,12 @@ internal actor MailAppleScriptClient {
           with timeout of 60 seconds
             set _mbx to \(escapedPath)
             set _mailboxName to (name of _mbx as string)
+            set _accountName to ""
+            try
+              set _accountName to (name of account of _mbx as string)
+            on error
+              set _accountName to ""
+            end try
             set _msgs to messages of _mbx
             set _count to 0
             if _window > 0 then
@@ -116,7 +123,7 @@ internal actor MailAppleScriptClient {
                 on error
                   set _body to ""
                 end try
-                copy {(message id of m as string), (subject of m as string), _mailboxName, (date received of m), (read status of m), _src, _body} to end of _rows
+                copy {(message id of m as string), (subject of m as string), _mailboxName, _accountName, (date received of m), (read status of m), _src, _body} to end of _rows
                 set _count to _count + 1
                 if _count is greater than or equal to _limit then exit repeat
               end if
@@ -141,6 +148,12 @@ internal actor MailAppleScriptClient {
           with timeout of 60 seconds
             set _mbx to \(escapedPath)
             set _mailboxName to (name of _mbx as string)
+            set _accountName to ""
+            try
+              set _accountName to (name of account of _mbx as string)
+            on error
+              set _accountName to ""
+            end try
             set _msgs to messages of _mbx
             set _count to 0
             if _startWindow > 0 then
@@ -170,7 +183,7 @@ internal actor MailAppleScriptClient {
                 on error
                   set _body to ""
                 end try
-                copy {(message id of m as string), (subject of m as string), _mailboxName, (date received of m), (read status of m), _src, _body} to end of _rows
+                copy {(message id of m as string), (subject of m as string), _mailboxName, _accountName, (date received of m), (read status of m), _src, _body} to end of _rows
                 set _count to _count + 1
                 if _count is greater than or equal to _limit then exit repeat
               end if
@@ -242,6 +255,7 @@ internal actor MailAppleScriptClient {
             let canonicalID = normalizedID.isEmpty ? UUID().uuidString.lowercased() : normalizedID
             let subject = row.atIndex(RowIndex.subject)?.stringValue ?? "(No Subject)"
             let mailboxID = row.atIndex(RowIndex.mailbox)?.stringValue ?? mailbox
+            let accountName = row.atIndex(RowIndex.account)?.stringValue ?? ""
             let dateValue = row.atIndex(RowIndex.date)?.dateValue ?? Date()
             let isRead = row.atIndex(RowIndex.read)?.booleanValue ?? true
             guard let source = row.atIndex(RowIndex.source)?.stringValue else { continue }
@@ -259,6 +273,7 @@ internal actor MailAppleScriptClient {
 
             let email = EmailMessage(messageID: canonicalID,
                                      mailboxID: mailboxID,
+                                     accountName: accountName,
                                      subject: subject,
                                      from: sender,
                                      to: recipients,

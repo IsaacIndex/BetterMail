@@ -5,34 +5,41 @@
 //  Created by Isaac IBM on 5/11/2025.
 //
 
-import AppKit
 import Foundation
 import OSLog
 
 internal enum MailControlError: LocalizedError {
     case invalidMessageID
-    case openFailed
-    case searchFailed
+    case filteredFallbackFailed
 
     var errorDescription: String? {
         switch self {
         case .invalidMessageID:
-            return "Invalid Message-ID for message:// URL."
-        case .openFailed:
-            return "Failed to open the message in Mail."
-        case .searchFailed:
-            return "Failed to search Mail for the Message-ID."
+            return "Invalid Message-ID."
+        case .filteredFallbackFailed:
+            return "Failed to search Mail for the message."
         }
     }
 }
 
 internal struct MailControl {
-    internal struct MessageMatch: Hashable {
-        internal let messageID: String
+    internal struct OpenMessageMetadata: Hashable {
         internal let subject: String
+        internal let sender: String
+        internal let date: Date
         internal let mailbox: String
         internal let account: String
-        internal let date: String
+    }
+
+    internal enum FilteredFallbackOutcome: Equatable {
+        case opened
+        case notFound
+    }
+
+    internal enum TargetingResolution: Equatable {
+        case openedMessageID
+        case openedFilteredFallback
+        case notFound
     }
 
     /// Escape arbitrary user text so embedding it inside AppleScript stays well-formed.
@@ -69,35 +76,7 @@ internal struct MailControl {
         return accountSuffix(reference)
     }
 
-    internal static func openMessage(messageID: String) throws {
-        try openMessage(messageID: messageID,
-                        openViaAppleScript: openMessageViaAppleScript,
-                        openViaURL: { NSWorkspace.shared.open($0) })
-    }
-
-    internal static func openMessage(messageID: String,
-                                     openViaAppleScript: (String) throws -> Bool,
-                                     openViaURL: (URL) -> Bool) throws {
-        // Prefer AppleScript so we can fail fast and surface fallback without Mail's alert.
-        let opened: Bool
-        do {
-            opened = try openViaAppleScript(messageID)
-        } catch {
-            Log.appleScript.error("Open in Mail via AppleScript failed; falling back to message:// URL. id=\(messageID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            opened = false
-        }
-
-        if opened {
-            Log.appleScript.debug("Open in Mail via AppleScript succeeded. id=\(messageID, privacy: .public)")
-            return
-        }
-
-        let url = try messageURL(for: messageID)
-        Log.appleScript.debug("Open in Mail via message:// URL fallback. id=\(messageID, privacy: .public) url=\(url.absoluteString, privacy: .public)")
-        guard openViaURL(url) else { throw MailControlError.openFailed }
-    }
-
-    internal static func openMessageViaAppleScript(messageID: String) throws -> Bool {
+    nonisolated internal static func openMessageViaAppleScript(messageID: String) throws -> Bool {
         let normalized = try normalizedMessageID(messageID)
         let bracketed = "<\(normalized)>"
         let script = buildMessageOpenScript(normalized: normalized, bracketed: bracketed)
@@ -108,27 +87,45 @@ internal struct MailControl {
         return false
     }
 
-    internal static func searchMessages(messageID: String, limit: Int = 5) throws -> [MessageMatch] {
-        let normalized = try normalizedMessageID(messageID)
-        let bracketed = "<\(normalized)>"
-        let script = messageSearchScript(normalized: normalized, bracketed: bracketed, limit: limit)
-        let result = try runAppleScript(script)
-        guard result.descriptorType == typeAEList else {
-            throw MailControlError.searchFailed
+    nonisolated internal static func resolveTargetingPath(messageID: String,
+                                                          metadata: OpenMessageMetadata,
+                                                          openViaAppleScript: (String) throws -> Bool = openMessageViaAppleScript,
+                                                          openViaFilteredFallback: (OpenMessageMetadata) throws -> FilteredFallbackOutcome = openMessageViaFilteredFallback,
+                                                          onMessageIDFailure: (() -> Void)? = nil) throws -> TargetingResolution {
+        let openedByMessageID = try openViaAppleScript(messageID)
+        if openedByMessageID {
+            return .openedMessageID
         }
-        return decodeMatches(from: result)
+
+        onMessageIDFailure?()
+
+        let filteredOutcome = try openViaFilteredFallback(metadata)
+        switch filteredOutcome {
+        case .opened:
+            return .openedFilteredFallback
+        case .notFound:
+            return .notFound
+        }
     }
 
-    internal static func messageURL(for messageID: String) throws -> URL {
-        let normalized = try normalizedMessageID(messageID)
-        let wrapped = "<\(normalized)>"
-        let disallowed = CharacterSet(charactersIn: "/?&%#<>\"")
-        let allowed = CharacterSet.urlPathAllowed.subtracting(disallowed)
-        guard let encoded = wrapped.addingPercentEncoding(withAllowedCharacters: allowed),
-              let url = URL(string: "message://\(encoded)") else {
-            throw MailControlError.invalidMessageID
+    nonisolated internal static func openMessageViaFilteredFallback(_ metadata: OpenMessageMetadata) throws -> FilteredFallbackOutcome {
+        let subject = metadata.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let senderToken = heuristicSenderToken(from: metadata.sender)
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: metadata.date)
+        let year = components.year ?? 0
+        let month = components.month ?? 0
+        let day = components.day ?? 0
+
+        let script = filteredFallbackOpenScript(subject: subject,
+                                                sender: senderToken,
+                                                year: year,
+                                                month: month,
+                                                day: day)
+        let result = try runAppleScript(script)
+        if result.descriptorType == typeBoolean {
+            return result.booleanValue ? .opened : .notFound
         }
-        return url
+        throw MailControlError.filteredFallbackFailed
     }
 
     internal static func normalizedMessageID(_ messageID: String) throws -> String {
@@ -230,68 +227,66 @@ internal struct MailControl {
         }
     }
 
-    internal static func messageSearchScript(for messageID: String, limit: Int = 5) throws -> String {
-        let normalized = try normalizedMessageID(messageID)
-        let bracketed = "<\(normalized)>"
-        return messageSearchScript(normalized: normalized, bracketed: bracketed, limit: limit)
-    }
+    private static func filteredFallbackOpenScript(subject: String,
+                                                   sender: String,
+                                                   year: Int,
+                                                   month: Int,
+                                                   day: Int) -> String {
+        let safeSubject = escapedForAppleScript(subject)
+        let safeSender = escapedForAppleScript(sender)
 
-    private static func messageSearchScript(normalized: String,
-                                            bracketed: String,
-                                            limit: Int) -> String {
-        let safeNormalized = escapedForAppleScript(normalized)
-        let safeBracketed = escapedForAppleScript(bracketed)
         return """
-        set _rows to {}
+        on monthEnumFromNumber(mNum)
+          if mNum is 1 then return January
+          if mNum is 2 then return February
+          if mNum is 3 then return March
+          if mNum is 4 then return April
+          if mNum is 5 then return May
+          if mNum is 6 then return June
+          if mNum is 7 then return July
+          if mNum is 8 then return August
+          if mNum is 9 then return September
+          if mNum is 10 then return October
+          if mNum is 11 then return November
+          if mNum is 12 then return December
+          error "Invalid month number: " & mNum
+        end monthEnumFromNumber
+
+        on startOfDayForYMD(y, mNum, d)
+          set dt to current date
+          set year of dt to y
+          set month of dt to my monthEnumFromNumber(mNum)
+          set day of dt to d
+          set time of dt to 0
+          return dt
+        end startOfDayForYMD
+
         tell application "Mail"
           with timeout of 30 seconds
-            set _matches to {}
-            set _id1 to "\(safeBracketed)"
-            set _id2 to "\(safeNormalized)"
+            set _targetSubject to "\(safeSubject)"
+            set _targetSender to "\(safeSender)"
+            set _targetYear to \(year)
+            set _targetMonth to \(month)
+            set _targetDay to \(day)
+            set _startDate to my startOfDayForYMD(_targetYear, _targetMonth, _targetDay)
+            set _endDate to _startDate + (1 * days)
             ignoring case
-              try
-                repeat with m in (every message whose message id is _id1)
-                  copy m to end of _matches
-                end repeat
-              end try
-              if _id2 is not equal to _id1 then
-                try
-                  repeat with m in (every message whose message id is _id2)
-                    copy m to end of _matches
-                  end repeat
-                end try
-              end if
+              set _matches to (first message of inbox whose subject contains _targetSubject and sender contains _targetSender and date received is greater than or equal to _startDate and date received is less than _endDate)
             end ignoring
-            set _count to 0
-            repeat with m in _matches
-              set _mailbox to mailbox of m
-              set _mailboxName to (name of _mailbox as string)
-              set _accountName to ""
+            if (count of _matches) is 0 then return false
+            set _match to item 1 of _matches
+            try
+              open _match
+            on error
               try
-                set _accountName to (name of account of _mailbox as string)
-              on error
-                set _accountName to ""
+                set _viewer to message viewer 1
+                set selected messages of _viewer to {_match}
               end try
-              set _subject to ""
-              try
-                set _subject to (subject of m as string)
-              on error
-                set _subject to ""
-              end try
-              set _msgID to (message id of m as string)
-              set _date to ""
-              try
-                set _date to (date received of m as string)
-              on error
-                set _date to ""
-              end try
-              copy (_msgID & "||" & _subject & "||" & _mailboxName & "||" & _accountName & "||" & _date) to end of _rows
-              set _count to _count + 1
-              if _count is greater than or equal to \(limit) then exit repeat
-            end repeat
+            end try
+            activate
+            return true
           end timeout
         end tell
-        return _rows
         """
     }
 
@@ -336,27 +331,15 @@ internal struct MailControl {
         """
     }
 
-    private static func decodeMatches(from result: NSAppleEventDescriptor) -> [MessageMatch] {
-        var matches: [MessageMatch] = []
-        guard result.numberOfItems > 0 else { return [] }
-        matches.reserveCapacity(result.numberOfItems)
-        for index in 1...result.numberOfItems {
-            guard let row = result.atIndex(index)?.stringValue else { continue }
-            let parts = row.components(separatedBy: "||")
-            guard parts.count >= 5 else { continue }
-            let rawID = parts[0]
-            let cleanedID = cleanMessageIDPreservingCase(rawID)
-            let messageID = cleanedID.isEmpty ? JWZThreader.normalizeIdentifier(rawID) : cleanedID
-            let subject = parts[1]
-            let mailbox = parts[2]
-            let account = parts[3]
-            let date = parts[4]
-            matches.append(MessageMatch(messageID: messageID,
-                                        subject: subject,
-                                        mailbox: mailbox,
-                                        account: account,
-                                        date: date))
+    private static func heuristicSenderToken(from rawSender: String) -> String {
+        let trimmed = rawSender.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if let start = trimmed.firstIndex(of: "<"),
+           let end = trimmed.firstIndex(of: ">"),
+           start < end {
+            let email = trimmed[trimmed.index(after: start)..<end]
+            return email.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return matches
+        return trimmed
     }
 }

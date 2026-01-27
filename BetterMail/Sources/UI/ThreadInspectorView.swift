@@ -8,11 +8,12 @@ internal struct ThreadInspectorView: View {
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     internal let openInMailState: OpenInMailState?
     internal let onOpenInMail: (ThreadNode) -> Void
-    internal let onOpenMatchedMessage: (OpenInMailMatch) -> Void
     internal let onCopyOpenInMailText: (String) -> Void
-    internal let onCopyOpenInMailURL: (String) -> Void
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var isCopyToastVisible = false
+    @State private var copyToastMessage = ""
+    @State private var copyToastHideWorkItem: DispatchWorkItem?
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -41,6 +42,9 @@ internal struct ThreadInspectorView: View {
         .shadow(color: Color.black.opacity(isGlassInspectorEnabled ? 0.35 : 0), radius: 1.2, x: 0, y: 1)
         .background(inspectorBackground)
         .modifier(InspectorColorSchemeModifier(isEnabled: isGlassInspectorEnabled))
+        .overlay(alignment: .bottom) {
+            copyToast
+        }
     }
 
     @ViewBuilder
@@ -159,16 +163,19 @@ internal struct ThreadInspectorView: View {
 
     @ViewBuilder
     private func openInMailStatus(for node: ThreadNode) -> some View {
-        if let state = openInMailState, state.messageID == node.message.messageID {
-            VStack(alignment: .leading, spacing: 8) {
-                statusLine(for: state.status)
-                matchDetails(for: state.status, node: node)
-            }
-            .font(.caption)
-            .foregroundStyle(inspectorSecondaryForegroundStyle)
-        } else {
-            EmptyView()
+        let status = Self.openInMailStatus(for: openInMailState, messageID: node.message.messageID)
+        VStack(alignment: .leading, spacing: 8) {
+            statusLine(for: status)
+            hintText(for: status)
+            copyControls(for: node)
         }
+        .font(.caption)
+        .foregroundStyle(inspectorSecondaryForegroundStyle)
+    }
+
+    internal static func openInMailStatus(for state: OpenInMailState?, messageID: String) -> OpenInMailStatus {
+        guard let state, state.messageID == messageID else { return .idle }
+        return state.status
     }
 
     @ViewBuilder
@@ -176,21 +183,22 @@ internal struct ThreadInspectorView: View {
         switch status {
         case .idle:
             EmptyView()
-        case .opening:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opening",
-                                    comment: "Open in Mail opening status"),
-                  systemImage: "arrow.up.right.square")
-        case .opened:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened",
-                                    comment: "Open in Mail success status"),
-                  systemImage: "checkmark.circle")
-        case .searching:
+        case .searchingMessageID:
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching",
                                     comment: "Open in Mail fallback search status"),
                   systemImage: "magnifyingglass")
-        case .matches:
-            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.matches",
-                                   comment: "Open in Mail fallback match status"))
+        case .searchingFilteredFallback:
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching_filtered",
+                                    comment: "Open in Mail filtered fallback search status"),
+                  systemImage: "magnifyingglass")
+        case .opened(.messageID):
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_message_id",
+                                    comment: "Open in Mail success status using Message-ID"),
+                  systemImage: "checkmark.circle")
+        case .opened(.filteredFallback):
+            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_filtered",
+                                    comment: "Open in Mail success status using filtered fallback"),
+                  systemImage: "checkmark.circle")
         case .notFound:
             Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.no_match",
                                    comment: "Open in Mail fallback no match status"))
@@ -201,69 +209,107 @@ internal struct ThreadInspectorView: View {
     }
 
     @ViewBuilder
-    private func matchDetails(for status: OpenInMailStatus, node: ThreadNode) -> some View {
+    private func hintText(for status: OpenInMailStatus) -> some View {
         switch status {
-        case .matches(let matches):
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(matches) { match in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(match.subject.isEmpty
-                             ? NSLocalizedString("threadcanvas.subject.placeholder",
-                                                 comment: "Placeholder subject when missing")
-                             : match.subject)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(inspectorPrimaryForegroundStyle)
-                        Text(match.mailboxDisplay)
-                        if !match.date.isEmpty {
-                            Text(match.date)
-                        }
-                        HStack(spacing: 8) {
-                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.open_match",
-                                                     comment: "Open matched message action"),
-                                   action: { onOpenMatchedMessage(match) })
-                                .controlSize(.mini)
-                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
-                                                     comment: "Copy Message-ID action"),
-                                   action: { onCopyOpenInMailText(match.messageID) })
-                                .controlSize(.mini)
-                            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_url",
-                                                     comment: "Copy Message URL action"),
-                                   action: { onCopyOpenInMailURL(match.messageID) })
-                                .controlSize(.mini)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    Divider()
-                }
-            }
         case .notFound, .failed:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.manual_hint",
-                                       comment: "Open in Mail fallback guidance"))
-                HStack(spacing: 8) {
-                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
-                                             comment: "Copy Message-ID action"),
-                           action: { onCopyOpenInMailText(node.message.messageID) })
-                        .controlSize(.mini)
-                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_url",
-                                             comment: "Copy Message URL action"),
-                           action: { onCopyOpenInMailURL(node.message.messageID) })
-                        .controlSize(.mini)
-                    Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
-                                             comment: "Copy subject action"),
-                           action: { onCopyOpenInMailText(node.message.subject) })
-                        .controlSize(.mini)
-                }
-                .buttonStyle(.borderless)
-            }
+            Text(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.manual_hint",
+                                   comment: "Open in Mail fallback guidance"))
         default:
             EmptyView()
         }
     }
 
+    private func copyControls(for node: ThreadNode) -> some View {
+        let messageID = node.message.messageID
+        let subject = node.message.subject
+        let mailboxValue = mailboxCopyValue(for: node)
+        return HStack(spacing: 8) {
+            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
+                                     comment: "Copy Message-ID action"),
+                   action: { handleCopyAction(messageID) })
+                .controlSize(.mini)
+                .disabled(messageID.isEmpty)
+            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
+                                     comment: "Copy subject action"),
+                   action: { handleCopyAction(subject) })
+                .controlSize(.mini)
+                .disabled(subject.isEmpty)
+            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_mailbox",
+                                     comment: "Copy mailbox path action"),
+                   action: { handleCopyAction(mailboxValue) })
+                .controlSize(.mini)
+                .disabled(mailboxValue.isEmpty)
+        }
+        .buttonStyle(InspectorCopyButtonStyle())
+    }
+
+    private func mailboxCopyValue(for node: ThreadNode) -> String {
+        let mailbox = node.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = node.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mailbox.isEmpty {
+            return account
+        }
+        if account.isEmpty {
+            return mailbox
+        }
+        return "\(account): \(mailbox)"
+    }
+
     private var snippetFormatter: SnippetFormatter {
         SnippetFormatter(lineLimit: inspectorSettings.snippetLineLimit,
                          stopPhrases: inspectorSettings.stopPhrases)
+    }
+
+    private func handleCopyAction(_ value: String) {
+        guard !value.isEmpty else { return }
+        onCopyOpenInMailText(value)
+        showCopyToast(message: NSLocalizedString("threadcanvas.inspector.copy_toast",
+                                                comment: "Toast text when inspector copy action succeeds"))
+    }
+
+    private func showCopyToast(message: String) {
+        copyToastMessage = message
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+            isCopyToastVisible = true
+        }
+        copyToastHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            withAnimation(.easeOut(duration: 0.2)) {
+                isCopyToastVisible = false
+            }
+        }
+        copyToastHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
+    @ViewBuilder
+    private var copyToast: some View {
+        if isCopyToastVisible {
+            Text(copyToastMessage)
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(copyToastBackground)
+                .clipShape(Capsule())
+                .shadow(color: Color.black.opacity(0.2), radius: 6, y: 3)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .accessibilityLabel(copyToastMessage)
+        }
+    }
+
+    private var copyToastBackground: some View {
+        let shape = Capsule()
+        if reduceTransparency {
+            return AnyView(shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.95))
+                .overlay(shape.stroke(Color.white.opacity(0.2))))
+        }
+        if isGlassInspectorEnabled {
+            return AnyView(shape.fill(Color.black.opacity(0.55))
+                .overlay(shape.stroke(Color.white.opacity(0.18))))
+        }
+        return AnyView(shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+            .overlay(shape.stroke(Color.black.opacity(0.1))))
     }
 }
 
@@ -289,6 +335,14 @@ private struct InspectorField: View {
             return reduceTransparency ? Color.secondary : Color.white.opacity(0.75)
         }
         return Color.secondary
+    }
+}
+
+private struct InspectorCopyButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 

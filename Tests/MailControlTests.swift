@@ -7,34 +7,61 @@ final class MailControlTests: XCTestCase {
         XCTAssertEqual(normalized, "test@example.com")
     }
 
-    func test_messageURL_whenBareMessageID_wrapsAndEncodes() throws {
-        let url = try MailControl.messageURL(for: "Test@Example.com")
-        let urlString = url.absoluteString
-        XCTAssertEqual(urlString, "message://%3Ctest@example.com%3E")
-    }
-
-    func test_messageSearchScript_whenGenerated_includesBracketedAndBareIDs() throws {
-        let script = try MailControl.messageSearchScript(for: "Test@Example.com", limit: 3)
-        XCTAssertTrue(script.contains("message id is \"<test@example.com>\""))
-        XCTAssertTrue(script.contains("message id is \"test@example.com\""))
-        XCTAssertTrue(script.contains("ignoring case"))
-        XCTAssertTrue(script.contains("repeat with m in (every message whose message id is _id1)"))
-        XCTAssertTrue(script.contains("greater than or equal to 3"))
-    }
-
     func test_cleanMessageIDPreservingCase_stripsBracketsAndWhitespace() {
         let cleaned = MailControl.cleanMessageIDPreservingCase("  <CaseSensitive@Host.COM> ")
         XCTAssertEqual(cleaned, "CaseSensitive@Host.COM")
     }
 
-    func test_openMessage_whenAppleScriptThrows_usesURLFallback() throws {
-        var openedURL: URL?
-        try MailControl.openMessage(messageID: "Test@Example.com",
-                                    openViaAppleScript: { _ in throw MailControlError.searchFailed },
-                                    openViaURL: { url in
-                                        openedURL = url
-                                        return true
-                                    })
-        XCTAssertEqual(openedURL?.absoluteString, "message://%3Ctest@example.com%3E")
+    func test_resolveTargetingPath_whenMessageIDOpens_returnsMessageID() throws {
+        let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
+                                                       sender: "a@example.com",
+                                                       date: Date(),
+                                                       mailbox: "Inbox",
+                                                       account: "iCloud")
+        var filteredFallbackCalled = false
+
+        let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
+                                                          metadata: metadata,
+                                                          openViaAppleScript: { _ in true },
+                                                          openViaFilteredFallback: { _ in
+                                                              filteredFallbackCalled = true
+                                                              return .notFound
+                                                          })
+
+        XCTAssertEqual(result, .openedMessageID)
+        XCTAssertFalse(filteredFallbackCalled)
+    }
+
+    func test_resolveTargetingPath_whenMessageIDFails_usesFilteredFallback() throws {
+        let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
+                                                       sender: "a@example.com",
+                                                       date: Date(),
+                                                       mailbox: "Inbox",
+                                                       account: "iCloud")
+        var failureNotified = false
+
+        let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
+                                                          metadata: metadata,
+                                                          openViaAppleScript: { _ in false },
+                                                          openViaFilteredFallback: { _ in .opened },
+                                                          onMessageIDFailure: { failureNotified = true })
+
+        XCTAssertEqual(result, .openedFilteredFallback)
+        XCTAssertTrue(failureNotified)
+    }
+
+    func test_resolveTargetingPath_whenNoMatch_returnsNotFound() throws {
+        let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
+                                                       sender: "a@example.com",
+                                                       date: Date(),
+                                                       mailbox: "",
+                                                       account: "")
+
+        let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
+                                                          metadata: metadata,
+                                                          openViaAppleScript: { _ in false },
+                                                          openViaFilteredFallback: { _ in .notFound })
+
+        XCTAssertEqual(result, .notFound)
     }
 }
