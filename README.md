@@ -100,10 +100,9 @@ sequenceDiagram
         VM->>Worker: subjectsByRoot()
         note over Worker,VM: Off main actor
         Worker-->>VM: subjectsByID
-        VM->>Worker: summarize(subjects)
-        note over Worker,VM: Summary on worker (not main)
-        Worker-->>VM: summary text/status
-        VM->>SummState: apply summary (MainActor)
+        note over UI,VM: Per-message and folder summaries happen on-demand\nwithin ThreadCanvasViewModel
+        VM->>Summary: summarizeEmail(request)
+        VM->>Summary: summarizeFolder(request)
     end
 
     rect rgb(235,245,255)
@@ -122,10 +121,9 @@ sequenceDiagram
         VM->>Worker: subjectsByRoot()
         note over Worker,VM: Off main actor
         Worker-->>VM: subjectsByID
-        VM->>Worker: summarize(subjects)
-        note over Worker,VM: Summary on worker
-        Worker-->>VM: summary text/status
-        VM->>SummState: apply summary (MainActor)
+        note over UI,VM: Per-message and folder summaries happen on-demand\nwithin ThreadCanvasViewModel
+        VM->>Summary: summarizeEmail(request)
+        VM->>Summary: summarizeFolder(request)
         VM->>VM: isRefreshing = false
     end
 ```
@@ -157,7 +155,8 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 ### Apple Intelligence Summaries
 - When compiled on macOS 15.2 or later with the Foundation Models framework present, the app automatically instantiates `FoundationModelsEmailSummaryProvider`.
 - Summaries are optional; if the model is unavailable, the UI falls back to status strings explaining what is required.
-- Keep subjects tidy—the summarizer currently limits itself to the 25 unique subject lines per thread to stay within token budgets.
+- The per-message and folder summaries are wired into the UI. The inbox subject-line digest (`summarize(subjects:)`) is implemented but not currently shown in the UI.
+- The inbox subject-line digest API is deprecated.
 
 ## TechDocs
 - See `TechDocs/index.md` for architecture, module map, data flow/concurrency notes, MailKit helper summary, and migration log.

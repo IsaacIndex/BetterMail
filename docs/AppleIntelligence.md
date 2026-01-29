@@ -4,7 +4,7 @@
 BetterMail uses Apple's Foundation Models (Apple Intelligence) to generate email summaries when the on-device model is available on macOS 15.2+.
 
 ## Where It Is Used
-- Inbox subject-line summary (digest)
+- Inbox subject-line summary (digest) (deprecated; not wired into the UI)
 - Single email summary (thread context aware)
 - Folder summary (rollup of per-message summaries)
 

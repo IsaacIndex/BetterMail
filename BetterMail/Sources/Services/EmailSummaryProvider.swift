@@ -21,6 +21,8 @@ internal enum EmailSummaryError: LocalizedError {
 }
 
 internal protocol EmailSummaryProviding {
+    /// Inbox subject-line digest. Currently not wired into the UI.
+    @available(*, deprecated, message: "Not wired into the UI. Use summarizeEmail(_:) or summarizeFolder(_:) instead.")
     func summarize(subjects: [String]) async throws -> String
     func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String
     func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String
@@ -82,7 +84,9 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
         self.model = model
     }
 
+    @available(*, deprecated, message: "Not wired into the UI. Use summarizeEmail(_:) or summarizeFolder(_:) instead.")
     internal func summarize(subjects: [String]) async throws -> String {
+        // NOTE: This digest path is not currently invoked by the UI.
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
