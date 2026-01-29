@@ -105,6 +105,10 @@ internal struct ThreadListView: View {
             if let selectedFolder = viewModel.selectedFolder {
                 ThreadFolderInspectorView(folder: selectedFolder,
                                           summaryState: viewModel.folderSummaryState(for: selectedFolder.id),
+                                          canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                                          onRegenerateSummary: {
+                                              viewModel.regenerateFolderSummary(for: selectedFolder.id)
+                                          },
                                           onPreview: { title, color in
                                               viewModel.previewFolderEdits(id: selectedFolder.id,
                                                                            title: title,
@@ -133,6 +137,10 @@ internal struct ThreadListView: View {
                                     summaryExpansion: selectedSummaryExpansion,
                                     inspectorSettings: inspectorSettings,
                                     openInMailState: viewModel.openInMailState,
+                                    canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                                    onRegenerateSummary: {
+                                        viewModel.regenerateNodeSummary(for: selectedNode.id)
+                                    },
                                     onOpenInMail: viewModel.openMessageInMail,
                                     onCopyOpenInMailText: viewModel.copyToPasteboard)
                     .frame(width: inspectorWidth)

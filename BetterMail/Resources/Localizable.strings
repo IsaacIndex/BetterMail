@@ -40,11 +40,13 @@
 "threadcanvas.inspector.open_in_mail.action.copy_mailbox" = "Copy Mailbox Path";
 "threadcanvas.inspector.copy_toast" = "Copied to clipboard";
 "threadcanvas.inspector.summary.title" = "Message summary";
+"threadcanvas.inspector.summary.regenerate" = "Regenerate message summary";
 "threadcanvas.folder.inspector.title" = "Folder";
 "threadcanvas.folder.inspector.name" = "Name";
 "threadcanvas.folder.inspector.color" = "Color";
 "threadcanvas.folder.inspector.summary" = "Summary";
 "threadcanvas.folder.inspector.summary.empty" = "No summary available yet.";
+"threadcanvas.folder.inspector.summary.regenerate" = "Regenerate folder summary";
 "threadcanvas.folder.inspector.preview" = "Preview";
 "threadcanvas.folder.inspector.cancel" = "Cancel";
 "threadcanvas.folder.inspector.save" = "Save";

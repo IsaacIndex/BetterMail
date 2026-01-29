@@ -4,6 +4,8 @@ import SwiftUI
 internal struct ThreadFolderInspectorView: View {
     internal let folder: ThreadFolder
     internal let summaryState: ThreadSummaryState?
+    internal let canRegenerateSummary: Bool
+    internal let onRegenerateSummary: (() -> Void)?
     internal let onPreview: (String, ThreadFolderColor) -> Void
     internal let onSave: (String, ThreadFolderColor) -> Void
 
@@ -18,10 +20,14 @@ internal struct ThreadFolderInspectorView: View {
 
     internal init(folder: ThreadFolder,
                   summaryState: ThreadSummaryState?,
+                  canRegenerateSummary: Bool,
+                  onRegenerateSummary: (() -> Void)?,
                   onPreview: @escaping (String, ThreadFolderColor) -> Void,
                   onSave: @escaping (String, ThreadFolderColor) -> Void) {
         self.folder = folder
         self.summaryState = summaryState
+        self.canRegenerateSummary = canRegenerateSummary
+        self.onRegenerateSummary = onRegenerateSummary
         self.onPreview = onPreview
         self.onSave = onSave
         let initialColor = Color(red: folder.color.red,
@@ -126,12 +132,32 @@ internal struct ThreadFolderInspectorView: View {
         let placeholder = NSLocalizedString("threadcanvas.folder.inspector.summary.empty",
                                             comment: "Placeholder when no folder summary is available")
         let displayText = summaryText.isEmpty ? (statusText.isEmpty ? placeholder : statusText) : summaryText
+        let isSummarizing = summaryState?.isSummarizing == true
 
         return VStack(alignment: .leading, spacing: 6) {
-            Text(NSLocalizedString("threadcanvas.folder.inspector.summary",
-                                   comment: "Folder summary label"))
-                .font(.caption)
-                .foregroundStyle(inspectorSecondaryForegroundStyle)
+            HStack(spacing: 8) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.summary",
+                                       comment: "Folder summary label"))
+                    .font(.caption)
+                    .foregroundStyle(inspectorSecondaryForegroundStyle)
+                if let onRegenerateSummary {
+                    Button(action: onRegenerateSummary) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .controlSize(.mini)
+                    .disabled(!canRegenerateSummary || isSummarizing)
+                    .accessibilityLabel(NSLocalizedString("threadcanvas.folder.inspector.summary.regenerate",
+                                                          comment: "Accessibility label for regenerating a folder summary"))
+                    .help(NSLocalizedString("threadcanvas.folder.inspector.summary.regenerate",
+                                            comment: "Help text for regenerating a folder summary"))
+                }
+                if isSummarizing {
+                    ProgressView().controlSize(.mini)
+                }
+                Spacer()
+            }
             TextEditor(text: .constant(displayText))
                 .font(.callout)
                 .frame(minHeight: 96)
