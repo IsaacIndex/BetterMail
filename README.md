@@ -78,6 +78,24 @@ To keep the Liquid Glass look without losing nav bar legibility, the glass conta
 - Sequence diagram (source at `openspec/changes/refactor-refresh-concurrency/refresh-flow.mmd`):
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'background': '#ffffff',
+  'primaryColor': '#e8eef7',
+  'secondaryColor': '#dce9d7',
+  'tertiaryColor': '#f1f3f5',
+  'primaryTextColor': '#111111',
+  'secondaryTextColor': '#111111',
+  'tertiaryTextColor': '#111111',
+  'lineColor': '#2b2b2b',
+  'noteBkgColor': '#fff3bf',
+  'noteTextColor': '#111111',
+  'actorBkg': '#f5f7fa',
+  'actorBorder': '#2b2b2b',
+  'actorTextColor': '#111111',
+  'activationBkgColor': '#e6f0ff',
+  'activationBorderColor': '#2b2b2b',
+  'sequenceNumberColor': '#111111'
+}}}%%
 sequenceDiagram
     autonumber
     participant UI as UI
