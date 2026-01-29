@@ -240,15 +240,12 @@ internal struct ThreadListView: View {
 
     @ViewBuilder
     private var viewModeToggle: some View {
-        let button = Button(action: { displaySettings.toggleViewMode() }) {
+        Toggle(isOn: viewModeToggleBinding) {
             Text(viewModeLabel)
                 .font(.caption)
         }
-        if #available(macOS 26, *) {
-            button.buttonStyle(.glass)
-        } else {
-            button.buttonStyle(.bordered)
-        }
+        .toggleStyle(.switch)
+        .tint(.green)
     }
 
     private var viewModeLabel: String {
@@ -258,6 +255,13 @@ internal struct ThreadListView: View {
         case .timeline:
             return NSLocalizedString("threadlist.viewmode.timeline", comment: "Timeline thread canvas view label")
         }
+    }
+
+    private var viewModeToggleBinding: Binding<Bool> {
+        Binding(
+            get: { displaySettings.viewMode == .timeline },
+            set: { displaySettings.viewMode = $0 ? .timeline : .default }
+        )
     }
 
     private var statusText: String {
