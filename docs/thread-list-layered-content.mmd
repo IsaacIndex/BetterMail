@@ -1,0 +1,24 @@
+flowchart LR
+  subgraph Inputs
+    layoutInputs["State + settings\n(viewModel, displaySettings, inspectorSettings)"]
+    navInputs["Nav layout\n(navHeight, navInsets, reduceTransparency)"]
+    selectionInputs["Selection state\n(selectedNode/Folder)"]
+  end
+
+  subgraph ZStack["layeredContent ZStack top"]
+    direction TB
+    selectionActionBar[selectionActionBar]
+    navigationBarOverlay[navigationBarOverlay]
+    inspectorOverlay[inspectorOverlay]
+    canvasContent[canvasContent]
+  end
+
+  layoutInputs --> canvasContent
+  layoutInputs --> inspectorOverlay
+
+  navInputs --> navigationBarOverlay
+  navInputs --> canvasContent
+  navInputs --> inspectorOverlay
+
+  selectionInputs --> inspectorOverlay
+  selectionInputs --> selectionActionBar
