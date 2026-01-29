@@ -17,6 +17,14 @@ This document describes the primary data flow and concurrency boundaries.
 3. Results are persisted by `MessageStore`.
 4. UI updates occur via `@MainActor` view models.
 
+## Re-GenAI Flow
+
+1. `BatchBackfillSettingsViewModel` invokes `SummaryRegenerationService`.
+2. `SummaryRegenerationService` (actor) paginates stored messages in the selected range.
+3. `EmailSummaryProviding` regenerates per-email summaries, and `MessageStore` persists cache updates.
+4. Folder summaries are refreshed after each batch.
+5. UI updates occur via `@MainActor` view models.
+
 ## Summary Flow
 
 1. `ThreadCanvasViewModel` builds summary inputs via `SnippetFormatter`.

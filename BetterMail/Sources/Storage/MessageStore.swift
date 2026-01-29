@@ -98,10 +98,70 @@ internal final class MessageStore {
     internal func fetchMessages(since date: Date?, limit: Int? = nil) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-            request.sortDescriptors = [NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false)]
+            request.sortDescriptors = [
+                NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+            ]
             if let date {
                 request.predicate = NSPredicate(format: "date >= %@", date as NSDate)
             }
+            if let limit { request.fetchLimit = limit }
+            let entities = try context.fetch(request)
+            return entities.compactMap { $0.toModel() }
+        }
+    }
+
+    internal func countMessages(in range: DateInterval, mailbox: String? = nil) async throws -> Int {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "date >= %@", range.start as NSDate),
+                NSPredicate(format: "date <= %@", range.end as NSDate)
+            ]
+            if let mailbox {
+                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+            }
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            return try context.count(for: request)
+        }
+    }
+
+    internal func fetchMessages(in range: DateInterval,
+                                mailbox: String? = nil,
+                                limit: Int? = nil,
+                                offset: Int = 0) async throws -> [EmailMessage] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            request.sortDescriptors = [
+                NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+            ]
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "date >= %@", range.start as NSDate),
+                NSPredicate(format: "date <= %@", range.end as NSDate)
+            ]
+            if let mailbox {
+                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+            }
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            if let limit {
+                request.fetchLimit = limit
+            }
+            request.fetchOffset = max(0, offset)
+            let entities = try context.fetch(request)
+            return entities.compactMap { $0.toModel() }
+        }
+    }
+
+    internal func fetchMessages(threadIDs: Set<String>, limit: Int? = nil) async throws -> [EmailMessage] {
+        guard !threadIDs.isEmpty else { return [] }
+        return try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            request.sortDescriptors = [
+                NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+            ]
+            request.predicate = NSPredicate(format: "threadID IN %@", Array(threadIDs))
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
             return entities.compactMap { $0.toModel() }

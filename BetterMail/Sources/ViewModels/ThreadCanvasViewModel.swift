@@ -553,7 +553,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 nodeSummaryTasks.removeValue(forKey: input.nodeID)
                 nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                  statusMessage: cachedStatusMessage(for: cachedEntry,
-                                                                                                    prefix: "Cached"),
+                                                                                                    prefix: "Updated"),
                                                                  isSummarizing: false)
                 continue
             }
@@ -767,7 +767,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 folderSummaryTasks.removeValue(forKey: input.folderID)
                 folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                      statusMessage: cachedStatusMessage(for: cachedEntry,
-                                                                                                        prefix: "Cached"),
+                                                                                                        prefix: "Updated"),
                                                                      isSummarizing: false)
                 continue
             }

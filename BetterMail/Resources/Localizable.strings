@@ -71,7 +71,11 @@
 "settings.backfill.start" = "Start date";
 "settings.backfill.end" = "End date";
 "settings.backfill.button" = "Start backfill";
+"settings.regenai.button" = "Start Re-GenAI";
 "settings.backfill.progress" = "Completed %d of %d (batch %d)";
+"settings.backfill.accessibility.progress" = "Backfill progress";
+"settings.regenai.accessibility.progress" = "Re-GenAI progress";
+"settings.regenai.accessibility.hint" = "Regenerate Apple Intelligence summaries for the selected range.";
 "settings.backfill.status.counting" = "Counting messages...";
 "settings.backfill.status.counted" = "Found %d messages to backfill.";
 "settings.backfill.status.running" = "Backfilling %d of %d (batch %d)";
@@ -79,6 +83,12 @@
 "settings.backfill.status.finished" = "Backfill complete: %d";
 "settings.backfill.status.error" = "Backfill failed: %@";
 "settings.backfill.status.empty" = "No messages found for the selected range.";
+"settings.regenai.status.counting" = "Counting messages to regenerate...";
+"settings.regenai.status.counted" = "Found %d messages to regenerate.";
+"settings.regenai.status.running" = "Regenerating %d of %d (batch %d)";
+"settings.regenai.status.finished" = "Re-GenAI complete: %d";
+"settings.regenai.status.error" = "Re-GenAI failed: %@";
+"settings.regenai.status.empty" = "No messages found for the selected range.";
 "settings.reset.title" = "Reset";
 "settings.reset.manual_grouping.button" = "Reset manual grouping";
 "settings.reset.manual_grouping.footer" = "Clears all manual thread groupings and attachments.";

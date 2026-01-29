@@ -198,9 +198,14 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
     }
 
     private static let instructions = """
-    You are an organized executive assistant reviewing an email inbox.
-    Provide short plain-language digests that help the user understand what to focus on.
-    Avoid bullet lists and instead write one or two compact sentences.
+    You are an executive assistant reviewing an email inbox.
+
+    Write a short, plain-language digest that tells the user what matters and what to focus on.
+    Respond with one or two compact sentences only.
+
+    Do not include introductions, confirmations, apologies, labels, or meta commentary.
+    Do not mention that you are summarizing or describing an email.
+    Write the digest directly, as final output.
     """
 
     private static func nodePrompt(subject: String,
@@ -220,6 +225,7 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
         Summarize this email in one or two concise sentences.
         Focus on what is new compared to the prior messages listed.
         Keep the tone professional and actionable.
+        Do not quote or repeat the email body; paraphrase and compress instead.
 
         Email subject:
         \(resolvedSubject)
@@ -255,6 +261,8 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
     You are an organized executive assistant reviewing an email.
     Write a concise summary of what this message adds or changes relative to the prior context.
     Avoid bullet lists; use one or two short sentences.
+    Do not copy the email text. Paraphrase and summarize instead.
+    Do not include direct quotes.
     """
 }
 
