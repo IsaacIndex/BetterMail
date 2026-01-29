@@ -58,6 +58,12 @@
 "settings.inspector.snippet_lines.value" = "%d lines";
 "settings.inspector.stop_words" = "Stop phrases";
 "settings.inspector.stop_words.footer" = "One phrase per line. Matching is case-insensitive.";
+"settings.canvas.title" = "Thread Canvas";
+"settings.canvas.zoom.current" = "Current zoom";
+"settings.canvas.zoom.detailed" = "Detailed threshold";
+"settings.canvas.zoom.compact" = "Compact threshold";
+"settings.canvas.zoom.minimal" = "Minimal threshold";
+"settings.canvas.zoom.footer" = "Adjust thresholds for detailed, compact, and minimal canvas readability.";
 "settings.backfill.title" = "Batch Backfill";
 "settings.backfill.footer" = "Fetches historical messages for the selected range without blocking the UI.";
 "settings.backfill.start" = "Start date";

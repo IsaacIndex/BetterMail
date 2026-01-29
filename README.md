@@ -4,6 +4,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
+- Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
 - Inspector "Open in Mail" uses AppleScript targeting (Message-ID plus filtered fallback search) without `message://` URLs.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.

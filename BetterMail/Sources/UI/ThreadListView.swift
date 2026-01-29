@@ -5,6 +5,7 @@ internal struct ThreadListView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
     @ObservedObject internal var settings: AutoRefreshSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var navHeight: CGFloat = 96
     @State private var isShowingBackfillConfirmation = false
@@ -92,6 +93,7 @@ internal struct ThreadListView: View {
 
     private var canvasContent: some View {
         ThreadCanvasView(viewModel: viewModel,
+                         displaySettings: displaySettings,
                          topInset: canvasTopPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, navHorizontalPadding)

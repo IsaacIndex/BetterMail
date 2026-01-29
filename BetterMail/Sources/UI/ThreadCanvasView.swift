@@ -1,8 +1,10 @@
 import AppKit
 import SwiftUI
+internal import os
 
 internal struct ThreadCanvasView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
+    @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     internal let topInset: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -32,7 +34,9 @@ internal struct ThreadCanvasView: View {
             let today = Date()
             let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
             let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
-            let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale)
+            let readabilityMode = displaySettings.readabilityMode(for: zoomScale)
+            let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
+                                                                     readabilityMode: readabilityMode)
             let headerStackHeight = chromeData.isEmpty
                 ? 0
                 : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
@@ -40,22 +44,31 @@ internal struct ThreadCanvasView: View {
 
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
-                    dayBands(layout: layout, metrics: metrics, rawZoom: zoomScale)
+                    dayBands(layout: layout,
+                             metrics: metrics,
+                             readabilityMode: readabilityMode)
                     folderColumnBackgroundLayer(chromeData: chromeData,
                                                  metrics: metrics,
                                                  headerHeight: headerStackHeight + headerSpacing)
-                    groupLegendLayer(layout: layout, metrics: metrics, rawZoom: zoomScale, calendar: calendar)
+                    groupLegendLayer(layout: layout,
+                                     metrics: metrics,
+                                     readabilityMode: readabilityMode,
+                                     calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout, metrics: metrics)
                     nodesLayer(layout: layout,
                                metrics: metrics,
                                chromeData: chromeData,
+                               readabilityMode: readabilityMode,
                                folderHeaderHeight: headerStackHeight + headerSpacing)
                     folderDropHighlightLayer(chromeData: chromeData,
                                              metrics: metrics,
                                              headerHeight: headerStackHeight + headerSpacing)
                     dragPreviewLayer()
-                    folderColumnHeaderLayer(chromeData: chromeData, metrics: metrics, rawZoom: zoomScale)
+                    folderColumnHeaderLayer(chromeData: chromeData,
+                                            metrics: metrics,
+                                            rawZoom: zoomScale,
+                                            readabilityMode: readabilityMode)
                         .offset(y: -(headerStackHeight + headerSpacing))
                     folderHeaderHitTargets(chromeData: chromeData, metrics: metrics)
                         .offset(y: -(headerStackHeight + headerSpacing))
@@ -122,12 +135,16 @@ internal struct ThreadCanvasView: View {
             }
             .onAppear {
                 accumulatedZoom = zoomScale
+                displaySettings.updateCurrentZoom(zoomScale)
                 viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
                                                 viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                 layout: layout,
                                                 metrics: metrics,
                                                 today: today,
                                                 calendar: calendar)
+            }
+            .onChange(of: zoomScale) { _, newValue in
+                displaySettings.updateCurrentZoom(newValue)
             }
             .onHover { isInside in
                 if !isInside {
@@ -161,7 +178,7 @@ internal struct ThreadCanvasView: View {
                 let clamped = clampedZoom(accumulatedZoom * value)
                 zoomScale = clamped
                 accumulatedZoom = clamped
-//                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
+                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
             }
     }
 
@@ -232,7 +249,8 @@ internal struct ThreadCanvasView: View {
 
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
                                          metrics: ThreadCanvasLayoutMetrics,
-                                         rawZoom: CGFloat) -> some View {
+                                         rawZoom: CGFloat,
+                                         readabilityMode: ThreadCanvasReadabilityMode) -> some View {
         ZStack(alignment: .topLeading) {
             let maxDepth = chromeData.map(\.depth).max() ?? 0
             ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
@@ -246,6 +264,7 @@ internal struct ThreadCanvasView: View {
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
+                                   readabilityMode: readabilityMode,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
                                    isSelected: viewModel.selectedFolderID == chrome.id)
                 .frame(width: headerFrame.width, alignment: .leading)
@@ -306,8 +325,10 @@ internal struct ThreadCanvasView: View {
     @ViewBuilder
     private func dayBands(layout: ThreadCanvasLayout,
                           metrics: ThreadCanvasLayoutMetrics,
-                          rawZoom: CGFloat) -> some View {
-        let labelMap = dayLabelMap(days: layout.days, rawZoom: rawZoom, calendar: calendar)
+                          readabilityMode: ThreadCanvasReadabilityMode) -> some View {
+        let labelMap = dayLabelMap(days: layout.days,
+                                   readabilityMode: readabilityMode,
+                                   calendar: calendar)
         ForEach(layout.days) { day in
             ThreadCanvasDayBand(day: day,
                                 metrics: metrics,
@@ -346,13 +367,14 @@ internal struct ThreadCanvasView: View {
     private func nodesLayer(layout: ThreadCanvasLayout,
                             metrics: ThreadCanvasLayoutMetrics,
                             chromeData: [FolderChromeData],
+                            readabilityMode: ThreadCanvasReadabilityMode,
                             folderHeaderHeight: CGFloat) -> some View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
                 ThreadCanvasNodeView(node: node,
                                      isSelected: viewModel.selectedNodeIDs.contains(node.id),
                                      fontScale: metrics.fontScale,
-                                     rawZoom: zoomScale)
+                                     readabilityMode: readabilityMode)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .gesture(
@@ -511,9 +533,9 @@ internal struct ThreadCanvasView: View {
     }
 
     private func dayLabelMap(days: [ThreadCanvasDay],
-                             rawZoom: CGFloat,
+                             readabilityMode: ThreadCanvasReadabilityMode,
                              calendar: Calendar) -> [Int: String?] {
-        if dayLabelMode(rawZoom: rawZoom) == nil {
+        if dayLabelMode(readabilityMode: readabilityMode) == nil {
             return days.reduce(into: [:]) { result, day in
                 result[day.id] = day.label
             }
@@ -523,15 +545,15 @@ internal struct ThreadCanvasView: View {
         }
     }
 
-    private func dayLabelMode(rawZoom: CGFloat) -> DayLabelMode? {
-        let rawFontSize = 11 * rawZoom
-        if rawFontSize >= ThreadCanvasNodeView.textEllipsisPointSize {
+    private func dayLabelMode(readabilityMode: ThreadCanvasReadabilityMode) -> DayLabelMode? {
+        switch readabilityMode {
+        case .detailed:
             return nil
-        }
-        if rawZoom >= 0.179 {
+        case .compact:
             return .month
+        case .minimal:
+            return .year
         }
-        return .year
     }
 
     private struct FolderHeaderMetrics {
@@ -541,9 +563,11 @@ internal struct ThreadCanvasView: View {
     }
 
     private func folderHeaderMetrics(metrics: ThreadCanvasLayoutMetrics,
-                                     rawZoom: CGFloat) -> FolderHeaderMetrics {
+                                     rawZoom: CGFloat,
+                                     readabilityMode: ThreadCanvasReadabilityMode) -> FolderHeaderMetrics {
         let sizeScale = FolderHeaderLayout.sizeScale(rawZoom: rawZoom)
-        let height = FolderHeaderLayout.headerHeight(rawZoom: rawZoom)
+        let height = FolderHeaderLayout.headerHeight(rawZoom: rawZoom,
+                                                     readabilityMode: readabilityMode)
         let indent = max(16 * metrics.fontScale, metrics.nodeHorizontalInset)
         let spacing = headerSpacing * sizeScale
         return FolderHeaderMetrics(height: height, indent: indent, spacing: spacing)
@@ -564,7 +588,9 @@ internal struct ThreadCanvasView: View {
                                   metrics: ThreadCanvasLayoutMetrics,
                                   rawZoom: CGFloat) -> [FolderChromeData] {
         let columnsByID = Dictionary(uniqueKeysWithValues: layout.columns.map { ($0.id, $0) })
-        let headerMetrics = folderHeaderMetrics(metrics: metrics, rawZoom: rawZoom)
+        let headerMetrics = folderHeaderMetrics(metrics: metrics,
+                                                rawZoom: rawZoom,
+                                                readabilityMode: displaySettings.readabilityMode(for: rawZoom))
         return layout.folderOverlays.compactMap { overlay in
             let columns = overlay.columnIDs.compactMap { columnsByID[$0] }
             guard !columns.isEmpty else { return nil }
@@ -623,9 +649,9 @@ internal struct ThreadCanvasView: View {
     @ViewBuilder
     private func groupLegendLayer(layout: ThreadCanvasLayout,
                                   metrics: ThreadCanvasLayoutMetrics,
-                                  rawZoom: CGFloat,
+                                  readabilityMode: ThreadCanvasReadabilityMode,
                                   calendar: Calendar) -> some View {
-        if let mode = dayLabelMode(rawZoom: rawZoom) {
+        if let mode = dayLabelMode(readabilityMode: readabilityMode) {
             let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
             let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
             ZStack(alignment: .topLeading) {
@@ -811,11 +837,14 @@ private struct FolderHeaderLayout {
         rawZoom.clamped(to: 0.6...1.25)
     }
 
-    static func headerHeight(rawZoom: CGFloat) -> CGFloat {
+    static func headerHeight(rawZoom: CGFloat,
+                             readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
         let scale = sizeScale(rawZoom: rawZoom)
-        let titleLines = lineCount(baseSize: titleBaseSize, lineLimit: titleLineLimit, rawZoom: rawZoom)
-        let summaryLines = lineCount(baseSize: summaryBaseSize, lineLimit: summaryLineLimit, rawZoom: rawZoom)
-        let footerHeight = footerRowHeight(rawZoom: rawZoom, sizeScale: scale)
+        let titleLines = lineCount(lineLimit: titleLineLimit,
+                                   readabilityMode: readabilityMode)
+        let summaryLines = lineCount(lineLimit: summaryLineLimit,
+                                     readabilityMode: readabilityMode)
+        let footerHeight = footerRowHeight(sizeScale: scale, readabilityMode: readabilityMode)
 
         let titleHeight = lineHeight(baseSize: titleBaseSize, sizeScale: scale) * CGFloat(titleLines)
         let summaryHeight = lineHeight(baseSize: summaryBaseSize, sizeScale: scale) * CGFloat(summaryLines)
@@ -831,8 +860,9 @@ private struct FolderHeaderLayout {
         return font.ascender - font.descender + font.leading
     }
 
-    static func lineCount(baseSize: CGFloat, lineLimit: Int, rawZoom: CGFloat) -> Int {
-        switch textVisibility(baseSize: baseSize, rawZoom: rawZoom) {
+    static func lineCount(lineLimit: Int,
+                          readabilityMode: ThreadCanvasReadabilityMode) -> Int {
+        switch textVisibility(readabilityMode: readabilityMode) {
         case .normal:
             return lineLimit
         case .ellipsis:
@@ -842,8 +872,9 @@ private struct FolderHeaderLayout {
         }
     }
 
-    static func footerRowHeight(rawZoom: CGFloat, sizeScale: CGFloat) -> CGFloat {
-        let visibility = textVisibility(baseSize: footerBaseSize, rawZoom: rawZoom)
+    static func footerRowHeight(sizeScale: CGFloat,
+                                readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        let visibility = textVisibility(readabilityMode: readabilityMode)
         let lineHeight = lineHeight(baseSize: footerBaseSize, sizeScale: sizeScale)
 
         switch visibility {
@@ -858,15 +889,15 @@ private struct FolderHeaderLayout {
         }
     }
 
-    static func textVisibility(baseSize: CGFloat, rawZoom: CGFloat) -> TextVisibility {
-        let rawSize = baseSize * rawZoom
-        if rawSize < ThreadCanvasNodeView.textHidePointSize {
+    static func textVisibility(readabilityMode: ThreadCanvasReadabilityMode) -> TextVisibility {
+        switch readabilityMode {
+        case .detailed:
+            return .normal
+        case .compact:
+            return .ellipsis
+        case .minimal:
             return .hidden
         }
-        if rawSize < ThreadCanvasNodeView.textEllipsisPointSize {
-            return .ellipsis
-        }
-        return .normal
     }
 }
 
@@ -878,6 +909,7 @@ private struct FolderColumnHeader: View {
     let accentColor: Color
     let reduceTransparency: Bool
     let rawZoom: CGFloat
+    let readabilityMode: ThreadCanvasReadabilityMode
     let cornerRadius: CGFloat
     let isSelected: Bool
 
@@ -916,9 +948,9 @@ private struct FolderColumnHeader: View {
     }
 
     var body: some View {
-        let titleVisibility = textVisibility(for: FolderHeaderLayout.titleBaseSize)
-        let summaryVisibility = textVisibility(for: FolderHeaderLayout.summaryBaseSize)
-        let footerVisibility = textVisibility(for: FolderHeaderLayout.footerBaseSize)
+        let titleVisibility = textVisibility()
+        let summaryVisibility = textVisibility()
+        let footerVisibility = textVisibility()
 
         VStack(alignment: .leading, spacing: FolderHeaderLayout.lineSpacing * sizeScale) {
             if titleVisibility != .hidden {
@@ -948,7 +980,9 @@ private struct FolderColumnHeader: View {
         }
         .padding(.horizontal, 12 * sizeScale)
         .padding(.vertical, FolderHeaderLayout.verticalPadding * sizeScale)
-        .frame(height: FolderHeaderLayout.headerHeight(rawZoom: rawZoom), alignment: .leading)
+        .frame(height: FolderHeaderLayout.headerHeight(rawZoom: rawZoom,
+                                                       readabilityMode: readabilityMode),
+               alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .overlay(selectionOverlay)
@@ -972,7 +1006,7 @@ private struct FolderColumnHeader: View {
                           weight: Font.Weight,
                           color: Color,
                           allowWrap: Bool = false) -> some View {
-        switch textVisibility(for: baseSize) {
+        switch textVisibility() {
         case .normal:
             Text(text)
                 .font(.system(size: baseSize * sizeScale, weight: weight))
@@ -992,7 +1026,7 @@ private struct FolderColumnHeader: View {
 
     @ViewBuilder
     private func summaryLine(_ text: String) -> some View {
-        switch textVisibility(for: FolderHeaderLayout.summaryBaseSize) {
+        switch textVisibility() {
         case .normal:
             summaryText(text)
                 .font(.system(size: FolderHeaderLayout.summaryBaseSize * sizeScale, weight: .regular))
@@ -1024,7 +1058,7 @@ private struct FolderColumnHeader: View {
 
     @ViewBuilder
     private func badge(unread: Int) -> some View {
-        switch textVisibility(for: FolderHeaderLayout.footerBaseSize) {
+        switch textVisibility() {
         case .hidden:
             EmptyView()
         case .ellipsis:
@@ -1046,8 +1080,8 @@ private struct FolderColumnHeader: View {
         }
     }
 
-    private func textVisibility(for baseSize: CGFloat) -> TextVisibility {
-        FolderHeaderLayout.textVisibility(baseSize: baseSize, rawZoom: rawZoom)
+    private func textVisibility() -> TextVisibility {
+        FolderHeaderLayout.textVisibility(readabilityMode: readabilityMode)
     }
 
     @ViewBuilder
@@ -1285,13 +1319,10 @@ private struct ConnectorSegment: Identifiable {
 }
 
 private struct ThreadCanvasNodeView: View {
-    static let textEllipsisPointSize: CGFloat = 10
-    static let textHidePointSize: CGFloat = 7
-
     let node: ThreadCanvasNode
     let isSelected: Bool
     let fontScale: CGFloat
-    let rawZoom: CGFloat
+    let readabilityMode: ThreadCanvasReadabilityMode
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -1308,12 +1339,18 @@ private struct ThreadCanvasNodeView: View {
             textLine(subjectText,
                      baseSize: 13,
                      weight: node.message.isUnread ? .semibold : .regular,
-                     color: primaryTextColor)
-            textLine(node.message.from, baseSize: 11, weight: .regular, color: secondaryTextColor)
+                     color: primaryTextColor,
+                     isTitleLine: true)
+            textLine(node.message.from,
+                     baseSize: 11,
+                     weight: .regular,
+                     color: secondaryTextColor,
+                     isTitleLine: false)
             textLine(Self.timeFormatter.string(from: node.message.date),
                      baseSize: 11,
                      weight: .regular,
-                     color: secondaryTextColor)
+                     color: secondaryTextColor,
+                     isTitleLine: false)
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -1395,8 +1432,9 @@ private struct ThreadCanvasNodeView: View {
     private func textLine(_ text: String,
                           baseSize: CGFloat,
                           weight: Font.Weight,
-                          color: Color) -> some View {
-        switch textVisibility(for: baseSize) {
+                          color: Color,
+                          isTitleLine: Bool) -> some View {
+        switch nodeTextVisibility(readabilityMode: readabilityMode, isTitleLine: isTitleLine) {
         case .normal:
             Text(text)
                 .font(.system(size: baseSize * fontScale, weight: weight))
@@ -1410,17 +1448,6 @@ private struct ThreadCanvasNodeView: View {
         case .hidden:
             EmptyView()
         }
-    }
-
-    private func textVisibility(for baseSize: CGFloat) -> TextVisibility {
-        let rawSize = baseSize * rawZoom
-        if rawSize < Self.textHidePointSize {
-            return .hidden
-        }
-        if rawSize < Self.textEllipsisPointSize {
-            return .ellipsis
-        }
-        return .normal
     }
 }
 
@@ -1457,7 +1484,19 @@ private struct ThreadDragPreview: View {
     }
 }
 
-private enum TextVisibility {
+internal func nodeTextVisibility(readabilityMode: ThreadCanvasReadabilityMode,
+                                 isTitleLine: Bool) -> TextVisibility {
+    switch readabilityMode {
+    case .detailed:
+        return .normal
+    case .compact:
+        return isTitleLine ? .normal : .hidden
+    case .minimal:
+        return .hidden
+    }
+}
+
+internal enum TextVisibility {
     case normal
     case ellipsis
     case hidden

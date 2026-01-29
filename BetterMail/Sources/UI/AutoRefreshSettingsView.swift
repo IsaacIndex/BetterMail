@@ -4,12 +4,16 @@ import SwiftUI
 internal struct AutoRefreshSettingsView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @StateObject private var backfillViewModel: BatchBackfillSettingsViewModel
     @State private var isResetConfirmationPresented = false
 
-    internal init(settings: AutoRefreshSettings, inspectorSettings: InspectorViewSettings) {
+    internal init(settings: AutoRefreshSettings,
+                  inspectorSettings: InspectorViewSettings,
+                  displaySettings: ThreadCanvasDisplaySettings) {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
+        self.displaySettings = displaySettings
         _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
             snippetLineLimitProvider: { inspectorSettings.snippetLineLimit }
         ))
@@ -70,6 +74,56 @@ internal struct AutoRefreshSettingsView: View {
                 Text(NSLocalizedString("settings.inspector.title", comment: "Header for inspector settings section"))
             } footer: {
                 Text(NSLocalizedString("settings.inspector.stop_words.footer", comment: "Footer describing stop words behavior"))
+            }
+
+            Section {
+                LabeledContent(NSLocalizedString("settings.canvas.zoom.current", comment: "Label for current thread canvas zoom")) {
+                    Text(displaySettings.currentZoom, format: .number.precision(.fractionLength(3)))
+                        .monospacedDigit()
+                }
+
+                LabeledContent(NSLocalizedString("settings.canvas.zoom.detailed", comment: "Label for detailed zoom threshold")) {
+                    Stepper(
+                        value: detailedThresholdBinding,
+                        in: Double(ThreadCanvasLayoutMetrics.minZoom)...Double(ThreadCanvasLayoutMetrics.maxZoom),
+                        step: 0.05
+                    ) {
+                        Text(detailedThresholdBinding.wrappedValue,
+                             format: .number.precision(.fractionLength(2)))
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                }
+
+                LabeledContent(NSLocalizedString("settings.canvas.zoom.compact", comment: "Label for compact zoom threshold")) {
+                    Stepper(
+                        value: compactThresholdBinding,
+                        in: Double(ThreadCanvasLayoutMetrics.minZoom)...Double(ThreadCanvasLayoutMetrics.maxZoom),
+                        step: 0.05
+                    ) {
+                        Text(compactThresholdBinding.wrappedValue,
+                             format: .number.precision(.fractionLength(2)))
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                }
+
+                LabeledContent(NSLocalizedString("settings.canvas.zoom.minimal", comment: "Label for minimal zoom threshold")) {
+                    Stepper(
+                        value: minimalThresholdBinding,
+                        in: Double(ThreadCanvasLayoutMetrics.minZoom)...Double(ThreadCanvasLayoutMetrics.maxZoom),
+                        step: 0.05
+                    ) {
+                        Text(minimalThresholdBinding.wrappedValue,
+                             format: .number.precision(.fractionLength(2)))
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                }
+            } header: {
+                Text(NSLocalizedString("settings.canvas.title", comment: "Header for thread canvas settings section"))
+            } footer: {
+                Text(NSLocalizedString("settings.canvas.zoom.footer", comment: "Footer describing thread canvas zoom thresholds"))
             }
 
             Section {
@@ -166,6 +220,27 @@ internal struct AutoRefreshSettingsView: View {
         Binding(
             get: { inspectorSettings.snippetLineLimit },
             set: { inspectorSettings.snippetLineLimit = $0 }
+        )
+    }
+
+    private var detailedThresholdBinding: Binding<Double> {
+        Binding(
+            get: { Double(displaySettings.detailedThreshold) },
+            set: { displaySettings.detailedThreshold = CGFloat($0) }
+        )
+    }
+
+    private var compactThresholdBinding: Binding<Double> {
+        Binding(
+            get: { Double(displaySettings.compactThreshold) },
+            set: { displaySettings.compactThreshold = CGFloat($0) }
+        )
+    }
+
+    private var minimalThresholdBinding: Binding<Double> {
+        Binding(
+            get: { Double(displaySettings.minimalThreshold) },
+            set: { displaySettings.minimalThreshold = CGFloat($0) }
         )
     }
 

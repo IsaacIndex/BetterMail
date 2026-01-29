@@ -32,7 +32,7 @@ This map lists the main modules and their responsibilities.
 - `AppleScriptRunner`: AppleScript execution helpers.
 
 ## Settings
-- `AutoRefreshSettings`, `InspectorViewSettings`, `BatchBackfillSettingsViewModel`.
+- `AutoRefreshSettings`, `InspectorViewSettings`, `ThreadCanvasDisplaySettings`, `BatchBackfillSettingsViewModel`.
 
 ## MailHelperExtension
 - `MailExtension` plus `ContentBlocker`, `MessageActionHandler`, `ComposeSessionHandler`, `MessageSecurityHandler`.
