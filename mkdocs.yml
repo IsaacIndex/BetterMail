@@ -11,5 +11,8 @@ nav:
   - Module Map: ModuleMap.md
   - Data Flow and Concurrency: DataFlow.md
   - MailKit Helper Summary: MailKitHelper.md
+  - UI:
+      - Thread Canvas ZStack: thread-canvas-zstack-components.md
+      - Thread List layeredContent: thread-list-layered-content.md
   - Refactor Audit: RefactorAudit.md
   - Migration Log: MigrationLog.md
