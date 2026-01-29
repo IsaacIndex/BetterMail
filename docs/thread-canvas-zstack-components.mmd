@@ -1,0 +1,45 @@
+flowchart LR
+  %% Consolidated inputs to reduce visual clutter
+  subgraph Inputs
+    layoutInputs["Layout inputs\n(layout + metrics + readabilityMode)"]
+    chromeInputs["Chrome inputs\n(chromeData + headerStackHeight)"]
+  end
+
+  subgraph Interaction
+    dragState[dragState]
+    activeDropFolderID[activeDropFolderID]
+  end
+
+  %% ZStack order: top (front) to bottom (back)
+  subgraph ZStack["ThreadCanvasView ZStack topLeading"]
+    direction TB
+    folderHeaderHitTargets[folderHeaderHitTargets]
+    folderColumnHeaderLayer[folderColumnHeaderLayer]
+    dragPreviewLayer[dragPreviewLayer]
+    folderDropHighlightLayer[folderDropHighlightLayer]
+    nodesLayer[nodesLayer]
+    connectorLayer[connectorLayer]
+    columnDividers[columnDividers]
+    groupLegendLayer[groupLegendLayer]
+    folderColumnBackgroundLayer[folderColumnBackgroundLayer]
+    dayBands[dayBands]
+  end
+
+  %% Inputs -> layers (grouped)
+  layoutInputs --> dayBands
+  layoutInputs --> groupLegendLayer
+  layoutInputs --> columnDividers
+  layoutInputs --> connectorLayer
+  layoutInputs --> nodesLayer
+
+  chromeInputs --> folderColumnBackgroundLayer
+  chromeInputs --> nodesLayer
+  chromeInputs --> folderDropHighlightLayer
+  chromeInputs --> folderColumnHeaderLayer
+  chromeInputs --> folderHeaderHitTargets
+
+  %% Interaction wiring
+  nodesLayer --> dragState
+  nodesLayer --> activeDropFolderID
+  dragState --> dragPreviewLayer
+  activeDropFolderID --> folderDropHighlightLayer

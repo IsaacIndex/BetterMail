@@ -1,0 +1,124 @@
+# ThreadCanvasView ZStack Components
+
+Source: `BetterMail/Sources/UI/ThreadCanvasView.swift`
+
+## Overview
+`ThreadCanvasView` builds a scrollable canvas and draws its content inside a `ZStack(alignment: .topLeading)`.
+The order of views in the ZStack defines the visual stacking (earlier = further back, later = on top).
+
+ZStack draw order (back to front):
+1) `dayBands`
+2) `folderColumnBackgroundLayer`
+3) `groupLegendLayer`
+4) `columnDividers`
+5) `connectorLayer`
+6) `nodesLayer`
+7) `folderDropHighlightLayer`
+8) `dragPreviewLayer`
+9) `folderColumnHeaderLayer` (offset upward by header stack height)
+10) `folderHeaderHitTargets` (offset upward by header stack height)
+
+## Component Details
+
+### 1) dayBands
+- Role: Paints alternating day rows plus optional day labels.
+- Key inputs: `layout.days`, `metrics`, `readabilityMode`.
+- Notes: This is the primary background grid for time-based alignment.
+
+### 2) folderColumnBackgroundLayer
+- Role: Draws the large rounded background for each folder column group (visual column chrome).
+- Key inputs: `chromeData`, `metrics`, `headerHeight`.
+- Notes: Extends upward to visually connect to folder headers; width expands based on folder depth.
+
+### 3) groupLegendLayer
+- Role: Draws month/year grouping guides and rotated labels when readability mode is compact/minimal.
+- Key inputs: `layout.days`, `metrics`, `readabilityMode`, `calendar`.
+- Notes: Suppressed in detailed mode.
+
+### 4) columnDividers
+- Role: Vertical divider lines that separate columns.
+- Key inputs: `layout.columns`, `metrics`.
+- Notes: Uses a subtle translucent line color; spans full content height.
+
+### 5) connectorLayer
+- Role: Renders JWZ and manual connector lanes linking related nodes within each column.
+- Key inputs: `layout.columns`, `metrics`, `zoomScale` (for visual emphasis), selection state.
+- Notes: Uses `ThreadCanvasConnectorColumn` per column; highlights if any node is selected.
+
+### 6) nodesLayer
+- Role: Draws every message node and wires up selection + drag gesture handling.
+- Key inputs: `layout.columns`, `metrics`, `chromeData`, `readabilityMode`, `folderHeaderHeight`.
+- Notes: Drag gesture updates `dragState` and `activeDropFolderID`; tap selects nodes.
+
+### 7) folderDropHighlightLayer
+- Role: Renders the pulsing drop target outline when dragging across folder columns.
+- Key inputs: `chromeData`, `metrics`, `headerHeight`, `activeDropFolderID`.
+- Notes: Hit-testing disabled so it does not block interactions.
+
+### 8) dragPreviewLayer
+- Role: Shows a floating preview of the dragged thread/group.
+- Key inputs: `dragState`, `dragPreviewOpacity`, `dragPreviewScale`.
+- Notes: Positioned at the cursor location and does not accept hit tests.
+
+### 9) folderColumnHeaderLayer
+- Role: Draws the visual folder headers (title, summary, unread count, timestamps).
+- Key inputs: `chromeData`, `metrics`, `rawZoom`, `readabilityMode`, selection state.
+- Notes: Offset upward to sit above the day bands; hit testing disabled so clicks pass through.
+
+### 10) folderHeaderHitTargets
+- Role: Invisible buttons aligned with headers to handle folder selection.
+- Key inputs: `chromeData`, `metrics`, `viewModel.selectedFolderID`.
+- Notes: Offset upward to align with rendered headers; uses accessibility labels.
+
+## Interaction Relationships
+- `nodesLayer` drives drag state updates, which feed `dragPreviewLayer` and `folderDropHighlightLayer`.
+- `folderColumnHeaderLayer` is purely visual; `folderHeaderHitTargets` handles interaction.
+- `folderColumnBackgroundLayer` and `folderDropHighlightLayer` both expand to include header space so they stay visually connected to headers.
+
+## Diagram (Mermaid)
+```mermaid
+flowchart LR
+  %% Consolidated inputs to reduce visual clutter
+  subgraph Inputs
+    layoutInputs["Layout inputs\n(layout + metrics + readabilityMode)"]
+    chromeInputs["Chrome inputs\n(chromeData + headerStackHeight)"]
+  end
+
+  subgraph Interaction
+    dragState[dragState]
+    activeDropFolderID[activeDropFolderID]
+  end
+
+  %% ZStack order: top (front) to bottom (back)
+  subgraph ZStack["ThreadCanvasView ZStack topLeading"]
+    direction TB
+    folderHeaderHitTargets[folderHeaderHitTargets]
+    folderColumnHeaderLayer[folderColumnHeaderLayer]
+    dragPreviewLayer[dragPreviewLayer]
+    folderDropHighlightLayer[folderDropHighlightLayer]
+    nodesLayer[nodesLayer]
+    connectorLayer[connectorLayer]
+    columnDividers[columnDividers]
+    groupLegendLayer[groupLegendLayer]
+    folderColumnBackgroundLayer[folderColumnBackgroundLayer]
+    dayBands[dayBands]
+  end
+
+  %% Inputs -> layers (grouped)
+  layoutInputs --> dayBands
+  layoutInputs --> groupLegendLayer
+  layoutInputs --> columnDividers
+  layoutInputs --> connectorLayer
+  layoutInputs --> nodesLayer
+
+  chromeInputs --> folderColumnBackgroundLayer
+  chromeInputs --> nodesLayer
+  chromeInputs --> folderDropHighlightLayer
+  chromeInputs --> folderColumnHeaderLayer
+  chromeInputs --> folderHeaderHitTargets
+
+  %% Interaction wiring
+  nodesLayer --> dragState
+  nodesLayer --> activeDropFolderID
+  dragState --> dragPreviewLayer
+  activeDropFolderID --> folderDropHighlightLayer
