@@ -238,6 +238,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
     @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
     @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
+    @Published internal private(set) var timelineTagsByNodeID: [String: [String]] = [:]
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
     @Published internal var fetchLimit: Int = 10 {
@@ -256,6 +257,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let summaryProvider: EmailSummaryProviding?
     private let summaryProviderID: String
     private let summaryAvailabilityMessage: String
+    private let tagProvider: EmailTagProviding?
+    private let tagProviderID: String
+    private let tagAvailabilityMessage: String
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
     private let worker: SidebarBackgroundWorker
@@ -263,6 +267,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var autoRefreshTask: Task<Void, Never>?
     private var nodeSummaryTasks: [String: Task<Void, Never>] = [:]
     private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
+    private var timelineTagTasks: [String: Task<Void, Never>] = [:]
     private var nodeSummaryRefreshGeneration = 0
     private let folderSummaryDebounceInterval: TimeInterval
     private var cancellables = Set<AnyCancellable>()
@@ -277,6 +282,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
                   summaryCapability: EmailSummaryCapability? = nil,
+                  tagCapability: EmailTagCapability? = nil,
                   folderSummaryDebounceInterval: TimeInterval = 30) {
         self.store = store
         self.client = client
@@ -288,6 +294,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.summaryProvider = capability.provider
         self.summaryProviderID = capability.providerID
         self.summaryAvailabilityMessage = capability.statusMessage
+        let tagCapability = tagCapability ?? EmailTagProviderFactory.makeCapability()
+        self.tagProvider = tagCapability.provider
+        self.tagProviderID = tagCapability.providerID
+        self.tagAvailabilityMessage = tagCapability.statusMessage
         self.worker = SidebarBackgroundWorker(client: client,
                                               store: store,
                                               threader: threader)
@@ -304,6 +314,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         autoRefreshTask?.cancel()
         nodeSummaryTasks.values.forEach { $0.cancel() }
         folderSummaryTasks.values.forEach { $0.cancel() }
+        timelineTagTasks.values.forEach { $0.cancel() }
     }
 
     internal func start() {
@@ -1359,6 +1370,46 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         threadFolders.first { $0.id == selectedFolderID }
     }
 
+    internal func timelineNodes(today: Date = Date(),
+                                calendar: Calendar = .current) -> [ThreadNode] {
+        Self.timelineNodes(for: roots,
+                           dayWindowCount: dayWindowCount,
+                           today: today,
+                           calendar: calendar)
+    }
+
+    internal func timelineTags(for nodeID: String) -> [String] {
+        timelineTagsByNodeID[nodeID] ?? []
+    }
+
+    internal func requestTimelineTagsIfNeeded(for node: ThreadNode) {
+        guard timelineTagsByNodeID[node.id] == nil else { return }
+        guard timelineTagTasks[node.id] == nil else { return }
+        guard let tagProvider else { return }
+
+        let request = EmailTagRequest(subject: node.message.subject,
+                                      from: node.message.from,
+                                      snippet: node.message.snippet)
+        guard request.hasContent else { return }
+
+        timelineTagTasks[node.id] = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let tags = try await tagProvider.generateTags(request)
+                await MainActor.run {
+                    self.timelineTagsByNodeID[node.id] = tags
+                }
+            } catch {
+                await MainActor.run {
+                    self.timelineTagsByNodeID[node.id] = []
+                }
+            }
+            await MainActor.run {
+                self.timelineTagTasks[node.id] = nil
+            }
+        }
+    }
+
     internal func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
                                today: Date = Date(),
                                calendar: Calendar = .current) -> ThreadCanvasLayout {
@@ -1903,6 +1954,27 @@ extension ThreadCanvasViewModel {
                                   columns: columns,
                                   contentSize: CGSize(width: totalWidth, height: totalHeight),
                                   folderOverlays: folderOverlays)
+    }
+
+    internal static func timelineNodes(for roots: [ThreadNode],
+                                       dayWindowCount: Int,
+                                       today: Date = Date(),
+                                       calendar: Calendar = .current) -> [ThreadNode] {
+        let clampedDayCount = max(dayWindowCount, 1)
+        let allNodes = flatten(nodes: roots)
+        let filtered = allNodes.filter { node in
+            ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                            today: today,
+                                            calendar: calendar,
+                                            dayCount: clampedDayCount) != nil
+        }
+
+        return filtered.sorted { lhs, rhs in
+            if lhs.message.date == rhs.message.date {
+                return lhs.message.messageID > rhs.message.messageID
+            }
+            return lhs.message.date > rhs.message.date
+        }
     }
 
     internal static func node(matching id: String?, in roots: [ThreadNode]) -> ThreadNode? {

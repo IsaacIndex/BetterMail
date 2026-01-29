@@ -95,7 +95,7 @@ internal struct ThreadListView: View {
         ThreadCanvasView(viewModel: viewModel,
                          displaySettings: displaySettings,
                          topInset: canvasTopPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, navHorizontalPadding)
     }
 

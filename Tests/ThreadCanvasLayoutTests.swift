@@ -477,4 +477,121 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(update?.remainingFolders.contains(where: { $0.id == parentFolder.id }), true)
         XCTAssertEqual(update?.membership["thread-child"], childFolder.id)
     }
+
+    func testTimelineNodesOrderedWithinVisibleWindow() {
+        let calendar = Calendar(identifier: .gregorian)
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2025
+        components.month = 3
+        components.day = 8
+        components.hour = 9
+        let today = calendar.date(from: components)!
+
+        let newestMessage = EmailMessage(messageID: "newest",
+                                         mailboxID: "inbox",
+                                         accountName: "",
+                                         subject: "Newest",
+                                         from: "a@example.com",
+                                         to: "me@example.com",
+                                         date: calendar.date(byAdding: .hour, value: 1, to: today)!,
+                                         snippet: "",
+                                         isUnread: false,
+                                         inReplyTo: nil,
+                                         references: [])
+        let olderMessage = EmailMessage(messageID: "older",
+                                        mailboxID: "inbox",
+                                        accountName: "",
+                                        subject: "Older",
+                                        from: "b@example.com",
+                                        to: "me@example.com",
+                                        date: calendar.date(byAdding: .day, value: -1, to: today)!,
+                                        snippet: "",
+                                        isUnread: false,
+                                        inReplyTo: nil,
+                                        references: [])
+        let outsideWindowMessage = EmailMessage(messageID: "outside",
+                                                mailboxID: "inbox",
+                                                accountName: "",
+                                                subject: "Outside",
+                                                from: "c@example.com",
+                                                to: "me@example.com",
+                                                date: calendar.date(byAdding: .day, value: -4, to: today)!,
+                                                snippet: "",
+                                                isUnread: false,
+                                                inReplyTo: nil,
+                                                references: [])
+
+        let roots = [
+            ThreadNode(message: olderMessage),
+            ThreadNode(message: outsideWindowMessage),
+            ThreadNode(message: newestMessage)
+        ]
+        let timelineNodes = ThreadCanvasViewModel.timelineNodes(for: roots,
+                                                                dayWindowCount: 2,
+                                                                today: today,
+                                                                calendar: calendar)
+
+        XCTAssertEqual(timelineNodes.map(\.id), [newestMessage.messageID, olderMessage.messageID])
+    }
+
+    @MainActor
+    func testTimelineTagsRequestedOncePerNode() async {
+        let expectation = XCTestExpectation(description: "Tag request")
+        let provider = TestTagProvider(tags: ["Urgent"], expectation: expectation)
+        let capability = EmailTagCapability(provider: provider,
+                                            statusMessage: "Ready",
+                                            providerID: "test")
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              tagCapability: capability)
+
+        let message = EmailMessage(messageID: "node-1",
+                                   mailboxID: "inbox",
+                                   accountName: "",
+                                   subject: "Subject",
+                                   from: "sender@example.com",
+                                   to: "me@example.com",
+                                   date: Date(timeIntervalSince1970: 1_700_000_000),
+                                   snippet: "Snippet",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [])
+        let node = ThreadNode(message: message)
+
+        viewModel.requestTimelineTagsIfNeeded(for: node)
+        viewModel.requestTimelineTagsIfNeeded(for: node)
+
+        await fulfillment(of: [expectation], timeout: 1.0)
+
+        for _ in 0..<20 {
+            if viewModel.timelineTags(for: node.id) == ["Urgent"] {
+                break
+            }
+            await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        XCTAssertEqual(provider.callCount, 1)
+        XCTAssertEqual(viewModel.timelineTags(for: node.id), ["Urgent"])
+    }
+}
+
+private final class TestTagProvider: EmailTagProviding {
+    private let tags: [String]
+    private let expectation: XCTestExpectation?
+    private(set) var callCount: Int = 0
+
+    init(tags: [String], expectation: XCTestExpectation? = nil) {
+        self.tags = tags
+        self.expectation = expectation
+    }
+
+    func generateTags(_ request: EmailTagRequest) async throws -> [String] {
+        callCount += 1
+        expectation?.fulfill()
+        return tags
+    }
 }

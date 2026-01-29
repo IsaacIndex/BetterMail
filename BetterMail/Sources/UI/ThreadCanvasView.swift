@@ -371,12 +371,25 @@ internal struct ThreadCanvasView: View {
                             folderHeaderHeight: CGFloat) -> some View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
-                ThreadCanvasNodeView(node: node,
-                                     summaryState: viewModel.summaryState(for: node.id),
-                                     isSelected: viewModel.selectedNodeIDs.contains(node.id),
-                                     fontScale: metrics.fontScale,
-                                     viewMode: displaySettings.viewMode,
-                                     readabilityMode: readabilityMode)
+                Group {
+                    if displaySettings.viewMode == .timeline {
+                        ThreadTimelineCanvasNodeView(node: node,
+                                                     summaryState: viewModel.summaryState(for: node.id),
+                                                     tags: viewModel.timelineTags(for: node.id),
+                                                     isSelected: viewModel.selectedNodeIDs.contains(node.id),
+                                                     fontScale: metrics.fontScale)
+                            .task {
+                                viewModel.requestTimelineTagsIfNeeded(for: ThreadNode(message: node.message))
+                            }
+                    } else {
+                        ThreadCanvasNodeView(node: node,
+                                             summaryState: viewModel.summaryState(for: node.id),
+                                             isSelected: viewModel.selectedNodeIDs.contains(node.id),
+                                             fontScale: metrics.fontScale,
+                                             viewMode: displaySettings.viewMode,
+                                             readabilityMode: readabilityMode)
+                    }
+                }
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .gesture(
@@ -1318,6 +1331,129 @@ private struct ConnectorSegment: Identifiable {
     let endY: CGFloat
     let nodeMidX: CGFloat
     let isManual: Bool
+}
+
+private struct ThreadTimelineCanvasNodeView: View {
+    let node: ThreadCanvasNode
+    let summaryState: ThreadSummaryState?
+    let tags: [String]
+    let isSelected: Bool
+    let fontScale: CGFloat
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: scaled(10)) {
+            Text(Self.timeFormatter.string(from: node.message.date))
+                .font(.system(size: scaled(11), weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: scaled(52), alignment: .leading)
+
+            VStack(alignment: .leading, spacing: scaled(5)) {
+                Text(titleText)
+                    .font(.system(size: scaled(13), weight: node.message.isUnread ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Text(node.message.from)
+                    .font(.system(size: scaled(11)))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if !tags.isEmpty {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: scaled(72)), spacing: scaled(6), alignment: .leading)],
+                              alignment: .leading,
+                              spacing: scaled(6)) {
+                        ForEach(tags.prefix(3), id: \.self) { tag in
+                            ThreadTimelineTagChip(text: tag, fontScale: fontScale)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(scaled(10))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(entryBackground)
+        .overlay(selectionOverlay)
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var titleText: String {
+        let subject = node.message.subject.isEmpty
+            ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+            : node.message.subject
+        guard let summaryState else { return subject }
+        let summaryText = summaryState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summaryText.isEmpty {
+            return summaryText
+        }
+        let statusText = summaryState.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return statusText.isEmpty ? subject : statusText
+    }
+
+    private var cornerRadius: CGFloat {
+        12 * fontScale
+    }
+
+    @ViewBuilder
+    private var entryBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.95))
+                .overlay(shape.stroke(Color.white.opacity(0.14)))
+        } else {
+            shape
+                .fill(Color.black.opacity(0.3))
+                .overlay(shape.stroke(Color.white.opacity(0.12)))
+                .shadow(color: Color.black.opacity(0.18), radius: scaled(8), y: scaled(5))
+        }
+    }
+
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.9), lineWidth: scaled(1.4))
+                .shadow(color: Color.accentColor.opacity(0.4), radius: scaled(6))
+        }
+    }
+
+    private var accessibilityLabel: String {
+        let tagText = tags.prefix(3).joined(separator: ", ")
+        return [
+            node.message.from,
+            titleText,
+            Self.timeFormatter.string(from: node.message.date),
+            tagText
+        ].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        value * fontScale
+    }
+}
+
+private struct ThreadTimelineTagChip: View {
+    let text: String
+    let fontScale: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10 * fontScale, weight: .semibold))
+            .padding(.vertical, 3 * fontScale)
+            .padding(.horizontal, 6 * fontScale)
+            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+            .foregroundStyle(Color.accentColor)
+    }
 }
 
 private struct ThreadCanvasNodeView: View {
