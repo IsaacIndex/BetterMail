@@ -3,6 +3,8 @@
 "refresh.status.failed" = "Refresh failed: %@";
 "refresh.status.threading_failed" = "Threading failed: %@";
 "threadlist.status.unread" = "Unread: %d - %@";
+"threadlist.viewmode.default" = "Default View";
+"threadlist.viewmode.timeline" = "Timeline View";
 "threadlist.backfill.button" = "Backfill";
 "threadlist.backfill.status.fetching" = "Backfilling visible days...";
 "threadlist.backfill.status.complete" = "Backfill complete: %d";

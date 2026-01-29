@@ -208,6 +208,7 @@ internal struct ThreadListView: View {
             if viewModel.isBackfilling {
                 ProgressView().controlSize(.small)
             }
+            viewModeToggle
             HStack(spacing: 6) {
                 Text("Limit")
                     .font(.caption)
@@ -235,6 +236,28 @@ internal struct ThreadListView: View {
                     .preference(key: NavHeightPreferenceKey.self, value: proxy.size.height)
             }
         )
+    }
+
+    @ViewBuilder
+    private var viewModeToggle: some View {
+        let button = Button(action: { displaySettings.toggleViewMode() }) {
+            Text(viewModeLabel)
+                .font(.caption)
+        }
+        if #available(macOS 26, *) {
+            button.buttonStyle(.glass)
+        } else {
+            button.buttonStyle(.bordered)
+        }
+    }
+
+    private var viewModeLabel: String {
+        switch displaySettings.viewMode {
+        case .default:
+            return NSLocalizedString("threadlist.viewmode.default", comment: "Default thread canvas view label")
+        case .timeline:
+            return NSLocalizedString("threadlist.viewmode.timeline", comment: "Timeline thread canvas view label")
+        }
     }
 
     private var statusText: String {

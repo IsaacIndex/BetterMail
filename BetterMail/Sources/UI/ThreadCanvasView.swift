@@ -372,8 +372,10 @@ internal struct ThreadCanvasView: View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
                 ThreadCanvasNodeView(node: node,
+                                     summaryState: viewModel.summaryState(for: node.id),
                                      isSelected: viewModel.selectedNodeIDs.contains(node.id),
                                      fontScale: metrics.fontScale,
+                                     viewMode: displaySettings.viewMode,
                                      readabilityMode: readabilityMode)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
@@ -1320,8 +1322,10 @@ private struct ConnectorSegment: Identifiable {
 
 private struct ThreadCanvasNodeView: View {
     let node: ThreadCanvasNode
+    let summaryState: ThreadSummaryState?
     let isSelected: Bool
     let fontScale: CGFloat
+    let viewMode: ThreadCanvasViewMode
     let readabilityMode: ThreadCanvasReadabilityMode
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1336,7 +1340,7 @@ private struct ThreadCanvasNodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            textLine(subjectText,
+            textLine(titleText,
                      baseSize: 13,
                      weight: node.message.isUnread ? .semibold : .regular,
                      color: primaryTextColor,
@@ -1365,6 +1369,25 @@ private struct ThreadCanvasNodeView: View {
 
     private var subjectText: String {
         node.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : node.message.subject
+    }
+
+    private var titleText: String {
+        switch viewMode {
+        case .default:
+            return subjectText
+        case .timeline:
+            return summaryTitleText ?? subjectText
+        }
+    }
+
+    private var summaryTitleText: String? {
+        guard let summaryState else { return nil }
+        let summaryText = summaryState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summaryText.isEmpty {
+            return summaryText
+        }
+        let statusText = summaryState.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return statusText.isEmpty ? nil : statusText
     }
 
     private var cornerRadius: CGFloat {
@@ -1404,7 +1427,7 @@ private struct ThreadCanvasNodeView: View {
         String.localizedStringWithFormat(
             NSLocalizedString("threadcanvas.node.accessibility", comment: "Accessibility label for a node"),
             node.message.from,
-            subjectText,
+            titleText,
             Self.timeFormatter.string(from: node.message.date)
         )
     }
