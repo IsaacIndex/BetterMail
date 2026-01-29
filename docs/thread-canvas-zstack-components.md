@@ -122,3 +122,4 @@ flowchart LR
   nodesLayer --> activeDropFolderID
   dragState --> dragPreviewLayer
   activeDropFolderID --> folderDropHighlightLayer
+```

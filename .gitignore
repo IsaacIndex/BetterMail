@@ -22,3 +22,6 @@ DerivedData/
 build/
 *.ipa
 *.dSYM*
+
+# Rendering mkdocs
+.venv

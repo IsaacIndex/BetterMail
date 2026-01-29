@@ -5,6 +5,13 @@ repo_name: IsaacIndex/BetterMail
 theme:
   name: material
 
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
 nav:
   - TechDocs: index.md
   - Architecture Overview: Architecture.md
