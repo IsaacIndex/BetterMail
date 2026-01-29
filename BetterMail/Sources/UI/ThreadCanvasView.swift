@@ -1339,12 +1339,18 @@ private struct ThreadCanvasNodeView: View {
             textLine(subjectText,
                      baseSize: 13,
                      weight: node.message.isUnread ? .semibold : .regular,
-                     color: primaryTextColor)
-            textLine(node.message.from, baseSize: 11, weight: .regular, color: secondaryTextColor)
+                     color: primaryTextColor,
+                     isTitleLine: true)
+            textLine(node.message.from,
+                     baseSize: 11,
+                     weight: .regular,
+                     color: secondaryTextColor,
+                     isTitleLine: false)
             textLine(Self.timeFormatter.string(from: node.message.date),
                      baseSize: 11,
                      weight: .regular,
-                     color: secondaryTextColor)
+                     color: secondaryTextColor,
+                     isTitleLine: false)
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -1426,8 +1432,9 @@ private struct ThreadCanvasNodeView: View {
     private func textLine(_ text: String,
                           baseSize: CGFloat,
                           weight: Font.Weight,
-                          color: Color) -> some View {
-        switch textVisibility() {
+                          color: Color,
+                          isTitleLine: Bool) -> some View {
+        switch nodeTextVisibility(readabilityMode: readabilityMode, isTitleLine: isTitleLine) {
         case .normal:
             Text(text)
                 .font(.system(size: baseSize * fontScale, weight: weight))
@@ -1440,17 +1447,6 @@ private struct ThreadCanvasNodeView: View {
                 .lineLimit(1)
         case .hidden:
             EmptyView()
-        }
-    }
-
-    private func textVisibility() -> TextVisibility {
-        switch readabilityMode {
-        case .detailed:
-            return .normal
-        case .compact:
-            return .ellipsis
-        case .minimal:
-            return .hidden
         }
     }
 }
@@ -1488,7 +1484,19 @@ private struct ThreadDragPreview: View {
     }
 }
 
-private enum TextVisibility {
+internal func nodeTextVisibility(readabilityMode: ThreadCanvasReadabilityMode,
+                                 isTitleLine: Bool) -> TextVisibility {
+    switch readabilityMode {
+    case .detailed:
+        return .normal
+    case .compact:
+        return isTitleLine ? .normal : .hidden
+    case .minimal:
+        return .hidden
+    }
+}
+
+internal enum TextVisibility {
     case normal
     case ellipsis
     case hidden
