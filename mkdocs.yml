@@ -20,7 +20,7 @@ nav:
   - Data Flow and Concurrency: DataFlow.md
   - MailKit Helper Summary: MailKitHelper.md
   - Prompts:
-      - Inbox Subject-Line Digest: prompts/EmailSummary-SubjectLines.md
+      - Email Tags: prompts/EmailTags.md
       - Thread Message Summary: prompts/EmailSummary-ThreadMessage.md
       - Folder Summary: prompts/EmailSummary-Folder.md
   - UI:

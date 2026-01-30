@@ -10,6 +10,7 @@ The system is composed of ingestion, storage, threading, presentation, and optio
 - Threading: `JWZThreader` builds threads and thread maps using JWZ-style references.
 - Presentation: `ThreadCanvasViewModel` feeds SwiftUI views (`ThreadCanvasView`, `ThreadInspectorView`).
 - Summaries: `EmailSummaryProvider` adds Apple Intelligence summaries when available.
+- Tags: `EmailTagProvider` adds Apple Intelligence message tags when available.
 - MailKit helper: `MailHelperExtension` ships example handlers for MailKit extension points.
 
 ## Guiding Principles
