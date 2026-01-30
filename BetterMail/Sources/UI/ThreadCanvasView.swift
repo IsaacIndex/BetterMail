@@ -32,7 +32,10 @@ internal struct ThreadCanvasView: View {
         GeometryReader { proxy in
             let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
             let today = Date()
-            let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
+            let layout = viewModel.canvasLayout(metrics: metrics,
+                                                viewMode: displaySettings.viewMode,
+                                                today: today,
+                                                calendar: calendar)
             let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
             let readabilityMode = displaySettings.readabilityMode(for: zoomScale)
             let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
@@ -1350,37 +1353,41 @@ private struct ThreadTimelineCanvasNodeView: View {
     }()
 
     var body: some View {
-        HStack(alignment: .top, spacing: scaled(10)) {
-            Text(Self.timeFormatter.string(from: node.message.date))
-                .font(.system(size: scaled(11), weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: scaled(52), alignment: .leading)
+        VStack(alignment: .leading, spacing: summaryLineSpacing) {
+            HStack(alignment: .firstTextBaseline, spacing: elementSpacing) {
+                timelineDot
 
-            VStack(alignment: .leading, spacing: scaled(5)) {
-                Text(titleText)
-                    .font(.system(size: scaled(13), weight: node.message.isUnread ? .semibold : .regular))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                Text(node.message.from)
-                    .font(.system(size: scaled(11)))
+                Text(Self.timeFormatter.string(from: node.message.date))
+                    .font(.system(size: timeFontSize, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .frame(width: timeWidth, alignment: .leading)
+
                 if !tags.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: scaled(72)), spacing: scaled(6), alignment: .leading)],
-                              alignment: .leading,
-                              spacing: scaled(6)) {
+                    HStack(alignment: .firstTextBaseline, spacing: tagSpacing) {
                         ForEach(tags.prefix(3), id: \.self) { tag in
                             ThreadTimelineTagChip(text: tag, fontScale: fontScale)
+                                .alignmentGuide(.firstTextBaseline) { dimensions in
+                                    dimensions[.firstTextBaseline]
+                                }
                         }
                     }
                 }
             }
+
+            Text(titleText)
+                .font(.system(size: summaryFontSize, weight: node.message.isUnread ? .semibold : .regular))
+                .foregroundStyle(.primary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, summaryIndent)
+                .layoutPriority(1)
         }
-        .padding(scaled(10))
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(entryBackground)
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, verticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selectionBackground)
         .overlay(selectionOverlay)
-        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -1399,38 +1406,82 @@ private struct ThreadTimelineCanvasNodeView: View {
         return statusText.isEmpty ? subject : statusText
     }
 
-    private var cornerRadius: CGFloat {
-        12 * fontScale
+    private var selectionCornerRadius: CGFloat {
+        ThreadTimelineLayoutConstants.selectionCornerRadius(fontScale: fontScale)
+    }
+
+    private var summaryFontSize: CGFloat {
+        ThreadTimelineLayoutConstants.summaryFontSize(fontScale: fontScale)
+    }
+
+    private var timeFontSize: CGFloat {
+        ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale)
+    }
+
+    private var timeWidth: CGFloat {
+        ThreadTimelineLayoutConstants.timeWidth(fontScale: fontScale)
+    }
+
+    private var elementSpacing: CGFloat {
+        ThreadTimelineLayoutConstants.elementSpacing(fontScale: fontScale)
+    }
+
+    private var tagSpacing: CGFloat {
+        ThreadTimelineLayoutConstants.tagSpacing(fontScale: fontScale)
+    }
+
+    private var summaryLineSpacing: CGFloat {
+        ThreadTimelineLayoutConstants.summaryLineSpacing(fontScale: fontScale)
+    }
+
+    private var horizontalPadding: CGFloat {
+        ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: fontScale)
+    }
+
+    private var verticalPadding: CGFloat {
+        ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: fontScale)
+    }
+
+    private var dotSize: CGFloat {
+        ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
+    }
+
+    private var summaryIndent: CGFloat {
+        dotSize + elementSpacing
     }
 
     @ViewBuilder
-    private var entryBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.95))
-                .overlay(shape.stroke(Color.white.opacity(0.14)))
-        } else {
-            shape
-                .fill(Color.black.opacity(0.3))
-                .overlay(shape.stroke(Color.white.opacity(0.12)))
-                .shadow(color: Color.black.opacity(0.18), radius: scaled(8), y: scaled(5))
-        }
+    private var timelineDot: some View {
+        Circle()
+            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.7))
+            .frame(width: dotSize, height: dotSize)
+            .shadow(color: isSelected && !reduceTransparency ? Color.accentColor.opacity(0.4) : .clear,
+                    radius: scaled(4))
+            .alignmentGuide(.firstTextBaseline) { dimensions in
+                dimensions[VerticalAlignment.center]
+            }
     }
 
     @ViewBuilder
     private var selectionOverlay: some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.9), lineWidth: scaled(1.4))
-                .shadow(color: Color.accentColor.opacity(0.4), radius: scaled(6))
+            RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.9), lineWidth: scaled(1.2))
+                .shadow(color: Color.accentColor.opacity(0.35), radius: scaled(6))
+        }
+    }
+
+    @ViewBuilder
+    private var selectionBackground: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous)
+                .fill(Color.accentColor.opacity(reduceTransparency ? 0.18 : 0.12))
         }
     }
 
     private var accessibilityLabel: String {
         let tagText = tags.prefix(3).joined(separator: ", ")
         return [
-            node.message.from,
             titleText,
             Self.timeFormatter.string(from: node.message.date),
             tagText
@@ -1449,9 +1500,14 @@ private struct ThreadTimelineTagChip: View {
     var body: some View {
         Text(text)
             .font(.system(size: 10 * fontScale, weight: .semibold))
+            .lineLimit(1)
+            .frame(maxWidth: ThreadTimelineLayoutConstants.tagMaxWidth(fontScale: fontScale),
+                   alignment: .leading)
+            .clipped()
             .padding(.vertical, 3 * fontScale)
             .padding(.horizontal, 6 * fontScale)
             .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+            .overlay(Capsule().stroke(Color.accentColor.opacity(0.28), lineWidth: 0.6 * fontScale))
             .foregroundStyle(Color.accentColor)
     }
 }

@@ -45,6 +45,14 @@ private struct FolderSummaryInput {
     let fingerprint: String
 }
 
+private struct NodeTagInput {
+    let nodeID: String
+    let subject: String
+    let from: String
+    let snippet: String
+    let fingerprint: String
+}
+
 private struct ThreadFolderEdit: Hashable {
     let title: String
     let color: ThreadFolderColor
@@ -268,6 +276,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var nodeSummaryTasks: [String: Task<Void, Never>] = [:]
     private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
     private var timelineTagTasks: [String: Task<Void, Never>] = [:]
+    private var timelineTagCacheByNodeID: [String: SummaryCacheEntry] = [:]
     private var nodeSummaryRefreshGeneration = 0
     private let folderSummaryDebounceInterval: TimeInterval
     private var cancellables = Set<AnyCancellable>()
@@ -455,6 +464,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             pruneSelection(using: rethreadResult.roots)
             pruneFolderSelection(using: rethreadResult.folders)
             refreshNodeSummaries(for: rethreadResult.roots)
+            refreshTimelineTags(for: rethreadResult.roots)
             refreshFolderSummaries(for: rethreadResult.roots, folders: rethreadResult.folders)
             let currentNodeIDs = Set(Self.flatten(nodes: rethreadResult.roots).map(\.id))
             let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
@@ -465,6 +475,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     do {
                         if !removedNodeIDs.isEmpty {
                             try await store.deleteSummaries(scope: .emailNode, ids: Array(removedNodeIDs))
+                            try await store.deleteSummaries(scope: .emailTag, ids: Array(removedNodeIDs))
                         }
                         if !removedFolderIDs.isEmpty {
                             try await store.deleteSummaries(scope: .folder, ids: Array(removedFolderIDs))
@@ -685,6 +696,52 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                           cachedByKey: cachedByKey,
                                           summaryProvider: provider,
                                           providerStatusMessage: providerStatusMessage)
+            }
+        }
+    }
+
+    private func refreshTimelineTags(for roots: [ThreadNode]) {
+        let rootsSnapshot = roots
+        let tagProviderID = tagProviderID
+        let providerAvailable = tagProvider != nil
+        Task { [weak self] in
+            guard let self else { return }
+            let inputsByNodeID = Self.tagInputs(for: rootsSnapshot, providerID: tagProviderID)
+            let nodeIDs = Array(inputsByNodeID.keys)
+            var cachedByID: [String: SummaryCacheEntry] = [:]
+            if !nodeIDs.isEmpty {
+                do {
+                    let cached = try await store.fetchSummaries(scope: .emailTag, ids: nodeIDs)
+                    cachedByID = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
+                } catch {
+                    Log.app.error("Failed to load cached timeline tags: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+
+            await MainActor.run {
+                let validNodeIDs = Set(inputsByNodeID.keys)
+                for (id, task) in timelineTagTasks where !validNodeIDs.contains(id) {
+                    task.cancel()
+                    timelineTagTasks.removeValue(forKey: id)
+                }
+                for id in timelineTagsByNodeID.keys where !validNodeIDs.contains(id) {
+                    timelineTagsByNodeID.removeValue(forKey: id)
+                }
+                for id in timelineTagCacheByNodeID.keys where !validNodeIDs.contains(id) {
+                    timelineTagCacheByNodeID.removeValue(forKey: id)
+                }
+
+                self.timelineTagCacheByNodeID = cachedByID
+                for (nodeID, entry) in cachedByID {
+                    guard let input = inputsByNodeID[nodeID] else { continue }
+                    let isFresh = entry.fingerprint == input.fingerprint && entry.provider == tagProviderID
+                    if isFresh || !providerAvailable {
+                        let tags = Self.decodeTagCache(entry.summaryText)
+                        if !tags.isEmpty {
+                            timelineTagsByNodeID[nodeID] = tags
+                        }
+                    }
+                }
             }
         }
     }
@@ -1383,25 +1440,62 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func requestTimelineTagsIfNeeded(for node: ThreadNode) {
-        guard timelineTagsByNodeID[node.id] == nil else { return }
-        guard timelineTagTasks[node.id] == nil else { return }
-        guard let tagProvider else { return }
+        let input = Self.tagInput(for: node, providerID: tagProviderID)
+        let cachedEntry = timelineTagCacheByNodeID[node.id]
+        let hasFreshCache = cachedEntry?.fingerprint == input?.fingerprint && cachedEntry?.provider == tagProviderID
 
-        let request = EmailTagRequest(subject: node.message.subject,
-                                      from: node.message.from,
-                                      snippet: node.message.snippet)
+        if let cachedEntry {
+            let cachedTags = Self.decodeTagCache(cachedEntry.summaryText)
+            if timelineTagsByNodeID[node.id] == nil {
+                if !cachedTags.isEmpty {
+                    timelineTagsByNodeID[node.id] = cachedTags
+                }
+            }
+            if hasFreshCache {
+                return
+            }
+        }
+
+        guard let tagProvider else { return }
+        guard let input else { return }
+        guard timelineTagTasks[node.id] == nil else { return }
+
+        let request = EmailTagRequest(subject: input.subject,
+                                      from: input.from,
+                                      snippet: input.snippet)
         guard request.hasContent else { return }
 
         timelineTagTasks[node.id] = Task { [weak self] in
             guard let self else { return }
             do {
                 let tags = try await tagProvider.generateTags(request)
+                let entry = SummaryCacheEntry(scope: .emailTag,
+                                              scopeID: input.nodeID,
+                                              summaryText: Self.encodeTagCache(tags),
+                                              generatedAt: Date(),
+                                              fingerprint: input.fingerprint,
+                                              provider: tagProviderID)
+                do {
+                    try await store.upsertSummaries([entry])
+                } catch {
+                    Log.app.error("Failed to persist timeline tag cache: \(error.localizedDescription, privacy: .public)")
+                }
                 await MainActor.run {
                     self.timelineTagsByNodeID[node.id] = tags
+                    self.timelineTagCacheByNodeID[node.id] = entry
                 }
             } catch {
                 await MainActor.run {
-                    self.timelineTagsByNodeID[node.id] = []
+                    if let cachedEntry {
+                        let cachedTags = Self.decodeTagCache(cachedEntry.summaryText)
+                        if !cachedTags.isEmpty {
+                        self.timelineTagsByNodeID[node.id] = cachedTags
+                        } else {
+                            self.timelineTagsByNodeID[node.id] = []
+                        }
+                    } else {
+                        self.timelineTagsByNodeID[node.id] = []
+                    }
                 }
             }
             await MainActor.run {
@@ -1410,17 +1504,77 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    private static func tagInputs(for roots: [ThreadNode],
+                                  providerID: String) -> [String: NodeTagInput] {
+        var inputs: [String: NodeTagInput] = [:]
+        for node in flatten(nodes: roots) {
+            if let input = tagInput(for: node, providerID: providerID) {
+                inputs[node.id] = input
+            }
+        }
+        return inputs
+    }
+
+    private static func tagInput(for node: ThreadNode,
+                                 providerID: String) -> NodeTagInput? {
+        let subject = normalizedTagText(node.message.subject, maxCharacters: 140)
+        let from = normalizedTagText(node.message.from, maxCharacters: 80)
+        let snippet = normalizedTagText(node.message.snippet, maxCharacters: 220)
+        guard !subject.isEmpty || !from.isEmpty || !snippet.isEmpty else { return nil }
+        let fingerprint = ThreadSummaryFingerprint.makeTags(subject: subject,
+                                                            from: from,
+                                                            snippet: snippet,
+                                                            providerID: providerID)
+        return NodeTagInput(nodeID: node.id,
+                            subject: subject,
+                            from: from,
+                            snippet: snippet,
+                            fingerprint: fingerprint)
+    }
+
+    private static func normalizedTagText(_ text: String, maxCharacters: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let collapsed = trimmed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard collapsed.count > maxCharacters else { return collapsed }
+        let endIndex = collapsed.index(collapsed.startIndex, offsetBy: maxCharacters)
+        return String(collapsed[..<endIndex]) + "…"
+    }
+
+    private static func encodeTagCache(_ tags: [String]) -> String {
+        if let data = try? JSONEncoder().encode(tags),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return tags.joined(separator: ",")
+    }
+
+    private static func decodeTagCache(_ text: String) -> [String] {
+        if let data = text.data(using: .utf8),
+           let tags = try? JSONDecoder().decode([String].self, from: data) {
+            return tags
+        }
+        return text
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     internal func canvasLayout(metrics: ThreadCanvasLayoutMetrics,
+                               viewMode: ThreadCanvasViewMode = .default,
                                today: Date = Date(),
                                calendar: Calendar = .current) -> ThreadCanvasLayout {
         Self.canvasLayout(for: roots,
                           metrics: metrics,
+                          viewMode: viewMode,
                           today: today,
                           calendar: calendar,
                           manualAttachmentMessageIDs: manualAttachmentMessageIDs,
                           jwzThreadMap: jwzThreadMap,
                           folders: effectiveThreadFolders,
-                          folderMembershipByThreadID: folderMembershipByThreadID)
+                          folderMembershipByThreadID: folderMembershipByThreadID,
+                          nodeSummaries: nodeSummaries,
+                          timelineTagsByNodeID: timelineTagsByNodeID)
     }
 
     internal var canBackfillVisibleRange: Bool {
@@ -1826,13 +1980,22 @@ private extension ThreadCanvasViewModel {
 extension ThreadCanvasViewModel {
     internal static func canvasLayout(for roots: [ThreadNode],
                                       metrics: ThreadCanvasLayoutMetrics,
+                                      viewMode: ThreadCanvasViewMode = .default,
                                       today: Date,
                                       calendar: Calendar,
                                       manualAttachmentMessageIDs: Set<String> = [],
                                       jwzThreadMap: [String: String] = [:],
                                       folders: [ThreadFolder] = [],
-                                      folderMembershipByThreadID: [String: String] = [:]) -> ThreadCanvasLayout {
-        let dayHeights = dayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
+                                      folderMembershipByThreadID: [String: String] = [:],
+                                      nodeSummaries: [String: ThreadSummaryState] = [:],
+                                      timelineTagsByNodeID: [String: [String]] = [:]) -> ThreadCanvasLayout {
+        let dayHeights = dayHeights(for: roots,
+                                    metrics: metrics,
+                                    viewMode: viewMode,
+                                    today: today,
+                                    calendar: calendar,
+                                    nodeSummaries: nodeSummaries,
+                                    timelineTagsByNodeID: timelineTagsByNodeID)
         var currentYOffset = metrics.contentPadding
         let days = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
             let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
@@ -1918,11 +2081,14 @@ extension ThreadCanvasViewModel {
                                             threadID: thread.threadID,
                                             columnX: columnX,
                                             metrics: metrics,
+                                            viewMode: viewMode,
                                             today: today,
                                             calendar: calendar,
                                             dayLookup: dayLookup,
                                             manualAttachmentMessageIDs: manualAttachmentMessageIDs,
-                                            jwzThreadMap: jwzThreadMap)
+                                            jwzThreadMap: jwzThreadMap,
+                                            nodeSummaries: nodeSummaries,
+                                            timelineTagsByNodeID: timelineTagsByNodeID)
                     let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
                     let folderID = normalizedMembership[thread.threadID]
                     columns.append(ThreadCanvasColumn(id: thread.threadID,
@@ -1997,11 +2163,14 @@ extension ThreadCanvasViewModel {
                                     threadID: String,
                                     columnX: CGFloat,
                                     metrics: ThreadCanvasLayoutMetrics,
+                                    viewMode: ThreadCanvasViewMode,
                                     today: Date,
                                     calendar: Calendar,
                                     dayLookup: [Int: ThreadCanvasDay],
                                     manualAttachmentMessageIDs: Set<String>,
-                                    jwzThreadMap: [String: String]) -> [ThreadCanvasNode] {
+                                    jwzThreadMap: [String: String],
+                                    nodeSummaries: [String: ThreadSummaryState],
+                                    timelineTagsByNodeID: [String: [String]]) -> [ThreadCanvasNode] {
         var grouped: [Int: [ThreadNode]] = [:]
         let allNodes = flatten(node: root)
         for node in allNodes {
@@ -2020,28 +2189,54 @@ extension ThreadCanvasViewModel {
             let sorted = dayNodes.sorted { lhs, rhs in
                 lhs.message.date > rhs.message.date
             }
-            let count = sorted.count
             let dayBaseY = day.yOffset + metrics.nodeVerticalSpacing
-            let usableHeight = max(day.height - metrics.nodeHeight - (metrics.nodeVerticalSpacing * 2), 0)
             let nodeGap = metrics.nodeVerticalSpacing
-            let maxStep = metrics.nodeHeight + nodeGap
-            let step = count > 1 ? min(maxStep, usableHeight / CGFloat(count - 1)) : 0
 
-            for (stackIndex, node) in sorted.enumerated() {
-                let y = dayBaseY + CGFloat(stackIndex) * step
-                let frame = CGRect(x: columnX + metrics.nodeHorizontalInset,
-                                   y: y,
-                                   width: metrics.nodeWidth,
-                                   height: metrics.nodeHeight)
-                let messageKey = node.message.threadKey
-                let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? threadID
-                nodes.append(ThreadCanvasNode(id: node.id,
-                                              message: node.message,
-                                              threadID: threadID,
-                                              jwzThreadID: jwzThreadID,
-                                              frame: frame,
-                                              dayIndex: dayIndex,
-                                              isManualAttachment: manualAttachmentMessageIDs.contains(node.id)))
+            switch viewMode {
+            case .timeline:
+                var currentYOffset = dayBaseY
+                for node in sorted {
+                    let nodeHeight = timelineEntryHeight(for: node,
+                                                         metrics: metrics,
+                                                         summaryState: nodeSummaries[node.id],
+                                                         tags: timelineTagsByNodeID[node.id] ?? [])
+                    let frame = CGRect(x: columnX + metrics.nodeHorizontalInset,
+                                       y: currentYOffset,
+                                       width: metrics.nodeWidth,
+                                       height: nodeHeight)
+                    currentYOffset += nodeHeight + nodeGap
+                    let messageKey = node.message.threadKey
+                    let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? threadID
+                    nodes.append(ThreadCanvasNode(id: node.id,
+                                                  message: node.message,
+                                                  threadID: threadID,
+                                                  jwzThreadID: jwzThreadID,
+                                                  frame: frame,
+                                                  dayIndex: dayIndex,
+                                                  isManualAttachment: manualAttachmentMessageIDs.contains(node.id)))
+                }
+            case .default:
+                let count = sorted.count
+                let usableHeight = max(day.height - metrics.nodeHeight - (metrics.nodeVerticalSpacing * 2), 0)
+                let maxStep = metrics.nodeHeight + nodeGap
+                let step = count > 1 ? min(maxStep, usableHeight / CGFloat(count - 1)) : 0
+
+                for (stackIndex, node) in sorted.enumerated() {
+                    let y = dayBaseY + CGFloat(stackIndex) * step
+                    let frame = CGRect(x: columnX + metrics.nodeHorizontalInset,
+                                       y: y,
+                                       width: metrics.nodeWidth,
+                                       height: metrics.nodeHeight)
+                    let messageKey = node.message.threadKey
+                    let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? threadID
+                    nodes.append(ThreadCanvasNode(id: node.id,
+                                                  message: node.message,
+                                                  threadID: threadID,
+                                                  jwzThreadID: jwzThreadID,
+                                                  frame: frame,
+                                                  dayIndex: dayIndex,
+                                                  isManualAttachment: manualAttachmentMessageIDs.contains(node.id)))
+                }
             }
         }
 
@@ -2084,8 +2279,28 @@ extension ThreadCanvasViewModel {
 
     private static func dayHeights(for roots: [ThreadNode],
                                    metrics: ThreadCanvasLayoutMetrics,
+                                   viewMode: ThreadCanvasViewMode,
                                    today: Date,
-                                   calendar: Calendar) -> [Int: CGFloat] {
+                                   calendar: Calendar,
+                                   nodeSummaries: [String: ThreadSummaryState],
+                                   timelineTagsByNodeID: [String: [String]]) -> [Int: CGFloat] {
+        switch viewMode {
+        case .timeline:
+            return timelineDayHeights(for: roots,
+                                      metrics: metrics,
+                                      today: today,
+                                      calendar: calendar,
+                                      nodeSummaries: nodeSummaries,
+                                      timelineTagsByNodeID: timelineTagsByNodeID)
+        case .default:
+            return defaultDayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
+        }
+    }
+
+    private static func defaultDayHeights(for roots: [ThreadNode],
+                                          metrics: ThreadCanvasLayoutMetrics,
+                                          today: Date,
+                                          calendar: Calendar) -> [Int: CGFloat] {
         var maxCountsByDay: [Int: Int] = [:]
         for root in roots {
             var countsByDay: [Int: Int] = [:]
@@ -2106,12 +2321,12 @@ extension ThreadCanvasViewModel {
         var heights: [Int: CGFloat] = [:]
         for dayIndex in 0..<metrics.dayCount {
             let count = maxCountsByDay[dayIndex, default: 0]
-            heights[dayIndex] = max(metrics.dayHeight, requiredDayHeight(nodeCount: count, metrics: metrics))
+            heights[dayIndex] = max(metrics.dayHeight, requiredDefaultDayHeight(nodeCount: count, metrics: metrics))
         }
         return heights
     }
 
-    private static func requiredDayHeight(nodeCount: Int, metrics: ThreadCanvasLayoutMetrics) -> CGFloat {
+    private static func requiredDefaultDayHeight(nodeCount: Int, metrics: ThreadCanvasLayoutMetrics) -> CGFloat {
         guard nodeCount > 1 else {
             return metrics.dayHeight
         }
@@ -2120,6 +2335,100 @@ extension ThreadCanvasViewModel {
         return metrics.nodeHeight
             + (metrics.nodeVerticalSpacing * 2)
             + CGFloat(nodeCount - 1) * maxStep
+    }
+
+    private static func timelineDayHeights(for roots: [ThreadNode],
+                                           metrics: ThreadCanvasLayoutMetrics,
+                                           today: Date,
+                                           calendar: Calendar,
+                                           nodeSummaries: [String: ThreadSummaryState],
+                                           timelineTagsByNodeID: [String: [String]]) -> [Int: CGFloat] {
+        var maxHeightsByDay: [Int: CGFloat] = [:]
+        for root in roots {
+            var totalHeightByDay: [Int: CGFloat] = [:]
+            var countsByDay: [Int: Int] = [:]
+            for node in flatten(node: root) {
+                guard let dayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                                                     today: today,
+                                                                     calendar: calendar,
+                                                                     dayCount: metrics.dayCount) else {
+                    continue
+                }
+                let nodeHeight = timelineEntryHeight(for: node,
+                                                     metrics: metrics,
+                                                     summaryState: nodeSummaries[node.id],
+                                                     tags: timelineTagsByNodeID[node.id] ?? [])
+                totalHeightByDay[dayIndex, default: 0] += nodeHeight
+                countsByDay[dayIndex, default: 0] += 1
+            }
+
+            for (dayIndex, totalHeight) in totalHeightByDay {
+                let count = countsByDay[dayIndex, default: 0]
+                let gaps = count > 1 ? CGFloat(count - 1) * metrics.nodeVerticalSpacing : 0
+                let requiredHeight = (metrics.nodeVerticalSpacing * 2) + totalHeight + gaps
+                maxHeightsByDay[dayIndex] = max(maxHeightsByDay[dayIndex, default: 0], requiredHeight)
+            }
+        }
+
+        var heights: [Int: CGFloat] = [:]
+        for dayIndex in 0..<metrics.dayCount {
+            let required = maxHeightsByDay[dayIndex, default: 0]
+            heights[dayIndex] = max(metrics.dayHeight, required)
+        }
+        return heights
+    }
+
+    private static func timelineEntryHeight(for node: ThreadNode,
+                                            metrics: ThreadCanvasLayoutMetrics,
+                                            summaryState: ThreadSummaryState?,
+                                            tags: [String]) -> CGFloat {
+        let fontScale = metrics.fontScale
+        let summaryText = timelineDisplayText(for: node, summaryState: summaryState)
+        let summaryFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.summaryFontSize(fontScale: fontScale),
+                                            weight: node.message.isUnread ? .semibold : .regular)
+        let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
+                                         weight: .semibold)
+        let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
+                                        weight: .semibold)
+
+        let dotSize = ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
+        let timeWidth = ThreadTimelineLayoutConstants.timeWidth(fontScale: fontScale)
+        let elementSpacing = ThreadTimelineLayoutConstants.elementSpacing(fontScale: fontScale)
+        let horizontalPadding = ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: fontScale)
+        let verticalPadding = ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: fontScale)
+        let summarySpacing = ThreadTimelineLayoutConstants.summaryLineSpacing(fontScale: fontScale)
+        let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
+        let visibleTags = tags.prefix(3)
+
+        let summaryIndent = dotSize + elementSpacing
+        let availableWidth = max(metrics.nodeWidth - (horizontalPadding * 2) - summaryIndent, 40)
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        let summaryRect = (summaryText as NSString).boundingRect(with: CGSize(width: availableWidth, height: .greatestFiniteMagnitude),
+                                                                 options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                                                 attributes: [.font: summaryFont, .paragraphStyle: paragraph])
+        let summaryHeight = ceil(summaryRect.height)
+        let timeHeight = ceil(timeFont.ascender - timeFont.descender)
+        let tagHeight = visibleTags.isEmpty ? 0 : ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
+        let topLineHeight = max(timeHeight, tagHeight, dotSize)
+        let contentHeight = topLineHeight + summarySpacing + summaryHeight
+
+        return contentHeight + (verticalPadding * 2)
+    }
+
+    private static func timelineDisplayText(for node: ThreadNode,
+                                            summaryState: ThreadSummaryState?) -> String {
+        let subject = node.message.subject.isEmpty
+            ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+            : node.message.subject
+        guard let summaryState else { return subject }
+        let summaryText = summaryState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summaryText.isEmpty {
+            return summaryText
+        }
+        let statusText = summaryState.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return statusText.isEmpty ? subject : statusText
     }
 
     private struct FolderHierarchy {

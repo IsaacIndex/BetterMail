@@ -63,6 +63,64 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 }
 
+internal struct ThreadTimelineLayoutConstants {
+    internal static func dotSize(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func timeWidth(fontScale: CGFloat) -> CGFloat {
+        52 * fontScale
+    }
+
+    internal static func elementSpacing(fontScale: CGFloat) -> CGFloat {
+        8 * fontScale
+    }
+
+    internal static func tagSpacing(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func rowHorizontalPadding(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func rowVerticalPadding(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func summaryLineSpacing(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func summaryFontSize(fontScale: CGFloat) -> CGFloat {
+        13 * fontScale
+    }
+
+    internal static func timeFontSize(fontScale: CGFloat) -> CGFloat {
+        11 * fontScale
+    }
+
+    internal static func tagFontSize(fontScale: CGFloat) -> CGFloat {
+        10 * fontScale
+    }
+
+    internal static func tagVerticalPadding(fontScale: CGFloat) -> CGFloat {
+        3 * fontScale
+    }
+
+    internal static func tagHorizontalPadding(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func tagMaxWidth(fontScale: CGFloat) -> CGFloat {
+        160 * fontScale
+    }
+
+    internal static func selectionCornerRadius(fontScale: CGFloat) -> CGFloat {
+        10 * fontScale
+    }
+}
+
 internal struct ThreadCanvasDay: Identifiable, Hashable {
     internal let id: Int
     internal let date: Date

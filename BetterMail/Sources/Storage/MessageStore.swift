@@ -1062,11 +1062,15 @@ internal final class MessageStore {
             let cachedIDs = try await fetchScopedSummaryIDs()
             let orphanedNodes = cachedIDs.nodeIDs.filter { !messageIDs.contains($0) }
             let orphanedFolders = cachedIDs.folderIDs.filter { !folderIDs.contains($0) }
+            let orphanedTags = cachedIDs.tagIDs.filter { !messageIDs.contains($0) }
             if !orphanedNodes.isEmpty {
                 try await deleteSummaries(scope: .emailNode, ids: orphanedNodes)
             }
             if !orphanedFolders.isEmpty {
                 try await deleteSummaries(scope: .folder, ids: orphanedFolders)
+            }
+            if !orphanedTags.isEmpty {
+                try await deleteSummaries(scope: .emailTag, ids: orphanedTags)
             }
             userDefaults.set(true, forKey: scopedSummaryCacheMigrationKey)
         } catch {
@@ -1081,22 +1085,26 @@ internal final class MessageStore {
         }
     }
 
-    private func fetchScopedSummaryIDs() async throws -> (nodeIDs: [String], folderIDs: [String]) {
+    private func fetchScopedSummaryIDs() async throws -> (nodeIDs: [String], folderIDs: [String], tagIDs: [String]) {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             let entries = try context.fetch(request)
             var nodeIDs: [String] = []
             var folderIDs: [String] = []
+            var tagIDs: [String] = []
             nodeIDs.reserveCapacity(entries.count)
             folderIDs.reserveCapacity(entries.count)
+            tagIDs.reserveCapacity(entries.count)
             for entry in entries {
                 if entry.scope == SummaryScope.emailNode.rawValue {
                     nodeIDs.append(entry.scopeID)
                 } else if entry.scope == SummaryScope.folder.rawValue {
                     folderIDs.append(entry.scopeID)
+                } else if entry.scope == SummaryScope.emailTag.rawValue {
+                    tagIDs.append(entry.scopeID)
                 }
             }
-            return (nodeIDs, folderIDs)
+            return (nodeIDs, folderIDs, tagIDs)
         }
     }
 }

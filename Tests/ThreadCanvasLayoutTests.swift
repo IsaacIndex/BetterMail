@@ -536,6 +536,69 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(timelineNodes.map(\.id), [newestMessage.messageID, olderMessage.messageID])
     }
 
+    func testTimelineLayoutUsesDynamicHeightsForLongSummaries() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 4, day: 12, hour: 11))!
+        let longText = String(repeating: "Long summary ", count: 24)
+
+        let longMessage = EmailMessage(messageID: "long",
+                                       mailboxID: "inbox",
+                                       accountName: "",
+                                       subject: "Long",
+                                       from: "long@example.com",
+                                       to: "me@example.com",
+                                       date: today,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [],
+                                       threadID: "thread-long")
+        let shortMessage = EmailMessage(messageID: "short",
+                                        mailboxID: "inbox",
+                                        accountName: "",
+                                        subject: "Short",
+                                        from: "short@example.com",
+                                        to: "me@example.com",
+                                        date: calendar.date(byAdding: .minute, value: -30, to: today)!,
+                                        snippet: "",
+                                        isUnread: false,
+                                        inReplyTo: nil,
+                                        references: [],
+                                        threadID: "thread-long")
+
+        let root = ThreadNode(message: longMessage, children: [ThreadNode(message: shortMessage)])
+        let summaries: [String: ThreadSummaryState] = [
+            longMessage.messageID: ThreadSummaryState(text: longText, statusMessage: "", isSummarizing: false),
+            shortMessage.messageID: ThreadSummaryState(text: "Short summary.", statusMessage: "", isSummarizing: false)
+        ]
+
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [root],
+                                                        metrics: metrics,
+                                                        viewMode: .timeline,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        nodeSummaries: summaries,
+                                                        timelineTagsByNodeID: [
+                                                            longMessage.messageID: ["AI", "Follow-up", "Billing"],
+                                                            shortMessage.messageID: ["Quick"]
+                                                        ])
+
+        guard let columnNodes = layout.columns.first?.nodes, columnNodes.count == 2 else {
+            XCTFail("Expected two timeline nodes")
+            return
+        }
+
+        let firstNode = columnNodes[0]
+        let secondNode = columnNodes[1]
+
+        XCTAssertGreaterThan(firstNode.frame.height, secondNode.frame.height)
+        XCTAssertEqual(secondNode.frame.minY,
+                       firstNode.frame.maxY + metrics.nodeVerticalSpacing,
+                       accuracy: 0.5)
+        XCTAssertGreaterThan(layout.days.first?.height ?? 0, metrics.dayHeight)
+    }
+
     @MainActor
     func testTimelineTagsRequestedOncePerNode() async {
         let expectation = XCTestExpectation(description: "Tag request")
