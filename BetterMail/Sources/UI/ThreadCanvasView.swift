@@ -63,7 +63,10 @@ internal struct ThreadCanvasView: View {
                                      readabilityMode: readabilityMode,
                                      calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
-                    connectorLayer(layout: layout, metrics: metrics)
+                    connectorLayer(layout: layout,
+                                   metrics: metrics,
+                                   readabilityMode: readabilityMode,
+                                   timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
                     nodesLayer(layout: layout,
                                metrics: metrics,
                                chromeData: chromeData,
@@ -360,11 +363,15 @@ internal struct ThreadCanvasView: View {
 
     @ViewBuilder
     private func connectorLayer(layout: ThreadCanvasLayout,
-                                metrics: ThreadCanvasLayoutMetrics) -> some View {
+                                metrics: ThreadCanvasLayoutMetrics,
+                                readabilityMode: ThreadCanvasReadabilityMode,
+                                timelineTagsByNodeID: [String: [String]]) -> some View {
         ForEach(layout.columns) { column in
             ThreadCanvasConnectorColumn(column: column,
                                         metrics: metrics,
                                         viewMode: displaySettings.viewMode,
+                                        readabilityMode: readabilityMode,
+                                        timelineTagsByNodeID: timelineTagsByNodeID,
                                         isHighlighted: isColumnSelected(column),
                                         rawZoom: zoomScale)
             .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
@@ -1123,6 +1130,8 @@ private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
     let metrics: ThreadCanvasLayoutMetrics
     let viewMode: ThreadCanvasViewMode
+    let readabilityMode: ThreadCanvasReadabilityMode
+    let timelineTagsByNodeID: [String: [String]]
     let isHighlighted: Bool
     let rawZoom: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1174,13 +1183,15 @@ private struct ThreadCanvasConnectorColumn: View {
             )
             .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
 
-            let circleScale = max(rawZoom, 0.05)
-            let circleSize = lineWidth * 5.8 * circleScale
-            Circle()
-                .fill(segmentColor(for: segment))
-                .frame(width: circleSize, height: circleSize)
-                .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                .position(x: localX + shift, y: segment.endY - (lineWidth * 8.8 * circleScale) / 2)
+            if viewMode != .timeline {
+                let circleScale = max(rawZoom, 0.05)
+                let circleSize = lineWidth * 5.8 * circleScale
+                Circle()
+                    .fill(segmentColor(for: segment))
+                    .frame(width: circleSize, height: circleSize)
+                    .shadow(color: segmentColor(for: segment), radius: glowRadius)
+                    .position(x: localX + shift, y: segment.endY - (lineWidth * 8.8 * circleScale) / 2)
+            }
         }
     }
 
@@ -1246,7 +1257,6 @@ private struct ThreadCanvasConnectorColumn: View {
         guard sortedNodes.count > 1 else { return [] }
 
         var segments: [ConnectorSegment] = []
-        let gap = 0.0
 
         for index in 1..<sortedNodes.count {
             let previous = sortedNodes[index - 1]
@@ -1255,8 +1265,9 @@ private struct ThreadCanvasConnectorColumn: View {
             let touchesManualAttachment = previous.isManualAttachment || next.isManualAttachment
             guard crossesThreads || touchesManualAttachment else { continue }
 
-            let startY = previous.frame.maxY + gap
-            let endY = next.frame.minY - gap
+            let endpoints = connectorEndpoints(previous: previous, next: next)
+            let startY = endpoints.startY
+            let endY = endpoints.endY
             guard endY > startY else { continue }
 
             let midX = (anchorX(for: previous) + anchorX(for: next)) / 2
@@ -1298,15 +1309,13 @@ private struct ThreadCanvasConnectorColumn: View {
         var segments: [ConnectorSegment] = []
         segments.reserveCapacity(nodes.count - 1)
 
-        // Keep the connector from touching the node cards.
-        let gap = 0.0
-
         for index in 1..<nodes.count {
             let previous = nodes[index - 1]
             let next = nodes[index]
 
-            let startY = previous.frame.maxY + gap
-            let endY = next.frame.minY - gap
+            let endpoints = connectorEndpoints(previous: previous, next: next)
+            let startY = endpoints.startY
+            let endY = endpoints.endY
             guard endY > startY else { continue }
 
             segments.append(
@@ -1346,6 +1355,59 @@ private struct ThreadCanvasConnectorColumn: View {
         let padding = ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: metrics.fontScale)
         let dotRadius = ThreadTimelineLayoutConstants.dotSize(fontScale: metrics.fontScale) / 2
         return node.frame.minX + padding + dotRadius
+    }
+
+    private func connectorEndpoints(previous: ThreadCanvasNode,
+                                    next: ThreadCanvasNode) -> (startY: CGFloat, endY: CGFloat) {
+        guard viewMode == .timeline else {
+            return (previous.frame.maxY, next.frame.minY)
+        }
+
+        let previousEdges = timelineDotEdges(for: previous)
+        let nextEdges = timelineDotEdges(for: next)
+        let overlap = connectorDotOverlap
+        return (previousEdges.bottom - overlap, nextEdges.top + overlap)
+    }
+
+    private func timelineDotEdges(for node: ThreadCanvasNode) -> (top: CGFloat, bottom: CGFloat) {
+        let centerY = timelineDotCenterY(for: node)
+        let radius = ThreadTimelineLayoutConstants.dotSize(fontScale: metrics.fontScale) / 2
+        return (centerY - radius, centerY + radius)
+    }
+
+    private func timelineDotCenterY(for node: ThreadCanvasNode) -> CGFloat {
+        let tags = timelineTagsByNodeID[node.id] ?? []
+        let verticalPadding = ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: metrics.fontScale)
+        let topLineHeight = timelineTopLineHeight(tags: tags)
+        return node.frame.minY + verticalPadding + (topLineHeight / 2)
+    }
+
+    private func timelineTopLineHeight(tags: [String]) -> CGFloat {
+        let fontScale = metrics.fontScale
+        let textVisibility = timelineTextVisibility(readabilityMode: readabilityMode)
+        let dotSize = ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
+
+        guard textVisibility == .normal else {
+            return dotSize
+        }
+
+        let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
+                                         weight: .semibold)
+        let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
+                                        weight: .semibold)
+        let timeHeight = ceil(timeFont.ascender - timeFont.descender)
+        let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
+        let visibleTags = tags.prefix(3)
+        let tagHeight = visibleTags.isEmpty
+            ? 0
+            : ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
+
+        return max(dotSize, timeHeight, tagHeight)
+    }
+
+    private var connectorDotOverlap: CGFloat {
+        let scaled = 0.8 * metrics.fontScale
+        return min(max(scaled, 0.5), 1.2)
     }
 }
 
