@@ -8,6 +8,7 @@ internal struct ThreadCanvasLayoutMetrics {
 
     internal let zoom: CGFloat
     internal let dayCount: Int
+    internal let columnWidthAdjustment: CGFloat
 
     internal var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
@@ -18,7 +19,7 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 
     internal var columnWidth: CGFloat {
-        260 * clampedZoom
+        (260 + columnWidthAdjustment) * clampedZoom
     }
 
     internal var columnSpacing: CGFloat {
@@ -57,13 +58,19 @@ internal struct ThreadCanvasLayoutMetrics {
         max(columnWidth - (nodeHorizontalInset * 2), 24)
     }
 
-    internal init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
+    internal init(zoom: CGFloat,
+                  dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount,
+                  columnWidthAdjustment: CGFloat = 0) {
         self.zoom = zoom
         self.dayCount = max(dayCount, 1)
+        self.columnWidthAdjustment = columnWidthAdjustment
     }
 }
 
 internal struct ThreadTimelineLayoutConstants {
+    internal static let summaryColumnExtraWidth: CGFloat = 24
+    internal static let tagColumnExtraWidth: CGFloat = 40
+
     internal static func dotSize(fontScale: CGFloat) -> CGFloat {
         6 * fontScale
     }
@@ -113,7 +120,7 @@ internal struct ThreadTimelineLayoutConstants {
     }
 
     internal static func tagMaxWidth(fontScale: CGFloat) -> CGFloat {
-        160 * fontScale
+        (160 + tagColumnExtraWidth) * fontScale
     }
 
     internal static func selectionCornerRadius(fontScale: CGFloat) -> CGFloat {

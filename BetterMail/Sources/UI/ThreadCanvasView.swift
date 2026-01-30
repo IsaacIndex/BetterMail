@@ -30,7 +30,12 @@ internal struct ThreadCanvasView: View {
 
     internal var body: some View {
         GeometryReader { proxy in
-            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
+            let columnWidthAdjustment = displaySettings.viewMode == .timeline
+                ? ThreadTimelineLayoutConstants.summaryColumnExtraWidth
+                : 0
+            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale,
+                                                    dayCount: viewModel.dayWindowCount,
+                                                    columnWidthAdjustment: columnWidthAdjustment)
             let today = Date()
             let layout = viewModel.canvasLayout(metrics: metrics,
                                                 viewMode: displaySettings.viewMode,
@@ -1354,7 +1359,7 @@ private struct ThreadTimelineCanvasNodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: summaryLineSpacing) {
-            HStack(alignment: .firstTextBaseline, spacing: elementSpacing) {
+            HStack(alignment: .center, spacing: elementSpacing) {
                 timelineDot
 
                 Text(Self.timeFormatter.string(from: node.message.date))
@@ -1363,12 +1368,9 @@ private struct ThreadTimelineCanvasNodeView: View {
                     .frame(width: timeWidth, alignment: .leading)
 
                 if !tags.isEmpty {
-                    HStack(alignment: .firstTextBaseline, spacing: tagSpacing) {
+                    HStack(alignment: .center, spacing: tagSpacing) {
                         ForEach(tags.prefix(3), id: \.self) { tag in
                             ThreadTimelineTagChip(text: tag, fontScale: fontScale)
-                                .alignmentGuide(.firstTextBaseline) { dimensions in
-                                    dimensions[.firstTextBaseline]
-                                }
                         }
                     }
                 }
@@ -1457,9 +1459,6 @@ private struct ThreadTimelineCanvasNodeView: View {
             .frame(width: dotSize, height: dotSize)
             .shadow(color: isSelected && !reduceTransparency ? Color.accentColor.opacity(0.4) : .clear,
                     radius: scaled(4))
-            .alignmentGuide(.firstTextBaseline) { dimensions in
-                dimensions[VerticalAlignment.center]
-            }
     }
 
     @ViewBuilder
@@ -1499,10 +1498,8 @@ private struct ThreadTimelineTagChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10 * fontScale, weight: .semibold))
+            .font(.system(size: 8 * fontScale, weight: .semibold))
             .lineLimit(1)
-            .frame(maxWidth: ThreadTimelineLayoutConstants.tagMaxWidth(fontScale: fontScale),
-                   alignment: .leading)
             .clipped()
             .padding(.vertical, 3 * fontScale)
             .padding(.horizontal, 6 * fontScale)
@@ -1751,3 +1748,61 @@ private extension Comparable {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }
+
+#if DEBUG
+// Preview helper for EmailMessage type used in previews.
+private extension EmailMessage {
+    static func preview(
+        messageID: String = "<msg-1@example.com>",
+        mailboxID: String = "inbox",
+        accountName: String = "Preview Account",
+        subject: String = "Quarterly Results and Strategy Update",
+        from: String = "Alex Johnson",
+        to: String = "You",
+        date: Date = Date(),
+        isUnread: Bool = true,
+        snippet: String = "Highlights: Revenue up 12% QoQ, margin expansion continues.",
+        inReplyTo: String = "",
+        references: [String] = ["<ref-1@example.com>", "<ref-2@example.com>"]
+    ) -> EmailMessage {
+        EmailMessage(
+            messageID: messageID,
+            mailboxID: mailboxID,
+            accountName: accountName,
+            subject: subject,
+            from: from,
+            to: to,
+            date: date,
+            snippet: snippet,
+            isUnread: isUnread,
+            inReplyTo: inReplyTo,
+            references: references
+        )
+    }
+}
+#endif
+
+#Preview("ThreadTimelineTagChip") {
+    ThreadTimelineTagChip(text: "Important", fontScale: 1.0)
+}
+
+#Preview("ThreadTimelineCanvasNodeView") {
+    let message = EmailMessage.preview()
+    let node = ThreadCanvasNode(
+        id: "node-1",
+        message: message,
+        threadID: "thread-1",
+        jwzThreadID: "jwz-1",
+        frame: CGRect(x: 0, y: 0, width: 400, height: 80),
+        dayIndex: 0,
+        isManualAttachment: false
+    )
+    ThreadTimelineCanvasNodeView(
+        node: node,
+        summaryState: nil,
+        tags: ["Finance", "Q1", "Update"],
+        isSelected: true,
+        fontScale: 1.0
+    )
+}
+
