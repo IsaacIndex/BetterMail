@@ -364,6 +364,7 @@ internal struct ThreadCanvasView: View {
         ForEach(layout.columns) { column in
             ThreadCanvasConnectorColumn(column: column,
                                         metrics: metrics,
+                                        viewMode: displaySettings.viewMode,
                                         isHighlighted: isColumnSelected(column),
                                         rawZoom: zoomScale)
             .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
@@ -385,7 +386,8 @@ internal struct ThreadCanvasView: View {
                                                      summaryState: viewModel.summaryState(for: node.id),
                                                      tags: viewModel.timelineTags(for: node.id),
                                                      isSelected: viewModel.selectedNodeIDs.contains(node.id),
-                                                     fontScale: metrics.fontScale)
+                                                     fontScale: metrics.fontScale,
+                                                     readabilityMode: readabilityMode)
                             .task {
                                 viewModel.requestTimelineTagsIfNeeded(for: ThreadNode(message: node.message))
                             }
@@ -1120,6 +1122,7 @@ private struct FolderColumnHeader: View {
 private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
     let metrics: ThreadCanvasLayoutMetrics
+    let viewMode: ThreadCanvasViewMode
     let isHighlighted: Bool
     let rawZoom: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1140,7 +1143,10 @@ private struct ThreadCanvasConnectorColumn: View {
         let manualShift = max(4, metrics.nodeWidth * 0.02)
         var localX: CGFloat
         var shift: CGFloat
-        if segment.isManual {
+        if viewMode == .timeline {
+            localX = (segment.nodeMidX - column.xOffset).clamped(to: 0...metrics.columnWidth)
+            shift = 0
+        } else if segment.isManual {
             localX = metrics.columnWidth / 2
             shift = 0
         } else {
@@ -1253,7 +1259,7 @@ private struct ThreadCanvasConnectorColumn: View {
             let endY = next.frame.minY - gap
             guard endY > startY else { continue }
 
-            let midX = (previous.frame.midX + next.frame.midX) / 2
+            let midX = (anchorX(for: previous) + anchorX(for: next)) / 2
             segments.append(
                 ConnectorSegment(
                     id: "\(column.id)-manual-\(index)",
@@ -1268,6 +1274,9 @@ private struct ThreadCanvasConnectorColumn: View {
     }
 
     private func laneOffsets(for jwzThreadIDs: [String]) -> [String: CGFloat] {
+        if viewMode == .timeline {
+            return jwzThreadIDs.reduce(into: [:]) { $0[$1] = 0 }
+        }
         guard jwzThreadIDs.count > 1 else {
             return jwzThreadIDs.reduce(into: [:]) { $0[$1] = 0 }
         }
@@ -1305,7 +1314,7 @@ private struct ThreadCanvasConnectorColumn: View {
                     id: "\(segmentPrefix)-\(index)",
                     startY: startY,
                     endY: endY,
-                    nodeMidX: previous.frame.midX + laneOffset,
+                    nodeMidX: anchorX(for: previous, laneOffset: laneOffset),
                     isManual: isManual
                 )
             )
@@ -1321,6 +1330,22 @@ private struct ThreadCanvasConnectorColumn: View {
             jwzCount,
             manualCount
         ))
+    }
+
+    private func anchorX(for node: ThreadCanvasNode, laneOffset: CGFloat = 0) -> CGFloat {
+        let base: CGFloat
+        if viewMode == .timeline {
+            base = timelineDotCenterX(for: node)
+        } else {
+            base = node.frame.midX
+        }
+        return base + laneOffset
+    }
+
+    private func timelineDotCenterX(for node: ThreadCanvasNode) -> CGFloat {
+        let padding = ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: metrics.fontScale)
+        let dotRadius = ThreadTimelineLayoutConstants.dotSize(fontScale: metrics.fontScale) / 2
+        return node.frame.minX + padding + dotRadius
     }
 }
 
@@ -1347,6 +1372,7 @@ private struct ThreadTimelineCanvasNodeView: View {
     let tags: [String]
     let isSelected: Bool
     let fontScale: CGFloat
+    let readabilityMode: ThreadCanvasReadabilityMode
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -1358,14 +1384,17 @@ private struct ThreadTimelineCanvasNodeView: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: summaryLineSpacing) {
+        let textVisibility = timelineTextVisibility(readabilityMode: readabilityMode)
+        VStack(alignment: .leading, spacing: textVisibility == .normal ? summaryLineSpacing : 0) {
             HStack(alignment: .center, spacing: elementSpacing) {
                 timelineDot
 
-                Text(Self.timeFormatter.string(from: node.message.date))
-                    .font(.system(size: timeFontSize, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: timeWidth, alignment: .leading)
+                if textVisibility == .normal {
+                    Text(Self.timeFormatter.string(from: node.message.date))
+                        .font(.system(size: timeFontSize, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: timeWidth, alignment: .leading)
+                }
 
                 if !tags.isEmpty {
                     HStack(alignment: .center, spacing: tagSpacing) {
@@ -1376,13 +1405,15 @@ private struct ThreadTimelineCanvasNodeView: View {
                 }
             }
 
-            Text(titleText)
-                .font(.system(size: summaryFontSize, weight: node.message.isUnread ? .semibold : .regular))
-                .foregroundStyle(.primary)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, summaryIndent)
-                .layoutPriority(1)
+            if textVisibility == .normal {
+                Text(titleText)
+                    .font(.system(size: summaryFontSize, weight: node.message.isUnread ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, summaryIndent)
+                    .layoutPriority(1)
+            }
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, verticalPadding)
@@ -1489,6 +1520,15 @@ private struct ThreadTimelineCanvasNodeView: View {
 
     private func scaled(_ value: CGFloat) -> CGFloat {
         value * fontScale
+    }
+}
+
+internal func timelineTextVisibility(readabilityMode: ThreadCanvasReadabilityMode) -> TextVisibility {
+    switch readabilityMode {
+    case .detailed:
+        return .normal
+    case .compact, .minimal:
+        return .hidden
     }
 }
 
@@ -1802,7 +1842,7 @@ private extension EmailMessage {
         summaryState: nil,
         tags: ["Finance", "Q1", "Update"],
         isSelected: true,
-        fontScale: 1.0
+        fontScale: 1.0,
+        readabilityMode: .detailed
     )
 }
-
