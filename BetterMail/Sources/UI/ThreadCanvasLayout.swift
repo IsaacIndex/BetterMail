@@ -68,8 +68,8 @@ internal struct ThreadCanvasLayoutMetrics {
 }
 
 internal struct ThreadTimelineLayoutConstants {
-    internal static let summaryColumnExtraWidth: CGFloat = 24
-    internal static let tagColumnExtraWidth: CGFloat = 40
+    internal static let summaryColumnExtraWidth: CGFloat = 160
+    internal static let tagColumnExtraWidth: CGFloat = 160
 
     internal static func dotSize(fontScale: CGFloat) -> CGFloat {
         6 * fontScale
