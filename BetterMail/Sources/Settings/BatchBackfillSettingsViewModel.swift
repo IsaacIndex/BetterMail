@@ -24,7 +24,8 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     private let regenerationService: SummaryRegenerationServicing
     private let snippetLineLimitProvider: () -> Int
     private let stopPhrasesProvider: () -> [String]
-    private let mailbox: String = "inbox"
+    private let backfillMailbox: String = "inbox"
+    private let regenerationMailbox: String? = nil
     private let defaultBatchSize = 5
     private var runTask: Task<Void, Never>?
     private let logger = Log.refresh
@@ -61,12 +62,12 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let total = try await service.countMessages(in: orderedRange, mailbox: mailbox)
+                let total = try await service.countMessages(in: orderedRange, mailbox: backfillMailbox)
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
                 let result = try await service.runBackfill(range: orderedRange,
-                                                           mailbox: mailbox,
+                                                           mailbox: backfillMailbox,
                                                            preferredBatchSize: defaultBatchSize,
                                                            totalExpected: total,
                                                            snippetLineLimit: snippetLimit) { [weak self] progress in
@@ -117,18 +118,19 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         let snippetLimit = snippetLineLimitProvider()
         let stopPhrases = stopPhrasesProvider()
 
-        logger.info("RegenAI start: mailbox=\(self.mailbox, privacy: .public) rangeStart=\(orderedRange.start, privacy: .private) rangeEnd=\(orderedRange.end, privacy: .private) snippetLimit=\(snippetLimit, privacy: .public) stopPhrases=\(stopPhrases.count, privacy: .public)")
+        let mailboxLabel = regenerationMailbox ?? "all-mailboxes"
+        logger.info("RegenAI start: mailbox=\(mailboxLabel, privacy: .public) rangeStart=\(orderedRange.start, privacy: .private) rangeEnd=\(orderedRange.end, privacy: .private) snippetLimit=\(snippetLimit, privacy: .public) stopPhrases=\(stopPhrases.count, privacy: .public)")
 
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let total = try await regenerationService.countMessages(in: orderedRange, mailbox: mailbox)
-                logger.info("RegenAI count: total=\(total, privacy: .public) mailbox=\(self.mailbox, privacy: .public)")
+                let total = try await regenerationService.countMessages(in: orderedRange, mailbox: regenerationMailbox)
+                logger.info("RegenAI count: total=\(total, privacy: .public) mailbox=\(mailboxLabel, privacy: .public)")
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
                 let result = try await regenerationService.runRegeneration(range: orderedRange,
-                                                                           mailbox: mailbox,
+                                                                           mailbox: regenerationMailbox,
                                                                            preferredBatchSize: defaultBatchSize,
                                                                            totalExpected: total,
                                                                            snippetLineLimit: snippetLimit,
