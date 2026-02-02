@@ -62,7 +62,7 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
-        return try await store.countMessages(in: clampedRange, mailbox: nil)
+        return try await store.countMessages(in: clampedRange, mailbox: mailbox)
     }
 
     internal func runRegeneration(range: DateInterval,
@@ -97,7 +97,7 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
 
         while completed < totalExpected {
             let messages = try await store.fetchMessages(in: clampedRange,
-                                                         mailbox: nil,
+                                                         mailbox: mailbox,
                                                          limit: batchSize,
                                                          offset: offset)
             guard !messages.isEmpty else { break }
