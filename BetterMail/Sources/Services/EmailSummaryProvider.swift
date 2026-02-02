@@ -267,10 +267,10 @@ Subjects:
         Use only the provided text; do not add new facts or assumptions.
         Highlight the main themes, decisions, or urgent follow ups.
         Keep the tone professional and actionable, in two or three sentences.
+        Output only the overview text (no headings, labels, bullet points, or blank lines).
         
-        Folder title: \(resolvedTitle)
+        \(resolvedTitle)
         
-        Email summaries:
         \(bullets)
         """
     }
