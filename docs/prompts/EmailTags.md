@@ -14,7 +14,8 @@ Generates three short tags for an email so it can be scanned quickly in the UI.
 
 ## Prompt Template
 ```text
-Generate tags for this email.
+Generate tags by transforming only the provided email text.
+Use only the information in the subject, sender, and snippet; do not add new facts.
 
 Subject: <subject>
 From: <sender>
@@ -25,6 +26,7 @@ Snippet: <snippet>
 ```text
 You are labeling an email for quick scanning.
 
+Transform the provided email text into tags only; do not add facts or assumptions.
 Provide exactly three short tags (1-2 words each).
 Return only a comma-separated list of tags.
 Do not include any extra text, numbering, or commentary.

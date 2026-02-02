@@ -14,7 +14,8 @@ Summarizes a single email message, focusing on what it adds or changes relative 
 
 ## Prompt Template
 ```text
-Summarize this email in one or two concise sentences.
+Transform this email into one or two concise sentences.
+Use only the provided text; do not add new facts or assumptions.
 Focus on what is new compared to the prior messages listed.
 Keep the tone professional and actionable.
 
@@ -33,7 +34,8 @@ Prior messages in this thread:
 ## System Instructions
 ```text
 You are an organized executive assistant reviewing an email.
-Write a concise summary of what this message adds or changes relative to the prior context.
+Transform the provided email content into a concise summary of what this message adds or changes relative to the prior context.
+Do not introduce any details that are not present in the input.
 Avoid bullet lists; use one or two short sentences.
 ```
 

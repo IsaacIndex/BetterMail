@@ -46,7 +46,7 @@ internal enum EmailTagProviderFactory {
     internal static func makeCapability() -> EmailTagCapability {
 #if canImport(FoundationModels)
         if #available(macOS 15.2, *) {
-            let model = FoundationModels.SystemLanguageModel.default
+            let model = FoundationModelsSupport.makeDefaultModel()
             switch model.availability {
             case .available:
                 let provider = FoundationModelsEmailTagProvider(model: model)
@@ -102,6 +102,7 @@ internal final class FoundationModelsEmailTagProvider: EmailTagProviding {
     private static let instructions = """
     You are labeling an email for quick scanning.
 
+    Transform the provided email text into tags only; do not add facts or assumptions.
     Provide exactly three short tags (1-2 words each).
     Return only a comma-separated list of tags.
     Do not include any extra text, numbering, or commentary.
@@ -113,7 +114,8 @@ internal final class FoundationModelsEmailTagProvider: EmailTagProviding {
         let cleanedSnippet = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return """
-        Generate tags for this email.
+        Generate tags by transforming only the provided email text.
+        Use only the information in the subject, sender, and snippet; do not add new facts.
 
         Subject: \(cleanedSubject.isEmpty ? "No subject" : cleanedSubject)
         From: \(cleanedFrom.isEmpty ? "Unknown sender" : cleanedFrom)
