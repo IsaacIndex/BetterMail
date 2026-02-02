@@ -96,12 +96,12 @@ internal struct ThreadCanvasView: View {
                                 let adjustedOffset = max(0, rawOffset + totalTopPadding)
                                 let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
                                 scrollOffset = adjustedOffset
-                                viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
-                                                                viewportHeight: effectiveHeight,
-                                                                layout: layout,
-                                                                metrics: metrics,
-                                                                today: today,
-                                                                calendar: calendar)
+                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
+                                                                        viewportHeight: effectiveHeight,
+                                                                        layout: layout,
+                                                                        metrics: metrics,
+                                                                        today: today,
+                                                                        calendar: calendar)
                             }
                     }
                 )
@@ -120,20 +120,22 @@ internal struct ThreadCanvasView: View {
                 let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
-                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: clampedHeight,
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: clampedHeight,
+                                                        layout: layout,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        immediate: true)
             }
             .onChange(of: layout.contentSize.height) { _ in
-                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                        layout: layout,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        immediate: true)
             }
             .onChange(of: activeDropFolderID) { oldValue, newValue in
                 guard newValue != nil else {
@@ -147,12 +149,13 @@ internal struct ThreadCanvasView: View {
             .onAppear {
                 accumulatedZoom = zoomScale
                 displaySettings.updateCurrentZoom(zoomScale)
-                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                        layout: layout,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        immediate: true)
             }
             .onChange(of: zoomScale) { _, newValue in
                 displaySettings.updateCurrentZoom(newValue)

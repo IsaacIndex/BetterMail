@@ -5,6 +5,7 @@ Source: `BetterMail/Sources/UI/ThreadCanvasView.swift`
 ## Overview
 `ThreadCanvasView` builds a scrollable canvas and draws its content inside a `ZStack(alignment: .topLeading)`.
 The order of views in the ZStack defines the visual stacking (earlier = further back, later = on top).
+Timeline layout work is cached in the view model and visible-range updates are throttled to avoid per-scroll recomputation.
 
 ZStack draw order (back to front):
 1) `dayBands`

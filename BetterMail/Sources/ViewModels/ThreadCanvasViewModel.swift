@@ -60,6 +60,107 @@ private struct ThreadFolderEdit: Hashable {
 
 @MainActor
 internal final class ThreadCanvasViewModel: ObservableObject {
+    private struct TimelineLayoutCacheKey: Hashable {
+        let viewMode: ThreadCanvasViewMode
+        let dayCount: Int
+        let zoomBucket: Int
+        let columnWidthBucket: Int
+        let dataVersion: Int
+        let dayStart: Date
+    }
+
+    private struct TimelineTextMeasurementCache {
+        struct FontKey: Hashable {
+            let fontScaleBucket: Int
+            let isUnread: Bool
+        }
+
+        struct SummaryKey: Hashable {
+            let fontKey: FontKey
+            let widthBucket: Int
+            let text: String
+        }
+
+        struct Assets {
+            let summaryFont: NSFont
+            let timeFont: NSFont
+            let tagFont: NSFont
+            let paragraph: NSParagraphStyle
+            let timeHeight: CGFloat
+            let tagHeight: CGFloat
+        }
+
+        private(set) var assetsByKey: [FontKey: Assets] = [:]
+        private var summaryHeights: [SummaryKey: CGFloat] = [:]
+        private var summaryOrder: [SummaryKey] = []
+        private let summaryLimit = 500
+
+        mutating func assets(fontScale: CGFloat, isUnread: Bool) -> Assets {
+            let key = FontKey(fontScaleBucket: Self.bucket(fontScale), isUnread: isUnread)
+            if let cached = assetsByKey[key] {
+                return cached
+            }
+            let summaryFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.summaryFontSize(fontScale: fontScale),
+                                                weight: isUnread ? .semibold : .regular)
+            let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
+                                             weight: .semibold)
+            let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
+                                            weight: .semibold)
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byWordWrapping
+            let timeHeight = ceil(timeFont.ascender - timeFont.descender)
+            let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
+            let tagHeight = ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
+            let assets = Assets(summaryFont: summaryFont,
+                                timeFont: timeFont,
+                                tagFont: tagFont,
+                                paragraph: paragraph,
+                                timeHeight: timeHeight,
+                                tagHeight: tagHeight)
+            assetsByKey[key] = assets
+            return assets
+        }
+
+        mutating func summaryHeight(text: String,
+                                    fontScale: CGFloat,
+                                    isUnread: Bool,
+                                    availableWidth: CGFloat) -> CGFloat {
+            let fontKey = FontKey(fontScaleBucket: Self.bucket(fontScale), isUnread: isUnread)
+            let widthBucket = Self.bucket(availableWidth)
+            let key = SummaryKey(fontKey: fontKey, widthBucket: widthBucket, text: text)
+            if let cached = summaryHeights[key] {
+                return cached
+            }
+            let assets = assets(fontScale: fontScale, isUnread: isUnread)
+            let rect = (text as NSString).boundingRect(with: CGSize(width: availableWidth, height: .greatestFiniteMagnitude),
+                                                       options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                                       attributes: [.font: assets.summaryFont,
+                                                                    .paragraphStyle: assets.paragraph])
+            let height = ceil(rect.height)
+            summaryHeights[key] = height
+            summaryOrder.append(key)
+            if summaryOrder.count > summaryLimit {
+                let trimCount = summaryOrder.count - summaryLimit
+                let toRemove = summaryOrder.prefix(trimCount)
+                for entry in toRemove {
+                    summaryHeights.removeValue(forKey: entry)
+                }
+                summaryOrder.removeFirst(trimCount)
+            }
+            return height
+        }
+
+        mutating func clear() {
+            assetsByKey.removeAll()
+            summaryHeights.removeAll()
+            summaryOrder.removeAll()
+        }
+
+        private static func bucket(_ value: CGFloat) -> Int {
+            Int((value * 1000).rounded())
+        }
+    }
+
     private actor SidebarBackgroundWorker {
         private let client: MailAppleScriptClient
         private let store: MessageStore
@@ -223,30 +324,48 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    @Published internal private(set) var roots: [ThreadNode] = []
+    @Published internal private(set) var roots: [ThreadNode] = [] {
+        didSet { invalidateLayoutCache() }
+    }
     @Published internal private(set) var isRefreshing = false
     @Published internal private(set) var status: String = ""
     @Published internal private(set) var unreadTotal: Int = 0
     @Published internal private(set) var lastRefreshDate: Date?
     @Published internal private(set) var nextRefreshDate: Date?
-    @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:]
+    @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:] {
+        didSet { invalidateLayoutCache() }
+    }
     @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
     @Published internal private(set) var expandedSummaryIDs: Set<String> = []
     @Published internal var selectedNodeID: String?
     @Published internal var selectedFolderID: String?
     @Published internal private(set) var selectedNodeIDs: Set<String> = []
     @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
-    @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = []
+    @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = [] {
+        didSet { invalidateLayoutCache() }
+    }
     @Published internal private(set) var manualGroups: [String: ManualThreadGroup] = [:]
-    @Published internal private(set) var jwzThreadMap: [String: String] = [:]
-    @Published internal private(set) var threadFolders: [ThreadFolder] = []
-    @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:]
-    @Published internal private(set) var folderMembershipByThreadID: [String: String] = [:]
+    @Published internal private(set) var jwzThreadMap: [String: String] = [:] {
+        didSet { invalidateLayoutCache() }
+    }
+    @Published internal private(set) var threadFolders: [ThreadFolder] = [] {
+        didSet { invalidateLayoutCache() }
+    }
+    @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:] {
+        didSet { invalidateLayoutCache() }
+    }
+    @Published internal private(set) var folderMembershipByThreadID: [String: String] = [:] {
+        didSet { invalidateLayoutCache() }
+    }
     @Published internal private(set) var openInMailState: OpenInMailState?
-    @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount
+    @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount {
+        didSet { invalidateLayoutCache() }
+    }
     @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
     @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
-    @Published internal private(set) var timelineTagsByNodeID: [String: [String]] = [:]
+    @Published internal private(set) var timelineTagsByNodeID: [String: [String]] = [:] {
+        didSet { invalidateLayoutCache() }
+    }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
     @Published internal var fetchLimit: Int = 10 {
@@ -284,6 +403,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var openInMailAttemptID = UUID()
     private var shouldForceFullReload = false
     private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
+    private var layoutCacheKey: TimelineLayoutCacheKey?
+    private var layoutCache: ThreadCanvasLayout?
+    private var layoutCacheVersion = 0
+    private var timelineTextMeasurementCache = TimelineTextMeasurementCache()
+    private var visibleRangeUpdateTask: Task<Void, Never>?
+    private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
+    private static let timelineVisibleTagLimit = 3
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
@@ -1564,21 +1690,75 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                viewMode: ThreadCanvasViewMode = .default,
                                today: Date = Date(),
                                calendar: Calendar = .current) -> ThreadCanvasLayout {
-        Self.canvasLayout(for: roots,
-                          metrics: metrics,
-                          viewMode: viewMode,
-                          today: today,
-                          calendar: calendar,
-                          manualAttachmentMessageIDs: manualAttachmentMessageIDs,
-                          jwzThreadMap: jwzThreadMap,
-                          folders: effectiveThreadFolders,
-                          folderMembershipByThreadID: folderMembershipByThreadID,
-                          nodeSummaries: nodeSummaries,
-                          timelineTagsByNodeID: timelineTagsByNodeID)
+        let dayStart = calendar.startOfDay(for: today)
+        let cacheKey = TimelineLayoutCacheKey(viewMode: viewMode,
+                                              dayCount: metrics.dayCount,
+                                              zoomBucket: Self.metricsBucket(metrics.zoom),
+                                              columnWidthBucket: Self.metricsBucket(metrics.columnWidthAdjustment),
+                                              dataVersion: layoutCacheVersion,
+                                              dayStart: dayStart)
+        if let cachedKey = layoutCacheKey,
+           cachedKey == cacheKey,
+           let cachedLayout = layoutCache {
+            return cachedLayout
+        }
+
+        let layout = Self.canvasLayout(for: roots,
+                                       metrics: metrics,
+                                       viewMode: viewMode,
+                                       today: today,
+                                       calendar: calendar,
+                                       manualAttachmentMessageIDs: manualAttachmentMessageIDs,
+                                       jwzThreadMap: jwzThreadMap,
+                                       folders: effectiveThreadFolders,
+                                       folderMembershipByThreadID: folderMembershipByThreadID,
+                                       nodeSummaries: nodeSummaries,
+                                       timelineTagsByNodeID: timelineTagsByNodeID,
+                                       measurementCache: &timelineTextMeasurementCache)
+        layoutCacheKey = cacheKey
+        layoutCache = layout
+        return layout
     }
 
     internal var canBackfillVisibleRange: Bool {
         !visibleEmptyDayIntervals.isEmpty && !isBackfilling
+    }
+
+    internal func scheduleVisibleDayRangeUpdate(scrollOffset: CGFloat,
+                                                viewportHeight: CGFloat,
+                                                layout: ThreadCanvasLayout,
+                                                metrics: ThreadCanvasLayoutMetrics,
+                                                today: Date = Date(),
+                                                calendar: Calendar = .current,
+                                                immediate: Bool = false) {
+        if immediate {
+            visibleRangeUpdateTask?.cancel()
+            updateVisibleDayRange(scrollOffset: scrollOffset,
+                                  viewportHeight: viewportHeight,
+                                  layout: layout,
+                                  metrics: metrics,
+                                  today: today,
+                                  calendar: calendar)
+            return
+        }
+
+        visibleRangeUpdateTask?.cancel()
+        let scroll = scrollOffset
+        let height = viewportHeight
+        let layoutSnapshot = layout
+        let metricsSnapshot = metrics
+        let todaySnapshot = today
+        let calendarSnapshot = calendar
+        visibleRangeUpdateTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: visibleRangeUpdateThrottleInterval)
+            guard !Task.isCancelled else { return }
+            self.updateVisibleDayRange(scrollOffset: scroll,
+                                       viewportHeight: height,
+                                       layout: layoutSnapshot,
+                                       metrics: metricsSnapshot,
+                                       today: todaySnapshot,
+                                       calendar: calendarSnapshot)
+        }
     }
 
     internal func updateVisibleDayRange(scrollOffset: CGFloat,
@@ -1613,6 +1793,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                     contentHeight: layout.contentSize.height,
                                                     threshold: metrics.dayHeight * 2)
         expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
+    }
+
+    private func invalidateLayoutCache() {
+        layoutCacheVersion &+= 1
+        layoutCacheKey = nil
+        layoutCache = nil
+    }
+
+    private static func metricsBucket(_ value: CGFloat) -> Int {
+        Int((value * 1000).rounded())
     }
 
     internal func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
@@ -1989,13 +2179,41 @@ extension ThreadCanvasViewModel {
                                       folderMembershipByThreadID: [String: String] = [:],
                                       nodeSummaries: [String: ThreadSummaryState] = [:],
                                       timelineTagsByNodeID: [String: [String]] = [:]) -> ThreadCanvasLayout {
+        var measurementCache = TimelineTextMeasurementCache()
+        return canvasLayout(for: roots,
+                            metrics: metrics,
+                            viewMode: viewMode,
+                            today: today,
+                            calendar: calendar,
+                            manualAttachmentMessageIDs: manualAttachmentMessageIDs,
+                            jwzThreadMap: jwzThreadMap,
+                            folders: folders,
+                            folderMembershipByThreadID: folderMembershipByThreadID,
+                            nodeSummaries: nodeSummaries,
+                            timelineTagsByNodeID: timelineTagsByNodeID,
+                            measurementCache: &measurementCache)
+    }
+
+    private static func canvasLayout(for roots: [ThreadNode],
+                                     metrics: ThreadCanvasLayoutMetrics,
+                                     viewMode: ThreadCanvasViewMode = .default,
+                                     today: Date,
+                                     calendar: Calendar,
+                                     manualAttachmentMessageIDs: Set<String> = [],
+                                     jwzThreadMap: [String: String] = [:],
+                                     folders: [ThreadFolder] = [],
+                                     folderMembershipByThreadID: [String: String] = [:],
+                                     nodeSummaries: [String: ThreadSummaryState] = [:],
+                                     timelineTagsByNodeID: [String: [String]] = [:],
+                                     measurementCache: inout TimelineTextMeasurementCache) -> ThreadCanvasLayout {
         let dayHeights = dayHeights(for: roots,
                                     metrics: metrics,
                                     viewMode: viewMode,
                                     today: today,
                                     calendar: calendar,
                                     nodeSummaries: nodeSummaries,
-                                    timelineTagsByNodeID: timelineTagsByNodeID)
+                                    timelineTagsByNodeID: timelineTagsByNodeID,
+                                    measurementCache: &measurementCache)
         var currentYOffset = metrics.contentPadding
         let days = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
             let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
@@ -2088,7 +2306,8 @@ extension ThreadCanvasViewModel {
                                             manualAttachmentMessageIDs: manualAttachmentMessageIDs,
                                             jwzThreadMap: jwzThreadMap,
                                             nodeSummaries: nodeSummaries,
-                                            timelineTagsByNodeID: timelineTagsByNodeID)
+                                            timelineTagsByNodeID: timelineTagsByNodeID,
+                                            measurementCache: &measurementCache)
                     let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
                     let folderID = normalizedMembership[thread.threadID]
                     columns.append(ThreadCanvasColumn(id: thread.threadID,
@@ -2170,7 +2389,8 @@ extension ThreadCanvasViewModel {
                                     manualAttachmentMessageIDs: Set<String>,
                                     jwzThreadMap: [String: String],
                                     nodeSummaries: [String: ThreadSummaryState],
-                                    timelineTagsByNodeID: [String: [String]]) -> [ThreadCanvasNode] {
+                                    timelineTagsByNodeID: [String: [String]],
+                                    measurementCache: inout TimelineTextMeasurementCache) -> [ThreadCanvasNode] {
         var grouped: [Int: [ThreadNode]] = [:]
         let allNodes = flatten(node: root)
         for node in allNodes {
@@ -2199,7 +2419,8 @@ extension ThreadCanvasViewModel {
                     let nodeHeight = timelineEntryHeight(for: node,
                                                          metrics: metrics,
                                                          summaryState: nodeSummaries[node.id],
-                                                         tags: timelineTagsByNodeID[node.id] ?? [])
+                                                         tags: timelineTagsByNodeID[node.id] ?? [],
+                                                         measurementCache: &measurementCache)
                     let frame = CGRect(x: columnX + metrics.nodeHorizontalInset,
                                        y: currentYOffset,
                                        width: metrics.nodeWidth,
@@ -2283,7 +2504,8 @@ extension ThreadCanvasViewModel {
                                    today: Date,
                                    calendar: Calendar,
                                    nodeSummaries: [String: ThreadSummaryState],
-                                   timelineTagsByNodeID: [String: [String]]) -> [Int: CGFloat] {
+                                   timelineTagsByNodeID: [String: [String]],
+                                   measurementCache: inout TimelineTextMeasurementCache) -> [Int: CGFloat] {
         switch viewMode {
         case .timeline:
             return timelineDayHeights(for: roots,
@@ -2291,7 +2513,8 @@ extension ThreadCanvasViewModel {
                                       today: today,
                                       calendar: calendar,
                                       nodeSummaries: nodeSummaries,
-                                      timelineTagsByNodeID: timelineTagsByNodeID)
+                                      timelineTagsByNodeID: timelineTagsByNodeID,
+                                      measurementCache: &measurementCache)
         case .default:
             return defaultDayHeights(for: roots, metrics: metrics, today: today, calendar: calendar)
         }
@@ -2342,7 +2565,8 @@ extension ThreadCanvasViewModel {
                                            today: Date,
                                            calendar: Calendar,
                                            nodeSummaries: [String: ThreadSummaryState],
-                                           timelineTagsByNodeID: [String: [String]]) -> [Int: CGFloat] {
+                                           timelineTagsByNodeID: [String: [String]],
+                                           measurementCache: inout TimelineTextMeasurementCache) -> [Int: CGFloat] {
         var maxHeightsByDay: [Int: CGFloat] = [:]
         for root in roots {
             var totalHeightByDay: [Int: CGFloat] = [:]
@@ -2357,7 +2581,8 @@ extension ThreadCanvasViewModel {
                 let nodeHeight = timelineEntryHeight(for: node,
                                                      metrics: metrics,
                                                      summaryState: nodeSummaries[node.id],
-                                                     tags: timelineTagsByNodeID[node.id] ?? [])
+                                                     tags: timelineTagsByNodeID[node.id] ?? [],
+                                                     measurementCache: &measurementCache)
                 totalHeightByDay[dayIndex, default: 0] += nodeHeight
                 countsByDay[dayIndex, default: 0] += 1
             }
@@ -2381,37 +2606,29 @@ extension ThreadCanvasViewModel {
     private static func timelineEntryHeight(for node: ThreadNode,
                                             metrics: ThreadCanvasLayoutMetrics,
                                             summaryState: ThreadSummaryState?,
-                                            tags: [String]) -> CGFloat {
+                                            tags: [String],
+                                            measurementCache: inout TimelineTextMeasurementCache) -> CGFloat {
         let fontScale = metrics.fontScale
         let summaryText = timelineDisplayText(for: node, summaryState: summaryState)
-        let summaryFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.summaryFontSize(fontScale: fontScale),
-                                            weight: node.message.isUnread ? .semibold : .regular)
-        let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
-                                         weight: .semibold)
-        let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
-                                        weight: .semibold)
+        let isUnread = node.message.isUnread
+        let assets = measurementCache.assets(fontScale: fontScale, isUnread: isUnread)
 
         let dotSize = ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
-        let timeWidth = ThreadTimelineLayoutConstants.timeWidth(fontScale: fontScale)
         let elementSpacing = ThreadTimelineLayoutConstants.elementSpacing(fontScale: fontScale)
         let horizontalPadding = ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: fontScale)
         let verticalPadding = ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: fontScale)
         let summarySpacing = ThreadTimelineLayoutConstants.summaryLineSpacing(fontScale: fontScale)
-        let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
-        let visibleTags = tags.prefix(3)
+        let visibleTags = tags.prefix(Self.timelineVisibleTagLimit)
 
         let summaryIndent = dotSize + elementSpacing
         let availableWidth = max(metrics.nodeWidth - (horizontalPadding * 2) - summaryIndent, 40)
 
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        let summaryRect = (summaryText as NSString).boundingRect(with: CGSize(width: availableWidth, height: .greatestFiniteMagnitude),
-                                                                 options: [.usesLineFragmentOrigin, .usesFontLeading],
-                                                                 attributes: [.font: summaryFont, .paragraphStyle: paragraph])
-        let summaryHeight = ceil(summaryRect.height)
-        let timeHeight = ceil(timeFont.ascender - timeFont.descender)
-        let tagHeight = visibleTags.isEmpty ? 0 : ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
-        let topLineHeight = max(timeHeight, tagHeight, dotSize)
+        let summaryHeight = measurementCache.summaryHeight(text: summaryText,
+                                                           fontScale: fontScale,
+                                                           isUnread: isUnread,
+                                                           availableWidth: availableWidth)
+        let tagHeight = visibleTags.isEmpty ? 0 : assets.tagHeight
+        let topLineHeight = max(assets.timeHeight, tagHeight, dotSize)
         let contentHeight = topLineHeight + summarySpacing + summaryHeight
 
         return contentHeight + (verticalPadding * 2)
