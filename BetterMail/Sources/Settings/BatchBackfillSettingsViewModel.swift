@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 internal final class BatchBackfillSettingsViewModel: ObservableObject {
@@ -26,6 +27,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     private let mailbox: String = "inbox"
     private let defaultBatchSize = 5
     private var runTask: Task<Void, Never>?
+    private let logger = Log.refresh
 
     internal init(service: BatchBackfillService = BatchBackfillService(),
                   regenerationService: SummaryRegenerationServicing = SummaryRegenerationService(),
@@ -115,10 +117,13 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         let snippetLimit = snippetLineLimitProvider()
         let stopPhrases = stopPhrasesProvider()
 
+        logger.info("RegenAI start: mailbox=\(self.mailbox, privacy: .public) rangeStart=\(orderedRange.start, privacy: .private) rangeEnd=\(orderedRange.end, privacy: .private) snippetLimit=\(snippetLimit, privacy: .public) stopPhrases=\(stopPhrases.count, privacy: .public)")
+
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let total = try await regenerationService.countMessages(in: orderedRange, mailbox: mailbox)
+                logger.info("RegenAI count: total=\(total, privacy: .public) mailbox=\(self.mailbox, privacy: .public)")
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
@@ -143,12 +148,14 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                     )
                     runTask = nil
                 }
+                logger.info("RegenAI finished: regenerated=\(result.regenerated, privacy: .public) total=\(total, privacy: .public)")
             } catch is CancellationError {
                 await MainActor.run {
                     isRunning = false
                     currentAction = nil
                     runTask = nil
                 }
+                logger.info("RegenAI cancelled")
             } catch {
                 await MainActor.run {
                     isRunning = false
@@ -160,6 +167,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                     currentAction = nil
                     runTask = nil
                 }
+                logger.error("RegenAI failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -217,11 +225,16 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
             completedCount = 0
             progressValue = total > 0 ? 0 : nil
             if total == 0 {
+                let action = currentAction
+                let orderedRange = startDate <= endDate
+                    ? DateInterval(start: startDate, end: endDate)
+                    : DateInterval(start: endDate, end: startDate)
                 isRunning = false
                 statusText = NSLocalizedString(statusKey(for: .empty),
                                                comment: "Status when no messages are found for the selected range")
                 currentAction = nil
                 runTask = nil
+                logger.info("Backfill/Regen count empty: action=\(String(describing: action), privacy: .public) rangeStart=\(orderedRange.start, privacy: .private) rangeEnd=\(orderedRange.end, privacy: .private)")
             } else {
                 statusText = String.localizedStringWithFormat(
                     NSLocalizedString(statusKey(for: .counted),
