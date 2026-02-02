@@ -11,6 +11,7 @@ internal struct ThreadCanvasView: View {
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var scrollOffset: CGFloat = 0
+    @State private var rawScrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     @State private var activeDropFolderID: String?
     @State private var dropHighlightPulseToken: Int = 0
@@ -58,10 +59,6 @@ internal struct ThreadCanvasView: View {
                     folderColumnBackgroundLayer(chromeData: chromeData,
                                                  metrics: metrics,
                                                  headerHeight: headerStackHeight + headerSpacing)
-                    groupLegendLayer(layout: layout,
-                                     metrics: metrics,
-                                     readabilityMode: readabilityMode,
-                                     calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
                     connectorLayer(layout: layout,
                                    metrics: metrics,
@@ -93,6 +90,7 @@ internal struct ThreadCanvasView: View {
                         Color.clear
                             .onChange(of: minY) { _, newValue in
                                 let rawOffset = -newValue
+                                rawScrollOffset = max(0, rawOffset)
                                 let adjustedOffset = max(0, rawOffset + totalTopPadding)
                                 let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
                                 scrollOffset = adjustedOffset
@@ -108,6 +106,14 @@ internal struct ThreadCanvasView: View {
             }
             .scrollIndicators(.visible)
             .background(canvasBackground)
+            .overlay(alignment: .topLeading) {
+                floatingDateRail(layout: layout,
+                                 metrics: metrics,
+                                 readabilityMode: readabilityMode,
+                                 totalTopPadding: totalTopPadding,
+                                 rawScrollOffset: rawScrollOffset,
+                                 viewportHeight: proxy.size.height)
+            }
             .gesture(magnificationGesture)
             .coordinateSpace(name: "ThreadCanvasScroll")
             .background(
@@ -340,13 +346,10 @@ internal struct ThreadCanvasView: View {
     private func dayBands(layout: ThreadCanvasLayout,
                           metrics: ThreadCanvasLayoutMetrics,
                           readabilityMode: ThreadCanvasReadabilityMode) -> some View {
-        let labelMap = dayLabelMap(days: layout.days,
-                                   readabilityMode: readabilityMode,
-                                   calendar: calendar)
         ForEach(layout.days) { day in
             ThreadCanvasDayBand(day: day,
                                 metrics: metrics,
-                                labelText: labelMap[day.id] ?? nil,
+                                labelText: nil,
                                 contentWidth: layout.contentSize.width)
                 .offset(x: 0, y: day.yOffset)
         }
@@ -567,19 +570,6 @@ internal struct ThreadCanvasView: View {
         return flags.contains(.command)
     }
 
-    private func dayLabelMap(days: [ThreadCanvasDay],
-                             readabilityMode: ThreadCanvasReadabilityMode,
-                             calendar: Calendar) -> [Int: String?] {
-        if dayLabelMode(readabilityMode: readabilityMode) == nil {
-            return days.reduce(into: [:]) { result, day in
-                result[day.id] = day.label
-            }
-        }
-        return days.reduce(into: [:]) { result, day in
-            result[day.id] = nil
-        }
-    }
-
     private func dayLabelMode(readabilityMode: ThreadCanvasReadabilityMode) -> DayLabelMode? {
         switch readabilityMode {
         case .detailed:
@@ -682,19 +672,23 @@ internal struct ThreadCanvasView: View {
         return CGFloat(levelsAbove) * chrome.indentStep
     }
     @ViewBuilder
-    private func groupLegendLayer(layout: ThreadCanvasLayout,
+    private func floatingDateRail(layout: ThreadCanvasLayout,
                                   metrics: ThreadCanvasLayoutMetrics,
                                   readabilityMode: ThreadCanvasReadabilityMode,
-                                  calendar: Calendar) -> some View {
-        if let mode = dayLabelMode(readabilityMode: readabilityMode) {
-            let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
-            let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
-            ZStack(alignment: .topLeading) {
+                                  totalTopPadding: CGFloat,
+                                  rawScrollOffset: CGFloat,
+                                  viewportHeight: CGFloat) -> some View {
+        let railWidth = metrics.dayLabelWidth
+        ZStack(alignment: .topLeading) {
+            if let mode = dayLabelMode(readabilityMode: readabilityMode) {
+                let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
+                let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
                 ForEach(Array(items.dropFirst().enumerated()), id: \.offset) { _, item in
                     Rectangle()
                         .fill(legendGuideColor)
-                        .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset, height: 1)
-                        .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+                        .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
+                        .offset(x: metrics.nodeHorizontalInset,
+                                y: item.startY + totalTopPadding - rawScrollOffset)
                 }
                 ForEach(items) { item in
                     ZStack(alignment: .topLeading) {
@@ -717,15 +711,28 @@ internal struct ThreadCanvasView: View {
                             .accessibilityAddTraits(.isHeader)
                             .allowsHitTesting(false)
                     }
-                    .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset,
+                    .frame(width: railWidth - metrics.nodeHorizontalInset,
                            height: item.height,
                            alignment: .topLeading)
-                    .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+                    .offset(x: metrics.nodeHorizontalInset,
+                            y: item.startY + totalTopPadding - rawScrollOffset)
+                }
+            } else {
+                ForEach(layout.days) { day in
+                    Text(day.label)
+                        .font(.system(size: 11 * metrics.fontScale, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
+                        .padding(.leading, metrics.nodeHorizontalInset)
+                        .padding(.top, metrics.nodeVerticalSpacing)
+                        .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
+                        .accessibilityAddTraits(.isHeader)
                 }
             }
-        } else {
-            EmptyView()
         }
+        .frame(width: railWidth, height: viewportHeight, alignment: .topLeading)
+        .clipped()
+        .allowsHitTesting(false)
     }
 
     private var legendGuideColor: Color {
