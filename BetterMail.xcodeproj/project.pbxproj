@@ -62,9 +62,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AGENTS.md,
-				"openspec/changes/add-inspector-summary-regen-buttons/proposal.md",
-				"openspec/changes/add-inspector-summary-regen-buttons/specs/apple-intelligence-summaries/spec.md",
-				"openspec/changes/add-inspector-summary-regen-buttons/specs/thread-canvas/spec.md",
 			);
 			target = 5AD2C65A2EBB0927004783B6 /* BetterMail */;
 		};
