@@ -3,6 +3,11 @@ import Foundation
 
 @MainActor
 internal final class BatchBackfillSettingsViewModel: ObservableObject {
+    internal enum Action {
+        case backfill
+        case regeneration
+    }
+
     @Published internal var startDate: Date
     @Published internal var endDate: Date
     @Published internal private(set) var statusText: String = ""
@@ -12,18 +17,25 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     @Published internal private(set) var completedCount: Int = 0
     @Published internal private(set) var currentBatchSize: Int = 5
     @Published internal private(set) var errorMessage: String?
+    @Published internal private(set) var currentAction: Action?
 
     private let service: BatchBackfillService
+    private let regenerationService: SummaryRegenerationServicing
     private let snippetLineLimitProvider: () -> Int
+    private let stopPhrasesProvider: () -> [String]
     private let mailbox: String = "inbox"
     private let defaultBatchSize = 5
     private var runTask: Task<Void, Never>?
 
     internal init(service: BatchBackfillService = BatchBackfillService(),
+                  regenerationService: SummaryRegenerationServicing = SummaryRegenerationService(),
                   snippetLineLimitProvider: @escaping () -> Int = { InspectorViewSettings.defaultSnippetLineLimit },
+                  stopPhrasesProvider: @escaping () -> [String] = { [] },
                   calendar: Calendar = .current) {
         self.service = service
+        self.regenerationService = regenerationService
         self.snippetLineLimitProvider = snippetLineLimitProvider
+        self.stopPhrasesProvider = stopPhrasesProvider
         let now = Date()
         let startOfYear = calendar.date(from: DateComponents(year: calendar.component(.year, from: now), month: 1, day: 1)) ?? now
         self.startDate = startOfYear
@@ -37,13 +49,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     internal func startBackfill() {
         guard !isRunning else { return }
         runTask?.cancel()
-        errorMessage = nil
-        isRunning = true
-        statusText = NSLocalizedString("settings.backfill.status.counting", comment: "Status while counting messages for backfill")
-        totalCount = nil
-        completedCount = 0
-        progressValue = nil
-        currentBatchSize = defaultBatchSize
+        prepareForRun(action: .backfill)
 
         let orderedRange = startDate <= endDate
             ? DateInterval(start: startDate, end: endDate)
@@ -69,6 +75,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
 
                 await MainActor.run {
                     isRunning = false
+                    currentAction = nil
                     progressValue = total > 0 ? 1.0 : nil
                     statusText = String.localizedStringWithFormat(
                         NSLocalizedString("settings.backfill.status.finished", comment: "Status after backfill completes"),
@@ -79,6 +86,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
             } catch is CancellationError {
                 await MainActor.run {
                     isRunning = false
+                    currentAction = nil
                     runTask = nil
                 }
             } catch {
@@ -89,6 +97,67 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                         NSLocalizedString("settings.backfill.status.error", comment: "Status when backfill fails"),
                         error.localizedDescription
                     )
+                    currentAction = nil
+                    runTask = nil
+                }
+            }
+        }
+    }
+
+    internal func startRegeneration() {
+        guard !isRunning else { return }
+        runTask?.cancel()
+        prepareForRun(action: .regeneration)
+
+        let orderedRange = startDate <= endDate
+            ? DateInterval(start: startDate, end: endDate)
+            : DateInterval(start: endDate, end: startDate)
+        let snippetLimit = snippetLineLimitProvider()
+        let stopPhrases = stopPhrasesProvider()
+
+        runTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let total = try await regenerationService.countMessages(in: orderedRange, mailbox: mailbox)
+                await handleCountResult(total)
+                guard total > 0 else { return }
+
+                let result = try await regenerationService.runRegeneration(range: orderedRange,
+                                                                           mailbox: mailbox,
+                                                                           preferredBatchSize: defaultBatchSize,
+                                                                           totalExpected: total,
+                                                                           snippetLineLimit: snippetLimit,
+                                                                           stopPhrases: stopPhrases) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.handle(regeneration: progress)
+                    }
+                }
+
+                await MainActor.run {
+                    isRunning = false
+                    currentAction = nil
+                    progressValue = total > 0 ? 1.0 : nil
+                    statusText = String.localizedStringWithFormat(
+                        NSLocalizedString("settings.regenai.status.finished", comment: "Status after Re-GenAI completes"),
+                        result.regenerated
+                    )
+                    runTask = nil
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    isRunning = false
+                    currentAction = nil
+                    runTask = nil
+                }
+            } catch {
+                await MainActor.run {
+                    isRunning = false
+                    errorMessage = error.localizedDescription
+                    statusText = String.localizedStringWithFormat(
+                        NSLocalizedString("settings.regenai.status.error", comment: "Status when Re-GenAI fails"),
+                        error.localizedDescription
+                    )
+                    currentAction = nil
                     runTask = nil
                 }
             }
@@ -96,6 +165,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     }
 
     private func handle(progress: BatchBackfillProgress) {
+        guard currentAction == .backfill else { return }
         totalCount = progress.total
         completedCount = progress.completed
         currentBatchSize = progress.currentBatchSize
@@ -121,6 +191,26 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         }
     }
 
+    private func handle(regeneration progress: SummaryRegenerationProgress) {
+        guard currentAction == .regeneration else { return }
+        totalCount = progress.total
+        completedCount = progress.completed
+        currentBatchSize = progress.currentBatchSize
+        progressValue = progress.total > 0 ? Double(progress.completed) / Double(progress.total) : nil
+
+        switch progress.state {
+        case .running:
+            statusText = String.localizedStringWithFormat(
+                NSLocalizedString("settings.regenai.status.running", comment: "Status while Re-GenAI is running"),
+                progress.completed,
+                progress.total,
+                progress.currentBatchSize
+            )
+        case .finished:
+            break
+        }
+    }
+
     private func handleCountResult(_ total: Int) async {
         await MainActor.run {
             totalCount = total
@@ -128,14 +218,70 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
             progressValue = total > 0 ? 0 : nil
             if total == 0 {
                 isRunning = false
-                statusText = NSLocalizedString("settings.backfill.status.empty", comment: "Status when no messages are found for backfill")
+                statusText = NSLocalizedString(statusKey(for: .empty),
+                                               comment: "Status when no messages are found for the selected range")
+                currentAction = nil
                 runTask = nil
             } else {
                 statusText = String.localizedStringWithFormat(
-                    NSLocalizedString("settings.backfill.status.counted", comment: "Status after counting messages for backfill"),
+                    NSLocalizedString(statusKey(for: .counted),
+                                      comment: "Status after counting messages for the selected action"),
                     total
                 )
             }
+        }
+    }
+
+    private func prepareForRun(action: Action) {
+        errorMessage = nil
+        isRunning = true
+        currentAction = action
+        statusText = NSLocalizedString(statusKey(for: .counting),
+                                       comment: "Status while counting messages for the selected action")
+        totalCount = nil
+        completedCount = 0
+        progressValue = nil
+        currentBatchSize = defaultBatchSize
+    }
+
+    internal var progressAccessibilityLabel: String {
+        switch currentAction {
+        case .regeneration:
+            return NSLocalizedString("settings.regenai.accessibility.progress",
+                                     comment: "Accessibility label for Re-GenAI progress")
+        case .backfill:
+            return NSLocalizedString("settings.backfill.accessibility.progress",
+                                     comment: "Accessibility label for backfill progress")
+        case .none:
+            return NSLocalizedString("settings.backfill.accessibility.progress",
+                                     comment: "Accessibility label for backfill progress")
+        }
+    }
+
+    private enum StatusKey {
+        case counting
+        case counted
+        case running
+        case empty
+    }
+
+    private func statusKey(for key: StatusKey) -> String {
+        let prefix: String
+        switch currentAction {
+        case .regeneration:
+            prefix = "settings.regenai.status"
+        case .backfill, .none:
+            prefix = "settings.backfill.status"
+        }
+        switch key {
+        case .counting:
+            return "\(prefix).counting"
+        case .counted:
+            return "\(prefix).counted"
+        case .running:
+            return "\(prefix).running"
+        case .empty:
+            return "\(prefix).empty"
         }
     }
 }

@@ -95,7 +95,7 @@ internal struct ThreadListView: View {
         ThreadCanvasView(viewModel: viewModel,
                          displaySettings: displaySettings,
                          topInset: canvasTopPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, navHorizontalPadding)
     }
 
@@ -105,6 +105,10 @@ internal struct ThreadListView: View {
             if let selectedFolder = viewModel.selectedFolder {
                 ThreadFolderInspectorView(folder: selectedFolder,
                                           summaryState: viewModel.folderSummaryState(for: selectedFolder.id),
+                                          canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                                          onRegenerateSummary: {
+                                              viewModel.regenerateFolderSummary(for: selectedFolder.id)
+                                          },
                                           onPreview: { title, color in
                                               viewModel.previewFolderEdits(id: selectedFolder.id,
                                                                            title: title,
@@ -133,6 +137,10 @@ internal struct ThreadListView: View {
                                     summaryExpansion: selectedSummaryExpansion,
                                     inspectorSettings: inspectorSettings,
                                     openInMailState: viewModel.openInMailState,
+                                    canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                                    onRegenerateSummary: {
+                                        viewModel.regenerateNodeSummary(for: selectedNode.id)
+                                    },
                                     onOpenInMail: viewModel.openMessageInMail,
                                     onCopyOpenInMailText: viewModel.copyToPasteboard)
                     .frame(width: inspectorWidth)
@@ -208,6 +216,7 @@ internal struct ThreadListView: View {
             if viewModel.isBackfilling {
                 ProgressView().controlSize(.small)
             }
+            viewModeToggle
             HStack(spacing: 6) {
                 Text("Limit")
                     .font(.caption)
@@ -234,6 +243,32 @@ internal struct ThreadListView: View {
                 Color.clear
                     .preference(key: NavHeightPreferenceKey.self, value: proxy.size.height)
             }
+        )
+    }
+
+    @ViewBuilder
+    private var viewModeToggle: some View {
+        Toggle(isOn: viewModeToggleBinding) {
+            Text(viewModeLabel)
+                .font(.caption)
+        }
+        .toggleStyle(.switch)
+        .tint(.green)
+    }
+
+    private var viewModeLabel: String {
+        switch displaySettings.viewMode {
+        case .default:
+            return NSLocalizedString("threadlist.viewmode.default", comment: "Default thread canvas view label")
+        case .timeline:
+            return NSLocalizedString("threadlist.viewmode.timeline", comment: "Timeline thread canvas view label")
+        }
+    }
+
+    private var viewModeToggleBinding: Binding<Bool> {
+        Binding(
+            get: { displaySettings.viewMode == .timeline },
+            set: { displaySettings.viewMode = $0 ? .timeline : .default }
         )
     }
 

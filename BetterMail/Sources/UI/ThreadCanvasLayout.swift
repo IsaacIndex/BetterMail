@@ -8,6 +8,7 @@ internal struct ThreadCanvasLayoutMetrics {
 
     internal let zoom: CGFloat
     internal let dayCount: Int
+    internal let columnWidthAdjustment: CGFloat
 
     internal var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
@@ -18,7 +19,7 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 
     internal var columnWidth: CGFloat {
-        260 * clampedZoom
+        (260 + columnWidthAdjustment) * clampedZoom
     }
 
     internal var columnSpacing: CGFloat {
@@ -57,9 +58,73 @@ internal struct ThreadCanvasLayoutMetrics {
         max(columnWidth - (nodeHorizontalInset * 2), 24)
     }
 
-    internal init(zoom: CGFloat, dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount) {
+    internal init(zoom: CGFloat,
+                  dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount,
+                  columnWidthAdjustment: CGFloat = 0) {
         self.zoom = zoom
         self.dayCount = max(dayCount, 1)
+        self.columnWidthAdjustment = columnWidthAdjustment
+    }
+}
+
+internal struct ThreadTimelineLayoutConstants {
+    internal static let summaryColumnExtraWidth: CGFloat = 160
+    internal static let tagColumnExtraWidth: CGFloat = 160
+
+    internal static func dotSize(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func timeWidth(fontScale: CGFloat) -> CGFloat {
+        52 * fontScale
+    }
+
+    internal static func elementSpacing(fontScale: CGFloat) -> CGFloat {
+        8 * fontScale
+    }
+
+    internal static func tagSpacing(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func rowHorizontalPadding(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func rowVerticalPadding(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func summaryLineSpacing(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func summaryFontSize(fontScale: CGFloat) -> CGFloat {
+        13 * fontScale
+    }
+
+    internal static func timeFontSize(fontScale: CGFloat) -> CGFloat {
+        11 * fontScale
+    }
+
+    internal static func tagFontSize(fontScale: CGFloat) -> CGFloat {
+        10 * fontScale
+    }
+
+    internal static func tagVerticalPadding(fontScale: CGFloat) -> CGFloat {
+        3 * fontScale
+    }
+
+    internal static func tagHorizontalPadding(fontScale: CGFloat) -> CGFloat {
+        6 * fontScale
+    }
+
+    internal static func tagMaxWidth(fontScale: CGFloat) -> CGFloat {
+        (160 + tagColumnExtraWidth) * fontScale
+    }
+
+    internal static func selectionCornerRadius(fontScale: CGFloat) -> CGFloat {
+        10 * fontScale
     }
 }
 

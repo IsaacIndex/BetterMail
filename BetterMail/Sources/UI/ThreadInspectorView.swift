@@ -7,6 +7,8 @@ internal struct ThreadInspectorView: View {
     internal let summaryExpansion: Binding<Bool>?
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     internal let openInMailState: OpenInMailState?
+    internal let canRegenerateSummary: Bool
+    internal let onRegenerateSummary: (() -> Void)?
     internal let onOpenInMail: (ThreadNode) -> Void
     internal let onCopyOpenInMailText: (String) -> Void
 
@@ -64,6 +66,8 @@ internal struct ThreadInspectorView: View {
                 ThreadSummaryDisclosureView(title: NSLocalizedString("threadcanvas.inspector.summary.title",
                                                                      comment: "Title for the thread summary disclosure in the inspector"),
                                              state: summaryState,
+                                             onRegenerate: onRegenerateSummary,
+                                             isRegenerateEnabled: canRegenerateSummary,
                                              isExpanded: summaryExpansion)
             }
 

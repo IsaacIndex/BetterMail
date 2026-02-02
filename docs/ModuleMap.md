@@ -8,6 +8,8 @@ This map lists the main modules and their responsibilities.
 ## Services
 - `BatchBackfillService`: backfill ranges and progress reporting.
 - `EmailSummaryProvider`: optional Apple Intelligence summaries.
+- `EmailTagProvider`: optional Apple Intelligence message tags.
+- `SummaryRegenerationService`: regenerates cached email and folder summaries.
 
 ## Storage
 - `MessageStore`: Core Data persistence for messages, threads, folders, and summaries.

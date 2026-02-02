@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		22F837F5A55C486AB0F0F200 /* Tests/ThreadCanvasLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */; };
 		5AD11B042EBCAC2100881D51 /* MailHelperExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5AD11AEB2EBCAC2100881D51 /* MailHelperExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		5B28F8B12F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5B28F8B02F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings */; };
 		63654992E5B34382AE3799B6 /* BetterMail.app in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AD2C65B2EBB0927004783B6 /* BetterMail.app */; };
 		CA32DC8C96F34952A33D8F16 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08CE01DE8A1C40779BF22717 /* XCTest.framework */; };
 /* End PBXBuildFile section */
@@ -59,6 +58,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5A72DE032F2B6FFC005BB9E6 /* Exceptions for "BetterMail" folder in "BetterMail" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AGENTS.md,
+			);
+			target = 5AD2C65A2EBB0927004783B6 /* BetterMail */;
+		};
 		5AD11B052EBCAC2100881D51 /* Exceptions for "MailHelperExtension" folder in "MailHelperExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -67,16 +73,6 @@
 			target = 5AD11AEA2EBCAC2100881D51 /* MailHelperExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		5A89E46B2ECDA54D000558CC /* Exceptions for "BetterMail" folder in "Copy Bundle Resources" phase from "BetterMail" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = 5AD2C6592EBB0927004783B6 /* Resources */;
-			membershipExceptions = (
-				BetterMail.entitlements,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		5AD11AEC2EBCAC2100881D51 /* MailHelperExtension */ = {
@@ -90,7 +86,7 @@
 		5AD2C65D2EBB0927004783B6 /* BetterMail */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				5A89E46B2ECDA54D000558CC /* Exceptions for "BetterMail" folder in "Copy Bundle Resources" phase from "BetterMail" target */,
+				5A72DE032F2B6FFC005BB9E6 /* Exceptions for "BetterMail" folder in "BetterMail" target */,
 			);
 			path = BetterMail;
 			sourceTree = "<group>";
@@ -305,7 +301,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				5B28F8B12F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

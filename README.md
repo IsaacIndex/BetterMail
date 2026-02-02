@@ -5,6 +5,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
+- Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
 - Inspector "Open in Mail" uses AppleScript targeting (Message-ID plus filtered fallback search) without `message://` URLs.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
@@ -77,6 +78,24 @@ To keep the Liquid Glass look without losing nav bar legibility, the glass conta
 - Sequence diagram (source at `openspec/changes/refactor-refresh-concurrency/refresh-flow.mmd`):
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'background': '#ffffff',
+  'primaryColor': '#e8eef7',
+  'secondaryColor': '#dce9d7',
+  'tertiaryColor': '#f1f3f5',
+  'primaryTextColor': '#111111',
+  'secondaryTextColor': '#111111',
+  'tertiaryTextColor': '#111111',
+  'lineColor': '#2b2b2b',
+  'noteBkgColor': '#fff3bf',
+  'noteTextColor': '#111111',
+  'actorBkg': '#f5f7fa',
+  'actorBorder': '#2b2b2b',
+  'actorTextColor': '#111111',
+  'activationBkgColor': '#e6f0ff',
+  'activationBorderColor': '#2b2b2b',
+  'sequenceNumberColor': '#111111'
+}}}%%
 sequenceDiagram
     autonumber
     participant UI as UI
@@ -99,10 +118,9 @@ sequenceDiagram
         VM->>Worker: subjectsByRoot()
         note over Worker,VM: Off main actor
         Worker-->>VM: subjectsByID
-        VM->>Worker: summarize(subjects)
-        note over Worker,VM: Summary on worker (not main)
-        Worker-->>VM: summary text/status
-        VM->>SummState: apply summary (MainActor)
+        note over UI,VM: Per-message and folder summaries happen on-demand\nwithin ThreadCanvasViewModel
+        VM->>Summary: summarizeEmail(request)
+        VM->>Summary: summarizeFolder(request)
     end
 
     rect rgb(235,245,255)
@@ -121,10 +139,9 @@ sequenceDiagram
         VM->>Worker: subjectsByRoot()
         note over Worker,VM: Off main actor
         Worker-->>VM: subjectsByID
-        VM->>Worker: summarize(subjects)
-        note over Worker,VM: Summary on worker
-        Worker-->>VM: summary text/status
-        VM->>SummState: apply summary (MainActor)
+        note over UI,VM: Per-message and folder summaries happen on-demand\nwithin ThreadCanvasViewModel
+        VM->>Summary: summarizeEmail(request)
+        VM->>Summary: summarizeFolder(request)
         VM->>VM: isRefreshing = false
     end
 ```
@@ -156,7 +173,8 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 ### Apple Intelligence Summaries
 - When compiled on macOS 15.2 or later with the Foundation Models framework present, the app automatically instantiates `FoundationModelsEmailSummaryProvider`.
 - Summaries are optional; if the model is unavailable, the UI falls back to status strings explaining what is required.
-- Keep subjects tidy—the summarizer currently limits itself to the 25 unique subject lines per thread to stay within token budgets.
+- The per-message and folder summaries are wired into the UI. The inbox subject-line digest (`summarize(subjects:)`) is implemented but not currently shown in the UI.
+- The inbox subject-line digest API is deprecated.
 
 ## TechDocs
 - See `TechDocs/index.md` for architecture, module map, data flow/concurrency notes, MailKit helper summary, and migration log.

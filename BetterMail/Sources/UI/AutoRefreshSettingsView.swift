@@ -15,7 +15,8 @@ internal struct AutoRefreshSettingsView: View {
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
         _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
-            snippetLineLimitProvider: { inspectorSettings.snippetLineLimit }
+            snippetLineLimitProvider: { inspectorSettings.snippetLineLimit },
+            stopPhrasesProvider: { inspectorSettings.stopPhrases }
         ))
     }
 
@@ -134,18 +135,35 @@ internal struct AutoRefreshSettingsView: View {
                            selection: $backfillViewModel.endDate,
                            displayedComponents: .date)
 
-                Button {
-                    backfillViewModel.startBackfill()
-                } label: {
-                    HStack {
-                        if backfillViewModel.isRunning {
-                            ProgressView()
-                                .controlSize(.small)
+                HStack(spacing: 12) {
+                    Button {
+                        backfillViewModel.startBackfill()
+                    } label: {
+                        HStack {
+                            if backfillViewModel.isRunning && backfillViewModel.currentAction == .backfill {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(NSLocalizedString("settings.backfill.button", comment: "Button label to start batch backfill"))
                         }
-                        Text(NSLocalizedString("settings.backfill.button", comment: "Button label to start batch backfill"))
                     }
+                    .disabled(backfillViewModel.isRunning)
+
+                    Button {
+                        backfillViewModel.startRegeneration()
+                    } label: {
+                        HStack {
+                            if backfillViewModel.isRunning && backfillViewModel.currentAction == .regeneration {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(NSLocalizedString("settings.regenai.button", comment: "Button label to start Re-GenAI"))
+                        }
+                    }
+                    .disabled(backfillViewModel.isRunning)
+                    .accessibilityHint(Text(NSLocalizedString("settings.regenai.accessibility.hint",
+                                                              comment: "Accessibility hint for starting Re-GenAI")))
                 }
-                .disabled(backfillViewModel.isRunning)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(backfillViewModel.statusText)
@@ -170,6 +188,7 @@ internal struct AutoRefreshSettingsView: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text(backfillViewModel.progressAccessibilityLabel))
             } header: {
                 Text(NSLocalizedString("settings.backfill.title", comment: "Header for batch backfill settings section"))
             } footer: {

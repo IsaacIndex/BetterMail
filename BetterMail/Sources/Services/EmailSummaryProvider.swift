@@ -21,6 +21,8 @@ internal enum EmailSummaryError: LocalizedError {
 }
 
 internal protocol EmailSummaryProviding {
+    /// Inbox subject-line digest. Currently not wired into the UI.
+    @available(*, deprecated, message: "Not wired into the UI. Use summarizeEmail(_:) or summarizeFolder(_:) instead.")
     func summarize(subjects: [String]) async throws -> String
     func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String
     func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String
@@ -53,7 +55,7 @@ internal enum EmailSummaryProviderFactory {
     internal static func makeCapability() -> EmailSummaryCapability {
 #if canImport(FoundationModels)
         if #available(macOS 15.2, *) {
-            let model = FoundationModels.SystemLanguageModel.default
+            let model = FoundationModelsSupport.makeDefaultModel()
             switch model.availability {
             case .available:
                 let provider = FoundationModelsEmailSummaryProvider(model: model)
@@ -82,7 +84,9 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
         self.model = model
     }
 
+    @available(*, deprecated, message: "Not wired into the UI. Use summarizeEmail(_:) or summarizeFolder(_:) instead.")
     internal func summarize(subjects: [String]) async throws -> String {
+        // NOTE: This digest path is not currently invoked by the UI.
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
@@ -184,7 +188,8 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
             .joined(separator: "\n")
 
         return """
-        Summarize the following email subject lines into at most two concise sentences.
+        Transform the following email subject lines into at most two concise sentences.
+        Use only the provided text; do not add new facts or assumptions.
         Highlight the main themes and call out any urgent follow ups that may require attention.
         Keep the tone professional and actionable.
 
@@ -194,9 +199,15 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
     }
 
     private static let instructions = """
-    You are an organized executive assistant reviewing an email inbox.
-    Provide short plain-language digests that help the user understand what to focus on.
-    Avoid bullet lists and instead write one or two compact sentences.
+    You are an executive assistant reviewing an email inbox.
+
+    Transform the provided email text into a short, plain-language digest that tells the user what matters and what to focus on.
+    Do not add any facts not present in the input.
+    Respond with one or two compact sentences only.
+
+    Do not include introductions, confirmations, apologies, labels, or meta commentary.
+    Do not mention that you are summarizing or describing an email.
+    Write the digest directly, as final output.
     """
 
     private static func nodePrompt(subject: String,
@@ -213,9 +224,11 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
         let resolvedBody = body.isEmpty ? "No body content available." : body
 
         return """
-        Summarize this email in one or two concise sentences.
+        Transform this email into one or two concise sentences.
+        Use only the provided text; do not add new facts or assumptions.
         Focus on what is new compared to the prior messages listed.
         Keep the tone professional and actionable.
+        Do not quote or repeat the email body; paraphrase and compress instead.
 
         Email subject:
         \(resolvedSubject)
@@ -236,7 +249,8 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
         let resolvedTitle = title.isEmpty ? "Folder" : title
 
         return """
-        Summarize the following email summaries into a concise folder overview.
+        Transform the following email summaries into a concise folder overview.
+        Use only the provided text; do not add new facts or assumptions.
         Highlight the main themes, decisions, or urgent follow ups.
         Keep the tone professional and actionable, in two or three sentences.
 
@@ -249,8 +263,11 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
 
     private static let nodeInstructions = """
     You are an organized executive assistant reviewing an email.
-    Write a concise summary of what this message adds or changes relative to the prior context.
+    Transform the provided email content into a concise summary of what this message adds or changes relative to the prior context.
+    Do not introduce any details that are not present in the input.
     Avoid bullet lists; use one or two short sentences.
+    Do not copy the email text. Paraphrase and summarize instead.
+    Do not include direct quotes.
     """
 }
 

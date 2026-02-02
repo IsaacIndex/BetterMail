@@ -30,7 +30,7 @@ The system SHALL default the canvas to the most recent 7 days, SHALL order threa
 - **THEN** GeometryReader content-frame updates drive the scroll position used for paging
 
 ### Requirement: Node Content and Selection
-The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. The inspector panel SHALL present a body preview trimmed to 10 lines with an ellipsis when the message body exceeds 10 lines, and SHALL provide an "Open in Mail" button to view the full message in Apple Mail.
+The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. The inspector panel SHALL present a body preview trimmed to 10 lines with an ellipsis when the message body exceeds 10 lines, and SHALL provide an "Open in Mail" button to view the full message in Apple Mail. The "Open in Mail" control SHALL normalize the Message-ID before launching Mail and SHALL surface an inline failure state (e.g., when Mail returns `MCMailErrorDomain` error 1030) that offers a fallback search to locate the message.
 
 #### Scenario: Selecting a node
 - **WHEN** the user clicks a node
@@ -40,12 +40,25 @@ The system SHALL render each node with sender, subject, and time, and SHALL upda
 - **WHEN** the selected message body exceeds 10 lines
 - **THEN** the inspector preview shows the first 10 lines followed by an ellipsis and does not render the full body
 
+#### Scenario: Open in Mail failure surfaces fallback
+- **WHEN** the user triggers "Open in Mail" and Mail returns an error instead of opening the URL
+- **THEN** the inspector shows that the direct open failed and presents a fallback search action without requiring the user to reselect the node
+
 ### Requirement: Navigation and Zoom
-The system SHALL support two-axis scrolling and zoom with clamped limits for readability.
+The system SHALL support two-axis scrolling and zoom with clamped limits for readability, and SHALL apply three configurable zoom thresholds to control readability states of the canvas: (1) detailed state shows full node text and day labels, (2) compact state shows title-only nodes with ellipsis and month labels, and (3) minimal state hides node text/ellipsis and shows year labels. Thresholds SHALL be user-configurable via Settings and take effect without restarting the app.
 
 #### Scenario: Navigating the canvas
 - **WHEN** the user scrolls or zooms
 - **THEN** the canvas pans on both axes and scales within defined minimum and maximum zoom levels
+
+#### Scenario: Readability thresholds
+- **GIVEN** three user-configurable zoom thresholds for detailed, compact, and minimal states
+- **WHEN** the zoom crosses a threshold
+- **THEN** the canvas transitions to the corresponding readability state (detailed → compact → minimal) updating node text visibility and day/month/year legend modes accordingly
+
+#### Scenario: Settings-controlled thresholds
+- **WHEN** the user updates zoom thresholds in Settings
+- **THEN** subsequent canvas renders use the updated values without requiring an app restart
 
 ### Requirement: Thread Continuity Connectors
 The system SHALL render vertical connector lanes between consecutive nodes in the same thread column. When a thread column represents a manual group that merges multiple JWZ sub-threads, the system SHALL render a separate connector lane for each JWZ sub-thread, with dynamic horizontal offsets based on layout metrics.
@@ -161,4 +174,61 @@ The system SHALL display a highlight with a brief entry pulse around the specifi
 #### Scenario: Clear highlight on exit or other target
 - **WHEN** the drag leaves the child folder's drop frame or enters a different folder
 - **THEN** the previous highlight clears immediately and the new target (if any) pulses
+
+### Requirement: Thread Canvas View Modes
+The system SHALL provide a navigation bar toggle to switch between Default View and Timeline View, SHALL default to Default View on first launch, and SHALL persist the last chosen view mode between app launches using display settings.
+
+#### Scenario: Toggle between modes
+- **WHEN** the user taps the view toggle in the navigation bar
+- **THEN** the canvas switches between Default View and Timeline View without requiring a refresh
+
+#### Scenario: Persisted view preference
+- **WHEN** the user relaunches the app after selecting a view mode
+- **THEN** the canvas starts in the previously selected view mode
+
+### Requirement: Heuristic Mail Targeting
+When direct Message-ID lookup fails, the system SHALL attempt AppleScript-based heuristics recommended in Apple Support thread 253933858: constrain search using cached mailbox and account hints when available, and otherwise search by subject + sender + received-date within Mail. The inspector SHALL surface which heuristic succeeded (Message-ID match vs. metadata heuristic) or that no match was found.
+
+#### Scenario: Mailbox-scoped heuristic
+- **WHEN** Message-ID lookup fails but mailbox or account hints exist for the selected message
+- **THEN** the system searches that mailbox/account for a message matching the cached subject + sender + received date and opens the first match in Mail
+
+#### Scenario: Global heuristic without mailbox hint
+- **WHEN** Message-ID lookup fails and no mailbox hint is available
+- **THEN** the system searches across Mail for the first message whose subject, sender, and received date match the cached metadata and opens it in Mail
+
+#### Scenario: Status reflects heuristic outcome
+- **WHEN** a heuristic succeeds or fails
+- **THEN** the inspector status text indicates the path used (Message-ID match, heuristic match, or no match) and keeps copy actions available for manual search
+
+### Requirement: Open in Mail Fallback Search
+When direct Mail open fails, the system SHALL search Apple Mail for the selected message's Message-ID via AppleScript and SHALL present the best match (subject, sender, and received date) in the inspector with actions to open that message in Mail without relying on `message://`, copy the Message-ID, and copy the message URL. The search SHALL run asynchronously and expose a loading and completion state.
+
+#### Scenario: Fallback search success shows result
+- **WHEN** direct open fails and the fallback search finds a message with the same Message-ID
+- **THEN** the inspector shows its subject, sender, and received date with an action to open that message in Mail
+- **AND** copy actions for the Message-ID and message URL remain available
+
+#### Scenario: Fallback search no match guidance
+- **WHEN** the fallback search completes without a match
+- **THEN** the inspector shows that no match was found
+- **AND** the user can copy the Message-ID and message URL to search manually in Mail
+
+### Requirement: Open in Mail Filtered Fallback
+The system SHALL attempt to open the selected message in Apple Mail by normalized Message-ID first. If that attempt fails, the system SHALL run a single global filtered search using Apple Mail’s AppleScript query pattern `(every message whose subject contains <subject> and sender contains <sender> and date received is within the target day>)` modeled after `OpenInMail (with filter).scpt`, where the date window spans from the start of the message’s calendar day to the start of the next day. When a match is found, the system SHALL open it (or select it in the first message viewer) and activate Mail; when no match is found, it SHALL surface an inline failure state.
+
+#### Scenario: Filtered fallback opens match
+- **WHEN** the Message-ID open attempt fails and the filtered fallback runs
+- **THEN** the system filters all messages (global scope) by subject substring, sender token substring, and received-date within the target day, opens the first match (or selects it in the viewer), and activates Mail
+
+#### Scenario: Filtered fallback finds no match
+- **WHEN** the filtered fallback runs and no message matches the subject, sender token, and day range
+- **THEN** the inspector shows an inline failure status while leaving manual copy helpers available for the user to try opening in Mail manually
+
+### Requirement: Open in Mail Copy Helpers Persistent
+The system SHALL render copy controls for Message-ID, subject, and mailbox/account alongside the Open in Mail status, and these controls SHALL remain visible regardless of success, searching, or failure states so users can quickly copy targeting metadata.
+
+#### Scenario: Copy helpers always available
+- **WHEN** the Open in Mail flow is idle, searching, succeeds, or fails
+- **THEN** the inspector still presents copy buttons for the selected message’s Message-ID, subject, and mailbox/account values
 

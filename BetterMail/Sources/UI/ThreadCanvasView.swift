@@ -11,6 +11,7 @@ internal struct ThreadCanvasView: View {
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var scrollOffset: CGFloat = 0
+    @State private var rawScrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     @State private var activeDropFolderID: String?
     @State private var dropHighlightPulseToken: Int = 0
@@ -30,9 +31,17 @@ internal struct ThreadCanvasView: View {
 
     internal var body: some View {
         GeometryReader { proxy in
-            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale, dayCount: viewModel.dayWindowCount)
+            let columnWidthAdjustment = displaySettings.viewMode == .timeline
+                ? ThreadTimelineLayoutConstants.summaryColumnExtraWidth
+                : 0
+            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale,
+                                                    dayCount: viewModel.dayWindowCount,
+                                                    columnWidthAdjustment: columnWidthAdjustment)
             let today = Date()
-            let layout = viewModel.canvasLayout(metrics: metrics, today: today, calendar: calendar)
+            let layout = viewModel.canvasLayout(metrics: metrics,
+                                                viewMode: displaySettings.viewMode,
+                                                today: today,
+                                                calendar: calendar)
             let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
             let readabilityMode = displaySettings.readabilityMode(for: zoomScale)
             let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
@@ -50,12 +59,11 @@ internal struct ThreadCanvasView: View {
                     folderColumnBackgroundLayer(chromeData: chromeData,
                                                  metrics: metrics,
                                                  headerHeight: headerStackHeight + headerSpacing)
-                    groupLegendLayer(layout: layout,
-                                     metrics: metrics,
-                                     readabilityMode: readabilityMode,
-                                     calendar: calendar)
                     columnDividers(layout: layout, metrics: metrics)
-                    connectorLayer(layout: layout, metrics: metrics)
+                    connectorLayer(layout: layout,
+                                   metrics: metrics,
+                                   readabilityMode: readabilityMode,
+                                   timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
                     nodesLayer(layout: layout,
                                metrics: metrics,
                                chromeData: chromeData,
@@ -82,21 +90,30 @@ internal struct ThreadCanvasView: View {
                         Color.clear
                             .onChange(of: minY) { _, newValue in
                                 let rawOffset = -newValue
+                                rawScrollOffset = max(0, rawOffset)
                                 let adjustedOffset = max(0, rawOffset + totalTopPadding)
                                 let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
                                 scrollOffset = adjustedOffset
-                                viewModel.updateVisibleDayRange(scrollOffset: adjustedOffset,
-                                                                viewportHeight: effectiveHeight,
-                                                                layout: layout,
-                                                                metrics: metrics,
-                                                                today: today,
-                                                                calendar: calendar)
+                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
+                                                                        viewportHeight: effectiveHeight,
+                                                                        layout: layout,
+                                                                        metrics: metrics,
+                                                                        today: today,
+                                                                        calendar: calendar)
                             }
                     }
                 )
             }
             .scrollIndicators(.visible)
             .background(canvasBackground)
+            .overlay(alignment: .topLeading) {
+                floatingDateRail(layout: layout,
+                                 metrics: metrics,
+                                 readabilityMode: readabilityMode,
+                                 totalTopPadding: totalTopPadding,
+                                 rawScrollOffset: rawScrollOffset,
+                                 viewportHeight: proxy.size.height)
+            }
             .gesture(magnificationGesture)
             .coordinateSpace(name: "ThreadCanvasScroll")
             .background(
@@ -109,20 +126,22 @@ internal struct ThreadCanvasView: View {
                 let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
-                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: clampedHeight,
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: clampedHeight,
+                                                        layout: layout,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        immediate: true)
             }
             .onChange(of: layout.contentSize.height) { _ in
-                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                        layout: layout,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        immediate: true)
             }
             .onChange(of: activeDropFolderID) { oldValue, newValue in
                 guard newValue != nil else {
@@ -136,12 +155,13 @@ internal struct ThreadCanvasView: View {
             .onAppear {
                 accumulatedZoom = zoomScale
                 displaySettings.updateCurrentZoom(zoomScale)
-                viewModel.updateVisibleDayRange(scrollOffset: scrollOffset,
-                                                viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                        layout: layout,
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        immediate: true)
             }
             .onChange(of: zoomScale) { _, newValue in
                 displaySettings.updateCurrentZoom(newValue)
@@ -326,13 +346,10 @@ internal struct ThreadCanvasView: View {
     private func dayBands(layout: ThreadCanvasLayout,
                           metrics: ThreadCanvasLayoutMetrics,
                           readabilityMode: ThreadCanvasReadabilityMode) -> some View {
-        let labelMap = dayLabelMap(days: layout.days,
-                                   readabilityMode: readabilityMode,
-                                   calendar: calendar)
         ForEach(layout.days) { day in
             ThreadCanvasDayBand(day: day,
                                 metrics: metrics,
-                                labelText: labelMap[day.id] ?? nil,
+                                labelText: nil,
                                 contentWidth: layout.contentSize.width)
                 .offset(x: 0, y: day.yOffset)
         }
@@ -352,10 +369,15 @@ internal struct ThreadCanvasView: View {
 
     @ViewBuilder
     private func connectorLayer(layout: ThreadCanvasLayout,
-                                metrics: ThreadCanvasLayoutMetrics) -> some View {
+                                metrics: ThreadCanvasLayoutMetrics,
+                                readabilityMode: ThreadCanvasReadabilityMode,
+                                timelineTagsByNodeID: [String: [String]]) -> some View {
         ForEach(layout.columns) { column in
             ThreadCanvasConnectorColumn(column: column,
                                         metrics: metrics,
+                                        viewMode: displaySettings.viewMode,
+                                        readabilityMode: readabilityMode,
+                                        timelineTagsByNodeID: timelineTagsByNodeID,
                                         isHighlighted: isColumnSelected(column),
                                         rawZoom: zoomScale)
             .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
@@ -371,10 +393,26 @@ internal struct ThreadCanvasView: View {
                             folderHeaderHeight: CGFloat) -> some View {
         ForEach(layout.columns) { column in
             ForEach(column.nodes) { node in
-                ThreadCanvasNodeView(node: node,
-                                     isSelected: viewModel.selectedNodeIDs.contains(node.id),
-                                     fontScale: metrics.fontScale,
-                                     readabilityMode: readabilityMode)
+                Group {
+                    if displaySettings.viewMode == .timeline {
+                        ThreadTimelineCanvasNodeView(node: node,
+                                                     summaryState: viewModel.summaryState(for: node.id),
+                                                     tags: viewModel.timelineTags(for: node.id),
+                                                     isSelected: viewModel.selectedNodeIDs.contains(node.id),
+                                                     fontScale: metrics.fontScale,
+                                                     readabilityMode: readabilityMode)
+                            .task {
+                                viewModel.requestTimelineTagsIfNeeded(for: ThreadNode(message: node.message))
+                            }
+                    } else {
+                        ThreadCanvasNodeView(node: node,
+                                             summaryState: viewModel.summaryState(for: node.id),
+                                             isSelected: viewModel.selectedNodeIDs.contains(node.id),
+                                             fontScale: metrics.fontScale,
+                                             viewMode: displaySettings.viewMode,
+                                             readabilityMode: readabilityMode)
+                    }
+                }
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .gesture(
@@ -532,19 +570,6 @@ internal struct ThreadCanvasView: View {
         return flags.contains(.command)
     }
 
-    private func dayLabelMap(days: [ThreadCanvasDay],
-                             readabilityMode: ThreadCanvasReadabilityMode,
-                             calendar: Calendar) -> [Int: String?] {
-        if dayLabelMode(readabilityMode: readabilityMode) == nil {
-            return days.reduce(into: [:]) { result, day in
-                result[day.id] = day.label
-            }
-        }
-        return days.reduce(into: [:]) { result, day in
-            result[day.id] = nil
-        }
-    }
-
     private func dayLabelMode(readabilityMode: ThreadCanvasReadabilityMode) -> DayLabelMode? {
         switch readabilityMode {
         case .detailed:
@@ -647,19 +672,23 @@ internal struct ThreadCanvasView: View {
         return CGFloat(levelsAbove) * chrome.indentStep
     }
     @ViewBuilder
-    private func groupLegendLayer(layout: ThreadCanvasLayout,
+    private func floatingDateRail(layout: ThreadCanvasLayout,
                                   metrics: ThreadCanvasLayoutMetrics,
                                   readabilityMode: ThreadCanvasReadabilityMode,
-                                  calendar: Calendar) -> some View {
-        if let mode = dayLabelMode(readabilityMode: readabilityMode) {
-            let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
-            let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
-            ZStack(alignment: .topLeading) {
+                                  totalTopPadding: CGFloat,
+                                  rawScrollOffset: CGFloat,
+                                  viewportHeight: CGFloat) -> some View {
+        let railWidth = metrics.dayLabelWidth
+        ZStack(alignment: .topLeading) {
+            if let mode = dayLabelMode(readabilityMode: readabilityMode) {
+                let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
+                let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
                 ForEach(Array(items.dropFirst().enumerated()), id: \.offset) { _, item in
                     Rectangle()
                         .fill(legendGuideColor)
-                        .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset, height: 1)
-                        .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+                        .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
+                        .offset(x: metrics.nodeHorizontalInset,
+                                y: item.startY + totalTopPadding - rawScrollOffset)
                 }
                 ForEach(items) { item in
                     ZStack(alignment: .topLeading) {
@@ -682,15 +711,28 @@ internal struct ThreadCanvasView: View {
                             .accessibilityAddTraits(.isHeader)
                             .allowsHitTesting(false)
                     }
-                    .frame(width: metrics.dayLabelWidth - metrics.nodeHorizontalInset,
+                    .frame(width: railWidth - metrics.nodeHorizontalInset,
                            height: item.height,
                            alignment: .topLeading)
-                    .offset(x: metrics.nodeHorizontalInset, y: item.startY)
+                    .offset(x: metrics.nodeHorizontalInset,
+                            y: item.startY + totalTopPadding - rawScrollOffset)
+                }
+            } else {
+                ForEach(layout.days) { day in
+                    Text(day.label)
+                        .font(.system(size: 11 * metrics.fontScale, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
+                        .padding(.leading, metrics.nodeHorizontalInset)
+                        .padding(.top, metrics.nodeVerticalSpacing)
+                        .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
+                        .accessibilityAddTraits(.isHeader)
                 }
             }
-        } else {
-            EmptyView()
         }
+        .frame(width: railWidth, height: viewportHeight, alignment: .topLeading)
+        .clipped()
+        .allowsHitTesting(false)
     }
 
     private var legendGuideColor: Color {
@@ -1097,6 +1139,9 @@ private struct FolderColumnHeader: View {
 private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
     let metrics: ThreadCanvasLayoutMetrics
+    let viewMode: ThreadCanvasViewMode
+    let readabilityMode: ThreadCanvasReadabilityMode
+    let timelineTagsByNodeID: [String: [String]]
     let isHighlighted: Bool
     let rawZoom: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1117,7 +1162,10 @@ private struct ThreadCanvasConnectorColumn: View {
         let manualShift = max(4, metrics.nodeWidth * 0.02)
         var localX: CGFloat
         var shift: CGFloat
-        if segment.isManual {
+        if viewMode == .timeline {
+            localX = (segment.nodeMidX - column.xOffset).clamped(to: 0...metrics.columnWidth)
+            shift = 0
+        } else if segment.isManual {
             localX = metrics.columnWidth / 2
             shift = 0
         } else {
@@ -1145,13 +1193,15 @@ private struct ThreadCanvasConnectorColumn: View {
             )
             .shadow(color: segmentColor(for: segment), radius: glowRadius, x: 0, y: 0)
 
-            let circleScale = max(rawZoom, 0.05)
-            let circleSize = lineWidth * 5.8 * circleScale
-            Circle()
-                .fill(segmentColor(for: segment))
-                .frame(width: circleSize, height: circleSize)
-                .shadow(color: segmentColor(for: segment), radius: glowRadius)
-                .position(x: localX + shift, y: segment.endY - (lineWidth * 8.8 * circleScale) / 2)
+            if viewMode != .timeline {
+                let circleScale = max(rawZoom, 0.05)
+                let circleSize = lineWidth * 5.8 * circleScale
+                Circle()
+                    .fill(segmentColor(for: segment))
+                    .frame(width: circleSize, height: circleSize)
+                    .shadow(color: segmentColor(for: segment), radius: glowRadius)
+                    .position(x: localX + shift, y: segment.endY - (lineWidth * 8.8 * circleScale) / 2)
+            }
         }
     }
 
@@ -1217,7 +1267,6 @@ private struct ThreadCanvasConnectorColumn: View {
         guard sortedNodes.count > 1 else { return [] }
 
         var segments: [ConnectorSegment] = []
-        let gap = 0.0
 
         for index in 1..<sortedNodes.count {
             let previous = sortedNodes[index - 1]
@@ -1226,11 +1275,12 @@ private struct ThreadCanvasConnectorColumn: View {
             let touchesManualAttachment = previous.isManualAttachment || next.isManualAttachment
             guard crossesThreads || touchesManualAttachment else { continue }
 
-            let startY = previous.frame.maxY + gap
-            let endY = next.frame.minY - gap
+            let endpoints = connectorEndpoints(previous: previous, next: next)
+            let startY = endpoints.startY
+            let endY = endpoints.endY
             guard endY > startY else { continue }
 
-            let midX = (previous.frame.midX + next.frame.midX) / 2
+            let midX = (anchorX(for: previous) + anchorX(for: next)) / 2
             segments.append(
                 ConnectorSegment(
                     id: "\(column.id)-manual-\(index)",
@@ -1245,6 +1295,9 @@ private struct ThreadCanvasConnectorColumn: View {
     }
 
     private func laneOffsets(for jwzThreadIDs: [String]) -> [String: CGFloat] {
+        if viewMode == .timeline {
+            return jwzThreadIDs.reduce(into: [:]) { $0[$1] = 0 }
+        }
         guard jwzThreadIDs.count > 1 else {
             return jwzThreadIDs.reduce(into: [:]) { $0[$1] = 0 }
         }
@@ -1266,15 +1319,13 @@ private struct ThreadCanvasConnectorColumn: View {
         var segments: [ConnectorSegment] = []
         segments.reserveCapacity(nodes.count - 1)
 
-        // Keep the connector from touching the node cards.
-        let gap = 0.0
-
         for index in 1..<nodes.count {
             let previous = nodes[index - 1]
             let next = nodes[index]
 
-            let startY = previous.frame.maxY + gap
-            let endY = next.frame.minY - gap
+            let endpoints = connectorEndpoints(previous: previous, next: next)
+            let startY = endpoints.startY
+            let endY = endpoints.endY
             guard endY > startY else { continue }
 
             segments.append(
@@ -1282,7 +1333,7 @@ private struct ThreadCanvasConnectorColumn: View {
                     id: "\(segmentPrefix)-\(index)",
                     startY: startY,
                     endY: endY,
-                    nodeMidX: previous.frame.midX + laneOffset,
+                    nodeMidX: anchorX(for: previous, laneOffset: laneOffset),
                     isManual: isManual
                 )
             )
@@ -1298,6 +1349,75 @@ private struct ThreadCanvasConnectorColumn: View {
             jwzCount,
             manualCount
         ))
+    }
+
+    private func anchorX(for node: ThreadCanvasNode, laneOffset: CGFloat = 0) -> CGFloat {
+        let base: CGFloat
+        if viewMode == .timeline {
+            base = timelineDotCenterX(for: node)
+        } else {
+            base = node.frame.midX
+        }
+        return base + laneOffset
+    }
+
+    private func timelineDotCenterX(for node: ThreadCanvasNode) -> CGFloat {
+        let padding = ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: metrics.fontScale)
+        let dotRadius = ThreadTimelineLayoutConstants.dotSize(fontScale: metrics.fontScale) / 2
+        return node.frame.minX + padding + dotRadius
+    }
+
+    private func connectorEndpoints(previous: ThreadCanvasNode,
+                                    next: ThreadCanvasNode) -> (startY: CGFloat, endY: CGFloat) {
+        guard viewMode == .timeline else {
+            return (previous.frame.maxY, next.frame.minY)
+        }
+
+        let previousEdges = timelineDotEdges(for: previous)
+        let nextEdges = timelineDotEdges(for: next)
+        let overlap = connectorDotOverlap
+        return (previousEdges.bottom - overlap, nextEdges.top + overlap)
+    }
+
+    private func timelineDotEdges(for node: ThreadCanvasNode) -> (top: CGFloat, bottom: CGFloat) {
+        let centerY = timelineDotCenterY(for: node)
+        let radius = ThreadTimelineLayoutConstants.dotSize(fontScale: metrics.fontScale) / 2
+        return (centerY - radius, centerY + radius)
+    }
+
+    private func timelineDotCenterY(for node: ThreadCanvasNode) -> CGFloat {
+        let tags = timelineTagsByNodeID[node.id] ?? []
+        let verticalPadding = ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: metrics.fontScale)
+        let topLineHeight = timelineTopLineHeight(tags: tags)
+        return node.frame.minY + verticalPadding + (topLineHeight / 2)
+    }
+
+    private func timelineTopLineHeight(tags: [String]) -> CGFloat {
+        let fontScale = metrics.fontScale
+        let textVisibility = timelineTextVisibility(readabilityMode: readabilityMode)
+        let dotSize = ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
+
+        guard textVisibility == .normal else {
+            return dotSize
+        }
+
+        let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
+                                         weight: .semibold)
+        let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
+                                        weight: .semibold)
+        let timeHeight = ceil(timeFont.ascender - timeFont.descender)
+        let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
+        let visibleTags = tags.prefix(3)
+        let tagHeight = visibleTags.isEmpty
+            ? 0
+            : ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
+
+        return max(dotSize, timeHeight, tagHeight)
+    }
+
+    private var connectorDotOverlap: CGFloat {
+        let scaled = 0.8 * metrics.fontScale
+        return min(max(scaled, 0.5), 1.2)
     }
 }
 
@@ -1318,10 +1438,195 @@ private struct ConnectorSegment: Identifiable {
     let isManual: Bool
 }
 
-private struct ThreadCanvasNodeView: View {
+private struct ThreadTimelineCanvasNodeView: View {
     let node: ThreadCanvasNode
+    let summaryState: ThreadSummaryState?
+    let tags: [String]
     let isSelected: Bool
     let fontScale: CGFloat
+    let readabilityMode: ThreadCanvasReadabilityMode
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var body: some View {
+        let textVisibility = timelineTextVisibility(readabilityMode: readabilityMode)
+        VStack(alignment: .leading, spacing: textVisibility == .normal ? summaryLineSpacing : 0) {
+            HStack(alignment: .center, spacing: elementSpacing) {
+                timelineDot
+
+                if textVisibility == .normal {
+                    Text(Self.timeFormatter.string(from: node.message.date))
+                        .font(.system(size: timeFontSize, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: timeWidth, alignment: .leading)
+                }
+
+                if !tags.isEmpty {
+                    HStack(alignment: .center, spacing: tagSpacing) {
+                        ForEach(tags.prefix(3), id: \.self) { tag in
+                            ThreadTimelineTagChip(text: tag, fontScale: fontScale)
+                        }
+                    }
+                }
+            }
+
+            if textVisibility == .normal {
+                Text(titleText)
+                    .font(.system(size: summaryFontSize, weight: node.message.isUnread ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, summaryIndent)
+                    .layoutPriority(1)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, verticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selectionBackground)
+        .overlay(selectionOverlay)
+        .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var titleText: String {
+        let subject = node.message.subject.isEmpty
+            ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+            : node.message.subject
+        guard let summaryState else { return subject }
+        let summaryText = summaryState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summaryText.isEmpty {
+            return summaryText
+        }
+        let statusText = summaryState.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return statusText.isEmpty ? subject : statusText
+    }
+
+    private var selectionCornerRadius: CGFloat {
+        ThreadTimelineLayoutConstants.selectionCornerRadius(fontScale: fontScale)
+    }
+
+    private var summaryFontSize: CGFloat {
+        ThreadTimelineLayoutConstants.summaryFontSize(fontScale: fontScale)
+    }
+
+    private var timeFontSize: CGFloat {
+        ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale)
+    }
+
+    private var timeWidth: CGFloat {
+        ThreadTimelineLayoutConstants.timeWidth(fontScale: fontScale)
+    }
+
+    private var elementSpacing: CGFloat {
+        ThreadTimelineLayoutConstants.elementSpacing(fontScale: fontScale)
+    }
+
+    private var tagSpacing: CGFloat {
+        ThreadTimelineLayoutConstants.tagSpacing(fontScale: fontScale)
+    }
+
+    private var summaryLineSpacing: CGFloat {
+        ThreadTimelineLayoutConstants.summaryLineSpacing(fontScale: fontScale)
+    }
+
+    private var horizontalPadding: CGFloat {
+        ThreadTimelineLayoutConstants.rowHorizontalPadding(fontScale: fontScale)
+    }
+
+    private var verticalPadding: CGFloat {
+        ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: fontScale)
+    }
+
+    private var dotSize: CGFloat {
+        ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
+    }
+
+    private var summaryIndent: CGFloat {
+        dotSize + elementSpacing
+    }
+
+    @ViewBuilder
+    private var timelineDot: some View {
+        Circle()
+            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.7))
+            .frame(width: dotSize, height: dotSize)
+            .shadow(color: isSelected && !reduceTransparency ? Color.accentColor.opacity(0.4) : .clear,
+                    radius: scaled(4))
+    }
+
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.9), lineWidth: scaled(1.2))
+                .shadow(color: Color.accentColor.opacity(0.35), radius: scaled(6))
+        }
+    }
+
+    @ViewBuilder
+    private var selectionBackground: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous)
+                .fill(Color.accentColor.opacity(reduceTransparency ? 0.18 : 0.12))
+        }
+    }
+
+    private var accessibilityLabel: String {
+        let tagText = tags.prefix(3).joined(separator: ", ")
+        return [
+            titleText,
+            Self.timeFormatter.string(from: node.message.date),
+            tagText
+        ].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        value * fontScale
+    }
+}
+
+internal func timelineTextVisibility(readabilityMode: ThreadCanvasReadabilityMode) -> TextVisibility {
+    switch readabilityMode {
+    case .detailed:
+        return .normal
+    case .compact, .minimal:
+        return .hidden
+    }
+}
+
+private struct ThreadTimelineTagChip: View {
+    let text: String
+    let fontScale: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 8 * fontScale, weight: .semibold))
+            .lineLimit(1)
+            .clipped()
+            .padding(.vertical, 3 * fontScale)
+            .padding(.horizontal, 6 * fontScale)
+            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+            .overlay(Capsule().stroke(Color.accentColor.opacity(0.28), lineWidth: 0.6 * fontScale))
+            .foregroundStyle(Color.accentColor)
+    }
+}
+
+private struct ThreadCanvasNodeView: View {
+    let node: ThreadCanvasNode
+    let summaryState: ThreadSummaryState?
+    let isSelected: Bool
+    let fontScale: CGFloat
+    let viewMode: ThreadCanvasViewMode
     let readabilityMode: ThreadCanvasReadabilityMode
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1336,7 +1641,7 @@ private struct ThreadCanvasNodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            textLine(subjectText,
+            textLine(titleText,
                      baseSize: 13,
                      weight: node.message.isUnread ? .semibold : .regular,
                      color: primaryTextColor,
@@ -1365,6 +1670,25 @@ private struct ThreadCanvasNodeView: View {
 
     private var subjectText: String {
         node.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : node.message.subject
+    }
+
+    private var titleText: String {
+        switch viewMode {
+        case .default:
+            return subjectText
+        case .timeline:
+            return summaryTitleText ?? subjectText
+        }
+    }
+
+    private var summaryTitleText: String? {
+        guard let summaryState else { return nil }
+        let summaryText = summaryState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summaryText.isEmpty {
+            return summaryText
+        }
+        let statusText = summaryState.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return statusText.isEmpty ? nil : statusText
     }
 
     private var cornerRadius: CGFloat {
@@ -1404,7 +1728,7 @@ private struct ThreadCanvasNodeView: View {
         String.localizedStringWithFormat(
             NSLocalizedString("threadcanvas.node.accessibility", comment: "Accessibility label for a node"),
             node.message.from,
-            subjectText,
+            titleText,
             Self.timeFormatter.string(from: node.message.date)
         )
     }
@@ -1535,4 +1859,62 @@ private extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self {
         min(max(self, range.lowerBound), range.upperBound)
     }
+}
+
+#if DEBUG
+// Preview helper for EmailMessage type used in previews.
+private extension EmailMessage {
+    static func preview(
+        messageID: String = "<msg-1@example.com>",
+        mailboxID: String = "inbox",
+        accountName: String = "Preview Account",
+        subject: String = "Quarterly Results and Strategy Update",
+        from: String = "Alex Johnson",
+        to: String = "You",
+        date: Date = Date(),
+        isUnread: Bool = true,
+        snippet: String = "Highlights: Revenue up 12% QoQ, margin expansion continues.",
+        inReplyTo: String = "",
+        references: [String] = ["<ref-1@example.com>", "<ref-2@example.com>"]
+    ) -> EmailMessage {
+        EmailMessage(
+            messageID: messageID,
+            mailboxID: mailboxID,
+            accountName: accountName,
+            subject: subject,
+            from: from,
+            to: to,
+            date: date,
+            snippet: snippet,
+            isUnread: isUnread,
+            inReplyTo: inReplyTo,
+            references: references
+        )
+    }
+}
+#endif
+
+#Preview("ThreadTimelineTagChip") {
+    ThreadTimelineTagChip(text: "Important", fontScale: 1.0)
+}
+
+#Preview("ThreadTimelineCanvasNodeView") {
+    let message = EmailMessage.preview()
+    let node = ThreadCanvasNode(
+        id: "node-1",
+        message: message,
+        threadID: "thread-1",
+        jwzThreadID: "jwz-1",
+        frame: CGRect(x: 0, y: 0, width: 400, height: 80),
+        dayIndex: 0,
+        isManualAttachment: false
+    )
+    ThreadTimelineCanvasNodeView(
+        node: node,
+        summaryState: nil,
+        tags: ["Finance", "Q1", "Update"],
+        isSelected: true,
+        fontScale: 1.0,
+        readabilityMode: .detailed
+    )
 }

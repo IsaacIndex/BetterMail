@@ -98,10 +98,70 @@ internal final class MessageStore {
     internal func fetchMessages(since date: Date?, limit: Int? = nil) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-            request.sortDescriptors = [NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false)]
+            request.sortDescriptors = [
+                NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+            ]
             if let date {
                 request.predicate = NSPredicate(format: "date >= %@", date as NSDate)
             }
+            if let limit { request.fetchLimit = limit }
+            let entities = try context.fetch(request)
+            return entities.compactMap { $0.toModel() }
+        }
+    }
+
+    internal func countMessages(in range: DateInterval, mailbox: String? = nil) async throws -> Int {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "date >= %@", range.start as NSDate),
+                NSPredicate(format: "date <= %@", range.end as NSDate)
+            ]
+            if let mailbox {
+                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+            }
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            return try context.count(for: request)
+        }
+    }
+
+    internal func fetchMessages(in range: DateInterval,
+                                mailbox: String? = nil,
+                                limit: Int? = nil,
+                                offset: Int = 0) async throws -> [EmailMessage] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            request.sortDescriptors = [
+                NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+            ]
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "date >= %@", range.start as NSDate),
+                NSPredicate(format: "date <= %@", range.end as NSDate)
+            ]
+            if let mailbox {
+                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+            }
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            if let limit {
+                request.fetchLimit = limit
+            }
+            request.fetchOffset = max(0, offset)
+            let entities = try context.fetch(request)
+            return entities.compactMap { $0.toModel() }
+        }
+    }
+
+    internal func fetchMessages(threadIDs: Set<String>, limit: Int? = nil) async throws -> [EmailMessage] {
+        guard !threadIDs.isEmpty else { return [] }
+        return try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            request.sortDescriptors = [
+                NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+            ]
+            request.predicate = NSPredicate(format: "threadID IN %@", Array(threadIDs))
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
             return entities.compactMap { $0.toModel() }
@@ -1002,11 +1062,15 @@ internal final class MessageStore {
             let cachedIDs = try await fetchScopedSummaryIDs()
             let orphanedNodes = cachedIDs.nodeIDs.filter { !messageIDs.contains($0) }
             let orphanedFolders = cachedIDs.folderIDs.filter { !folderIDs.contains($0) }
+            let orphanedTags = cachedIDs.tagIDs.filter { !messageIDs.contains($0) }
             if !orphanedNodes.isEmpty {
                 try await deleteSummaries(scope: .emailNode, ids: orphanedNodes)
             }
             if !orphanedFolders.isEmpty {
                 try await deleteSummaries(scope: .folder, ids: orphanedFolders)
+            }
+            if !orphanedTags.isEmpty {
+                try await deleteSummaries(scope: .emailTag, ids: orphanedTags)
             }
             userDefaults.set(true, forKey: scopedSummaryCacheMigrationKey)
         } catch {
@@ -1021,22 +1085,26 @@ internal final class MessageStore {
         }
     }
 
-    private func fetchScopedSummaryIDs() async throws -> (nodeIDs: [String], folderIDs: [String]) {
+    private func fetchScopedSummaryIDs() async throws -> (nodeIDs: [String], folderIDs: [String], tagIDs: [String]) {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             let entries = try context.fetch(request)
             var nodeIDs: [String] = []
             var folderIDs: [String] = []
+            var tagIDs: [String] = []
             nodeIDs.reserveCapacity(entries.count)
             folderIDs.reserveCapacity(entries.count)
+            tagIDs.reserveCapacity(entries.count)
             for entry in entries {
                 if entry.scope == SummaryScope.emailNode.rawValue {
                     nodeIDs.append(entry.scopeID)
                 } else if entry.scope == SummaryScope.folder.rawValue {
                     folderIDs.append(entry.scopeID)
+                } else if entry.scope == SummaryScope.emailTag.rawValue {
+                    tagIDs.append(entry.scopeID)
                 }
             }
-            return (nodeIDs, folderIDs)
+            return (nodeIDs, folderIDs, tagIDs)
         }
     }
 }

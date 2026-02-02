@@ -14,10 +14,15 @@ markdown_extensions:
 
 nav:
   - TechDocs: index.md
+  - Apple Intelligence: AppleIntelligence.md
   - Architecture Overview: Architecture.md
   - Module Map: ModuleMap.md
   - Data Flow and Concurrency: DataFlow.md
   - MailKit Helper Summary: MailKitHelper.md
+  - Prompts:
+      - Email Tags: prompts/EmailTags.md
+      - Thread Message Summary: prompts/EmailSummary-ThreadMessage.md
+      - Folder Summary: prompts/EmailSummary-Folder.md
   - UI:
       - Thread Canvas ZStack: thread-canvas-zstack-components.md
       - Thread List layeredContent: thread-list-layered-content.md
