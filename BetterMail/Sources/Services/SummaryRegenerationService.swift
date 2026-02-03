@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 internal struct SummaryRegenerationProgress {
     internal enum State {
@@ -19,9 +20,9 @@ internal struct SummaryRegenerationResult {
 }
 
 internal protocol SummaryRegenerationServicing {
-    func countMessages(in range: DateInterval, mailbox: String) async throws -> Int
+    func countMessages(in range: DateInterval, mailbox: String?) async throws -> Int
     func runRegeneration(range: DateInterval,
-                         mailbox: String,
+                         mailbox: String?,
                          preferredBatchSize: Int,
                          totalExpected: Int,
                          snippetLineLimit: Int,
@@ -47,6 +48,7 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
 
     private let store: MessageStore
     private let capabilityProvider: () -> EmailSummaryCapability
+    private let logger = Log.refresh
 
     internal init(store: MessageStore = .shared,
                   capabilityProvider: @escaping () -> EmailSummaryCapability = { EmailSummaryProviderFactory.makeCapability() }) {
@@ -54,19 +56,23 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         self.capabilityProvider = capabilityProvider
     }
 
-    internal func countMessages(in range: DateInterval, mailbox: String) async throws -> Int {
+    internal func countMessages(in range: DateInterval, mailbox: String?) async throws -> Int {
         let now = Date()
         if range.start > now {
+            let mailboxLabel = mailbox ?? "all-mailboxes"
+            logger.info("RegenAI count: rangeStart in future; mailbox=\(mailboxLabel, privacy: .public) rangeStart=\(range.start, privacy: .private) now=\(now, privacy: .private)")
             return 0
         }
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
+        let mailboxLabel = mailbox ?? "all-mailboxes"
+        logger.info("RegenAI count: mailbox=\(mailboxLabel, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
         return try await store.countMessages(in: clampedRange, mailbox: mailbox)
     }
 
     internal func runRegeneration(range: DateInterval,
-                                  mailbox: String,
+                                  mailbox: String?,
                                   preferredBatchSize: Int,
                                   totalExpected: Int,
                                   snippetLineLimit: Int,
@@ -74,11 +80,13 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
                                   progressHandler: @Sendable (SummaryRegenerationProgress) -> Void) async throws -> SummaryRegenerationResult {
         let capability = capabilityProvider()
         guard let provider = capability.provider else {
+            logger.error("RegenAI run: provider unavailable; status=\(capability.statusMessage, privacy: .public)")
             throw EmailSummaryError.unavailable(capability.statusMessage)
         }
 
         let now = Date()
         if range.start > now || totalExpected == 0 {
+            logger.info("RegenAI run: early exit; totalExpected=\(totalExpected, privacy: .public) rangeStart=\(range.start, privacy: .private) now=\(now, privacy: .private)")
             progressHandler(SummaryRegenerationProgress(total: totalExpected,
                                                         completed: 0,
                                                         currentBatchSize: max(1, preferredBatchSize),
@@ -90,6 +98,8 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
+        let mailboxLabel = mailbox ?? "all-mailboxes"
+        logger.info("RegenAI run: mailbox=\(mailboxLabel, privacy: .public) totalExpected=\(totalExpected, privacy: .public) preferredBatchSize=\(preferredBatchSize, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
 
         var completed = 0
         var batchSize = max(1, preferredBatchSize)
@@ -100,7 +110,10 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
                                                          mailbox: mailbox,
                                                          limit: batchSize,
                                                          offset: offset)
-            guard !messages.isEmpty else { break }
+            guard !messages.isEmpty else {
+                logger.info("RegenAI run: no messages from store; completed=\(completed, privacy: .public) totalExpected=\(totalExpected, privacy: .public) offset=\(offset, privacy: .public) batchSize=\(batchSize, privacy: .public)")
+                break
+            }
 
             let inputs = Self.nodeSummaryInputs(from: messages,
                                                 snippetLineLimit: snippetLineLimit,

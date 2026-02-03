@@ -99,12 +99,12 @@ private final class TestSummaryProvider: EmailSummaryProviding {
 private actor StubRegenerationService: SummaryRegenerationServicing {
     var totalCount: Int = 0
 
-    func countMessages(in range: DateInterval, mailbox: String) async throws -> Int {
+    func countMessages(in range: DateInterval, mailbox: String?) async throws -> Int {
         totalCount
     }
 
     func runRegeneration(range: DateInterval,
-                         mailbox: String,
+                         mailbox: String?,
                          preferredBatchSize: Int,
                          totalExpected: Int,
                          snippetLineLimit: Int,
