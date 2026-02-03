@@ -4,16 +4,20 @@ internal struct ContentView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
+    @ObservedObject internal var pinnedFolderSettings: PinnedFolderSettings
     @StateObject private var viewModel: ThreadCanvasViewModel
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
-                  displaySettings: ThreadCanvasDisplaySettings) {
+                  displaySettings: ThreadCanvasDisplaySettings,
+                  pinnedFolderSettings: PinnedFolderSettings) {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
+        self.pinnedFolderSettings = pinnedFolderSettings
         _viewModel = StateObject(wrappedValue: ThreadCanvasViewModel(settings: settings,
-                                                                     inspectorSettings: inspectorSettings))
+                                                                     inspectorSettings: inspectorSettings,
+                                                                     pinnedFolderSettings: pinnedFolderSettings))
     }
 
     internal var body: some View {

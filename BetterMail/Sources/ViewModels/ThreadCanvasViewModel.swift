@@ -349,6 +349,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didSet { invalidateLayoutCache() }
     }
     @Published internal private(set) var threadFolders: [ThreadFolder] = [] {
+        didSet {
+            prunePinnedFolderIDs(using: threadFolders)
+            invalidateLayoutCache()
+        }
+    }
+    @Published internal private(set) var pinnedFolderIDs: Set<String> = [] {
         didSet { invalidateLayoutCache() }
     }
     @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:] {
@@ -389,6 +395,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let tagAvailabilityMessage: String
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
+    private let pinnedFolderSettings: PinnedFolderSettings
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
@@ -413,6 +420,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
+                  pinnedFolderSettings: PinnedFolderSettings,
                   store: MessageStore = .shared,
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
@@ -424,6 +432,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.threader = threader
         self.settings = settings
         self.inspectorSettings = inspectorSettings
+        self.pinnedFolderSettings = pinnedFolderSettings
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
@@ -436,10 +445,17 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.worker = SidebarBackgroundWorker(client: client,
                                               store: store,
                                               threader: threader)
+        self.pinnedFolderIDs = pinnedFolderSettings.pinnedFolderIDs
         NotificationCenter.default.publisher(for: .manualThreadGroupsReset)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.scheduleRethread()
+            }
+            .store(in: &cancellables)
+        pinnedFolderSettings.$pinnedFolderIDs
+            .receive(on: RunLoop.main)
+            .sink { [weak self] ids in
+                self?.pinnedFolderIDs = ids
             }
             .store(in: &cancellables)
     }
@@ -627,6 +643,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func folderSummaryState(for folderID: String) -> ThreadSummaryState? {
         folderSummaries[folderID]
+    }
+
+    internal func isFolderPinned(id: String) -> Bool {
+        pinnedFolderIDs.contains(id)
+    }
+
+    internal func pinFolder(id: String) {
+        pinnedFolderSettings.pin(id)
+    }
+
+    internal func unpinFolder(id: String) {
+        pinnedFolderSettings.unpin(id)
     }
 
     internal var isSummaryProviderAvailable: Bool {
@@ -1711,6 +1739,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        manualAttachmentMessageIDs: manualAttachmentMessageIDs,
                                        jwzThreadMap: jwzThreadMap,
                                        folders: effectiveThreadFolders,
+                                       pinnedFolderIDs: pinnedFolderIDs,
                                        folderMembershipByThreadID: folderMembershipByThreadID,
                                        nodeSummaries: nodeSummaries,
                                        timelineTagsByNodeID: timelineTagsByNodeID,
@@ -2044,15 +2073,25 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    private func prunePinnedFolderIDs(using folders: [ThreadFolder]) {
+        let validIDs = Set(folders.map(\.id))
+        pinnedFolderSettings.prune(validIDs: validIDs)
+    }
+
     private var effectiveThreadFolders: [ThreadFolder] {
-        guard !folderEditsByID.isEmpty else { return threadFolders }
-        return threadFolders.map { folder in
-            guard let edit = folderEditsByID[folder.id] else { return folder }
-            var updated = folder
-            updated.title = edit.title
-            updated.color = edit.color
-            return updated
+        let baseFolders: [ThreadFolder]
+        if folderEditsByID.isEmpty {
+            baseFolders = threadFolders
+        } else {
+            baseFolders = threadFolders.map { folder in
+                guard let edit = folderEditsByID[folder.id] else { return folder }
+                var updated = folder
+                updated.title = edit.title
+                updated.color = edit.color
+                return updated
+            }
         }
+        return Self.pinnedFirstFolders(baseFolders, pinnedIDs: pinnedFolderIDs)
     }
 
     private func expandDayWindowIfNeeded(visibleRange: ClosedRange<Int>?,
@@ -2168,6 +2207,23 @@ private extension ThreadCanvasViewModel {
 }
 
 extension ThreadCanvasViewModel {
+    internal static func pinnedFirstFolders(_ folders: [ThreadFolder],
+                                            pinnedIDs: Set<String>) -> [ThreadFolder] {
+        guard !pinnedIDs.isEmpty else { return folders }
+        var pinned: [ThreadFolder] = []
+        var unpinned: [ThreadFolder] = []
+        pinned.reserveCapacity(min(folders.count, pinnedIDs.count))
+        unpinned.reserveCapacity(folders.count)
+        for folder in folders {
+            if pinnedIDs.contains(folder.id) {
+                pinned.append(folder)
+            } else {
+                unpinned.append(folder)
+            }
+        }
+        return pinned + unpinned
+    }
+
     internal static func canvasLayout(for roots: [ThreadNode],
                                       metrics: ThreadCanvasLayoutMetrics,
                                       viewMode: ThreadCanvasViewMode = .default,
@@ -2176,6 +2232,7 @@ extension ThreadCanvasViewModel {
                                       manualAttachmentMessageIDs: Set<String> = [],
                                       jwzThreadMap: [String: String] = [:],
                                       folders: [ThreadFolder] = [],
+                                      pinnedFolderIDs: Set<String> = [],
                                       folderMembershipByThreadID: [String: String] = [:],
                                       nodeSummaries: [String: ThreadSummaryState] = [:],
                                       timelineTagsByNodeID: [String: [String]] = [:]) -> ThreadCanvasLayout {
@@ -2188,6 +2245,7 @@ extension ThreadCanvasViewModel {
                             manualAttachmentMessageIDs: manualAttachmentMessageIDs,
                             jwzThreadMap: jwzThreadMap,
                             folders: folders,
+                            pinnedFolderIDs: pinnedFolderIDs,
                             folderMembershipByThreadID: folderMembershipByThreadID,
                             nodeSummaries: nodeSummaries,
                             timelineTagsByNodeID: timelineTagsByNodeID,
@@ -2202,6 +2260,7 @@ extension ThreadCanvasViewModel {
                                      manualAttachmentMessageIDs: Set<String> = [],
                                      jwzThreadMap: [String: String] = [:],
                                      folders: [ThreadFolder] = [],
+                                     pinnedFolderIDs: Set<String> = [],
                                      folderMembershipByThreadID: [String: String] = [:],
                                      nodeSummaries: [String: ThreadSummaryState] = [:],
                                      timelineTagsByNodeID: [String: [String]] = [:],
@@ -2269,20 +2328,31 @@ extension ThreadCanvasViewModel {
                 folderIDs = hierarchy.rootFolderIDs
             }
 
-            var items: [(latest: Date, item: OrderingItem)] = []
-            items.reserveCapacity(folderIDs.count + (threadsByFolderID[parentID]?.count ?? 0))
+            var pinnedItems: [(latest: Date, item: OrderingItem)] = []
+            var remainingItems: [(latest: Date, item: OrderingItem)] = []
+            pinnedItems.reserveCapacity(folderIDs.count)
+            remainingItems.reserveCapacity(folderIDs.count + (threadsByFolderID[parentID]?.count ?? 0))
 
             for folderID in folderIDs {
-                items.append((latest: latestDateForFolder(folderID), item: .folder(folderID)))
+                let item: OrderingItem = .folder(folderID)
+                if pinnedFolderIDs.contains(folderID) {
+                    pinnedItems.append((latest: latestDateForFolder(folderID), item: item))
+                } else {
+                    remainingItems.append((latest: latestDateForFolder(folderID), item: item))
+                }
             }
 
             for thread in threadsByFolderID[parentID] ?? [] {
-                items.append((latest: thread.latestDate, item: .thread(thread)))
+                remainingItems.append((latest: thread.latestDate, item: .thread(thread)))
             }
 
-            return items.sorted { lhs, rhs in
+            let orderedPinned = pinnedItems.sorted { lhs, rhs in
                 lhs.latest > rhs.latest
             }.map(\.item)
+            let orderedRemaining = remainingItems.sorted { lhs, rhs in
+                lhs.latest > rhs.latest
+            }.map(\.item)
+            return orderedPinned + orderedRemaining
         }
 
         var currentColumnIndex = 0

@@ -51,6 +51,8 @@
 "threadcanvas.folder.inspector.cancel" = "Cancel";
 "threadcanvas.folder.inspector.save" = "Save";
 "threadcanvas.folder.inspector.accessibility" = "Folder";
+"threadcanvas.folder.menu.pin" = "Pin Folder";
+"threadcanvas.folder.menu.unpin" = "Unpin Folder";
 "threadcanvas.summary.apple_intelligence" = "Apple Intelligence";
 "threadcanvas.connectors.accessibility" = "Thread connectors: %d standard, %d manual";
 "threadlist.selection.count" = "%d selected";
