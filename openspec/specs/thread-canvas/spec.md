@@ -176,7 +176,7 @@ The system SHALL display a highlight with a brief entry pulse around the specifi
 - **THEN** the previous highlight clears immediately and the new target (if any) pulses
 
 ### Requirement: Thread Canvas View Modes
-The system SHALL provide a navigation bar toggle to switch between Default View and Timeline View, SHALL default to Default View on first launch, and SHALL persist the last chosen view mode between app launches using display settings.
+The system SHALL provide a navigation bar toggle to switch between Default View and Timeline View, SHALL default to Default View on first launch, and SHALL persist the last chosen view mode between app launches using display settings. Both view modes SHALL use the same two-axis canvas renderer and data source so thread columns, manual group connectors, and folder backgrounds/adjacency are rendered identically, with Timeline View applying only styling/legend overlays (e.g., time labels or tags) on top of the shared canvas.
 
 #### Scenario: Toggle between modes
 - **WHEN** the user taps the view toggle in the navigation bar
@@ -185,6 +185,10 @@ The system SHALL provide a navigation bar toggle to switch between Default View 
 #### Scenario: Persisted view preference
 - **WHEN** the user relaunches the app after selecting a view mode
 - **THEN** the canvas starts in the previously selected view mode
+
+#### Scenario: Timeline reuses canvas and honors grouping
+- **WHEN** the user switches to Timeline View
+- **THEN** manual thread group connectors, JWZ thread columns, and folder backgrounds/adjacency remain present as in Default View, with only timeline-specific overlays changing
 
 ### Requirement: Heuristic Mail Targeting
 When direct Message-ID lookup fails, the system SHALL attempt AppleScript-based heuristics recommended in Apple Support thread 253933858: constrain search using cached mailbox and account hints when available, and otherwise search by subject + sender + received-date within Mail. The inspector SHALL surface which heuristic succeeded (Message-ID match vs. metadata heuristic) or that no match was found.
@@ -231,4 +235,58 @@ The system SHALL render copy controls for Message-ID, subject, and mailbox/accou
 #### Scenario: Copy helpers always available
 - **WHEN** the Open in Mail flow is idle, searching, succeeds, or fails
 - **THEN** the inspector still presents copy buttons for the selected message’s Message-ID, subject, and mailbox/account values
+
+### Requirement: Timeline Interaction Responsiveness
+The system SHALL keep Timeline View scrolling and zooming responsive for typical datasets (up to 200 visible timeline entries) by reusing cached layout and text measurements instead of recomputing work on every scroll delta, maintaining smooth visuals within a 16ms frame budget on supported hardware.
+
+#### Scenario: Smooth scroll under typical load
+- **WHEN** Timeline View shows up to 200 entries and the user scrolls vertically, horizontally, or diagonally
+- **THEN** the interaction remains visually smooth without blank content, and layout is reused rather than rebuilt on each scroll tick
+
+#### Scenario: Smooth zoom transitions
+- **WHEN** the user pinches to zoom between readability thresholds
+- **THEN** the canvas scales without stalls or dropped frames, using cached measurements where possible
+
+#### Scenario: Cached layout reuse
+- **WHEN** the scroll offset changes but zoom, view mode, day window, and node set remain unchanged
+- **THEN** the system reuses cached node frames instead of recalculating layout, keeping main-thread work within the 16ms frame budget
+
+### Requirement: Timeline View Entry Presentation
+The system SHALL render Timeline View as a single vertical sequence of individual message entries ordered by received time (newest first within the selected range), where each entry shows a time label, sender + subject summary, and one or more tag/title chips. The layout SHALL use the existing inspector selection model so selecting an entry opens the message inspector without leaving Timeline View. When message metadata lacks a concise title or tag, the system SHALL optionally invoke Apple Intelligence to generate a short title or tag set; when Apple Intelligence is unavailable, the entry SHALL fall back to subject-only content without blocking rendering.
+
+#### Scenario: Chronological entries with time labels
+- **WHEN** Timeline View is active
+- **THEN** each message in the visible date range appears once in a vertical list ordered by received time (newest first) and shows its time label alongside the entry
+
+#### Scenario: Entry content summary and tags
+- **WHEN** a message is rendered in Timeline View
+- **THEN** its entry shows sender, subject (or summary snippet), and tag/title chips (e.g., folder labels or generated tags) in a compact card style similar to the reference visual
+
+#### Scenario: Selection opens inspector
+- **WHEN** the user clicks a timeline entry
+- **THEN** that message becomes the current selection and the existing inspector panel opens with its details without exiting Timeline View
+
+#### Scenario: Apple Intelligence-assisted tags optional
+- **WHEN** message metadata lacks a concise title or tags
+- **THEN** the system may request Apple Intelligence to generate a short title or tag set
+- **AND** if Apple Intelligence is unavailable or fails, the entry still renders using available metadata without delay
+
+### Requirement: Timeline View Unbounded Entries
+The system SHALL render Timeline View entries as a vertical sequence aligned to a timeline rail where each entry uses a left dot + time column followed by inline AI tag chips (when available) and a summary/subject body that may wrap to multiple lines; entry height SHALL expand to fit the summary instead of clipping or overlapping adjacent entries. Timeline entries SHALL omit the sender line and rely on summary/subject plus tags for context, while preserving the existing inspector selection behavior.
+
+#### Scenario: Inline rail layout without clipping
+- **WHEN** Timeline View is active
+- **THEN** each message renders on a shared rail with a leading dot and time label, and the summary text appears to the right with available width, wrapping to additional lines as needed without horizontal clipping
+
+#### Scenario: No overlap with dynamic heights
+- **WHEN** a summary spans multiple lines or tags wrap
+- **THEN** the entry's vertical size grows and spacing ensures adjacent entries do not overlap or collide, maintaining readable separation on the rail
+
+#### Scenario: Sender hidden, summary-focused body
+- **WHEN** a message is shown in Timeline View
+- **THEN** the sender line is not displayed; the body uses the summary text when present, otherwise the subject, and remains selectable to open the inspector as before
+
+#### Scenario: AI tag chips inline with time
+- **WHEN** AI-generated tags or folder/title tags exist
+- **THEN** they render as pill chips inline after the time label (wrapping to the next line if needed) before the summary body, preserving the `(dot) time  [tags]  summary` visual order
 
