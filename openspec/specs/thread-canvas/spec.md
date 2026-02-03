@@ -290,3 +290,46 @@ The system SHALL render Timeline View entries as a vertical sequence aligned to 
 - **WHEN** AI-generated tags or folder/title tags exist
 - **THEN** they render as pill chips inline after the time label (wrapping to the next line if needed) before the summary body, preserving the `(dot) time  [tags]  summary` visual order
 
+### Requirement: Inspector summary regenerate controls
+The inspector SHALL show a "Regenerate" action beside the email summary disclosure and the folder summary field, and SHALL reflect running or unavailable states inline.
+
+#### Scenario: Node summary regen control
+- **WHEN** a thread node is selected and its summary appears in the inspector
+- **THEN** a "Regenerate" control is shown next to the summary title that triggers summary regeneration, and the control shows a busy/disabled state while regeneration is in progress
+
+#### Scenario: Folder summary regen control
+- **WHEN** a folder is selected and its summary appears in the inspector
+- **THEN** a "Regenerate" control is shown next to the folder summary label that triggers folder summary regeneration, and the control shows a busy/disabled state when regeneration is running or when Apple Intelligence is unavailable
+
+### Requirement: Floating Date Rail
+The system SHALL render a floating date rail pinned to the left edge of the thread canvas that keeps day/month/year labels visible while preserving full-width day band backgrounds.
+
+#### Scenario: Rail pinned to viewport
+- **WHEN** the user scrolls horizontally or vertically on the canvas
+- **THEN** the date rail remains fixed on the left side of the viewport and its labels stay visible
+
+#### Scenario: Rail aligned to day bands
+- **GIVEN** day band backgrounds still span the canvas width
+- **WHEN** the user scrolls or the visible day window pages
+- **THEN** the date rail’s labels remain vertically aligned with the corresponding day band heights and positions
+
+#### Scenario: Rail respects readability thresholds
+- **GIVEN** detailed, compact, and minimal readability states
+- **WHEN** the zoom crosses a threshold (day→month→year legend changes)
+- **THEN** the date rail switches label granularity to the matching mode without desynchronizing from the canvas content
+
+#### Scenario: Rail in both canvas modes
+- **WHEN** the user switches between Default View and Timeline View
+- **THEN** the floating date rail remains pinned and aligned with day bands in both modes
+
+### Requirement: Timeline Rail Connector Alignment
+The system SHALL render the Timeline View vertical rail so it visually meets each entry's dot at both the top and bottom with no visible gap, even when entries vary in height due to multi-line summaries or wrapped tags. The rail SHALL maintain consistent thickness and positioning relative to the dots across light and dark themes.
+
+#### Scenario: Rail touches dot edges
+- **WHEN** a timeline entry is rendered
+- **THEN** the vertical rail reaches the dot at the top and bottom edges with no visible gap between the line and the dot
+
+#### Scenario: Variable-height entries stay connected
+- **WHEN** a timeline entry grows taller because of multi-line summaries or wrapped tags
+- **THEN** the rail spans the full entry height and still meets the dot edges without offsets or breaks
+

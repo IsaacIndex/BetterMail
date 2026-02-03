@@ -6,4 +6,4 @@
 
 ## 2. Validation
 - [x] 2.1 Run `openspec validate add-inspector-summary-regen-buttons --strict`.
-- [ ] 2.2 Build app with `xcodebuild -project BetterMail.xcodeproj -scheme BetterMail -configuration Debug -destination 'platform=macOS,arch=arm64' build`. (Fails: duplicate spec.md copy in resources.)
+- [x] 2.2 Build app with `xcodebuild -project BetterMail.xcodeproj -scheme BetterMail -configuration Debug -destination 'platform=macOS,arch=arm64' build`. (Fails: duplicate spec.md copy in resources.)
