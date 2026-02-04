@@ -726,6 +726,97 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), ["a", "c", "b", "d"])
     }
 
+    func testLayoutPopulatedDayIndicesMatchNodes() {
+        let calendar = Calendar(identifier: .gregorian)
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2025
+        components.month = 3
+        components.day = 8
+        components.hour = 12
+        let today = calendar.date(from: components)!
+
+        let dayZero = EmailMessage(messageID: "day0",
+                                   mailboxID: "inbox",
+                                   accountName: "",
+                                   subject: "Today",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: today,
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-0")
+        let dayTwo = EmailMessage(messageID: "day2",
+                                  mailboxID: "inbox",
+                                  accountName: "",
+                                  subject: "Two Days Ago",
+                                  from: "b@example.com",
+                                  to: "me@example.com",
+                                  date: calendar.date(byAdding: .day, value: -2, to: today)!,
+                                  snippet: "",
+                                  isUnread: false,
+                                  inReplyTo: nil,
+                                  references: [],
+                                  threadID: "thread-2")
+
+        let rootA = ThreadNode(message: dayZero)
+        let rootB = ThreadNode(message: dayTwo)
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0, dayCount: 3)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [rootA, rootB],
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar)
+
+        XCTAssertEqual(layout.populatedDayIndices, Set([0, 2]))
+    }
+
+    func testEmptyDayIntervalsUseCachedPopulatedDays() {
+        let calendar = Calendar(identifier: .gregorian)
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2025
+        components.month = 3
+        components.day = 8
+        components.hour = 12
+        let today = calendar.date(from: components)!
+
+        let dayZero = EmailMessage(messageID: "only-day0",
+                                   mailboxID: "inbox",
+                                   accountName: "",
+                                   subject: "Today",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: today,
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-0")
+        let root = ThreadNode(message: dayZero)
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0, dayCount: 3)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [root],
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar)
+
+        let intervals = ThreadCanvasViewModel.emptyDayIntervals(for: layout,
+                                                                visibleRange: 0...2,
+                                                                today: today,
+                                                                calendar: calendar)
+
+        XCTAssertEqual(intervals.count, 1)
+        let expectedStart = ThreadCanvasDateHelper.dayDate(for: 2, today: today, calendar: calendar)
+        let expectedEnd = calendar.date(byAdding: .day,
+                                        value: 1,
+                                        to: ThreadCanvasDateHelper.dayDate(for: 1, today: today, calendar: calendar))!
+        XCTAssertEqual(intervals[0].start, expectedStart)
+        XCTAssertEqual(intervals[0].end, expectedEnd)
+    }
+
     @MainActor
     func testTimelineTagsRequestedOncePerNode() async {
         let expectation = XCTestExpectation(description: "Tag request")

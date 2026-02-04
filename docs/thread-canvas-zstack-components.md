@@ -6,11 +6,12 @@ Source: `BetterMail/Sources/UI/ThreadCanvasView.swift`
 `ThreadCanvasView` builds a scrollable canvas and draws its content inside a `ZStack(alignment: .topLeading)`.
 The order of views in the ZStack defines the visual stacking (earlier = further back, later = on top).
 Timeline layout work is cached in the view model and visible-range updates are throttled to avoid per-scroll recomputation.
+During scrolling, the canvas renders only visible days, columns, and nodes (plus a small buffer) to reduce view work.
 
 ZStack draw order (back to front):
 1) `dayBands`
 2) `folderColumnBackgroundLayer`
-3) `groupLegendLayer`
+3) `floatingDateRail`
 4) `columnDividers`
 5) `connectorLayer`
 6) `nodesLayer`
@@ -31,10 +32,10 @@ ZStack draw order (back to front):
 - Key inputs: `chromeData`, `metrics`, `headerHeight`.
 - Notes: Extends upward to visually connect to folder headers; width expands based on folder depth.
 
-### 3) groupLegendLayer
+### 3) floatingDateRail
 - Role: Draws month/year grouping guides and rotated labels when readability mode is compact/minimal.
-- Key inputs: `layout.days`, `metrics`, `readabilityMode`, `calendar`.
-- Notes: Suppressed in detailed mode.
+- Key inputs: `layout.days`, `metrics`, `readabilityMode`, `calendar`, visible range.
+- Notes: Suppressed in detailed mode; items outside the visible range are skipped.
 
 ### 4) columnDividers
 - Role: Vertical divider lines that separate columns.
@@ -100,14 +101,14 @@ flowchart LR
     nodesLayer[nodesLayer]
     connectorLayer[connectorLayer]
     columnDividers[columnDividers]
-    groupLegendLayer[groupLegendLayer]
+    floatingDateRail[floatingDateRail]
     folderColumnBackgroundLayer[folderColumnBackgroundLayer]
     dayBands[dayBands]
   end
 
   %% Inputs -> layers (grouped)
   layoutInputs --> dayBands
-  layoutInputs --> groupLegendLayer
+  layoutInputs --> floatingDateRail
   layoutInputs --> columnDividers
   layoutInputs --> connectorLayer
   layoutInputs --> nodesLayer
