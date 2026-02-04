@@ -10,7 +10,6 @@ internal struct ThreadCanvasView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
-    @State private var scrollOffset: CGFloat = 0
     @State private var rawScrollOffset: CGFloat = 0
     @State private var rawScrollOffsetX: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
@@ -56,8 +55,8 @@ internal struct ThreadCanvasView: View {
             let effectiveViewportWidth = max(viewportWidth, proxy.size.width)
             let visibleDayBuffer: CGFloat = 1
             let visibleColumnBuffer: CGFloat = 1
-            let visibleYStart = max(0, scrollOffset - (metrics.dayHeight * visibleDayBuffer))
-            let visibleYEnd = scrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
+            let visibleYStart = max(0, rawScrollOffset - (metrics.dayHeight * visibleDayBuffer))
+            let visibleYEnd = rawScrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
             let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
             let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
             let pinnedFolderIDs = viewModel.pinnedFolderIDs
@@ -159,10 +158,8 @@ internal struct ThreadCanvasView: View {
                             .onChange(of: minY) { _, newValue in
                                 let rawOffset = -newValue
                                 rawScrollOffset = max(0, rawOffset)
-                                let adjustedOffset = max(0, rawOffset + totalTopPadding)
                                 let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
-                                scrollOffset = adjustedOffset
-                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
+                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                                         viewportHeight: effectiveHeight,
                                                                         layout: layout,
                                                                         metrics: metrics,
@@ -202,7 +199,7 @@ internal struct ThreadCanvasView: View {
                 let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                         viewportHeight: clampedHeight,
                                                         layout: layout,
                                                         metrics: metrics,
@@ -214,7 +211,7 @@ internal struct ThreadCanvasView: View {
                 viewportWidth = width
             }
             .onChange(of: layout.contentSize.height) { _, _ in
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                         layout: layout,
                                                         metrics: metrics,
@@ -234,7 +231,7 @@ internal struct ThreadCanvasView: View {
             .onAppear {
                 accumulatedZoom = zoomScale
                 displaySettings.updateCurrentZoom(zoomScale)
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                         layout: layout,
                                                         metrics: metrics,

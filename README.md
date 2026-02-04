@@ -151,6 +151,9 @@ sequenceDiagram
 - The thread canvas expands in 7-day blocks when you scroll near the bottom of the current range.
 - Scroll detection for paging is driven by `GeometryReader` content-frame updates so two-axis scrolling (horizontal + vertical) still triggers expansion.
 
+### Canvas Virtualization Window
+- The virtualized render window is computed in content coordinates using the raw scroll offset, so pinned folder headers/top padding do not shift which days and nodes are considered visible.
+
 ### Manual Grouping & Ungrouping
 **User-facing**
 - Multi-select two or more nodes to enable the Group action in the bottom selection bar.
