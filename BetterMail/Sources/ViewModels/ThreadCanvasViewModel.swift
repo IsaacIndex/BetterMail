@@ -1810,7 +1810,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         if visibleEmptyDayIntervals != emptyIntervals {
             visibleEmptyDayIntervals = emptyIntervals
         }
-        let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
+        let populatedDays = layout.populatedDayIndices
         let hasMessages = range.map { range in
             range.contains { populatedDays.contains($0) }
         } ?? false
@@ -2405,10 +2405,12 @@ extension ThreadCanvasViewModel {
                                                      membership: normalizedMembership,
                                                      contentHeight: totalHeight,
                                                      metrics: metrics)
+        let populatedDayIndices = Set(columns.flatMap { $0.nodes.map(\.dayIndex) })
         return ThreadCanvasLayout(days: days,
                                   columns: columns,
                                   contentSize: CGSize(width: totalWidth, height: totalHeight),
-                                  folderOverlays: folderOverlays)
+                                  folderOverlays: folderOverlays,
+                                  populatedDayIndices: populatedDayIndices)
     }
 
     internal static func timelineNodes(for roots: [ThreadNode],
@@ -2947,7 +2949,7 @@ extension ThreadCanvasViewModel {
                                            today: Date,
                                            calendar: Calendar) -> [DateInterval] {
         guard let visibleRange else { return [] }
-        let populatedDays = Set(layout.columns.flatMap { $0.nodes.map(\.dayIndex) })
+        let populatedDays = layout.populatedDayIndices
         let emptyDayIndices = (visibleRange.lowerBound...visibleRange.upperBound)
             .filter { !populatedDays.contains($0) }
         guard !emptyDayIndices.isEmpty else { return [] }

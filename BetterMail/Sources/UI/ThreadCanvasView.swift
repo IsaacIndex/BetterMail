@@ -10,9 +10,10 @@ internal struct ThreadCanvasView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
-    @State private var scrollOffset: CGFloat = 0
     @State private var rawScrollOffset: CGFloat = 0
+    @State private var rawScrollOffsetX: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var viewportWidth: CGFloat = 0
     @State private var activeDropFolderID: String?
     @State private var dropHighlightPulseToken: Int = 0
     @State private var isDropHighlightPulsing: Bool = false
@@ -50,35 +51,99 @@ internal struct ThreadCanvasView: View {
                 ? 0
                 : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
             let totalTopPadding = topInset + headerStackHeight + headerSpacing
+            let effectiveViewportHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
+            let effectiveViewportWidth = max(viewportWidth, proxy.size.width)
+            let visibleDayBuffer: CGFloat = 1
+            let visibleColumnBuffer: CGFloat = 1
+            let visibleYStart = max(0, rawScrollOffset - (metrics.dayHeight * visibleDayBuffer))
+            let visibleYEnd = rawScrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
+            let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
+            let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
+            let pinnedFolderIDs = viewModel.pinnedFolderIDs
+            let visibleDays = layout.days.filter { day in
+                let dayStart = day.yOffset
+                let dayEnd = day.yOffset + day.height
+                return dayEnd >= visibleYStart && dayStart <= visibleYEnd
+            }
+            let visibleDayRange: ClosedRange<Int>? = {
+                guard let minID = visibleDays.map(\.id).min(),
+                      let maxID = visibleDays.map(\.id).max() else { return nil }
+                return minID...maxID
+            }()
+            let visibleColumns = layout.columns.filter { column in
+                let minX = column.xOffset
+                let maxX = column.xOffset + metrics.columnWidth
+                if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+                    return true
+                }
+                return maxX >= visibleXStart && minX <= visibleXEnd
+            }
+            let visibleNodesByColumnID: [String: [ThreadCanvasNode]] = Dictionary(uniqueKeysWithValues: visibleColumns.map { column in
+                let nodes: [ThreadCanvasNode]
+                if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+                    nodes = column.nodes
+                } else {
+                    nodes = column.nodes.filter { node in
+                        if let visibleDayRange, !visibleDayRange.contains(node.dayIndex) {
+                            return false
+                        }
+                        return node.frame.maxY >= visibleYStart && node.frame.minY <= visibleYEnd
+                    }
+                }
+                return (column.id, nodes)
+            })
+            let visibleChromeData = chromeData.filter { chrome in
+                let minX = chrome.frame.minX
+                let maxX = chrome.frame.maxX
+                let minY = chrome.frame.minY
+                let maxY = chrome.frame.maxY
+                if pinnedFolderIDs.contains(chrome.id) {
+                    return true
+                }
+                let intersectsX = maxX >= visibleXStart && minX <= visibleXEnd
+                let intersectsY = maxY >= visibleYStart && minY <= visibleYEnd
+                return intersectsX && intersectsY
+            }
+            let visibleHeaderChromeData = chromeData.filter { chrome in
+                let minX = chrome.frame.minX
+                let maxX = chrome.frame.maxX
+                if pinnedFolderIDs.contains(chrome.id) {
+                    return true
+                }
+                return maxX >= visibleXStart && minX <= visibleXEnd
+            }
 
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
-                    dayBands(layout: layout,
+                    dayBands(days: visibleDays,
                              metrics: metrics,
-                             readabilityMode: readabilityMode)
-                    folderColumnBackgroundLayer(chromeData: chromeData,
+                             contentWidth: layout.contentSize.width)
+                    folderColumnBackgroundLayer(chromeData: visibleChromeData,
                                                  metrics: metrics,
                                                  headerHeight: headerStackHeight + headerSpacing)
-                    columnDividers(layout: layout, metrics: metrics)
-                    connectorLayer(layout: layout,
-                                   metrics: metrics,
-                                   readabilityMode: readabilityMode,
-                                   timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
-                    nodesLayer(layout: layout,
+                    columnDividers(columns: visibleColumns, metrics: metrics, contentHeight: layout.contentSize.height)
+                    connectorLayer(columns: visibleColumns,
+                                   visibleNodesByColumnID: visibleNodesByColumnID,
+                                    metrics: metrics,
+                                    readabilityMode: readabilityMode,
+                                    timelineTagsByNodeID: viewModel.timelineTagsByNodeID,
+                                    contentHeight: layout.contentSize.height)
+                    nodesLayer(columns: visibleColumns,
+                               visibleNodesByColumnID: visibleNodesByColumnID,
                                metrics: metrics,
                                chromeData: chromeData,
                                readabilityMode: readabilityMode,
                                folderHeaderHeight: headerStackHeight + headerSpacing)
-                    folderDropHighlightLayer(chromeData: chromeData,
+                    folderDropHighlightLayer(chromeData: visibleChromeData,
                                              metrics: metrics,
                                              headerHeight: headerStackHeight + headerSpacing)
                     dragPreviewLayer()
-                    folderColumnHeaderLayer(chromeData: chromeData,
+                    folderColumnHeaderLayer(chromeData: visibleHeaderChromeData,
                                             metrics: metrics,
                                             rawZoom: zoomScale,
                                             readabilityMode: readabilityMode)
                         .offset(y: -(headerStackHeight + headerSpacing))
-                    folderHeaderHitTargets(chromeData: chromeData, metrics: metrics)
+                    folderHeaderHitTargets(chromeData: visibleHeaderChromeData, metrics: metrics)
                         .offset(y: -(headerStackHeight + headerSpacing))
                 }
                 .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
@@ -86,20 +151,24 @@ internal struct ThreadCanvasView: View {
                 .padding(.top, totalTopPadding)
                 .background(
                     GeometryReader { contentProxy in
-                        let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
+                        let frame = contentProxy.frame(in: .named("ThreadCanvasScroll"))
+                        let minY = frame.minY
+                        let minX = frame.minX
                         Color.clear
                             .onChange(of: minY) { _, newValue in
                                 let rawOffset = -newValue
                                 rawScrollOffset = max(0, rawOffset)
-                                let adjustedOffset = max(0, rawOffset + totalTopPadding)
                                 let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
-                                scrollOffset = adjustedOffset
-                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
+                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                                         viewportHeight: effectiveHeight,
                                                                         layout: layout,
                                                                         metrics: metrics,
                                                                         today: today,
                                                                         calendar: calendar)
+                            }
+                            .onChange(of: minX) { _, newValue in
+                                let rawOffset = -newValue
+                                rawScrollOffsetX = max(0, rawOffset)
                             }
                     }
                 )
@@ -112,7 +181,9 @@ internal struct ThreadCanvasView: View {
                                  readabilityMode: readabilityMode,
                                  totalTopPadding: totalTopPadding,
                                  rawScrollOffset: rawScrollOffset,
-                                 viewportHeight: proxy.size.height)
+                                 viewportHeight: proxy.size.height,
+                                 visibleYStart: visibleYStart,
+                                 visibleYEnd: visibleYEnd)
             }
             .gesture(magnificationGesture)
             .coordinateSpace(name: "ThreadCanvasScroll")
@@ -120,13 +191,15 @@ internal struct ThreadCanvasView: View {
                 GeometryReader { sizeProxy in
                     Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
                                            value: sizeProxy.size.height)
+                        .preference(key: ThreadCanvasViewportWidthPreferenceKey.self,
+                                    value: sizeProxy.size.width)
                 }
             )
             .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
                 let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                 let clampedHeight = max(effectiveHeight, 1)
                 viewportHeight = effectiveHeight
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                         viewportHeight: clampedHeight,
                                                         layout: layout,
                                                         metrics: metrics,
@@ -134,8 +207,11 @@ internal struct ThreadCanvasView: View {
                                                         calendar: calendar,
                                                         immediate: true)
             }
-            .onChange(of: layout.contentSize.height) { _ in
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+            .onPreferenceChange(ThreadCanvasViewportWidthPreferenceKey.self) { width in
+                viewportWidth = width
+            }
+            .onChange(of: layout.contentSize.height) { _, _ in
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                         layout: layout,
                                                         metrics: metrics,
@@ -155,7 +231,7 @@ internal struct ThreadCanvasView: View {
             .onAppear {
                 accumulatedZoom = zoomScale
                 displaySettings.updateCurrentZoom(zoomScale)
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                         layout: layout,
                                                         metrics: metrics,
@@ -364,56 +440,61 @@ internal struct ThreadCanvasView: View {
     }
 
     @ViewBuilder
-    private func dayBands(layout: ThreadCanvasLayout,
+    private func dayBands(days: [ThreadCanvasDay],
                           metrics: ThreadCanvasLayoutMetrics,
-                          readabilityMode: ThreadCanvasReadabilityMode) -> some View {
-        ForEach(layout.days) { day in
+                          contentWidth: CGFloat) -> some View {
+        ForEach(days) { day in
             ThreadCanvasDayBand(day: day,
                                 metrics: metrics,
                                 labelText: nil,
-                                contentWidth: layout.contentSize.width)
+                                contentWidth: contentWidth)
                 .offset(x: 0, y: day.yOffset)
         }
     }
 
     @ViewBuilder
-    private func columnDividers(layout: ThreadCanvasLayout,
-                                metrics: ThreadCanvasLayoutMetrics) -> some View {
+    private func columnDividers(columns: [ThreadCanvasColumn],
+                                metrics: ThreadCanvasLayoutMetrics,
+                                contentHeight: CGFloat) -> some View {
         let lineColor = reduceTransparency ? Color.secondary.opacity(0.2) : Color.white.opacity(0.12)
-        ForEach(layout.columns) { column in
+        ForEach(columns) { column in
             Rectangle()
                 .fill(lineColor)
-                .frame(width: 1, height: layout.contentSize.height)
+                .frame(width: 1, height: contentHeight)
                 .offset(x: column.xOffset + (metrics.columnWidth / 2), y: 0)
         }
     }
 
     @ViewBuilder
-    private func connectorLayer(layout: ThreadCanvasLayout,
+    private func connectorLayer(columns: [ThreadCanvasColumn],
+                                visibleNodesByColumnID: [String: [ThreadCanvasNode]],
                                 metrics: ThreadCanvasLayoutMetrics,
                                 readabilityMode: ThreadCanvasReadabilityMode,
-                                timelineTagsByNodeID: [String: [String]]) -> some View {
-        ForEach(layout.columns) { column in
+                                timelineTagsByNodeID: [String: [String]],
+                                contentHeight: CGFloat) -> some View {
+        ForEach(columns) { column in
             ThreadCanvasConnectorColumn(column: column,
+                                        nodes: visibleNodesByColumnID[column.id] ?? [],
                                         metrics: metrics,
                                         viewMode: displaySettings.viewMode,
                                         readabilityMode: readabilityMode,
                                         timelineTagsByNodeID: timelineTagsByNodeID,
                                         isHighlighted: isColumnSelected(column),
                                         rawZoom: zoomScale)
-            .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
+            .frame(width: metrics.columnWidth, height: contentHeight, alignment: .topLeading)
             .offset(x: column.xOffset, y: 0)
         }
     }
 
     @ViewBuilder
-    private func nodesLayer(layout: ThreadCanvasLayout,
+    private func nodesLayer(columns: [ThreadCanvasColumn],
+                            visibleNodesByColumnID: [String: [ThreadCanvasNode]],
                             metrics: ThreadCanvasLayoutMetrics,
                             chromeData: [FolderChromeData],
                             readabilityMode: ThreadCanvasReadabilityMode,
                             folderHeaderHeight: CGFloat) -> some View {
-        ForEach(layout.columns) { column in
-            ForEach(column.nodes) { node in
+        ForEach(columns) { column in
+            ForEach(visibleNodesByColumnID[column.id] ?? []) { node in
                 Group {
                     if displaySettings.viewMode == .timeline {
                         ThreadTimelineCanvasNodeView(node: node,
@@ -698,56 +779,70 @@ internal struct ThreadCanvasView: View {
                                   readabilityMode: ThreadCanvasReadabilityMode,
                                   totalTopPadding: CGFloat,
                                   rawScrollOffset: CGFloat,
-                                  viewportHeight: CGFloat) -> some View {
+                                  viewportHeight: CGFloat,
+                                  visibleYStart: CGFloat,
+                                  visibleYEnd: CGFloat) -> some View {
         let railWidth = metrics.dayLabelWidth
         ZStack(alignment: .topLeading) {
             if let mode = dayLabelMode(readabilityMode: readabilityMode) {
                 let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
                 let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
                 ForEach(Array(items.dropFirst().enumerated()), id: \.offset) { _, item in
-                    Rectangle()
-                        .fill(legendGuideColor)
-                        .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
-                        .offset(x: metrics.nodeHorizontalInset,
-                                y: item.startY + totalTopPadding - rawScrollOffset)
-                }
-                ForEach(items) { item in
-                    ZStack(alignment: .topLeading) {
+                    let itemStart = item.startY
+                    let itemEnd = item.startY + item.height
+                    if itemEnd >= visibleYStart && itemStart <= visibleYEnd {
                         Rectangle()
                             .fill(legendGuideColor)
-                            .frame(width: 1)
-                            .frame(maxHeight: .infinity)
-                        Text(item.label)
-                            .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .rotationEffect(.degrees(-90))
-                            .frame(width: max(item.height - legendTopInset, 0),
-                                   alignment: .leading)
-                            .frame(maxWidth: .infinity,
-                                   maxHeight: .infinity,
-                                   alignment: .topLeading)
-                            .offset(y: legendTopInset)
-                            .accessibilityAddTraits(.isHeader)
-                            .allowsHitTesting(false)
+                            .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
+                            .offset(x: metrics.nodeHorizontalInset,
+                                    y: item.startY + totalTopPadding - rawScrollOffset)
                     }
-                    .frame(width: railWidth - metrics.nodeHorizontalInset,
-                           height: item.height,
-                           alignment: .topLeading)
-                    .offset(x: metrics.nodeHorizontalInset,
-                            y: item.startY + totalTopPadding - rawScrollOffset)
+                }
+                ForEach(items) { item in
+                    let itemStart = item.startY
+                    let itemEnd = item.startY + item.height
+                    if itemEnd >= visibleYStart && itemStart <= visibleYEnd {
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .fill(legendGuideColor)
+                                .frame(width: 1)
+                                .frame(maxHeight: .infinity)
+                            Text(item.label)
+                                .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .rotationEffect(.degrees(-90))
+                                .frame(width: max(item.height - legendTopInset, 0),
+                                       alignment: .leading)
+                                .frame(maxWidth: .infinity,
+                                       maxHeight: .infinity,
+                                       alignment: .topLeading)
+                                .offset(y: legendTopInset)
+                                .accessibilityAddTraits(.isHeader)
+                                .allowsHitTesting(false)
+                        }
+                        .frame(width: railWidth - metrics.nodeHorizontalInset,
+                               height: item.height,
+                               alignment: .topLeading)
+                        .offset(x: metrics.nodeHorizontalInset,
+                                y: item.startY + totalTopPadding - rawScrollOffset)
+                    }
                 }
             } else {
                 ForEach(layout.days) { day in
-                    Text(day.label)
-                        .font(.system(size: 11 * metrics.fontScale, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
-                        .padding(.leading, metrics.nodeHorizontalInset)
-                        .padding(.top, metrics.nodeVerticalSpacing)
-                        .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
-                        .accessibilityAddTraits(.isHeader)
+                    let dayStart = day.yOffset
+                    let dayEnd = day.yOffset + day.height
+                    if dayEnd >= visibleYStart && dayStart <= visibleYEnd {
+                        Text(day.label)
+                            .font(.system(size: 11 * metrics.fontScale, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
+                            .padding(.leading, metrics.nodeHorizontalInset)
+                            .padding(.top, metrics.nodeVerticalSpacing)
+                            .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                 }
             }
         }
@@ -1170,6 +1265,7 @@ private struct FolderColumnHeader: View {
 
 private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
+    let nodes: [ThreadCanvasNode]
     let metrics: ThreadCanvasLayoutMetrics
     let viewMode: ThreadCanvasViewMode
     let readabilityMode: ThreadCanvasReadabilityMode
@@ -1179,7 +1275,7 @@ private struct ThreadCanvasConnectorColumn: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        let segments = connectorSegments(for: column.nodes)
+        let segments = connectorSegments(for: nodes)
 
         ZStack(alignment: .topLeading) {
             ForEach(segments, id: \.id) { segment in
@@ -1454,6 +1550,14 @@ private struct ThreadCanvasConnectorColumn: View {
 }
 
 private struct ThreadCanvasViewportHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ThreadCanvasViewportWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
