@@ -60,6 +60,7 @@ internal struct ThreadCanvasView: View {
             let visibleYEnd = scrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
             let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
             let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
+            let pinnedFolderIDs = viewModel.pinnedFolderIDs
             let visibleDays = layout.days.filter { day in
                 let dayStart = day.yOffset
                 let dayEnd = day.yOffset + day.height
@@ -73,14 +74,22 @@ internal struct ThreadCanvasView: View {
             let visibleColumns = layout.columns.filter { column in
                 let minX = column.xOffset
                 let maxX = column.xOffset + metrics.columnWidth
+                if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+                    return true
+                }
                 return maxX >= visibleXStart && minX <= visibleXEnd
             }
             let visibleNodesByColumnID: [String: [ThreadCanvasNode]] = Dictionary(uniqueKeysWithValues: visibleColumns.map { column in
-                let nodes = column.nodes.filter { node in
-                    if let visibleDayRange, !visibleDayRange.contains(node.dayIndex) {
-                        return false
+                let nodes: [ThreadCanvasNode]
+                if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+                    nodes = column.nodes
+                } else {
+                    nodes = column.nodes.filter { node in
+                        if let visibleDayRange, !visibleDayRange.contains(node.dayIndex) {
+                            return false
+                        }
+                        return node.frame.maxY >= visibleYStart && node.frame.minY <= visibleYEnd
                     }
-                    return node.frame.maxY >= visibleYStart && node.frame.minY <= visibleYEnd
                 }
                 return (column.id, nodes)
             })
@@ -89,6 +98,9 @@ internal struct ThreadCanvasView: View {
                 let maxX = chrome.frame.maxX
                 let minY = chrome.frame.minY
                 let maxY = chrome.frame.maxY
+                if pinnedFolderIDs.contains(chrome.id) {
+                    return true
+                }
                 let intersectsX = maxX >= visibleXStart && minX <= visibleXEnd
                 let intersectsY = maxY >= visibleYStart && minY <= visibleYEnd
                 return intersectsX && intersectsY
@@ -96,6 +108,9 @@ internal struct ThreadCanvasView: View {
             let visibleHeaderChromeData = chromeData.filter { chrome in
                 let minX = chrome.frame.minX
                 let maxX = chrome.frame.maxX
+                if pinnedFolderIDs.contains(chrome.id) {
+                    return true
+                }
                 return maxX >= visibleXStart && minX <= visibleXEnd
             }
 
@@ -110,9 +125,10 @@ internal struct ThreadCanvasView: View {
                     columnDividers(columns: visibleColumns, metrics: metrics, contentHeight: layout.contentSize.height)
                     connectorLayer(columns: visibleColumns,
                                    visibleNodesByColumnID: visibleNodesByColumnID,
-                                   metrics: metrics,
-                                   readabilityMode: readabilityMode,
-                                   timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
+                                    metrics: metrics,
+                                    readabilityMode: readabilityMode,
+                                    timelineTagsByNodeID: viewModel.timelineTagsByNodeID,
+                                    contentHeight: layout.contentSize.height)
                     nodesLayer(columns: visibleColumns,
                                visibleNodesByColumnID: visibleNodesByColumnID,
                                metrics: metrics,
@@ -197,7 +213,7 @@ internal struct ThreadCanvasView: View {
             .onPreferenceChange(ThreadCanvasViewportWidthPreferenceKey.self) { width in
                 viewportWidth = width
             }
-            .onChange(of: layout.contentSize.height) { _ in
+            .onChange(of: layout.contentSize.height) { _, _ in
                 viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
                                                         layout: layout,
@@ -457,7 +473,8 @@ internal struct ThreadCanvasView: View {
                                 visibleNodesByColumnID: [String: [ThreadCanvasNode]],
                                 metrics: ThreadCanvasLayoutMetrics,
                                 readabilityMode: ThreadCanvasReadabilityMode,
-                                timelineTagsByNodeID: [String: [String]]) -> some View {
+                                timelineTagsByNodeID: [String: [String]],
+                                contentHeight: CGFloat) -> some View {
         ForEach(columns) { column in
             ThreadCanvasConnectorColumn(column: column,
                                         nodes: visibleNodesByColumnID[column.id] ?? [],
@@ -467,7 +484,7 @@ internal struct ThreadCanvasView: View {
                                         timelineTagsByNodeID: timelineTagsByNodeID,
                                         isHighlighted: isColumnSelected(column),
                                         rawZoom: zoomScale)
-            .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
+            .frame(width: metrics.columnWidth, height: contentHeight, alignment: .topLeading)
             .offset(x: column.xOffset, y: 0)
         }
     }
