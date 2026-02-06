@@ -1160,7 +1160,7 @@ private struct FolderColumnHeader: View {
             if footerSectionHeight > 0 {
                 Group {
                     if footerVisibility != .hidden {
-                        HStack(alignment: .top, spacing: 10 * sizeScale) {
+                        HStack(alignment: .center, spacing: 10 * sizeScale) {
                             if let updatedText {
                                 textLine("Updated \(updatedText)",
                                          baseSize: FolderHeaderLayout.footerBaseSize,
@@ -1174,7 +1174,7 @@ private struct FolderColumnHeader: View {
                         Color.clear
                     }
                 }
-                .frame(height: footerSectionHeight, alignment: .topLeading)
+                .frame(height: footerSectionHeight, alignment: .leading)
             }
         }
         .padding(.horizontal, 12 * sizeScale)
