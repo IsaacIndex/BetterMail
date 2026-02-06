@@ -25,8 +25,7 @@ internal struct ThreadCanvasView: View {
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
+        formatter.dateFormat = "MMM d, yyyy HH:mm"
         return formatter
     }()
 
