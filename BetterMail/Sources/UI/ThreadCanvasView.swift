@@ -982,7 +982,7 @@ private struct FolderColumnBackground: View {
 
 private struct FolderHeaderLayout {
     static let titleBaseSize: CGFloat = 14
-    static let titleLineLimit: Int = 3
+    static let titleLineLimit: Int = 2
     static let summaryBaseSize: CGFloat = 11
     static let summaryLineLimit: Int = 5
     static let footerBaseSize: CGFloat = 12
@@ -998,14 +998,9 @@ private struct FolderHeaderLayout {
     static func headerHeight(rawZoom: CGFloat,
                              readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
         let scale = sizeScale(rawZoom: rawZoom)
-        let titleLines = lineCount(lineLimit: titleLineLimit,
-                                   readabilityMode: readabilityMode)
-        let summaryLines = lineCount(lineLimit: summaryLineLimit,
-                                     readabilityMode: readabilityMode)
-        let footerHeight = footerRowHeight(sizeScale: scale, readabilityMode: readabilityMode)
-
-        let titleHeight = lineHeight(baseSize: titleBaseSize, sizeScale: scale) * CGFloat(titleLines)
-        let summaryHeight = lineHeight(baseSize: summaryBaseSize, sizeScale: scale) * CGFloat(summaryLines)
+        let titleHeight = titleSectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
+        let summaryHeight = summarySectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
+        let footerHeight = footerSectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
         let visibleHeights = [titleHeight, summaryHeight, footerHeight].filter { $0 > 0 }
         let spacingCount = max(visibleHeights.count - 1, 0)
         let spacing = CGFloat(spacingCount) * lineSpacing * scale
@@ -1028,6 +1023,23 @@ private struct FolderHeaderLayout {
         case .hidden:
             return 0
         }
+    }
+
+    static func titleSectionHeight(sizeScale: CGFloat,
+                                   readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        let titleLines = lineCount(lineLimit: titleLineLimit, readabilityMode: readabilityMode)
+        return lineHeight(baseSize: titleBaseSize, sizeScale: sizeScale) * CGFloat(titleLines)
+    }
+
+    static func summarySectionHeight(sizeScale: CGFloat,
+                                     readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        let summaryLines = lineCount(lineLimit: summaryLineLimit, readabilityMode: readabilityMode)
+        return lineHeight(baseSize: summaryBaseSize, sizeScale: sizeScale) * CGFloat(summaryLines)
+    }
+
+    static func footerSectionHeight(sizeScale: CGFloat,
+                                    readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        footerRowHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
     }
 
     static func footerRowHeight(sizeScale: CGFloat,
@@ -1110,38 +1122,66 @@ private struct FolderColumnHeader: View {
         let titleVisibility = textVisibility()
         let summaryVisibility = textVisibility()
         let footerVisibility = textVisibility()
+        let titleSectionHeight = FolderHeaderLayout.titleSectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
+        let summarySectionHeight = FolderHeaderLayout.summarySectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
+        let footerSectionHeight = FolderHeaderLayout.footerSectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
 
         VStack(alignment: .leading, spacing: FolderHeaderLayout.lineSpacing * sizeScale) {
-            if titleVisibility != .hidden {
-                textLine(title.isEmpty
-                         ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
-                         : title,
-                         baseSize: FolderHeaderLayout.titleBaseSize,
-                         weight: .semibold,
-                         color: Color.white,
-                         allowWrap: true)
-            }
-            if let summaryText = summaryPreviewText, summaryVisibility != .hidden {
-                summaryLine(summaryText)
-            }
-            if footerVisibility != .hidden {
-                HStack(alignment: .center, spacing: 10 * sizeScale) {
-                    if let updatedText {
-                        textLine("Updated \(updatedText)",
-                                 baseSize: FolderHeaderLayout.footerBaseSize,
-                                 weight: .regular,
-                                 color: Color.white.opacity(0.78))
+            if titleSectionHeight > 0 {
+                Group {
+                    if titleVisibility != .hidden {
+                        textLine(title.isEmpty
+                                 ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+                                 : title,
+                                 baseSize: FolderHeaderLayout.titleBaseSize,
+                                 weight: .semibold,
+                                 color: Color.white,
+                                 allowWrap: true)
+                    } else {
+                        Color.clear
                     }
-                    Spacer()
-                    badge(unread: unreadCount)
                 }
+                .frame(height: titleSectionHeight, alignment: .topLeading)
+            }
+            if summarySectionHeight > 0 {
+                Group {
+                    if summaryVisibility != .hidden {
+                        if let summaryText = summaryPreviewText {
+                            summaryLine(summaryText)
+                        } else {
+                            Color.clear
+                        }
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: summarySectionHeight, alignment: .topLeading)
+            }
+            if footerSectionHeight > 0 {
+                Group {
+                    if footerVisibility != .hidden {
+                        HStack(alignment: .top, spacing: 10 * sizeScale) {
+                            if let updatedText {
+                                textLine("Updated \(updatedText)",
+                                         baseSize: FolderHeaderLayout.footerBaseSize,
+                                         weight: .regular,
+                                         color: Color.white.opacity(0.78))
+                            }
+                            Spacer()
+                            badge(unread: unreadCount)
+                        }
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: footerSectionHeight, alignment: .topLeading)
             }
         }
         .padding(.horizontal, 12 * sizeScale)
         .padding(.vertical, FolderHeaderLayout.verticalPadding * sizeScale)
         .frame(height: FolderHeaderLayout.headerHeight(rawZoom: rawZoom,
                                                        readabilityMode: readabilityMode),
-               alignment: .leading)
+               alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .overlay(alignment: .topTrailing) {
