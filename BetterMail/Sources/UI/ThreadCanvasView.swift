@@ -970,12 +970,12 @@ private struct FolderColumnHeader: View {
 
     private var headerBackground: some View {
         let gradient = LinearGradient(colors: [
-            accentColor.opacity(reduceTransparency ? 0.26 : 0.36),
-            accentColor.opacity(reduceTransparency ? 0.22 : 0.30)
+            accentColor.opacity(reduceTransparency ? 0.36 : 0.82),
+            accentColor.opacity(reduceTransparency ? 0.32 : 0.75)
         ], startPoint: .topLeading, endPoint: .bottomTrailing)
 
         let backgroundStyle: AnyShapeStyle = reduceTransparency
-            ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+            ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.97))
             : AnyShapeStyle(gradient)
 
         return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
