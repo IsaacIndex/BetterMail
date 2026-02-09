@@ -65,6 +65,7 @@ internal struct ThreadCanvasView: View {
                                        metrics: metrics,
                                        readabilityMode: readabilityMode,
                                        timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
+                        jumpAnchorLayer(layout: layout)
                         nodesLayer(layout: layout,
                                    metrics: metrics,
                                    chromeData: chromeData,
@@ -146,7 +147,7 @@ internal struct ThreadCanvasView: View {
                 .onChange(of: viewModel.pendingScrollRequest) { _, request in
                     guard let request else { return }
                     withAnimation(.easeInOut(duration: 0.28)) {
-                        scrollProxy.scrollTo(request.nodeID, anchor: .center)
+                        scrollProxy.scrollTo(jumpAnchorID(for: request.nodeID), anchor: .center)
                     }
                     viewModel.consumeScrollRequest(request)
                 }
@@ -212,6 +213,23 @@ internal struct ThreadCanvasView: View {
 
     private func clampedZoom(_ value: CGFloat) -> CGFloat {
         min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
+    }
+
+    private func jumpAnchorID(for nodeID: String) -> String {
+        "thread-canvas-jump-anchor-\(nodeID)"
+    }
+
+    @ViewBuilder
+    private func jumpAnchorLayer(layout: ThreadCanvasLayout) -> some View {
+        ForEach(layout.columns) { column in
+            ForEach(column.nodes) { node in
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .offset(x: node.frame.midX, y: node.frame.midY)
+                    .id(jumpAnchorID(for: node.id))
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     @ViewBuilder
@@ -414,7 +432,6 @@ internal struct ThreadCanvasView: View {
                                              readabilityMode: readabilityMode)
                     }
                 }
-                    .id(node.id)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .gesture(
