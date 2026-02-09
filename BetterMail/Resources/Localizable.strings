@@ -51,6 +51,10 @@
 "threadcanvas.folder.inspector.cancel" = "Cancel";
 "threadcanvas.folder.inspector.save" = "Save";
 "threadcanvas.folder.inspector.accessibility" = "Folder";
+"threadcanvas.folder.jump.latest.tooltip" = "Jump to latest email";
+"threadcanvas.folder.jump.first.tooltip" = "Jump to first email";
+"threadcanvas.folder.jump.latest.accessibility" = "Jump to latest email in folder";
+"threadcanvas.folder.jump.first.accessibility" = "Jump to first email in folder";
 "threadcanvas.summary.apple_intelligence" = "Apple Intelligence";
 "threadcanvas.connectors.accessibility" = "Thread connectors: %d standard, %d manual";
 "threadlist.selection.count" = "%d selected";

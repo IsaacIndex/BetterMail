@@ -7,6 +7,11 @@ internal extension Notification.Name {
 }
 
 internal final class MessageStore {
+    internal enum ThreadMessageBoundary {
+        case oldest
+        case newest
+    }
+
     internal static let shared = MessageStore()
 
     private let container: NSPersistentContainer
@@ -165,6 +170,29 @@ internal final class MessageStore {
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
             return entities.compactMap { $0.toModel() }
+        }
+    }
+
+    internal func fetchBoundaryMessage(threadIDs: Set<String>,
+                                       boundary: ThreadMessageBoundary) async throws -> EmailMessage? {
+        guard !threadIDs.isEmpty else { return nil }
+        return try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            switch boundary {
+            case .newest:
+                request.sortDescriptors = [
+                    NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
+                    NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+                ]
+            case .oldest:
+                request.sortDescriptors = [
+                    NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: true),
+                    NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+                ]
+            }
+            request.fetchLimit = 1
+            request.predicate = NSPredicate(format: "threadID IN %@", Array(threadIDs))
+            return try context.fetch(request).first?.toModel()
         }
     }
 

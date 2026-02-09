@@ -29,6 +29,11 @@ internal struct OpenInMailState: Equatable {
     internal let status: OpenInMailStatus
 }
 
+internal struct ThreadCanvasScrollRequest: Equatable {
+    internal let nodeID: String
+    internal let token: UUID
+}
+
 private struct NodeSummaryInput {
     let nodeID: String
     let cacheKey: String
@@ -358,6 +363,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didSet { invalidateLayoutCache() }
     }
     @Published internal private(set) var openInMailState: OpenInMailState?
+    @Published internal private(set) var pendingScrollRequest: ThreadCanvasScrollRequest?
     @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount {
         didSet { invalidateLayoutCache() }
     }
@@ -368,6 +374,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
+    @Published internal private(set) var folderJumpInProgressIDs: Set<String> = []
     @Published internal var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -410,6 +417,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var visibleRangeUpdateTask: Task<Void, Never>?
     private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
     private static let timelineVisibleTagLimit = 3
+    private let jumpExpansionThrottleInterval: UInt64 = 60_000_000
+    private let jumpExpansionBlockDays = ThreadCanvasLayoutMetrics.defaultDayCount * 4
+    private let jumpExpansionStepLimit = 24
+    private var folderJumpTasks: [String: Task<Void, Never>] = [:]
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
@@ -450,6 +461,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         nodeSummaryTasks.values.forEach { $0.cancel() }
         folderSummaryTasks.values.forEach { $0.cancel() }
         timelineTagTasks.values.forEach { $0.cancel() }
+        folderJumpTasks.values.forEach { $0.cancel() }
     }
 
     internal func start() {
@@ -1406,6 +1418,23 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         selectedFolderID = id
     }
 
+    internal func jumpToLatestNode(in folderID: String) {
+        jumpToFolderBoundaryNode(in: folderID, boundary: .newest)
+    }
+
+    internal func jumpToFirstNode(in folderID: String) {
+        jumpToFolderBoundaryNode(in: folderID, boundary: .oldest)
+    }
+
+    internal func isJumpInProgress(for folderID: String) -> Bool {
+        folderJumpInProgressIDs.contains(folderID)
+    }
+
+    internal func consumeScrollRequest(_ request: ThreadCanvasScrollRequest) {
+        guard pendingScrollRequest?.token == request.token else { return }
+        pendingScrollRequest = nil
+    }
+
     internal func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
         folderEditsByID[id] = ThreadFolderEdit(title: title, color: color)
     }
@@ -2158,6 +2187,84 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return threadID
         }
         return node.id
+    }
+
+    private func jumpToFolderBoundaryNode(in folderID: String,
+                                          boundary: MessageStore.ThreadMessageBoundary) {
+        guard !folderJumpInProgressIDs.contains(folderID) else { return }
+
+        folderJumpInProgressIDs.insert(folderID)
+        folderJumpTasks[folderID]?.cancel()
+        folderJumpTasks[folderID] = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.folderJumpInProgressIDs.remove(folderID)
+                    self.folderJumpTasks.removeValue(forKey: folderID)
+                }
+            }
+
+            do {
+                let threadIDs = folderThreadIDs(for: folderID)
+                guard !threadIDs.isEmpty else { return }
+                guard let target = try await store.fetchBoundaryMessage(threadIDs: threadIDs,
+                                                                        boundary: boundary) else {
+                    return
+                }
+                await expandDayWindow(toInclude: target.date)
+                guard await waitForNodeAvailability(nodeID: target.messageID) else { return }
+                guard !Task.isCancelled else { return }
+                selectNode(id: target.messageID)
+                pendingScrollRequest = ThreadCanvasScrollRequest(nodeID: target.messageID, token: UUID())
+            } catch {
+                Log.app.error("Failed to jump folder boundary node. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    private func folderThreadIDs(for folderID: String) -> Set<String> {
+        let map = Self.folderThreadIDsByFolder(folders: effectiveThreadFolders)
+        return map[folderID] ?? []
+    }
+
+    private func expandDayWindow(toInclude date: Date,
+                                 today: Date = Date(),
+                                 calendar: Calendar = .current) async {
+        let startOfToday = calendar.startOfDay(for: today)
+        let startOfTarget = calendar.startOfDay(for: date)
+        guard let dayDiff = calendar.dateComponents([.day], from: startOfTarget, to: startOfToday).day else {
+            return
+        }
+        guard dayDiff >= 0 else { return }
+
+        let requiredDayCount = dayDiff + 1
+        guard requiredDayCount > dayWindowCount else { return }
+
+        var steps = 0
+        while dayWindowCount < requiredDayCount && steps < jumpExpansionStepLimit {
+            guard !Task.isCancelled else { return }
+            let nextTarget = min(dayWindowCount + jumpExpansionBlockDays, requiredDayCount)
+            guard nextTarget > dayWindowCount else { break }
+            dayWindowCount = nextTarget
+            scheduleRethread()
+            steps += 1
+            try? await Task.sleep(nanoseconds: jumpExpansionThrottleInterval)
+        }
+    }
+
+    private func waitForNodeAvailability(nodeID: String) async -> Bool {
+        if Self.node(matching: nodeID, in: roots) != nil {
+            return true
+        }
+        for _ in 0..<40 {
+            guard !Task.isCancelled else { return false }
+            try? await Task.sleep(nanoseconds: visibleRangeUpdateThrottleInterval)
+            if Self.node(matching: nodeID, in: roots) != nil {
+                return true
+            }
+        }
+        return false
     }
 }
 

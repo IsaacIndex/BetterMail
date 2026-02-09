@@ -51,128 +51,135 @@ internal struct ThreadCanvasView: View {
                 : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
             let totalTopPadding = topInset + headerStackHeight + headerSpacing
 
-            ScrollView([.horizontal, .vertical]) {
-                ZStack(alignment: .topLeading) {
-                    dayBands(layout: layout,
-                             metrics: metrics,
-                             readabilityMode: readabilityMode)
-                    folderColumnBackgroundLayer(chromeData: chromeData,
+            ScrollViewReader { scrollProxy in
+                ScrollView([.horizontal, .vertical]) {
+                    ZStack(alignment: .topLeading) {
+                        dayBands(layout: layout,
+                                 metrics: metrics,
+                                 readabilityMode: readabilityMode)
+                        folderColumnBackgroundLayer(chromeData: chromeData,
+                                                     metrics: metrics,
+                                                     headerHeight: headerStackHeight + headerSpacing)
+                        columnDividers(layout: layout, metrics: metrics)
+                        connectorLayer(layout: layout,
+                                       metrics: metrics,
+                                       readabilityMode: readabilityMode,
+                                       timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
+                        nodesLayer(layout: layout,
+                                   metrics: metrics,
+                                   chromeData: chromeData,
+                                   readabilityMode: readabilityMode,
+                                   folderHeaderHeight: headerStackHeight + headerSpacing)
+                        folderDropHighlightLayer(chromeData: chromeData,
                                                  metrics: metrics,
                                                  headerHeight: headerStackHeight + headerSpacing)
-                    columnDividers(layout: layout, metrics: metrics)
-                    connectorLayer(layout: layout,
-                                   metrics: metrics,
-                                   readabilityMode: readabilityMode,
-                                   timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
-                    nodesLayer(layout: layout,
-                               metrics: metrics,
-                               chromeData: chromeData,
-                               readabilityMode: readabilityMode,
-                               folderHeaderHeight: headerStackHeight + headerSpacing)
-                    folderDropHighlightLayer(chromeData: chromeData,
-                                             metrics: metrics,
-                                             headerHeight: headerStackHeight + headerSpacing)
-                    dragPreviewLayer()
-                    folderColumnHeaderLayer(chromeData: chromeData,
-                                            metrics: metrics,
-                                            rawZoom: zoomScale,
-                                            readabilityMode: readabilityMode)
-                        .offset(y: -(headerStackHeight + headerSpacing))
-                    folderHeaderHitTargets(chromeData: chromeData, metrics: metrics)
-                        .offset(y: -(headerStackHeight + headerSpacing))
+                        dragPreviewLayer()
+                        folderColumnHeaderLayer(chromeData: chromeData,
+                                                metrics: metrics,
+                                                rawZoom: zoomScale,
+                                                readabilityMode: readabilityMode)
+                            .offset(y: -(headerStackHeight + headerSpacing))
+                    }
+                    .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
+                    .coordinateSpace(name: "ThreadCanvasContent")
+                    .padding(.top, totalTopPadding)
+                    .background(
+                        GeometryReader { contentProxy in
+                            let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
+                            Color.clear
+                                .onChange(of: minY) { _, newValue in
+                                    let rawOffset = -newValue
+                                    rawScrollOffset = max(0, rawOffset)
+                                    let adjustedOffset = max(0, rawOffset + totalTopPadding)
+                                    let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
+                                    scrollOffset = adjustedOffset
+                                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
+                                                                            viewportHeight: effectiveHeight,
+                                                                            layout: layout,
+                                                                            metrics: metrics,
+                                                                            today: today,
+                                                                            calendar: calendar)
+                                }
+                        }
+                    )
                 }
-                .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
-                .coordinateSpace(name: "ThreadCanvasContent")
-                .padding(.top, totalTopPadding)
+                .scrollIndicators(.visible)
+                .background(canvasBackground)
+                .overlay(alignment: .topLeading) {
+                    floatingDateRail(layout: layout,
+                                     metrics: metrics,
+                                     readabilityMode: readabilityMode,
+                                     totalTopPadding: totalTopPadding,
+                                     rawScrollOffset: rawScrollOffset,
+                                     viewportHeight: proxy.size.height)
+                }
+                .gesture(magnificationGesture)
+                .coordinateSpace(name: "ThreadCanvasScroll")
                 .background(
-                    GeometryReader { contentProxy in
-                        let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
-                        Color.clear
-                            .onChange(of: minY) { _, newValue in
-                                let rawOffset = -newValue
-                                rawScrollOffset = max(0, rawOffset)
-                                let adjustedOffset = max(0, rawOffset + totalTopPadding)
-                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
-                                scrollOffset = adjustedOffset
-                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
-                                                                        viewportHeight: effectiveHeight,
-                                                                        layout: layout,
-                                                                        metrics: metrics,
-                                                                        today: today,
-                                                                        calendar: calendar)
-                            }
+                    GeometryReader { sizeProxy in
+                        Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
+                                               value: sizeProxy.size.height)
                     }
                 )
-            }
-            .scrollIndicators(.visible)
-            .background(canvasBackground)
-            .overlay(alignment: .topLeading) {
-                floatingDateRail(layout: layout,
-                                 metrics: metrics,
-                                 readabilityMode: readabilityMode,
-                                 totalTopPadding: totalTopPadding,
-                                 rawScrollOffset: rawScrollOffset,
-                                 viewportHeight: proxy.size.height)
-            }
-            .gesture(magnificationGesture)
-            .coordinateSpace(name: "ThreadCanvasScroll")
-            .background(
-                GeometryReader { sizeProxy in
-                    Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
-                                           value: sizeProxy.size.height)
+                .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
+                    let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
+                    let clampedHeight = max(effectiveHeight, 1)
+                    viewportHeight = effectiveHeight
+                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                            viewportHeight: clampedHeight,
+                                                            layout: layout,
+                                                            metrics: metrics,
+                                                            today: today,
+                                                            calendar: calendar,
+                                                            immediate: true)
                 }
-            )
-            .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
-                let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
-                let clampedHeight = max(effectiveHeight, 1)
-                viewportHeight = effectiveHeight
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
-                                                        viewportHeight: clampedHeight,
-                                                        layout: layout,
-                                                        metrics: metrics,
-                                                        today: today,
-                                                        calendar: calendar,
-                                                        immediate: true)
-            }
-            .onChange(of: layout.contentSize.height) { _ in
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
-                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                        layout: layout,
-                                                        metrics: metrics,
-                                                        today: today,
-                                                        calendar: calendar,
-                                                        immediate: true)
-            }
-            .onChange(of: activeDropFolderID) { oldValue, newValue in
-                guard newValue != nil else {
-                    isDropHighlightPulsing = false
-                    return
+                .onChange(of: layout.contentSize.height) { _ in
+                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                            viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                            layout: layout,
+                                                            metrics: metrics,
+                                                            today: today,
+                                                            calendar: calendar,
+                                                            immediate: true)
                 }
-                if newValue != oldValue {
-                    startDropHighlightPulse()
+                .onChange(of: viewModel.pendingScrollRequest) { _, request in
+                    guard let request else { return }
+                    withAnimation(.easeInOut(duration: 0.28)) {
+                        scrollProxy.scrollTo(request.nodeID, anchor: .center)
+                    }
+                    viewModel.consumeScrollRequest(request)
                 }
-            }
-            .onAppear {
-                accumulatedZoom = zoomScale
-                displaySettings.updateCurrentZoom(zoomScale)
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
-                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                        layout: layout,
-                                                        metrics: metrics,
-                                                        today: today,
-                                                        calendar: calendar,
-                                                        immediate: true)
-            }
-            .onChange(of: zoomScale) { _, newValue in
-                displaySettings.updateCurrentZoom(newValue)
-            }
-            .onHover { isInside in
-                if !isInside {
+                .onChange(of: activeDropFolderID) { oldValue, newValue in
+                    guard newValue != nil else {
+                        isDropHighlightPulsing = false
+                        return
+                    }
+                    if newValue != oldValue {
+                        startDropHighlightPulse()
+                    }
+                }
+                .onAppear {
+                    accumulatedZoom = zoomScale
+                    displaySettings.updateCurrentZoom(zoomScale)
+                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                            viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                            layout: layout,
+                                                            metrics: metrics,
+                                                            today: today,
+                                                            calendar: calendar,
+                                                            immediate: true)
+                }
+                .onChange(of: zoomScale) { _, newValue in
+                    displaySettings.updateCurrentZoom(newValue)
+                }
+                .onHover { isInside in
+                    if !isInside {
+                        cancelDrag()
+                    }
+                }
+                .onExitCommand {
                     cancelDrag()
                 }
-            }
-            .onExitCommand {
-                cancelDrag()
             }
         }
         .contentShape(Rectangle())
@@ -286,32 +293,14 @@ internal struct ThreadCanvasView: View {
                                    rawZoom: rawZoom,
                                    readabilityMode: readabilityMode,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
-                                   isSelected: viewModel.selectedFolderID == chrome.id)
+                                   isSelected: viewModel.selectedFolderID == chrome.id,
+                                   isJumping: viewModel.isJumpInProgress(for: chrome.id),
+                                   onSelect: { viewModel.selectFolder(id: chrome.id) },
+                                   onJumpLatest: { viewModel.jumpToLatestNode(in: chrome.id) },
+                                   onJumpFirst: { viewModel.jumpToFirstNode(in: chrome.id) })
                 .frame(width: headerFrame.width, alignment: .leading)
                 .offset(x: headerFrame.minX, y: headerFrame.minY)
-                .allowsHitTesting(false)
                 .accessibilityElement(children: .combine)
-            }
-        }
-    }
-
-    private func folderHeaderHitTargets(chromeData: [FolderChromeData],
-                                        metrics: ThreadCanvasLayoutMetrics) -> some View {
-        ZStack(alignment: .topLeading) {
-            let maxDepth = chromeData.map(\.depth).max() ?? 0
-            ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
-                let headerFrame = folderHeaderFrame(for: chrome,
-                                                    metrics: metrics,
-                                                    maxDepth: maxDepth)
-                Button {
-                    viewModel.selectFolder(id: chrome.id)
-                } label: {
-                    Color.clear
-                        .frame(width: headerFrame.width, height: headerFrame.height)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .offset(x: headerFrame.minX, y: headerFrame.minY)
                 .accessibilityLabel(chrome.title.isEmpty
                                     ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
                                                         comment: "Accessibility label for a folder header")
@@ -413,6 +402,7 @@ internal struct ThreadCanvasView: View {
                                              readabilityMode: readabilityMode)
                     }
                 }
+                    .id(node.id)
                     .frame(width: node.frame.width, height: node.frame.height)
                     .offset(x: node.frame.minX, y: node.frame.minY)
                     .gesture(
@@ -954,6 +944,10 @@ private struct FolderColumnHeader: View {
     let readabilityMode: ThreadCanvasReadabilityMode
     let cornerRadius: CGFloat
     let isSelected: Bool
+    let isJumping: Bool
+    let onSelect: () -> Void
+    let onJumpLatest: () -> Void
+    let onJumpFirst: () -> Void
 
     private var sizeScale: CGFloat {
         // Track zoom more closely than the clamped fontScale to keep the header proportional.
@@ -1016,6 +1010,16 @@ private struct FolderColumnHeader: View {
                                  color: Color.white.opacity(0.78))
                     }
                     Spacer()
+                    HStack(spacing: 6 * sizeScale) {
+                        headerActionButton(systemName: "arrow.up.to.line",
+                                           accessibilityKey: "threadcanvas.folder.jump.latest.accessibility",
+                                           tooltipKey: "threadcanvas.folder.jump.latest.tooltip",
+                                           action: onJumpLatest)
+                        headerActionButton(systemName: "arrow.down.to.line",
+                                           accessibilityKey: "threadcanvas.folder.jump.first.accessibility",
+                                           tooltipKey: "threadcanvas.folder.jump.first.tooltip",
+                                           action: onJumpFirst)
+                    }
                     badge(unread: unreadCount)
                 }
             }
@@ -1029,6 +1033,10 @@ private struct FolderColumnHeader: View {
         .background(headerBackground)
         .overlay(selectionOverlay)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .onTapGesture {
+            onSelect()
+        }
     }
 
     private var summaryPreviewText: String? {
@@ -1124,6 +1132,33 @@ private struct FolderColumnHeader: View {
 
     private func textVisibility() -> TextVisibility {
         FolderHeaderLayout.textVisibility(readabilityMode: readabilityMode)
+    }
+
+    @ViewBuilder
+    private func headerActionButton(systemName: String,
+                                    accessibilityKey: String,
+                                    tooltipKey: String,
+                                    action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: max(FolderHeaderLayout.footerBaseSize * sizeScale - 1, 9), weight: .semibold))
+                .frame(width: 22 * sizeScale, height: 20 * sizeScale)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.white.opacity(isJumping ? 0.5 : 0.92))
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(accentColor.opacity(reduceTransparency ? 0.2 : 0.32))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.white.opacity(0.22))
+        )
+        .help(NSLocalizedString(tooltipKey, comment: "Tooltip for folder header jump action"))
+        .accessibilityLabel(NSLocalizedString(accessibilityKey,
+                                              comment: "Accessibility label for folder header jump action"))
+        .disabled(isJumping)
     }
 
     @ViewBuilder
