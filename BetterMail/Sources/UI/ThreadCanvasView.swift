@@ -76,6 +76,7 @@ internal struct ThreadCanvasView: View {
                         dragPreviewLayer()
                         folderColumnHeaderLayer(chromeData: chromeData,
                                                 metrics: metrics,
+                                                rawScrollOffset: rawScrollOffset,
                                                 rawZoom: zoomScale,
                                                 readabilityMode: readabilityMode)
                             .offset(y: -(headerStackHeight + headerSpacing))
@@ -276,6 +277,7 @@ internal struct ThreadCanvasView: View {
 
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
                                          metrics: ThreadCanvasLayoutMetrics,
+                                         rawScrollOffset: CGFloat,
                                          rawZoom: CGFloat,
                                          readabilityMode: ThreadCanvasReadabilityMode) -> some View {
         ZStack(alignment: .topLeading) {
@@ -284,6 +286,8 @@ internal struct ThreadCanvasView: View {
                 let headerFrame = folderHeaderFrame(for: chrome,
                                                     metrics: metrics,
                                                     maxDepth: maxDepth)
+                let maxPinnedY = max(headerFrame.minY, chrome.frame.maxY - chrome.headerHeight)
+                let pinnedY = min(headerFrame.minY + rawScrollOffset, maxPinnedY)
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
@@ -293,13 +297,21 @@ internal struct ThreadCanvasView: View {
                                    rawZoom: rawZoom,
                                    readabilityMode: readabilityMode,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
+                                   isPinned: viewModel.isFolderPinned(id: chrome.id),
                                    isSelected: viewModel.selectedFolderID == chrome.id,
                                    isJumping: viewModel.isJumpInProgress(for: chrome.id),
                                    onSelect: { viewModel.selectFolder(id: chrome.id) },
+                                   onPinToggle: {
+                                       if viewModel.isFolderPinned(id: chrome.id) {
+                                           viewModel.unpinFolder(id: chrome.id)
+                                       } else {
+                                           viewModel.pinFolder(id: chrome.id)
+                                       }
+                                   },
                                    onJumpLatest: { viewModel.jumpToLatestNode(in: chrome.id) },
                                    onJumpFirst: { viewModel.jumpToFirstNode(in: chrome.id) })
                 .frame(width: headerFrame.width, alignment: .leading)
-                .offset(x: headerFrame.minX, y: headerFrame.minY)
+                .offset(x: headerFrame.minX, y: pinnedY)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(chrome.title.isEmpty
                                     ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
@@ -943,9 +955,11 @@ private struct FolderColumnHeader: View {
     let rawZoom: CGFloat
     let readabilityMode: ThreadCanvasReadabilityMode
     let cornerRadius: CGFloat
+    let isPinned: Bool
     let isSelected: Bool
     let isJumping: Bool
     let onSelect: () -> Void
+    let onPinToggle: () -> Void
     let onJumpLatest: () -> Void
     let onJumpFirst: () -> Void
 
@@ -1031,11 +1045,32 @@ private struct FolderColumnHeader: View {
                alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
+        .overlay(alignment: .topTrailing) {
+            if isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 12 * sizeScale, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                    .padding(.top, 8 * sizeScale)
+                    .padding(.trailing, 10 * sizeScale)
+                    .accessibilityHidden(true)
+            }
+        }
         .overlay(selectionOverlay)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .onTapGesture {
             onSelect()
+        }
+        .contextMenu {
+            Button {
+                onPinToggle()
+            } label: {
+                Label(
+                    NSLocalizedString(isPinned ? "threadcanvas.folder.menu.unpin" : "threadcanvas.folder.menu.pin",
+                                      comment: "Context menu action to pin or unpin a folder"),
+                    systemImage: isPinned ? "pin.slash" : "pin"
+                )
+            }
         }
     }
 

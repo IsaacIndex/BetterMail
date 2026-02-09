@@ -51,6 +51,9 @@
 "threadcanvas.folder.inspector.cancel" = "Cancel";
 "threadcanvas.folder.inspector.save" = "Save";
 "threadcanvas.folder.inspector.accessibility" = "Folder";
+"threadcanvas.folder.menu.pin" = "Pin Folder";
+"threadcanvas.folder.menu.unpin" = "Unpin Folder";
+"threadcanvas.folder.pin.action" = "Pin Folder";
 "threadcanvas.folder.jump.latest.tooltip" = "Jump to latest email";
 "threadcanvas.folder.jump.first.tooltip" = "Jump to first email";
 "threadcanvas.folder.jump.latest.accessibility" = "Jump to latest email in folder";
