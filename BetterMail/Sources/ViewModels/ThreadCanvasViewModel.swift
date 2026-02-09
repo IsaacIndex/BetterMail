@@ -2255,7 +2255,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 guard await waitForNodeAvailability(nodeID: target.messageID) else { return }
                 guard !Task.isCancelled else { return }
                 selectNode(id: target.messageID)
-                pendingScrollRequest = ThreadCanvasScrollRequest(nodeID: target.messageID, token: UUID())
+                guard let scrollTargetID = resolveRenderableJumpTargetID(preferredNodeID: target.messageID,
+                                                                         folderThreadIDs: threadIDs,
+                                                                         boundary: boundary) else {
+                    return
+                }
+                pendingScrollRequest = ThreadCanvasScrollRequest(nodeID: scrollTargetID, token: UUID())
             } catch {
                 Log.app.error("Failed to jump folder boundary node. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
@@ -2304,6 +2309,53 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
         }
         return false
+    }
+
+    private func resolveRenderableJumpTargetID(preferredNodeID: String,
+                                               folderThreadIDs: Set<String>,
+                                               boundary: MessageStore.ThreadMessageBoundary,
+                                               today: Date = Date(),
+                                               calendar: Calendar = .current) -> String? {
+        guard !folderThreadIDs.isEmpty else { return nil }
+
+        if let preferredNode = Self.node(matching: preferredNodeID, in: roots),
+           isNodeRenderable(preferredNode, today: today, calendar: calendar) {
+            return preferredNode.id
+        }
+
+        let candidates = Self.flatten(nodes: roots).filter { node in
+            guard let threadID = effectiveThreadID(for: node), folderThreadIDs.contains(threadID) else {
+                return false
+            }
+            return isNodeRenderable(node, today: today, calendar: calendar)
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        switch boundary {
+        case .newest:
+            return candidates.max { lhs, rhs in
+                if lhs.message.date == rhs.message.date {
+                    return lhs.id < rhs.id
+                }
+                return lhs.message.date < rhs.message.date
+            }?.id
+        case .oldest:
+            return candidates.min { lhs, rhs in
+                if lhs.message.date == rhs.message.date {
+                    return lhs.id > rhs.id
+                }
+                return lhs.message.date > rhs.message.date
+            }?.id
+        }
+    }
+
+    private func isNodeRenderable(_ node: ThreadNode,
+                                  today: Date,
+                                  calendar: Calendar) -> Bool {
+        ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                        today: today,
+                                        calendar: calendar,
+                                        dayCount: dayWindowCount) != nil
     }
 }
 

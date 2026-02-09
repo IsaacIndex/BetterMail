@@ -143,13 +143,17 @@ internal struct ThreadCanvasView: View {
                                                             today: today,
                                                             calendar: calendar,
                                                             immediate: true)
+                    if let request = viewModel.pendingScrollRequest {
+                        scrollToPendingRequestIfAvailable(request,
+                                                         layout: layout,
+                                                         scrollProxy: scrollProxy)
+                    }
                 }
                 .onChange(of: viewModel.pendingScrollRequest) { _, request in
                     guard let request else { return }
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        scrollProxy.scrollTo(jumpAnchorID(for: request.nodeID), anchor: .center)
-                    }
-                    viewModel.consumeScrollRequest(request)
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     scrollProxy: scrollProxy)
                 }
                 .onChange(of: activeDropFolderID) { oldValue, newValue in
                     guard newValue != nil else {
@@ -217,6 +221,20 @@ internal struct ThreadCanvasView: View {
 
     private func jumpAnchorID(for nodeID: String) -> String {
         "thread-canvas-jump-anchor-\(nodeID)"
+    }
+
+    private func scrollToPendingRequestIfAvailable(_ request: ThreadCanvasScrollRequest,
+                                                   layout: ThreadCanvasLayout,
+                                                   scrollProxy: ScrollViewProxy) {
+        guard layout.columns.contains(where: { column in
+            column.nodes.contains(where: { $0.id == request.nodeID })
+        }) else {
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.28)) {
+            scrollProxy.scrollTo(jumpAnchorID(for: request.nodeID), anchor: .center)
+        }
+        viewModel.consumeScrollRequest(request)
     }
 
     @ViewBuilder
