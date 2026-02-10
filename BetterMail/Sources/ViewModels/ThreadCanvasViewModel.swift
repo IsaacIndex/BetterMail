@@ -409,7 +409,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   store: MessageStore = .shared,
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
-                  backfillService: BatchBackfillServicing = BatchBackfillService(),
+                  backfillService: BatchBackfillServicing? = nil,
                   summaryCapability: EmailSummaryCapability? = nil,
                   tagCapability: EmailTagCapability? = nil,
                   folderSummaryDebounceInterval: TimeInterval = 30) {
@@ -419,7 +419,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         self.pinnedFolderSettings = pinnedFolderSettings
-        self.backfillService = backfillService
+        self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
