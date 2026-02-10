@@ -11,8 +11,10 @@ internal struct ThreadCanvasView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
+    @State private var scrollOffset: CGFloat = 0
     @State private var rawScrollOffset: CGFloat = 0
     @State private var rawScrollOffsetX: CGFloat = 0
+    @State private var viewportWidth: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     @State private var canvasScrollView: NSScrollView?
     @State private var activeDropFolderID: String?

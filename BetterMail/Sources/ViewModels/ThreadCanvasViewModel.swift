@@ -686,18 +686,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         folderSummaries[folderID]
     }
 
-    internal func isFolderPinned(id: String) -> Bool {
-        pinnedFolderIDs.contains(id)
-    }
-
-    internal func pinFolder(id: String) {
-        pinnedFolderSettings.pin(id)
-    }
-
-    internal func unpinFolder(id: String) {
-        pinnedFolderSettings.unpin(id)
-    }
-
     internal var isSummaryProviderAvailable: Bool {
         summaryProvider != nil
     }
