@@ -18,7 +18,7 @@ internal final class PinnedFolderSettings: ObservableObject {
 
     internal func pin(_ id: String) {
         guard !id.isEmpty else { return }
-        if pinnedFolderIDs.contains(id) { return }
+        guard !pinnedFolderIDs.contains(id) else { return }
         var updated = pinnedFolderIDs
         updated.insert(id)
         pinnedFolderIDs = updated

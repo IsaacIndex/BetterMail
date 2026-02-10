@@ -236,59 +236,43 @@ The system SHALL render copy controls for Message-ID, subject, and mailbox/accou
 - **WHEN** the Open in Mail flow is idle, searching, succeeds, or fails
 - **THEN** the inspector still presents copy buttons for the selected message’s Message-ID, subject, and mailbox/account values
 
-### Requirement: Timeline Interaction Responsiveness
-The system SHALL keep Timeline View scrolling and zooming responsive for typical datasets (up to 200 visible timeline entries) by reusing cached layout and text measurements instead of recomputing work on every scroll delta, maintaining smooth visuals within a 16ms frame budget on supported hardware.
+### Requirement: Folder Header Jump Actions
+The system SHALL provide two icon-only action buttons in the footer row of each folder header block on the thread canvas: one to jump to the latest email node in that folder and one to jump to the first email node in that folder. Each button SHALL expose tooltip text on hover and SHALL be keyboard-focusable with accessible labels.
 
-#### Scenario: Smooth scroll under typical load
-- **WHEN** Timeline View shows up to 200 entries and the user scrolls vertically, horizontally, or diagonally
-- **THEN** the interaction remains visually smooth without blank content, and layout is reused rather than rebuilt on each scroll tick
+#### Scenario: Folder header actions are visible with tooltips
+- **WHEN** a folder header is rendered on the canvas
+- **THEN** the footer shows a latest-jump icon button and a first-jump icon button
+- **AND** hovering each button shows tooltip text describing its action
+- **AND** each button is exposed as an accessible control with a descriptive label
 
-#### Scenario: Smooth zoom transitions
-- **WHEN** the user pinches to zoom between readability thresholds
-- **THEN** the canvas scales without stalls or dropped frames, using cached measurements where possible
+### Requirement: DataStore-Backed Jump Target Resolution
+The system SHALL resolve jump targets for folder-header jump actions from DataStore-backed message bounds within the folder scope, rather than limiting targets to currently rendered day bands.
 
-#### Scenario: Cached layout reuse
-- **WHEN** the scroll offset changes but zoom, view mode, day window, and node set remain unchanged
-- **THEN** the system reuses cached node frames instead of recalculating layout, keeping main-thread work within the 16ms frame budget
+#### Scenario: Latest jump uses DataStore newest bound
+- **GIVEN** a folder whose newest email is outside the currently rendered day range
+- **WHEN** the user activates the latest-jump button
+- **THEN** the system resolves the newest in-scope email node from DataStore-backed bounds
+- **AND** the canvas navigates to that node once its day is renderable
 
-### Requirement: Timeline View Entry Presentation
-The system SHALL render Timeline View as a single vertical sequence of individual message entries ordered by received time (newest first within the selected range), where each entry shows a time label, sender + subject summary, and one or more tag/title chips. The layout SHALL use the existing inspector selection model so selecting an entry opens the message inspector without leaving Timeline View. When message metadata lacks a concise title or tag, the system SHALL optionally invoke Apple Intelligence to generate a short title or tag set; when Apple Intelligence is unavailable, the entry SHALL fall back to subject-only content without blocking rendering.
+#### Scenario: First jump uses DataStore oldest bound
+- **GIVEN** a folder whose oldest email is outside the currently rendered day range
+- **WHEN** the user activates the first-jump button
+- **THEN** the system resolves the oldest in-scope email node from DataStore-backed bounds
+- **AND** the canvas navigates to that node once its day is renderable
 
-#### Scenario: Chronological entries with time labels
-- **WHEN** Timeline View is active
-- **THEN** each message in the visible date range appears once in a vertical list ordered by received time (newest first) and shows its time label alongside the entry
+### Requirement: Responsive Range Expansion for Jump Actions
+When a resolved jump target falls outside the rendered day range, the system SHALL expand day-window coverage incrementally and stop as soon as the target day is included, avoiding unbounded synchronous expansion that would stall interaction.
 
-#### Scenario: Entry content summary and tags
-- **WHEN** a message is rendered in Timeline View
-- **THEN** its entry shows sender, subject (or summary snippet), and tag/title chips (e.g., folder labels or generated tags) in a compact card style similar to the reference visual
+#### Scenario: Incremental expansion stops at target day
+- **WHEN** a jump target day is older or newer than the currently rendered day window
+- **THEN** day-window expansion proceeds in bounded increments toward the target day
+- **AND** expansion stops immediately once the target day is included
+- **AND** the system proceeds to scroll to the target node without requiring manual paging
 
-#### Scenario: Selection opens inspector
-- **WHEN** the user clicks a timeline entry
-- **THEN** that message becomes the current selection and the existing inspector panel opens with its details without exiting Timeline View
-
-#### Scenario: Apple Intelligence-assisted tags optional
-- **WHEN** message metadata lacks a concise title or tags
-- **THEN** the system may request Apple Intelligence to generate a short title or tag set
-- **AND** if Apple Intelligence is unavailable or fails, the entry still renders using available metadata without delay
-
-### Requirement: Timeline View Unbounded Entries
-The system SHALL render Timeline View entries as a vertical sequence aligned to a timeline rail where each entry uses a left dot + time column followed by inline AI tag chips (when available) and a summary/subject body that may wrap to multiple lines; entry height SHALL expand to fit the summary instead of clipping or overlapping adjacent entries. Timeline entries SHALL omit the sender line and rely on summary/subject plus tags for context, while preserving the existing inspector selection behavior.
-
-#### Scenario: Inline rail layout without clipping
-- **WHEN** Timeline View is active
-- **THEN** each message renders on a shared rail with a leading dot and time label, and the summary text appears to the right with available width, wrapping to additional lines as needed without horizontal clipping
-
-#### Scenario: No overlap with dynamic heights
-- **WHEN** a summary spans multiple lines or tags wrap
-- **THEN** the entry's vertical size grows and spacing ensures adjacent entries do not overlap or collide, maintaining readable separation on the rail
-
-#### Scenario: Sender hidden, summary-focused body
-- **WHEN** a message is shown in Timeline View
-- **THEN** the sender line is not displayed; the body uses the summary text when present, otherwise the subject, and remains selectable to open the inspector as before
-
-#### Scenario: AI tag chips inline with time
-- **WHEN** AI-generated tags or folder/title tags exist
-- **THEN** they render as pill chips inline after the time label (wrapping to the next line if needed) before the summary body, preserving the `(dot) time  [tags]  summary` visual order
+#### Scenario: Jump controls avoid repeated heavy work while busy
+- **WHEN** a jump action is already expanding coverage toward a target
+- **THEN** additional activations for that folder are ignored or disabled until the active jump completes
+- **AND** normal canvas interaction remains responsive during the in-progress jump
 
 ### Requirement: Inspector summary regenerate controls
 The inspector SHALL show a "Regenerate" action beside the email summary disclosure and the folder summary field, and SHALL reflect running or unavailable states inline.
