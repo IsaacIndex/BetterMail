@@ -1,5 +1,15 @@
 import Foundation
 
+internal protocol BatchBackfillServicing {
+    func countMessages(in range: DateInterval, mailbox: String) async throws -> Int
+    func runBackfill(range: DateInterval,
+                     mailbox: String,
+                     preferredBatchSize: Int,
+                     totalExpected: Int,
+                     snippetLineLimit: Int,
+                     progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult
+}
+
 internal struct BatchBackfillProgress {
     internal enum State {
         case running
@@ -19,7 +29,7 @@ internal struct BatchBackfillResult {
     internal let fetched: Int
 }
 
-internal actor BatchBackfillService {
+internal actor BatchBackfillService: BatchBackfillServicing {
     private let client: MailAppleScriptClient
     private let store: MessageStore
 

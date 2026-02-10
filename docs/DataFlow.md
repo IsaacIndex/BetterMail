@@ -12,7 +12,7 @@ This document describes the primary data flow and concurrency boundaries.
 
 ## Backfill Flow
 
-1. `BatchBackfillSettingsViewModel` invokes `BatchBackfillService`.
+1. `BatchBackfillSettingsViewModel` and `ThreadCanvasViewModel` invoke `BatchBackfillService`.
 2. `BatchBackfillService` (actor) paginates Apple Mail ranges.
 3. Results are persisted by `MessageStore`.
 4. UI updates occur via `@MainActor` view models.
