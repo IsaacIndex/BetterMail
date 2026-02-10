@@ -158,14 +158,17 @@ internal struct ThreadFolderInspectorView: View {
                 }
                 Spacer()
             }
-            TextEditor(text: .constant(displayText))
-                .font(.callout)
-                .frame(minHeight: 96)
-                .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.15))
-                .cornerRadius(8)
-                .disabled(true)
-                .opacity(summaryText.isEmpty ? 0.75 : 1)
+            ScrollView {
+                Text(displayText)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(8)
+            }
+            .frame(minHeight: 96, maxHeight: 160)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.15))
+            .cornerRadius(8)
+            .opacity(summaryText.isEmpty ? 0.75 : 1)
         }
     }
 

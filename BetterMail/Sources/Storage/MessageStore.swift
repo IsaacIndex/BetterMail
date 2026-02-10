@@ -21,6 +21,7 @@ internal final class MessageStore {
     private let folderMigrationKey = "MessageStore.threadFolderMigrationV1"
     private let summaryCacheMigrationKey = "MessageStore.threadSummaryCacheMigrationV1"
     private let scopedSummaryCacheMigrationKey = "MessageStore.scopedSummaryCacheMigrationV1"
+    private let logger = Log.refresh
 
     internal var lastSyncDate: Date? {
         get { userDefaults.object(forKey: lastSyncKey) as? Date }
@@ -118,16 +119,45 @@ internal final class MessageStore {
 
     internal func countMessages(in range: DateInterval, mailbox: String? = nil) async throws -> Int {
         try await container.performBackgroundTask { context in
-            let request: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
-            var predicates: [NSPredicate] = [
+            let basePredicates: [NSPredicate] = [
                 NSPredicate(format: "date >= %@", range.start as NSDate),
                 NSPredicate(format: "date <= %@", range.end as NSDate)
             ]
+            let basePredicate = NSCompoundPredicate(andPredicateWithSubpredicates: basePredicates)
+
             if let mailbox {
-                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+                let allRequest: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
+                allRequest.predicate = basePredicate
+                let totalCount = try context.count(for: allRequest)
+
+                let mailboxRequest: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
+                mailboxRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: basePredicates + [
+                    NSPredicate(format: "mailboxID ==[c] %@", mailbox)
+                ])
+                let mailboxCount = try context.count(for: mailboxRequest)
+
+                if mailboxCount == 0 {
+                    if totalCount == 0 {
+                        self.logger.info("MessageStore count: no messages in range; mailbox=\(mailbox, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private)")
+                    } else {
+                        let sampleRequest = NSFetchRequest<NSDictionary>(entityName: "MessageEntity")
+                        sampleRequest.resultType = .dictionaryResultType
+                        sampleRequest.propertiesToFetch = [#keyPath(MessageEntity.mailboxID)]
+                        sampleRequest.predicate = basePredicate
+                        sampleRequest.fetchLimit = 25
+                        let sampleResults = try context.fetch(sampleRequest)
+                        let sampleMailboxIDs = sampleResults.compactMap { $0[#keyPath(MessageEntity.mailboxID)] as? String }
+                        let uniqueSample = Array(Set(sampleMailboxIDs)).prefix(10)
+                        self.logger.info("MessageStore count: range has messages but mailbox mismatch; mailbox=\(mailbox, privacy: .public) totalInRange=\(totalCount, privacy: .public) sampleMailboxIDs=\(uniqueSample.joined(separator: ","), privacy: .public)")
+                    }
+                }
+
+                return mailboxCount
+            } else {
+                let request: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
+                request.predicate = basePredicate
+                return try context.count(for: request)
             }
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-            return try context.count(for: request)
         }
     }
 

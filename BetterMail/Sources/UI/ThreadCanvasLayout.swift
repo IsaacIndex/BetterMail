@@ -161,6 +161,7 @@ internal struct ThreadCanvasLayout {
     internal let columns: [ThreadCanvasColumn]
     internal let contentSize: CGSize
     internal let folderOverlays: [ThreadCanvasFolderOverlay]
+    internal let populatedDayIndices: Set<Int>
 }
 
 internal struct ThreadCanvasFolderOverlay: Identifiable, Hashable {

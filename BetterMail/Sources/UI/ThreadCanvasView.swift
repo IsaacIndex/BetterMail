@@ -11,7 +11,6 @@ internal struct ThreadCanvasView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
-    @State private var scrollOffset: CGFloat = 0
     @State private var rawScrollOffset: CGFloat = 0
     @State private var rawScrollOffsetX: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
@@ -38,8 +37,7 @@ internal struct ThreadCanvasView: View {
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
+        formatter.dateFormat = "MMM d, yyyy HH:mm"
         return formatter
     }()
 
@@ -66,6 +64,67 @@ internal struct ThreadCanvasView: View {
                 ? 0
                 : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
             let totalTopPadding = topInset + headerStackHeight + headerSpacing
+            let effectiveViewportHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
+            let effectiveViewportWidth = max(viewportWidth, proxy.size.width)
+            let visibleDayBuffer: CGFloat = 1
+            let visibleColumnBuffer: CGFloat = 1
+            let visibleYStart = max(0, rawScrollOffset - (metrics.dayHeight * visibleDayBuffer))
+            let visibleYEnd = rawScrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
+            let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
+            let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
+            let pinnedFolderIDs = viewModel.pinnedFolderIDs
+            let visibleDays = layout.days.filter { day in
+                let dayStart = day.yOffset
+                let dayEnd = day.yOffset + day.height
+                return dayEnd >= visibleYStart && dayStart <= visibleYEnd
+            }
+            let visibleDayRange: ClosedRange<Int>? = {
+                guard let minID = visibleDays.map(\.id).min(),
+                      let maxID = visibleDays.map(\.id).max() else { return nil }
+                return minID...maxID
+            }()
+            let visibleColumns = layout.columns.filter { column in
+                let minX = column.xOffset
+                let maxX = column.xOffset + metrics.columnWidth
+                if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+                    return true
+                }
+                return maxX >= visibleXStart && minX <= visibleXEnd
+            }
+            let visibleNodesByColumnID: [String: [ThreadCanvasNode]] = Dictionary(uniqueKeysWithValues: visibleColumns.map { column in
+                let nodes: [ThreadCanvasNode]
+                if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+                    nodes = column.nodes
+                } else {
+                    nodes = column.nodes.filter { node in
+                        if let visibleDayRange, !visibleDayRange.contains(node.dayIndex) {
+                            return false
+                        }
+                        return node.frame.maxY >= visibleYStart && node.frame.minY <= visibleYEnd
+                    }
+                }
+                return (column.id, nodes)
+            })
+            let visibleChromeData = chromeData.filter { chrome in
+                let minX = chrome.frame.minX
+                let maxX = chrome.frame.maxX
+                let minY = chrome.frame.minY
+                let maxY = chrome.frame.maxY
+                if pinnedFolderIDs.contains(chrome.id) {
+                    return true
+                }
+                let intersectsX = maxX >= visibleXStart && minX <= visibleXEnd
+                let intersectsY = maxY >= visibleYStart && minY <= visibleYEnd
+                return intersectsX && intersectsY
+            }
+            let visibleHeaderChromeData = chromeData.filter { chrome in
+                let minX = chrome.frame.minX
+                let maxX = chrome.frame.maxX
+                if pinnedFolderIDs.contains(chrome.id) {
+                    return true
+                }
+                return maxX >= visibleXStart && minX <= visibleXEnd
+            }
 
             ScrollViewReader { _ in
                 ScrollView([.horizontal, .vertical]) {
@@ -574,56 +633,61 @@ internal struct ThreadCanvasView: View {
     }
 
     @ViewBuilder
-    private func dayBands(layout: ThreadCanvasLayout,
+    private func dayBands(days: [ThreadCanvasDay],
                           metrics: ThreadCanvasLayoutMetrics,
-                          readabilityMode: ThreadCanvasReadabilityMode) -> some View {
-        ForEach(layout.days) { day in
+                          contentWidth: CGFloat) -> some View {
+        ForEach(days) { day in
             ThreadCanvasDayBand(day: day,
                                 metrics: metrics,
                                 labelText: nil,
-                                contentWidth: layout.contentSize.width)
+                                contentWidth: contentWidth)
                 .offset(x: 0, y: day.yOffset)
         }
     }
 
     @ViewBuilder
-    private func columnDividers(layout: ThreadCanvasLayout,
-                                metrics: ThreadCanvasLayoutMetrics) -> some View {
+    private func columnDividers(columns: [ThreadCanvasColumn],
+                                metrics: ThreadCanvasLayoutMetrics,
+                                contentHeight: CGFloat) -> some View {
         let lineColor = reduceTransparency ? Color.secondary.opacity(0.2) : Color.white.opacity(0.12)
-        ForEach(layout.columns) { column in
+        ForEach(columns) { column in
             Rectangle()
                 .fill(lineColor)
-                .frame(width: 1, height: layout.contentSize.height)
+                .frame(width: 1, height: contentHeight)
                 .offset(x: column.xOffset + (metrics.columnWidth / 2), y: 0)
         }
     }
 
     @ViewBuilder
-    private func connectorLayer(layout: ThreadCanvasLayout,
+    private func connectorLayer(columns: [ThreadCanvasColumn],
+                                visibleNodesByColumnID: [String: [ThreadCanvasNode]],
                                 metrics: ThreadCanvasLayoutMetrics,
                                 readabilityMode: ThreadCanvasReadabilityMode,
-                                timelineTagsByNodeID: [String: [String]]) -> some View {
-        ForEach(layout.columns) { column in
+                                timelineTagsByNodeID: [String: [String]],
+                                contentHeight: CGFloat) -> some View {
+        ForEach(columns) { column in
             ThreadCanvasConnectorColumn(column: column,
+                                        nodes: visibleNodesByColumnID[column.id] ?? [],
                                         metrics: metrics,
                                         viewMode: displaySettings.viewMode,
                                         readabilityMode: readabilityMode,
                                         timelineTagsByNodeID: timelineTagsByNodeID,
                                         isHighlighted: isColumnSelected(column),
                                         rawZoom: zoomScale)
-            .frame(width: metrics.columnWidth, height: layout.contentSize.height, alignment: .topLeading)
+            .frame(width: metrics.columnWidth, height: contentHeight, alignment: .topLeading)
             .offset(x: column.xOffset, y: 0)
         }
     }
 
     @ViewBuilder
-    private func nodesLayer(layout: ThreadCanvasLayout,
+    private func nodesLayer(columns: [ThreadCanvasColumn],
+                            visibleNodesByColumnID: [String: [ThreadCanvasNode]],
                             metrics: ThreadCanvasLayoutMetrics,
                             chromeData: [FolderChromeData],
                             readabilityMode: ThreadCanvasReadabilityMode,
                             folderHeaderHeight: CGFloat) -> some View {
-        ForEach(layout.columns) { column in
-            ForEach(column.nodes) { node in
+        ForEach(columns) { column in
+            ForEach(visibleNodesByColumnID[column.id] ?? []) { node in
                 Group {
                     if displaySettings.viewMode == .timeline {
                         ThreadTimelineCanvasNodeView(node: node,
@@ -905,56 +969,70 @@ internal struct ThreadCanvasView: View {
                                   readabilityMode: ThreadCanvasReadabilityMode,
                                   totalTopPadding: CGFloat,
                                   rawScrollOffset: CGFloat,
-                                  viewportHeight: CGFloat) -> some View {
+                                  viewportHeight: CGFloat,
+                                  visibleYStart: CGFloat,
+                                  visibleYEnd: CGFloat) -> some View {
         let railWidth = metrics.dayLabelWidth
         ZStack(alignment: .topLeading) {
             if let mode = dayLabelMode(readabilityMode: readabilityMode) {
                 let legendTopInset = max(8 * metrics.fontScale, metrics.nodeVerticalSpacing)
                 let items = groupedLegendItems(days: layout.days, calendar: calendar, mode: mode)
                 ForEach(Array(items.dropFirst().enumerated()), id: \.offset) { _, item in
-                    Rectangle()
-                        .fill(legendGuideColor)
-                        .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
-                        .offset(x: metrics.nodeHorizontalInset,
-                                y: item.startY + totalTopPadding - rawScrollOffset)
-                }
-                ForEach(items) { item in
-                    ZStack(alignment: .topLeading) {
+                    let itemStart = item.startY
+                    let itemEnd = item.startY + item.height
+                    if itemEnd >= visibleYStart && itemStart <= visibleYEnd {
                         Rectangle()
                             .fill(legendGuideColor)
-                            .frame(width: 1)
-                            .frame(maxHeight: .infinity)
-                        Text(item.label)
-                            .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .rotationEffect(.degrees(-90))
-                            .frame(width: max(item.height - legendTopInset, 0),
-                                   alignment: .leading)
-                            .frame(maxWidth: .infinity,
-                                   maxHeight: .infinity,
-                                   alignment: .topLeading)
-                            .offset(y: legendTopInset)
-                            .accessibilityAddTraits(.isHeader)
-                            .allowsHitTesting(false)
+                            .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
+                            .offset(x: metrics.nodeHorizontalInset,
+                                    y: item.startY + totalTopPadding - rawScrollOffset)
                     }
-                    .frame(width: railWidth - metrics.nodeHorizontalInset,
-                           height: item.height,
-                           alignment: .topLeading)
-                    .offset(x: metrics.nodeHorizontalInset,
-                            y: item.startY + totalTopPadding - rawScrollOffset)
+                }
+                ForEach(items) { item in
+                    let itemStart = item.startY
+                    let itemEnd = item.startY + item.height
+                    if itemEnd >= visibleYStart && itemStart <= visibleYEnd {
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .fill(legendGuideColor)
+                                .frame(width: 1)
+                                .frame(maxHeight: .infinity)
+                            Text(item.label)
+                                .font(.system(size: 13 * metrics.fontScale, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .rotationEffect(.degrees(-90))
+                                .frame(width: max(item.height - legendTopInset, 0),
+                                       alignment: .leading)
+                                .frame(maxWidth: .infinity,
+                                       maxHeight: .infinity,
+                                       alignment: .topLeading)
+                                .offset(y: legendTopInset)
+                                .accessibilityAddTraits(.isHeader)
+                                .allowsHitTesting(false)
+                        }
+                        .frame(width: railWidth - metrics.nodeHorizontalInset,
+                               height: item.height,
+                               alignment: .topLeading)
+                        .offset(x: metrics.nodeHorizontalInset,
+                                y: item.startY + totalTopPadding - rawScrollOffset)
+                    }
                 }
             } else {
                 ForEach(layout.days) { day in
-                    Text(day.label)
-                        .font(.system(size: 11 * metrics.fontScale, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
-                        .padding(.leading, metrics.nodeHorizontalInset)
-                        .padding(.top, metrics.nodeVerticalSpacing)
-                        .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
-                        .accessibilityAddTraits(.isHeader)
+                    let dayStart = day.yOffset
+                    let dayEnd = day.yOffset + day.height
+                    if dayEnd >= visibleYStart && dayStart <= visibleYEnd {
+                        Text(day.label)
+                            .font(.system(size: 11 * metrics.fontScale, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
+                            .padding(.leading, metrics.nodeHorizontalInset)
+                            .padding(.top, metrics.nodeVerticalSpacing)
+                            .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                 }
             }
         }
@@ -1094,7 +1172,7 @@ private struct FolderColumnBackground: View {
 
 private struct FolderHeaderLayout {
     static let titleBaseSize: CGFloat = 14
-    static let titleLineLimit: Int = 3
+    static let titleLineLimit: Int = 2
     static let summaryBaseSize: CGFloat = 11
     static let summaryLineLimit: Int = 5
     static let footerBaseSize: CGFloat = 12
@@ -1110,14 +1188,9 @@ private struct FolderHeaderLayout {
     static func headerHeight(rawZoom: CGFloat,
                              readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
         let scale = sizeScale(rawZoom: rawZoom)
-        let titleLines = lineCount(lineLimit: titleLineLimit,
-                                   readabilityMode: readabilityMode)
-        let summaryLines = lineCount(lineLimit: summaryLineLimit,
-                                     readabilityMode: readabilityMode)
-        let footerHeight = footerRowHeight(sizeScale: scale, readabilityMode: readabilityMode)
-
-        let titleHeight = lineHeight(baseSize: titleBaseSize, sizeScale: scale) * CGFloat(titleLines)
-        let summaryHeight = lineHeight(baseSize: summaryBaseSize, sizeScale: scale) * CGFloat(summaryLines)
+        let titleHeight = titleSectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
+        let summaryHeight = summarySectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
+        let footerHeight = footerSectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
         let visibleHeights = [titleHeight, summaryHeight, footerHeight].filter { $0 > 0 }
         let spacingCount = max(visibleHeights.count - 1, 0)
         let spacing = CGFloat(spacingCount) * lineSpacing * scale
@@ -1140,6 +1213,23 @@ private struct FolderHeaderLayout {
         case .hidden:
             return 0
         }
+    }
+
+    static func titleSectionHeight(sizeScale: CGFloat,
+                                   readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        let titleLines = lineCount(lineLimit: titleLineLimit, readabilityMode: readabilityMode)
+        return lineHeight(baseSize: titleBaseSize, sizeScale: sizeScale) * CGFloat(titleLines)
+    }
+
+    static func summarySectionHeight(sizeScale: CGFloat,
+                                     readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        let summaryLines = lineCount(lineLimit: summaryLineLimit, readabilityMode: readabilityMode)
+        return lineHeight(baseSize: summaryBaseSize, sizeScale: sizeScale) * CGFloat(summaryLines)
+    }
+
+    static func footerSectionHeight(sizeScale: CGFloat,
+                                    readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
+        footerRowHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
     }
 
     static func footerRowHeight(sizeScale: CGFloat,
@@ -1227,27 +1317,56 @@ private struct FolderColumnHeader: View {
         let titleVisibility = textVisibility()
         let summaryVisibility = textVisibility()
         let footerVisibility = textVisibility()
+        let titleSectionHeight = FolderHeaderLayout.titleSectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
+        let summarySectionHeight = FolderHeaderLayout.summarySectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
+        let footerSectionHeight = FolderHeaderLayout.footerSectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
 
         VStack(alignment: .leading, spacing: FolderHeaderLayout.lineSpacing * sizeScale) {
-            if titleVisibility != .hidden {
-                textLine(title.isEmpty
-                         ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
-                         : title,
-                         baseSize: FolderHeaderLayout.titleBaseSize,
-                         weight: .semibold,
-                         color: Color.white,
-                         allowWrap: true)
+            if titleSectionHeight > 0 {
+                Group {
+                    if titleVisibility != .hidden {
+                        textLine(title.isEmpty
+                                 ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
+                                 : title,
+                                 baseSize: FolderHeaderLayout.titleBaseSize,
+                                 weight: .semibold,
+                                 color: Color.white,
+                                 allowWrap: true)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: titleSectionHeight, alignment: .topLeading)
             }
-            if let summaryText = summaryPreviewText, summaryVisibility != .hidden {
-                summaryLine(summaryText)
+            if summarySectionHeight > 0 {
+                Group {
+                    if summaryVisibility != .hidden {
+                        if let summaryText = summaryPreviewText {
+                            summaryLine(summaryText)
+                        } else {
+                            Color.clear
+                        }
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: summarySectionHeight, alignment: .topLeading)
             }
-            if footerVisibility != .hidden {
-                HStack(alignment: .center, spacing: 10 * sizeScale) {
-                    if let updatedText {
-                        textLine("Updated \(updatedText)",
-                                 baseSize: FolderHeaderLayout.footerBaseSize,
-                                 weight: .regular,
-                                 color: Color.white.opacity(0.78))
+            if footerSectionHeight > 0 {
+                Group {
+                    if footerVisibility != .hidden {
+                        HStack(alignment: .center, spacing: 10 * sizeScale) {
+                            if let updatedText {
+                                textLine("Updated \(updatedText)",
+                                         baseSize: FolderHeaderLayout.footerBaseSize,
+                                         weight: .regular,
+                                         color: Color.white.opacity(0.78))
+                            }
+                            Spacer()
+                            badge(unread: unreadCount)
+                        }
+                    } else {
+                        Color.clear
                     }
                     Spacer()
                     HStack(spacing: 6 * sizeScale) {
@@ -1262,13 +1381,14 @@ private struct FolderColumnHeader: View {
                     }
                     badge(unread: unreadCount)
                 }
+                .frame(height: footerSectionHeight, alignment: .leading)
             }
         }
         .padding(.horizontal, 12 * sizeScale)
         .padding(.vertical, FolderHeaderLayout.verticalPadding * sizeScale)
         .frame(height: FolderHeaderLayout.headerHeight(rawZoom: rawZoom,
                                                        readabilityMode: readabilityMode),
-               alignment: .leading)
+               alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(headerBackground)
         .overlay(alignment: .topTrailing) {
@@ -1434,6 +1554,7 @@ private struct FolderColumnHeader: View {
 
 private struct ThreadCanvasConnectorColumn: View {
     let column: ThreadCanvasColumn
+    let nodes: [ThreadCanvasNode]
     let metrics: ThreadCanvasLayoutMetrics
     let viewMode: ThreadCanvasViewMode
     let readabilityMode: ThreadCanvasReadabilityMode
@@ -1443,7 +1564,7 @@ private struct ThreadCanvasConnectorColumn: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        let segments = connectorSegments(for: column.nodes)
+        let segments = connectorSegments(for: nodes)
 
         ZStack(alignment: .topLeading) {
             ForEach(segments, id: \.id) { segment in
@@ -1718,6 +1839,14 @@ private struct ThreadCanvasConnectorColumn: View {
 }
 
 private struct ThreadCanvasViewportHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ThreadCanvasViewportWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

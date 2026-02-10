@@ -7,7 +7,7 @@ internal enum EmailSummaryError: LocalizedError {
     case noSubjects
     case unavailable(String)
     case generationFailed(Error)
-
+    
     var errorDescription: String? {
         switch self {
         case .noSubjects:
@@ -79,23 +79,23 @@ internal enum EmailSummaryProviderFactory {
 @available(macOS 15.2, *)
 internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding {
     private let model: SystemLanguageModel
-
+    
     internal init(model: SystemLanguageModel = .default) {
         self.model = model
     }
-
+    
     @available(*, deprecated, message: "Not wired into the UI. Use summarizeEmail(_:) or summarizeFolder(_:) instead.")
     internal func summarize(subjects: [String]) async throws -> String {
         // NOTE: This digest path is not currently invoked by the UI.
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
-
+        
         let cleanedSubjects = Self.prepareSubjects(from: subjects)
         guard !cleanedSubjects.isEmpty else {
             throw EmailSummaryError.noSubjects
         }
-
+        
         do {
             let prompt = Self.prompt(for: cleanedSubjects)
             let session = LanguageModelSession(model: model,
@@ -109,18 +109,18 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
             throw EmailSummaryError.generationFailed(error)
         }
     }
-
+    
     internal func summarizeEmail(_ request: EmailSummaryRequest) async throws -> String {
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
-
+        
         let cleanedSubject = request.subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedBody = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedSubject.isEmpty || !cleanedBody.isEmpty else {
             throw EmailSummaryError.noSubjects
         }
-
+        
         do {
             let prompt = Self.nodePrompt(subject: cleanedSubject,
                                          body: cleanedBody,
@@ -136,19 +136,19 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
             throw EmailSummaryError.generationFailed(error)
         }
     }
-
+    
     internal func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String {
         guard case .available = model.availability else {
             throw EmailSummaryError.unavailable(model.availability.userFacingMessage)
         }
-
+        
         let cleanedSummaries = request.messageSummaries
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard !cleanedSummaries.isEmpty else {
             throw EmailSummaryError.noSubjects
         }
-
+        
         do {
             let prompt = Self.folderPrompt(title: request.title,
                                            summaries: cleanedSummaries)
@@ -163,11 +163,11 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
             throw EmailSummaryError.generationFailed(error)
         }
     }
-
+    
     private static func prepareSubjects(from subjects: [String]) -> [String] {
         var seen = Set<String>()
         var ordered: [String] = []
-
+        
         for subject in subjects {
             let cleaned = subject.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { continue }
@@ -178,38 +178,49 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
                 break
             }
         }
-
+        
         return ordered
     }
-
+    
+    @available(*, deprecated, message: "Not wired into the UI. Use nodePrompt(_:) instead.")
     private static func prompt(for subjects: [String]) -> String {
         let bullets = subjects.enumerated()
             .map { "\($0.offset + 1). \($0.element)" }
             .joined(separator: "\n")
-
+        
         return """
-        Transform the following email subject lines into at most two concise sentences.
-        Use only the provided text; do not add new facts or assumptions.
-        Highlight the main themes and call out any urgent follow ups that may require attention.
-        Keep the tone professional and actionable.
+### TASK
+Write a plain-language inbox digest from the subject lines.
 
-        Subjects:
-        \(bullets)
-        """
+### RULES
+- Use ONLY the provided subject lines.
+- Output 1–2 short sentences (plain text).
+- Do NOT add facts, speculate, or infer missing details.
+- Do NOT include headings, bullet points, labels, greetings, apologies, or meta commentary.
+- Do NOT quote any subject verbatim; paraphrase and compress.
+- If nothing looks time-sensitive or actionable, output: No urgent updates.
+
+### SUBJECT LINES
+Subjects:
+\(bullets)
+"""
     }
-
+    
     private static let instructions = """
-    You are an executive assistant reviewing an email inbox.
+        You are an executive assistant reviewing a user’s inbox.
 
-    Transform the provided email text into a short, plain-language digest that tells the user what matters and what to focus on.
-    Do not add any facts not present in the input.
-    Respond with one or two compact sentences only.
+        Produce a plain-language digest of what matters and what the user should focus on, using ONLY the provided text.
 
-    Do not include introductions, confirmations, apologies, labels, or meta commentary.
-    Do not mention that you are summarizing or describing an email.
-    Write the digest directly, as final output.
+        Output rules:
+        - Write 1–2 short sentences (plain text).
+        - Do NOT add facts, speculate, or infer missing details.
+        - Do NOT include headings, bullet points, labels, greetings, apologies, or meta commentary.
+        - Do NOT quote the input verbatim; paraphrase and compress.
+        - If nothing actionable or time-sensitive is present, output: No urgent updates.
+
+        Write the digest directly as the final output.
     """
-
+    
     private static func nodePrompt(subject: String,
                                    body: String,
                                    prior: [EmailSummaryContextEntry]) -> String {
@@ -218,56 +229,66 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
             let snippetLine = entry.bodySnippet.isEmpty ? "" : " — \(entry.bodySnippet)"
             return "\(index + 1). \(subjectLine)\(snippetLine)"
         }.joined(separator: "\n")
-
+        
         let priorSection = priorLines.isEmpty ? "None" : priorLines
         let resolvedSubject = subject.isEmpty ? "No subject" : subject
         let resolvedBody = body.isEmpty ? "No body content available." : body
-
+        
         return """
-        Transform this email into one or two concise sentences.
-        Use only the provided text; do not add new facts or assumptions.
-        Focus on what is new compared to the prior messages listed.
-        Keep the tone professional and actionable.
-        Do not quote or repeat the email body; paraphrase and compress instead.
+            ### TASK
+            Write a plain-language digest of what matters in the current email AND what is new compared to the prior thread context.
 
-        Email subject:
-        \(resolvedSubject)
+            ### RULES
+            - Use ONLY the provided text.
+            - Output 1–2 short sentences (plain text).
+            - No bullet points, headings, labels, greetings, apologies, or meta commentary.
+            - Do NOT quote the email body; paraphrase and compress.
+            - Do NOT add facts, speculate, or infer missing details.
+            - If the current email adds nothing meaningfully new or actionable, output: No new updates.
 
-        Email body excerpt:
-        \(resolvedBody)
+            ### CURRENT EMAIL
+            Subject: \(resolvedSubject)
+            Body: \(resolvedBody)
 
-        Prior messages in this thread:
-        \(priorSection)
+            ### PRIOR THREAD CONTEXT
+            \(priorSection)
         """
     }
-
+    
     private static func folderPrompt(title: String,
                                      summaries: [String]) -> String {
         let bullets = summaries.prefix(20).enumerated()
             .map { "\($0.offset + 1). \($0.element)" }
             .joined(separator: "\n")
         let resolvedTitle = title.isEmpty ? "Folder" : title
-
+        
         return """
         Transform the following email summaries into a concise folder overview.
         Use only the provided text; do not add new facts or assumptions.
         Highlight the main themes, decisions, or urgent follow ups.
         Keep the tone professional and actionable, in two or three sentences.
-
-        Folder title: \(resolvedTitle)
-
-        Email summaries:
+        Output only the overview text (no headings, labels, bullet points, or blank lines).
+        
+        \(resolvedTitle)
+        
         \(bullets)
         """
     }
-
+    
     private static let nodeInstructions = """
-    You are an organized executive assistant reviewing an email.
-    Transform the provided email content into a concise summary of what this message adds or changes relative to the prior context.
-    Do not introduce any details that are not present in the input.
-    Avoid bullet lists; use one or two short sentences.
-    Do not copy the email text. Paraphrase and summarize instead.
-    Do not include direct quotes.
+    You are an executive assistant reviewing a user’s email thread.
+    
+    Your job: summarize what matters in the CURRENT email and what is NEW compared to the prior thread context.
+    
+    Rules:
+    - Use ONLY the provided text.
+    - Output 1–2 short sentences (plain text).
+    - Do NOT add facts, speculate, or infer missing details.
+    - Do NOT include headings, bullet points, labels, greetings, apologies, or meta commentary.
+    - Do NOT quote the email text; paraphrase and compress.
+    - If the current email adds nothing meaningfully new or actionable, output exactly: No new updates.
+    
+    Write the digest directly as the final output.
     """
 }
 

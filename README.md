@@ -5,6 +5,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
+- Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator.
 - Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
 - Inspector "Open in Mail" uses AppleScript targeting (Message-ID plus filtered fallback search) without `message://` URLs.
@@ -153,6 +154,9 @@ sequenceDiagram
 - Timeline layout cache keys use coarse zoom buckets so pinch gestures reuse layout work instead of rebuilding on tiny zoom deltas.
 - Folder headers include icon-only jump actions (with hover tooltips) to move directly to the latest or first email node in that folder.
 - Jump targets are resolved from DataStore-backed folder thread membership, and day-window expansion is applied in bounded increments to avoid large one-shot layout stalls.
+
+### Canvas Virtualization Window
+- The virtualized render window is computed in content coordinates using the raw scroll offset, so pinned folder headers/top padding do not shift which days and nodes are considered visible.
 
 ### Manual Grouping & Ungrouping
 **User-facing**

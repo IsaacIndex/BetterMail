@@ -49,3 +49,10 @@ The system SHALL let users force Apple Intelligence to regenerate summaries for 
 - **WHEN** the user clicks "Regenerate" in the folder inspector
 - **THEN** any pending debounced folder generation is cancelled, a new folder summary generation starts immediately using current member summaries, and the cache/status are updated when it finishes
 
+### Requirement: Regeneration honors mailbox scope
+The system SHALL run summary regeneration against the same mailbox scope used by MessageStore (including the aggregated “All Inboxes”) instead of assuming a hardcoded mailbox name.
+
+#### Scenario: Regenerate across All Inboxes
+- **WHEN** the user starts Re-GenAI from Settings over a date range where messages exist in “All Inboxes”
+- **THEN** the system counts and regenerates those messages (count > 0) without requiring the mailbox to be named “inbox”
+

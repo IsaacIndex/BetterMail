@@ -71,8 +71,10 @@ final class ThreadSummaryCacheTests: XCTestCase {
                                                 providerID: "test")
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
+        let pinnedFolderSettings = PinnedFolderSettings()
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
+                                              pinnedFolderSettings: pinnedFolderSettings,
                                               store: store,
                                               summaryCapability: capability,
                                               folderSummaryDebounceInterval: 0)
@@ -129,8 +131,10 @@ final class ThreadSummaryCacheTests: XCTestCase {
                                                 providerID: "test")
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
+        let pinnedFolderSettings = PinnedFolderSettings()
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
+                                              pinnedFolderSettings: pinnedFolderSettings,
                                               store: store,
                                               summaryCapability: capability,
                                               folderSummaryDebounceInterval: 0)
@@ -174,8 +178,10 @@ final class ThreadSummaryCacheTests: XCTestCase {
                                                 providerID: "test")
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
+        let pinnedFolderSettings = PinnedFolderSettings()
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
+                                              pinnedFolderSettings: pinnedFolderSettings,
                                               store: store,
                                               summaryCapability: capability,
                                               folderSummaryDebounceInterval: 0)
@@ -246,8 +252,10 @@ final class ThreadSummaryCacheTests: XCTestCase {
                                                 providerID: "test")
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
+        let pinnedFolderSettings = PinnedFolderSettings()
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
+                                              pinnedFolderSettings: pinnedFolderSettings,
                                               store: store,
                                               summaryCapability: capability,
                                               folderSummaryDebounceInterval: 0.1)
