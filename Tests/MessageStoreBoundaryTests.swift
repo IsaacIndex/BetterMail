@@ -63,4 +63,41 @@ final class MessageStoreBoundaryTests: XCTestCase {
 
         XCTAssertNil(result)
     }
+
+    func testFetchBoundaryMessageNewestPrefersHighestMessageIDForEqualDates() async throws {
+        let defaults = UserDefaults(suiteName: "MessageStoreBoundaryTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let sharedDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let lowerID = EmailMessage(messageID: "msg-001",
+                                   mailboxID: "inbox",
+                                   accountName: "test",
+                                   subject: "Lower ID",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: sharedDate,
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-tie")
+        let higherID = EmailMessage(messageID: "msg-999",
+                                    mailboxID: "inbox",
+                                    accountName: "test",
+                                    subject: "Higher ID",
+                                    from: "b@example.com",
+                                    to: "me@example.com",
+                                    date: sharedDate,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    threadID: "thread-tie")
+
+        try await store.upsert(messages: [lowerID, higherID])
+
+        let newestMatch = try await store.fetchBoundaryMessage(threadIDs: ["thread-tie"], boundary: .newest)
+
+        XCTAssertEqual(newestMatch?.messageID, higherID.messageID)
+    }
 }

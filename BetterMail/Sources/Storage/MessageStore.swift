@@ -212,7 +212,7 @@ internal final class MessageStore {
             case .newest:
                 request.sortDescriptors = [
                     NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
-                    NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
+                    NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: false)
                 ]
             case .oldest:
                 request.sortDescriptors = [
