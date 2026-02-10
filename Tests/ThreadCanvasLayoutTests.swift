@@ -282,6 +282,139 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertFalse(shouldNotExpand)
     }
 
+    func test_planJumpExpansionTargets_shortHistory_returnsNoStepsAndReached() {
+        let plan = ThreadCanvasViewModel.planJumpExpansionTargets(currentDayCount: 21,
+                                                                  requiredDayCount: 7,
+                                                                  dayWindowIncrement: 7,
+                                                                  maxDayCount: 365,
+                                                                  maxSteps: 10)
+
+        XCTAssertEqual(plan.targets, [])
+        XCTAssertTrue(plan.reachedRequiredDayCount)
+        XCTAssertEqual(plan.cappedDayCount, 21)
+        XCTAssertEqual(plan.requiredDayCount, 21)
+    }
+
+    func test_planJumpExpansionTargets_veryLongHistory_respectsCapAndReportsUnreached() {
+        let plan = ThreadCanvasViewModel.planJumpExpansionTargets(currentDayCount: 7,
+                                                                  requiredDayCount: 9_999,
+                                                                  dayWindowIncrement: 7,
+                                                                  maxDayCount: 365,
+                                                                  maxSteps: 50)
+
+        XCTAssertFalse(plan.targets.isEmpty)
+        XCTAssertEqual(plan.cappedDayCount, 365)
+        XCTAssertFalse(plan.reachedRequiredDayCount)
+        XCTAssertEqual(plan.requiredDayCount, 9_999)
+    }
+
+    func test_folderThreadIDsByFolder_nestedFolders_includeChildThreadsInParentScope() {
+        let parent = ThreadFolder(id: "parent",
+                                  title: "Parent",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.7, alpha: 1),
+                                  threadIDs: ["thread-parent"],
+                                  parentID: nil)
+        let child = ThreadFolder(id: "child",
+                                 title: "Child",
+                                 color: ThreadFolderColor(red: 0.2, green: 0.7, blue: 0.4, alpha: 1),
+                                 threadIDs: ["thread-child"],
+                                 parentID: "parent")
+        let sibling = ThreadFolder(id: "sibling",
+                                   title: "Sibling",
+                                   color: ThreadFolderColor(red: 0.9, green: 0.4, blue: 0.2, alpha: 1),
+                                   threadIDs: ["thread-sibling"],
+                                   parentID: nil)
+
+        let map = ThreadCanvasViewModel.folderThreadIDsByFolder(folders: [parent, child, sibling])
+
+        XCTAssertEqual(map["child"], Set(["thread-child"]))
+        XCTAssertEqual(map["parent"], Set(["thread-parent", "thread-child"]))
+        XCTAssertEqual(map["sibling"], Set(["thread-sibling"]))
+    }
+
+    func test_boundaryNodeID_tieBreakers_selectDeterministicOldestAndNewest() {
+        let calendar = Calendar(identifier: .gregorian)
+        let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let olderDate = calendar.date(byAdding: .day, value: -2, to: baseDate)!
+        let newerDate = calendar.date(byAdding: .day, value: -1, to: baseDate)!
+
+        let oldA = ThreadNode(message: makeMessage(id: "a-old", date: olderDate))
+        let oldB = ThreadNode(message: makeMessage(id: "z-old", date: olderDate))
+        let newA = ThreadNode(message: makeMessage(id: "a-new", date: newerDate))
+        let newB = ThreadNode(message: makeMessage(id: "z-new", date: newerDate))
+        let nodes = [oldA, oldB, newA, newB]
+
+        XCTAssertEqual(ThreadCanvasViewModel.boundaryNodeID(in: nodes, boundary: .oldest), "a-old")
+        XCTAssertEqual(ThreadCanvasViewModel.boundaryNodeID(in: nodes, boundary: .newest), "z-new")
+    }
+
+    func test_resolveRenderableJumpTargetID_returnsPreferredWhenPresent() {
+        let calendar = Calendar(identifier: .gregorian)
+        let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let olderDate = calendar.date(byAdding: .day, value: -1, to: baseDate)!
+
+        let preferred = ThreadNode(message: makeMessage(id: "preferred", date: baseDate))
+        let other = ThreadNode(message: makeMessage(id: "other", date: olderDate))
+        let nodes = [other, preferred]
+
+        let target = ThreadCanvasViewModel.resolveRenderableJumpTargetID(preferredNodeID: "preferred",
+                                                                          renderableCandidates: nodes,
+                                                                          boundary: .oldest,
+                                                                          allowFallback: false)
+
+        XCTAssertEqual(target, "preferred")
+    }
+
+    func test_resolveRenderableJumpTargetID_withoutFallbackReturnsNilWhenPreferredMissing() {
+        let calendar = Calendar(identifier: .gregorian)
+        let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let older = ThreadNode(message: makeMessage(id: "older", date: calendar.date(byAdding: .day, value: -2, to: baseDate)!))
+        let newer = ThreadNode(message: makeMessage(id: "newer", date: calendar.date(byAdding: .day, value: -1, to: baseDate)!))
+        let nodes = [older, newer]
+
+        let target = ThreadCanvasViewModel.resolveRenderableJumpTargetID(preferredNodeID: "missing",
+                                                                          renderableCandidates: nodes,
+                                                                          boundary: .newest,
+                                                                          allowFallback: false)
+
+        XCTAssertNil(target)
+    }
+
+    func test_resolveRenderableJumpTargetID_withFallbackReturnsBoundaryWhenPreferredMissing() {
+        let calendar = Calendar(identifier: .gregorian)
+        let baseDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let older = ThreadNode(message: makeMessage(id: "older", date: calendar.date(byAdding: .day, value: -2, to: baseDate)!))
+        let newer = ThreadNode(message: makeMessage(id: "newer", date: calendar.date(byAdding: .day, value: -1, to: baseDate)!))
+        let nodes = [older, newer]
+
+        let oldestFallback = ThreadCanvasViewModel.resolveRenderableJumpTargetID(preferredNodeID: "missing",
+                                                                                  renderableCandidates: nodes,
+                                                                                  boundary: .oldest)
+        let newestFallback = ThreadCanvasViewModel.resolveRenderableJumpTargetID(preferredNodeID: "missing",
+                                                                                  renderableCandidates: nodes,
+                                                                                  boundary: .newest)
+
+        XCTAssertEqual(oldestFallback, "older")
+        XCTAssertEqual(newestFallback, "newer")
+    }
+
+    private func makeMessage(id: String, date: Date) -> EmailMessage {
+        EmailMessage(messageID: id,
+                     mailboxID: "inbox",
+                     accountName: "",
+                     subject: id,
+                     from: "sender@example.com",
+                     to: "me@example.com",
+                     date: date,
+                     snippet: "",
+                     isUnread: false,
+                     inReplyTo: nil,
+                     references: [],
+                     threadID: "thread-\(id)")
+    }
+
     func testFolderOrderingKeepsMembersAdjacentAndSortedByFolderLatestDate() {
         let calendar = Calendar(identifier: .gregorian)
         let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!

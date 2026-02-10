@@ -12,7 +12,9 @@ internal struct ThreadCanvasView: View {
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var scrollOffset: CGFloat = 0
     @State private var rawScrollOffset: CGFloat = 0
+    @State private var rawScrollOffsetX: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var canvasScrollView: NSScrollView?
     @State private var activeDropFolderID: String?
     @State private var dropHighlightPulseToken: Int = 0
     @State private var isDropHighlightPulsing: Bool = false
@@ -42,6 +44,7 @@ internal struct ThreadCanvasView: View {
                                                 viewMode: displaySettings.viewMode,
                                                 today: today,
                                                 calendar: calendar)
+            let jumpAnchorVersion = jumpAnchorVersion(for: layout)
             let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
             let readabilityMode = displaySettings.readabilityMode(for: zoomScale)
             let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
@@ -65,7 +68,6 @@ internal struct ThreadCanvasView: View {
                                        metrics: metrics,
                                        readabilityMode: readabilityMode,
                                        timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
-                        jumpAnchorLayer(layout: layout)
                         nodesLayer(layout: layout,
                                    metrics: metrics,
                                    chromeData: chromeData,
@@ -88,6 +90,7 @@ internal struct ThreadCanvasView: View {
                     .background(
                         GeometryReader { contentProxy in
                             let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
+                            let minX = contentProxy.frame(in: .named("ThreadCanvasScroll")).minX
                             Color.clear
                                 .onChange(of: minY) { _, newValue in
                                     let rawOffset = -newValue
@@ -101,6 +104,9 @@ internal struct ThreadCanvasView: View {
                                                                             metrics: metrics,
                                                                             today: today,
                                                                             calendar: calendar)
+                                }
+                                .onChange(of: minX) { _, newValue in
+                                    rawScrollOffsetX = max(0, -newValue)
                                 }
                         }
                     )
@@ -121,6 +127,14 @@ internal struct ThreadCanvasView: View {
                     GeometryReader { sizeProxy in
                         Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
                                                value: sizeProxy.size.height)
+                    }
+                )
+                .background(
+                    ScrollViewResolver { scrollView in
+                        if canvasScrollView !== scrollView {
+                            canvasScrollView = scrollView
+                            Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
+                        }
                     }
                 )
                 .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
@@ -146,6 +160,8 @@ internal struct ThreadCanvasView: View {
                     if let request = viewModel.pendingScrollRequest {
                         scrollToPendingRequestIfAvailable(request,
                                                          layout: layout,
+                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                         totalTopPadding: totalTopPadding,
                                                          scrollProxy: scrollProxy)
                     }
                 }
@@ -153,6 +169,16 @@ internal struct ThreadCanvasView: View {
                     guard let request else { return }
                     scrollToPendingRequestIfAvailable(request,
                                                      layout: layout,
+                                                     viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                     totalTopPadding: totalTopPadding,
+                                                     scrollProxy: scrollProxy)
+                }
+                .onChange(of: jumpAnchorVersion) { _, _ in
+                    guard let request = viewModel.pendingScrollRequest else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                     totalTopPadding: totalTopPadding,
                                                      scrollProxy: scrollProxy)
                 }
                 .onChange(of: activeDropFolderID) { oldValue, newValue in
@@ -219,34 +245,63 @@ internal struct ThreadCanvasView: View {
         min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
     }
 
-    private func jumpAnchorID(for nodeID: String) -> String {
-        "thread-canvas-jump-anchor-\(nodeID)"
+    private func jumpAnchorVersion(for layout: ThreadCanvasLayout) -> Int {
+        var hasher = Hasher()
+        for column in layout.columns {
+            hasher.combine(column.id)
+            hasher.combine(column.nodes.count)
+            for node in column.nodes {
+                hasher.combine(node.id)
+            }
+        }
+        return hasher.finalize()
     }
 
     private func scrollToPendingRequestIfAvailable(_ request: ThreadCanvasScrollRequest,
                                                    layout: ThreadCanvasLayout,
+                                                   viewportHeight: CGFloat,
+                                                   totalTopPadding: CGFloat,
                                                    scrollProxy: ScrollViewProxy) {
-        guard layout.columns.contains(where: { column in
-            column.nodes.contains(where: { $0.id == request.nodeID })
-        }) else {
+        let matchingNodes = layout.columns
+            .flatMap(\.nodes)
+            .filter { $0.id == request.nodeID }
+        guard let targetNode = matchingNodes.first else {
+            Log.app.debug("Folder jump scroll deferred. marker=scroll-anchor-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public)")
             return
         }
-        withAnimation(.easeInOut(duration: 0.28)) {
-            scrollProxy.scrollTo(jumpAnchorID(for: request.nodeID), anchor: .center)
-        }
-        viewModel.consumeScrollRequest(request)
-    }
-
-    @ViewBuilder
-    private func jumpAnchorLayer(layout: ThreadCanvasLayout) -> some View {
-        ForEach(layout.columns) { column in
-            ForEach(column.nodes) { node in
-                Color.clear
-                    .frame(width: 1, height: 1)
-                    .offset(x: node.frame.midX, y: node.frame.midY)
-                    .id(jumpAnchorID(for: node.id))
-                    .accessibilityHidden(true)
+        Log.app.debug("Folder jump scroll dispatch. marker=scroll-dispatch folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) x=\(targetNode.frame.midX, privacy: .public) y=\(targetNode.frame.midY, privacy: .public) matchCount=\(matchingNodes.count, privacy: .public) targetType=appkit-vertical-only currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
+        let requestToken = request.token
+        guard let scrollView = canvasScrollView,
+              let documentView = scrollView.documentView else {
+            Log.app.debug("Folder jump scroll host missing. marker=scroll-host-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public)")
+            withAnimation(.easeInOut(duration: 0.18)) {
+                scrollProxy.scrollTo(request.nodeID, anchor: .center)
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                viewModel.consumeScrollRequest(request)
+            }
+            return
+        }
+        let clipView = scrollView.contentView
+        let targetMidYInScrollContent = targetNode.frame.midY + totalTopPadding
+        let desiredY = max(targetMidYInScrollContent - (max(viewportHeight, clipView.bounds.height) / 2), 0)
+        let maxY = max(documentView.bounds.height - clipView.bounds.height, 0)
+        let clampedY = min(desiredY, maxY)
+
+        func applyVerticalOnlyScroll() {
+            let current = clipView.bounds.origin
+            let next = CGPoint(x: current.x, y: clampedY)
+            clipView.setBoundsOrigin(next)
+            scrollView.reflectScrolledClipView(clipView)
+        }
+        applyVerticalOnlyScroll()
+        DispatchQueue.main.async {
+            guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+            applyVerticalOnlyScroll()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                Log.app.debug("Folder jump scroll postflight. marker=scroll-postflight folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) targetType=appkit-vertical-only targetScrollY=\(clampedY, privacy: .public) currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
+            }
+            viewModel.consumeScrollRequest(request)
         }
     }
 
@@ -451,7 +506,8 @@ internal struct ThreadCanvasView: View {
                     }
                 }
                     .frame(width: node.frame.width, height: node.frame.height)
-                    .offset(x: node.frame.minX, y: node.frame.minY)
+                    .position(x: node.frame.midX, y: node.frame.midY)
+                    .id(node.id)
                     .gesture(
                         DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasContent"))
                             .onChanged { value in
@@ -1929,6 +1985,26 @@ internal enum TextVisibility {
     case normal
     case ellipsis
     case hidden
+}
+
+private struct ScrollViewResolver: NSViewRepresentable {
+    let onResolve: (NSScrollView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak view] in
+            guard let view, let scrollView = view.enclosingScrollView else { return }
+            onResolve(scrollView)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            guard let nsView, let scrollView = nsView.enclosingScrollView else { return }
+            onResolve(scrollView)
+        }
+    }
 }
 
 private enum DayLabelMode {
