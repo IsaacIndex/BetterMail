@@ -7,6 +7,6 @@
 
 ## 2. Validation
 - [x] 2.1 Add/extend unit tests for oldest/newest boundary resolution and expansion planning edge cases (short history, very long history, nested folder membership).
-- [ ] 2.2 Manually validate both jump actions in folders with targets inside and outside the initial 7-day range, including nested folders.
-- [ ] 2.3 Manually validate repeated jump taps do not introduce lag spikes or dropped final scrolls.
+- [x] 2.2 Manually validate both jump actions in folders with targets inside and outside the initial 7-day range, including nested folders.
+- [x] 2.3 Manually validate repeated jump taps do not introduce lag spikes or dropped final scrolls.
 - [x] 2.4 Build the app and capture the full build log at `/tmp/xcodebuild.log`.
