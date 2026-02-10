@@ -76,6 +76,29 @@ ZStack draw order (back to front):
 - `folderColumnHeaderLayer` is purely visual; `folderHeaderHitTargets` handles interaction.
 - `folderColumnBackgroundLayer` and `folderDropHighlightLayer` both expand to include header space so they stay visually connected to headers.
 
+## Scrolling And Folder Jump Reliability
+
+### Why Folder Jumps Must Avoid `scrollTo`
+The canvas is a two-axis scroll view (horizontal + vertical). `ScrollViewProxy.scrollTo(_:anchor:)` can change both axes,
+which makes folder jump actions drift horizontally (often far left) depending on anchor choice and SwiftUI's internal scroll heuristics.
+
+For folder boundary jumps ("Jump to first email" / "Jump to latest email"), the intended behavior is vertical-only movement:
+- Preserve the current horizontal position (column alignment stays the same).
+- Scroll only the vertical axis to bring the target node into view.
+
+### How The Vertical-Only Scroll Works
+`ThreadCanvasView` resolves the underlying `NSScrollView` and directly adjusts the clip view bounds origin:
+- Preserve X: keep `clipView.bounds.origin.x` (or a per-jump preserved X).
+- Set Y: compute a desired Y based on boundary type, then clamp to the document's scrollable range.
+- Apply: `clipView.setBoundsOrigin(CGPoint(x: preservedX, y: targetY))` + `scrollView.reflectScrolledClipView(clipView)`.
+
+This bypasses SwiftUI's two-axis `scrollTo` behavior and deterministically enforces vertical-only scrolling.
+
+### Why Scroll Host Resolution Placement Matters
+The folder jump scroll path requires an `NSScrollView` reference. `ScrollViewResolver` must be attached inside the scrollable
+content hierarchy (under the `ScrollView` content / ZStack) so `enclosingScrollView` and superview traversal can find the real host.
+If the resolver is attached outside the scrolled content tree, it may never discover the scroll view, causing jump requests to time out.
+
 ## Diagram (Mermaid)
 ```mermaid
 flowchart LR
