@@ -21,6 +21,8 @@ internal struct ThreadCanvasView: View {
     @State private var dragState: ThreadCanvasDragState?
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
+    @State private var pendingScrollConsumeTask: Task<Void, Never>?
+    @State private var preservedJumpScrollXByToken: [UUID: CGFloat] = [:]
     private let headerSpacing: CGFloat = 0
 
     private let calendar = Calendar.current
@@ -54,7 +56,7 @@ internal struct ThreadCanvasView: View {
                 : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
             let totalTopPadding = topInset + headerStackHeight + headerSpacing
 
-            ScrollViewReader { scrollProxy in
+            ScrollViewReader { _ in
                 ScrollView([.horizontal, .vertical]) {
                     ZStack(alignment: .topLeading) {
                         dayBands(layout: layout,
@@ -87,6 +89,14 @@ internal struct ThreadCanvasView: View {
                     .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
                     .coordinateSpace(name: "ThreadCanvasContent")
                     .padding(.top, totalTopPadding)
+                    .background(
+                        ScrollViewResolver { scrollView in
+                            if canvasScrollView !== scrollView {
+                                canvasScrollView = scrollView
+                                Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
+                            }
+                        }
+                    )
                     .background(
                         GeometryReader { contentProxy in
                             let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
@@ -129,14 +139,6 @@ internal struct ThreadCanvasView: View {
                                                value: sizeProxy.size.height)
                     }
                 )
-                .background(
-                    ScrollViewResolver { scrollView in
-                        if canvasScrollView !== scrollView {
-                            canvasScrollView = scrollView
-                            Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
-                        }
-                    }
-                )
                 .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
                     let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
                     let clampedHeight = max(effectiveHeight, 1)
@@ -161,25 +163,25 @@ internal struct ThreadCanvasView: View {
                         scrollToPendingRequestIfAvailable(request,
                                                          layout: layout,
                                                          viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                         totalTopPadding: totalTopPadding,
-                                                         scrollProxy: scrollProxy)
+                                                         totalTopPadding: totalTopPadding)
                     }
                 }
-                .onChange(of: viewModel.pendingScrollRequest) { _, request in
+                .onChange(of: viewModel.pendingScrollRequest) { oldRequest, request in
+                    if let oldRequest {
+                        preservedJumpScrollXByToken.removeValue(forKey: oldRequest.token)
+                    }
                     guard let request else { return }
                     scrollToPendingRequestIfAvailable(request,
                                                      layout: layout,
                                                      viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                     totalTopPadding: totalTopPadding,
-                                                     scrollProxy: scrollProxy)
+                                                     totalTopPadding: totalTopPadding)
                 }
                 .onChange(of: jumpAnchorVersion) { _, _ in
                     guard let request = viewModel.pendingScrollRequest else { return }
                     scrollToPendingRequestIfAvailable(request,
                                                      layout: layout,
                                                      viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                     totalTopPadding: totalTopPadding,
-                                                     scrollProxy: scrollProxy)
+                                                     totalTopPadding: totalTopPadding)
                 }
                 .onChange(of: activeDropFolderID) { oldValue, newValue in
                     guard newValue != nil else {
@@ -261,7 +263,7 @@ internal struct ThreadCanvasView: View {
                                                    layout: ThreadCanvasLayout,
                                                    viewportHeight: CGFloat,
                                                    totalTopPadding: CGFloat,
-                                                   scrollProxy: ScrollViewProxy) {
+                                                   retryCount: Int = 0) {
         let matchingNodes = layout.columns
             .flatMap(\.nodes)
             .filter { $0.id == request.nodeID }
@@ -273,35 +275,80 @@ internal struct ThreadCanvasView: View {
         let requestToken = request.token
         guard let scrollView = canvasScrollView,
               let documentView = scrollView.documentView else {
-            Log.app.debug("Folder jump scroll host missing. marker=scroll-host-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public)")
-            withAnimation(.easeInOut(duration: 0.18)) {
-                scrollProxy.scrollTo(request.nodeID, anchor: .center)
+            let nextRetry = retryCount + 1
+            Log.app.debug("Folder jump scroll host missing. marker=scroll-host-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
+            if nextRetry <= 45 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: viewportHeight,
+                                                     totalTopPadding: totalTopPadding,
+                                                     retryCount: nextRetry)
+                }
+                return
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                viewModel.consumeScrollRequest(request)
-            }
+            Log.app.debug("Folder jump scroll host unavailable after retries. marker=scroll-host-fallback folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
             return
         }
         let clipView = scrollView.contentView
+        let preservedX = ThreadCanvasViewModel.resolvedPreservedJumpX(existingPreservedX: preservedJumpScrollXByToken[requestToken],
+                                                                       currentX: clipView.bounds.origin.x)
+        preservedJumpScrollXByToken[requestToken] = preservedX
+        let effectiveViewportHeight = max(viewportHeight, clipView.bounds.height)
+        let targetMinYInScrollContent = targetNode.frame.minY + totalTopPadding
         let targetMidYInScrollContent = targetNode.frame.midY + totalTopPadding
-        let desiredY = max(targetMidYInScrollContent - (max(viewportHeight, clipView.bounds.height) / 2), 0)
-        let maxY = max(documentView.bounds.height - clipView.bounds.height, 0)
-        let clampedY = min(desiredY, maxY)
+        let resolution = ThreadCanvasViewModel.resolveVerticalJump(boundary: request.boundary,
+                                                                   targetMinYInScrollContent: targetMinYInScrollContent,
+                                                                   targetMidYInScrollContent: targetMidYInScrollContent,
+                                                                   totalTopPadding: totalTopPadding,
+                                                                   viewportHeight: effectiveViewportHeight,
+                                                                   documentHeight: documentView.bounds.height,
+                                                                   clipHeight: clipView.bounds.height)
 
-        func applyVerticalOnlyScroll() {
-            let current = clipView.bounds.origin
-            let next = CGPoint(x: current.x, y: clampedY)
+        func applyVerticalOnlyScroll(targetY: CGFloat, preservedX: CGFloat) {
+            let next = CGPoint(x: preservedX, y: targetY)
             clipView.setBoundsOrigin(next)
             scrollView.reflectScrolledClipView(clipView)
         }
-        applyVerticalOnlyScroll()
+        applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
         DispatchQueue.main.async {
             guard viewModel.pendingScrollRequest?.token == requestToken else { return }
-            applyVerticalOnlyScroll()
+            applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
+            let finalOrigin = clipView.bounds.origin
+            let didConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: finalOrigin.y,
+                                                                             targetY: resolution.clampedY,
+                                                                             didClampToBottom: resolution.didClampToBottom)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                Log.app.debug("Folder jump scroll postflight. marker=scroll-postflight folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) targetType=appkit-vertical-only targetScrollY=\(clampedY, privacy: .public) currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
+                Log.app.debug("Folder jump scroll postflight. marker=scroll-postflight folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) targetType=appkit-vertical-only targetScrollY=\(resolution.clampedY, privacy: .public) desiredY=\(resolution.desiredY, privacy: .public) maxY=\(resolution.maxY, privacy: .public) preservedX=\(preservedX, privacy: .public) finalX=\(finalOrigin.x, privacy: .public) didConsume=\(didConsume, privacy: .public) currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
             }
-            viewModel.consumeScrollRequest(request)
+            if didConsume {
+                schedulePendingScrollConsumption(request)
+            } else {
+                let nextRetry = retryCount + 1
+                guard nextRetry <= 8 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: viewportHeight,
+                                                     totalTopPadding: totalTopPadding,
+                                                     retryCount: nextRetry)
+                }
+            }
+        }
+    }
+
+    private func schedulePendingScrollConsumption(_ request: ThreadCanvasScrollRequest) {
+        pendingScrollConsumeTask?.cancel()
+        let requestToken = request.token
+        pendingScrollConsumeTask = Task {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                viewModel.consumeScrollRequest(request)
+            }
         }
     }
 
@@ -1993,7 +2040,7 @@ private struct ScrollViewResolver: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async { [weak view] in
-            guard let view, let scrollView = view.enclosingScrollView else { return }
+            guard let view, let scrollView = Self.findScrollView(startingAt: view) else { return }
             onResolve(scrollView)
         }
         return view
@@ -2001,9 +2048,23 @@ private struct ScrollViewResolver: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async { [weak nsView] in
-            guard let nsView, let scrollView = nsView.enclosingScrollView else { return }
+            guard let nsView, let scrollView = Self.findScrollView(startingAt: nsView) else { return }
             onResolve(scrollView)
         }
+    }
+
+    private static func findScrollView(startingAt view: NSView) -> NSScrollView? {
+        if let direct = view.enclosingScrollView {
+            return direct
+        }
+        var current: NSView? = view
+        while let candidate = current {
+            if let scrollView = candidate as? NSScrollView {
+                return scrollView
+            }
+            current = candidate.superview
+        }
+        return nil
     }
 }
 

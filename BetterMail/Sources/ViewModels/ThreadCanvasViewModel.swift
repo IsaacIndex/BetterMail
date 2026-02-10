@@ -43,6 +43,13 @@ internal struct ThreadCanvasJumpExpansionPlan: Equatable {
     internal let requiredDayCount: Int
 }
 
+internal struct ThreadCanvasVerticalJumpResolution: Equatable {
+    internal let desiredY: CGFloat
+    internal let clampedY: CGFloat
+    internal let maxY: CGFloat
+    internal let didClampToBottom: Bool
+}
+
 private struct NodeSummaryInput {
     let nodeID: String
     let cacheKey: String
@@ -2498,6 +2505,47 @@ private extension ThreadCanvasViewModel {
 }
 
 extension ThreadCanvasViewModel {
+    internal static let verticalJumpScrollTolerance: CGFloat = 1
+
+    internal static func resolvedPreservedJumpX(existingPreservedX: CGFloat?,
+                                                currentX: CGFloat) -> CGFloat {
+        existingPreservedX ?? currentX
+    }
+
+    internal static func resolveVerticalJump(boundary: MessageStore.ThreadMessageBoundary,
+                                             targetMinYInScrollContent: CGFloat,
+                                             targetMidYInScrollContent: CGFloat,
+                                             totalTopPadding: CGFloat,
+                                             viewportHeight: CGFloat,
+                                             documentHeight: CGFloat,
+                                             clipHeight: CGFloat) -> ThreadCanvasVerticalJumpResolution {
+        let topVisibilityInset = max(24, totalTopPadding * 0.25)
+        let desiredY: CGFloat
+        switch boundary {
+        case .oldest:
+            desiredY = max(targetMinYInScrollContent - topVisibilityInset, 0)
+        case .newest:
+            desiredY = max(targetMidYInScrollContent - (viewportHeight / 2), 0)
+        }
+
+        let maxY = max(documentHeight - clipHeight, 0)
+        let clampedY = min(desiredY, maxY)
+        let didClampToBottom = desiredY > maxY && abs(clampedY - maxY) <= verticalJumpScrollTolerance
+
+        return ThreadCanvasVerticalJumpResolution(desiredY: desiredY,
+                                                  clampedY: clampedY,
+                                                  maxY: maxY,
+                                                  didClampToBottom: didClampToBottom)
+    }
+
+    internal static func shouldConsumeVerticalJump(finalY: CGFloat,
+                                                   targetY: CGFloat,
+                                                   didClampToBottom: Bool,
+                                                   tolerance: CGFloat = verticalJumpScrollTolerance) -> Bool {
+        let reachedTarget = abs(finalY - targetY) <= tolerance
+        return reachedTarget || didClampToBottom
+    }
+
     internal static func pinnedFirstFolders(_ folders: [ThreadFolder],
                                             pinnedIDs: Set<String>) -> [ThreadFolder] {
         guard !pinnedIDs.isEmpty else { return folders }

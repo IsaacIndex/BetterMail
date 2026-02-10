@@ -400,6 +400,54 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(newestFallback, "newer")
     }
 
+    func test_resolvedPreservedJumpX_keepsExistingX() {
+        let preserved = ThreadCanvasViewModel.resolvedPreservedJumpX(existingPreservedX: 320, currentX: 96)
+        XCTAssertEqual(preserved, 320)
+    }
+
+    func test_resolveVerticalJump_oldestUsesTopAlignedTarget() {
+        let resolution = ThreadCanvasViewModel.resolveVerticalJump(boundary: .oldest,
+                                                                   targetMinYInScrollContent: 420,
+                                                                   targetMidYInScrollContent: 480,
+                                                                   totalTopPadding: 120,
+                                                                   viewportHeight: 600,
+                                                                   documentHeight: 2_000,
+                                                                   clipHeight: 600)
+
+        XCTAssertEqual(resolution.desiredY, 390)
+        XCTAssertEqual(resolution.clampedY, 390)
+        XCTAssertFalse(resolution.didClampToBottom)
+    }
+
+    func test_resolveVerticalJump_newestCentersTargetAndClampsToBottom() {
+        let resolution = ThreadCanvasViewModel.resolveVerticalJump(boundary: .newest,
+                                                                   targetMinYInScrollContent: 900,
+                                                                   targetMidYInScrollContent: 980,
+                                                                   totalTopPadding: 100,
+                                                                   viewportHeight: 600,
+                                                                   documentHeight: 1_200,
+                                                                   clipHeight: 600)
+
+        XCTAssertEqual(resolution.desiredY, 680)
+        XCTAssertEqual(resolution.maxY, 600)
+        XCTAssertEqual(resolution.clampedY, 600)
+        XCTAssertTrue(resolution.didClampToBottom)
+    }
+
+    func test_shouldConsumeVerticalJump_falseWhenNotAtTargetAndNotBottomClamped() {
+        let shouldConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: 500,
+                                                                            targetY: 560,
+                                                                            didClampToBottom: false)
+        XCTAssertFalse(shouldConsume)
+    }
+
+    func test_shouldConsumeVerticalJump_trueWhenBottomClampIsFinal() {
+        let shouldConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: 520,
+                                                                            targetY: 600,
+                                                                            didClampToBottom: true)
+        XCTAssertTrue(shouldConsume)
+    }
+
     private func makeMessage(id: String, date: Date) -> EmailMessage {
         EmailMessage(messageID: id,
                      mailboxID: "inbox",
