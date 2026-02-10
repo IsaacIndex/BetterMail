@@ -1311,6 +1311,7 @@ private struct FolderHeaderLayout {
     static let footerBaseSize: CGFloat = 12
     static let verticalPadding: CGFloat = 10
     static let lineSpacing: CGFloat = 6
+    static let summaryFooterSpacing: CGFloat = 6
     static let badgeVerticalPadding: CGFloat = 6
     static let badgeVerticalPaddingEllipsis: CGFloat = 5
 
@@ -1327,8 +1328,11 @@ private struct FolderHeaderLayout {
         let visibleHeights = [titleHeight, summaryHeight, footerHeight].filter { $0 > 0 }
         let spacingCount = max(visibleHeights.count - 1, 0)
         let spacing = CGFloat(spacingCount) * lineSpacing * scale
+        let summaryFooterExtraSpacing = (summaryHeight > 0 && footerHeight > 0)
+            ? summaryFooterSpacing * scale
+            : 0
 
-        return (verticalPadding * 2 * scale) + visibleHeights.reduce(0, +) + spacing
+        return (verticalPadding * 2 * scale) + visibleHeights.reduce(0, +) + spacing + summaryFooterExtraSpacing
     }
 
     static func lineHeight(baseSize: CGFloat, sizeScale: CGFloat) -> CGFloat {
@@ -1453,6 +1457,9 @@ private struct FolderColumnHeader: View {
         let titleSectionHeight = FolderHeaderLayout.titleSectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
         let summarySectionHeight = FolderHeaderLayout.summarySectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
         let footerSectionHeight = FolderHeaderLayout.footerSectionHeight(sizeScale: sizeScale, readabilityMode: readabilityMode)
+        let summaryFooterSpacing = (summarySectionHeight > 0 && footerSectionHeight > 0)
+            ? FolderHeaderLayout.summaryFooterSpacing * sizeScale
+            : 0
 
         VStack(alignment: .leading, spacing: FolderHeaderLayout.lineSpacing * sizeScale) {
             if titleSectionHeight > 0 {
@@ -1508,6 +1515,7 @@ private struct FolderColumnHeader: View {
                             }
                             badge(unread: unreadCount)
                         }
+                        .padding(.top, summaryFooterSpacing)
                     } else {
                         Color.clear
                     }
