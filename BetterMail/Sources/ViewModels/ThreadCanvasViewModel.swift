@@ -3,6 +3,7 @@ import Combine
 import CoreGraphics
 import Foundation
 import OSLog
+import os.signpost
 
 internal struct ThreadSummaryState {
     internal var text: String
@@ -27,6 +28,27 @@ internal enum OpenInMailStatus: Equatable {
 internal struct OpenInMailState: Equatable {
     internal let messageID: String
     internal let status: OpenInMailStatus
+}
+
+internal struct ThreadCanvasScrollRequest: Equatable {
+    internal let nodeID: String
+    internal let token: UUID
+    internal let folderID: String
+    internal let boundary: MessageStore.ThreadMessageBoundary
+}
+
+internal struct ThreadCanvasJumpExpansionPlan: Equatable {
+    internal let targets: [Int]
+    internal let reachedRequiredDayCount: Bool
+    internal let cappedDayCount: Int
+    internal let requiredDayCount: Int
+}
+
+internal struct ThreadCanvasVerticalJumpResolution: Equatable {
+    internal let desiredY: CGFloat
+    internal let clampedY: CGFloat
+    internal let maxY: CGFloat
+    internal let didClampToBottom: Bool
 }
 
 private struct NodeSummaryInput {
@@ -56,6 +78,19 @@ private struct NodeTagInput {
 private struct ThreadFolderEdit: Hashable {
     let title: String
     let color: ThreadFolderColor
+}
+
+private enum FolderJumpPhase: String {
+    case resolvingTarget = "resolving"
+    case expandingCoverage = "expanding"
+    case awaitingAnchor = "awaiting_anchor"
+    case scrolling = "scrolling"
+}
+
+private struct PendingFolderJumpScrollContext {
+    let folderID: String
+    let boundary: MessageStore.ThreadMessageBoundary
+    let targetNodeID: String
 }
 
 @MainActor
@@ -348,6 +383,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didSet { invalidateLayoutCache() }
     }
     @Published internal private(set) var openInMailState: OpenInMailState?
+    @Published internal private(set) var pendingScrollRequest: ThreadCanvasScrollRequest?
     @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount {
         didSet { invalidateLayoutCache() }
     }
@@ -358,6 +394,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
+    @Published internal private(set) var folderJumpInProgressIDs: Set<String> = []
     @Published internal var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -401,11 +438,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var timelineTextMeasurementCache = TimelineTextMeasurementCache()
     private var visibleRangeUpdateTask: Task<Void, Never>?
     private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
+    private let dayWindowExpansionCooldown: TimeInterval = 0.35
+    private let dayWindowExpansionNearBottomHitThreshold = 2
     private static let timelineVisibleTagLimit = 3
+    private let jumpExpansionThrottleInterval: UInt64 = 70_000_000
+    private let jumpAnchorRetryInterval: UInt64 = 60_000_000
+    private let jumpExpansionMaxDayCount = ThreadCanvasLayoutMetrics.defaultDayCount * 520
+    private let jumpExpansionMaxSteps = 18
+    private let jumpAnchorResolutionAttempts = 45
+    private let jumpScrollTimeoutInterval: UInt64 = 2_500_000_000
+    private var folderJumpTasks: [String: Task<Void, Never>] = [:]
+    private var coalescedFolderJumpBoundaries: [String: MessageStore.ThreadMessageBoundary] = [:]
+    private var jumpPhaseByFolderID: [String: FolderJumpPhase] = [:]
+    private var pendingScrollContextByToken: [UUID: PendingFolderJumpScrollContext] = [:]
+    private var pendingScrollTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+    private var nearBottomHitCount = 0
+    private var lastDayWindowExpansionTime: Date?
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
-                  pinnedFolderSettings: PinnedFolderSettings,
+                  pinnedFolderSettings: PinnedFolderSettings? = nil,
                   store: MessageStore = .shared,
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
@@ -418,8 +470,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.threader = threader
         self.settings = settings
         self.inspectorSettings = inspectorSettings
-        self.pinnedFolderSettings = pinnedFolderSettings
         self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
+        self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
@@ -432,14 +484,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.worker = SidebarBackgroundWorker(client: client,
                                               store: store,
                                               threader: threader)
-        self.pinnedFolderIDs = pinnedFolderSettings.pinnedFolderIDs
+        self.pinnedFolderIDs = self.pinnedFolderSettings.pinnedFolderIDs
         NotificationCenter.default.publisher(for: .manualThreadGroupsReset)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.scheduleRethread()
             }
             .store(in: &cancellables)
-        pinnedFolderSettings.$pinnedFolderIDs
+        self.pinnedFolderSettings.$pinnedFolderIDs
             .receive(on: RunLoop.main)
             .sink { [weak self] ids in
                 self?.pinnedFolderIDs = ids
@@ -453,6 +505,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         nodeSummaryTasks.values.forEach { $0.cancel() }
         folderSummaryTasks.values.forEach { $0.cancel() }
         timelineTagTasks.values.forEach { $0.cancel() }
+        folderJumpTasks.values.forEach { $0.cancel() }
+        pendingScrollTimeoutTasks.values.forEach { $0.cancel() }
     }
 
     internal func start() {
@@ -1313,7 +1367,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return results
     }
 
-    private static func folderThreadIDsByFolder(folders: [ThreadFolder]) -> [String: Set<String>] {
+    internal static func folderThreadIDsByFolder(folders: [ThreadFolder]) -> [String: Set<String>] {
         let foldersByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
         let childrenByParent = childFolderIDsByParent(folders: folders)
 
@@ -1419,6 +1473,52 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             selectedNodeIDs = []
         }
         selectedFolderID = id
+    }
+
+    internal func jumpToLatestNode(in folderID: String) {
+        jumpToFolderBoundaryNode(in: folderID, boundary: .newest)
+    }
+
+    internal func jumpToFirstNode(in folderID: String) {
+        jumpToFolderBoundaryNode(in: folderID, boundary: .oldest)
+    }
+
+    internal func isJumpInProgress(for folderID: String) -> Bool {
+        folderJumpInProgressIDs.contains(folderID)
+    }
+
+    internal func isFolderPinned(id: String) -> Bool {
+        pinnedFolderIDs.contains(id)
+    }
+
+    internal func pinFolder(id: String) {
+        pinnedFolderSettings.pin(id)
+    }
+
+    internal func unpinFolder(id: String) {
+        pinnedFolderSettings.unpin(id)
+    }
+
+    internal func consumeScrollRequest(_ request: ThreadCanvasScrollRequest) {
+        guard pendingScrollRequest?.token == request.token else { return }
+        pendingScrollRequest = nil
+        pendingScrollTimeoutTasks[request.token]?.cancel()
+        pendingScrollTimeoutTasks.removeValue(forKey: request.token)
+        if let context = pendingScrollContextByToken.removeValue(forKey: request.token) {
+            Log.app.info("Folder jump completed. marker=success folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) scrolledNodeID=\(request.nodeID, privacy: .public)")
+            completeFolderJump(folderID: context.folderID)
+        }
+    }
+
+    internal func cancelPendingScrollRequest(reason: String = "user_scroll") {
+        guard let request = pendingScrollRequest else { return }
+        pendingScrollRequest = nil
+        pendingScrollTimeoutTasks[request.token]?.cancel()
+        pendingScrollTimeoutTasks.removeValue(forKey: request.token)
+        if let context = pendingScrollContextByToken.removeValue(forKey: request.token) {
+            Log.app.info("Folder jump cancelled. marker=cancelled folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) targetNodeID=\(context.targetNodeID, privacy: .public) reason=\(reason, privacy: .public)")
+            completeFolderJump(folderID: context.folderID)
+        }
     }
 
     internal func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
@@ -1705,16 +1805,22 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                viewMode: ThreadCanvasViewMode = .default,
                                today: Date = Date(),
                                calendar: Calendar = .current) -> ThreadCanvasLayout {
+        let signpostID = OSSignpostID(log: Log.performance)
+        os_signpost(.begin, log: Log.performance, name: "CanvasLayout", signpostID: signpostID)
+        defer {
+            os_signpost(.end, log: Log.performance, name: "CanvasLayout", signpostID: signpostID)
+        }
         let dayStart = calendar.startOfDay(for: today)
         let cacheKey = TimelineLayoutCacheKey(viewMode: viewMode,
                                               dayCount: metrics.dayCount,
-                                              zoomBucket: Self.metricsBucket(metrics.zoom),
+                                              zoomBucket: Self.zoomCacheBucket(metrics.zoom),
                                               columnWidthBucket: Self.metricsBucket(metrics.columnWidthAdjustment),
                                               dataVersion: layoutCacheVersion,
                                               dayStart: dayStart)
         if let cachedKey = layoutCacheKey,
            cachedKey == cacheKey,
            let cachedLayout = layoutCache {
+            os_signpost(.event, log: Log.performance, name: "CanvasLayoutCacheHit")
             return cachedLayout
         }
 
@@ -1731,6 +1837,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        nodeSummaries: nodeSummaries,
                                        timelineTagsByNodeID: timelineTagsByNodeID,
                                        measurementCache: &timelineTextMeasurementCache)
+        os_signpost(.event, log: Log.performance, name: "CanvasLayoutCacheMiss")
         layoutCacheKey = cacheKey
         layoutCache = layout
         return layout
@@ -1747,6 +1854,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                 today: Date = Date(),
                                                 calendar: Calendar = .current,
                                                 immediate: Bool = false) {
+        os_signpost(.event, log: Log.performance, name: "VisibleRangeSchedule")
         if immediate {
             visibleRangeUpdateTask?.cancel()
             updateVisibleDayRange(scrollOffset: scrollOffset,
@@ -1768,6 +1876,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         visibleRangeUpdateTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: visibleRangeUpdateThrottleInterval)
             guard !Task.isCancelled else { return }
+            os_signpost(.event, log: Log.performance, name: "VisibleRangeScheduleFired")
             self.updateVisibleDayRange(scrollOffset: scroll,
                                        viewportHeight: height,
                                        layout: layoutSnapshot,
@@ -1783,6 +1892,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                         metrics: ThreadCanvasLayoutMetrics,
                                         today: Date = Date(),
                                         calendar: Calendar = .current) {
+        let signpostID = OSSignpostID(log: Log.performance)
+        os_signpost(.begin, log: Log.performance, name: "VisibleRangeUpdate", signpostID: signpostID)
+        defer {
+            os_signpost(.end, log: Log.performance, name: "VisibleRangeUpdate", signpostID: signpostID)
+        }
         guard viewportHeight > 0 else { return }
         let range = Self.visibleDayRange(for: layout,
                                          scrollOffset: scrollOffset,
@@ -1804,11 +1918,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         if visibleRangeHasMessages != hasMessages {
             visibleRangeHasMessages = hasMessages
         }
-        let nearBottom = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
-                                                    viewportHeight: viewportHeight,
-                                                    contentHeight: layout.contentSize.height,
-                                                    threshold: metrics.dayHeight * 2)
-        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
+        let forceExpansion = shouldForceDayWindowExpansion(scrollOffset: scrollOffset,
+                                                           viewportHeight: viewportHeight,
+                                                           contentHeight: layout.contentSize.height,
+                                                           threshold: metrics.dayHeight * 2)
+        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: forceExpansion)
     }
 
     private func invalidateLayoutCache() {
@@ -1819,6 +1933,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private static func metricsBucket(_ value: CGFloat) -> Int {
         Int((value * 1000).rounded())
+    }
+
+    private static func zoomCacheBucket(_ value: CGFloat) -> Int {
+        let bucketStep: CGFloat = 0.025
+        return Int((value / bucketStep).rounded())
     }
 
     internal func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
@@ -2090,6 +2209,33 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return Self.pinnedFirstFolders(baseFolders, pinnedIDs: pinnedFolderIDs)
     }
 
+    private func shouldForceDayWindowExpansion(scrollOffset: CGFloat,
+                                               viewportHeight: CGFloat,
+                                               contentHeight: CGFloat,
+                                               threshold: CGFloat,
+                                               now: Date = Date()) -> Bool {
+        let nearBottom = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
+                                                    viewportHeight: viewportHeight,
+                                                    contentHeight: contentHeight,
+                                                    threshold: threshold)
+        if nearBottom {
+            nearBottomHitCount += 1
+        } else {
+            nearBottomHitCount = 0
+            return false
+        }
+        guard nearBottomHitCount >= dayWindowExpansionNearBottomHitThreshold else {
+            return false
+        }
+        if let lastExpansion = lastDayWindowExpansionTime,
+           now.timeIntervalSince(lastExpansion) < dayWindowExpansionCooldown {
+            return false
+        }
+        lastDayWindowExpansionTime = now
+        nearBottomHitCount = 0
+        return true
+    }
+
     private func expandDayWindowIfNeeded(visibleRange: ClosedRange<Int>?,
                                          forceIncrement: Bool) {
         var targetDayCount = dayWindowCount
@@ -2107,6 +2253,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Log.app.info("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount, privacy: .public) -> \(targetDayCount, privacy: .public) visibleRange=\(String(describing: visibleRange), privacy: .public) forceIncrement=\(forceIncrement, privacy: .public)")
         print("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount) -> \(targetDayCount) visibleRange=\(String(describing: visibleRange)) forceIncrement=\(forceIncrement)")
 #endif
+        nearBottomHitCount = 0
         dayWindowCount = targetDayCount
         scheduleRethread()
     }
@@ -2194,6 +2341,232 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
         return node.id
     }
+
+    private func jumpToFolderBoundaryNode(in folderID: String,
+                                          boundary: MessageStore.ThreadMessageBoundary) {
+        if folderJumpInProgressIDs.contains(folderID) {
+            coalescedFolderJumpBoundaries[folderID] = boundary
+            Log.app.debug("Coalesced folder jump request. folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public)")
+            return
+        }
+        beginFolderJump(folderID: folderID, boundary: boundary)
+    }
+
+    private func beginFolderJump(folderID: String,
+                                 boundary: MessageStore.ThreadMessageBoundary) {
+        folderJumpInProgressIDs.insert(folderID)
+        updateJumpPhase(.resolvingTarget, folderID: folderID)
+        folderJumpTasks[folderID]?.cancel()
+        folderJumpTasks[folderID] = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let threadIDs = folderThreadIDs(for: folderID)
+                guard !threadIDs.isEmpty else {
+                    Log.app.error("Folder jump failed. marker=resolution-failure folderID=\(folderID, privacy: .public) reason=no-thread-members")
+                    completeFolderJump(folderID: folderID)
+                    return
+                }
+                guard let target = try await store.fetchBoundaryMessage(threadIDs: threadIDs,
+                                                                        boundary: boundary) else {
+                    Log.app.error("Folder jump failed. marker=resolution-failure folderID=\(folderID, privacy: .public) reason=no-boundary-message boundary=\(String(describing: boundary), privacy: .public)")
+                    completeFolderJump(folderID: folderID)
+                    return
+                }
+
+                updateJumpPhase(.expandingCoverage, folderID: folderID)
+                let expansion = await expandDayWindow(toInclude: target.date)
+                if !expansion.reachedRequiredDayCount {
+                    Log.app.error("Folder jump failed. marker=expansion-ceiling folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public) requiredDayCount=\(expansion.requiredDayCount, privacy: .public) cappedDayCount=\(expansion.cappedDayCount, privacy: .public)")
+                    completeFolderJump(folderID: folderID)
+                    return
+                }
+                guard !Task.isCancelled else {
+                    completeFolderJump(folderID: folderID)
+                    return
+                }
+
+                selectNode(id: target.messageID)
+                updateJumpPhase(.awaitingAnchor, folderID: folderID)
+                guard let scrollTargetID = await waitForRenderableJumpTargetID(preferredNodeID: target.messageID,
+                                                                               folderThreadIDs: threadIDs,
+                                                                               boundary: boundary) else {
+                    Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public) selectedNodeID=\(target.messageID, privacy: .public)")
+                    completeFolderJump(folderID: folderID)
+                    return
+                }
+                guard !Task.isCancelled else {
+                    completeFolderJump(folderID: folderID)
+                    return
+                }
+
+                updateJumpPhase(.scrolling, folderID: folderID)
+                if scrollTargetID != target.messageID {
+                    Log.app.debug("Folder jump fallback anchor selected. folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public) preferredNodeID=\(target.messageID, privacy: .public) fallbackNodeID=\(scrollTargetID, privacy: .public)")
+                }
+                enqueueScrollRequest(nodeID: scrollTargetID,
+                                     folderID: folderID,
+                                     boundary: boundary,
+                                     selectedBoundaryNodeID: target.messageID)
+            } catch {
+                Log.app.error("Failed to jump folder boundary node. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                completeFolderJump(folderID: folderID)
+            }
+        }
+    }
+
+    private func folderThreadIDs(for folderID: String) -> Set<String> {
+        let map = Self.folderThreadIDsByFolder(folders: effectiveThreadFolders)
+        return map[folderID] ?? []
+    }
+
+    private func expandDayWindow(toInclude date: Date,
+                                 today: Date = Date(),
+                                 calendar: Calendar = .current) async -> ThreadCanvasJumpExpansionPlan {
+        let startOfToday = calendar.startOfDay(for: today)
+        let startOfTarget = calendar.startOfDay(for: date)
+        guard let dayDiff = calendar.dateComponents([.day], from: startOfTarget, to: startOfToday).day else {
+            return ThreadCanvasJumpExpansionPlan(targets: [],
+                                                 reachedRequiredDayCount: false,
+                                                 cappedDayCount: dayWindowCount,
+                                                 requiredDayCount: dayWindowCount)
+        }
+        guard dayDiff >= 0 else {
+            return ThreadCanvasJumpExpansionPlan(targets: [],
+                                                 reachedRequiredDayCount: true,
+                                                 cappedDayCount: dayWindowCount,
+                                                 requiredDayCount: dayWindowCount)
+        }
+
+        let requiredDayCount = dayDiff + 1
+        let plan = Self.planJumpExpansionTargets(currentDayCount: dayWindowCount,
+                                                 requiredDayCount: requiredDayCount,
+                                                 maxDayCount: jumpExpansionMaxDayCount,
+                                                 maxSteps: jumpExpansionMaxSteps)
+        guard !plan.targets.isEmpty else { return plan }
+
+        for target in plan.targets {
+            guard !Task.isCancelled else {
+                return ThreadCanvasJumpExpansionPlan(targets: plan.targets,
+                                                     reachedRequiredDayCount: false,
+                                                     cappedDayCount: dayWindowCount,
+                                                     requiredDayCount: plan.requiredDayCount)
+            }
+            guard target > dayWindowCount else { continue }
+            dayWindowCount = target
+            scheduleRethread()
+            try? await Task.sleep(nanoseconds: jumpExpansionThrottleInterval)
+        }
+        return plan
+    }
+
+    private func waitForRenderableJumpTargetID(preferredNodeID: String,
+                                               folderThreadIDs: Set<String>,
+                                               boundary: MessageStore.ThreadMessageBoundary) async -> String? {
+        var fallbackTargetID: String?
+        for attempt in 0..<jumpAnchorResolutionAttempts {
+            guard !Task.isCancelled else { return nil }
+            let candidates = renderableJumpCandidates(folderThreadIDs: folderThreadIDs)
+            if let targetID = Self.resolveRenderableJumpTargetID(preferredNodeID: preferredNodeID,
+                                                                 renderableCandidates: candidates,
+                                                                 boundary: boundary,
+                                                                 allowFallback: false) {
+                if attempt > 0 {
+                    Log.app.debug("Folder jump preferred anchor became renderable. marker=anchor-ready preferred=true attempt=\(attempt + 1, privacy: .public) nodeID=\(targetID, privacy: .public)")
+                }
+                return targetID
+            }
+            fallbackTargetID = Self.resolveRenderableJumpTargetID(preferredNodeID: preferredNodeID,
+                                                                  renderableCandidates: candidates,
+                                                                  boundary: boundary,
+                                                                  allowFallback: true)
+            if attempt == 0 || attempt == jumpAnchorResolutionAttempts - 1 {
+                Log.app.debug("Folder jump awaiting preferred anchor. marker=anchor-await attempt=\(attempt + 1, privacy: .public) candidateCount=\(candidates.count, privacy: .public) preferredNodeID=\(preferredNodeID, privacy: .public)")
+            }
+            try? await Task.sleep(nanoseconds: jumpAnchorRetryInterval)
+        }
+        if let fallbackTargetID {
+            Log.app.debug("Folder jump fallback anchor used after preferred timeout. marker=anchor-fallback fallbackNodeID=\(fallbackTargetID, privacy: .public) preferredNodeID=\(preferredNodeID, privacy: .public)")
+        }
+        return fallbackTargetID
+    }
+
+    private func enqueueScrollRequest(nodeID: String,
+                                      folderID: String,
+                                      boundary: MessageStore.ThreadMessageBoundary,
+                                      selectedBoundaryNodeID: String) {
+        if let existing = pendingScrollRequest {
+            pendingScrollRequest = nil
+            pendingScrollTimeoutTasks[existing.token]?.cancel()
+            pendingScrollTimeoutTasks.removeValue(forKey: existing.token)
+            if let existingContext = pendingScrollContextByToken.removeValue(forKey: existing.token) {
+                Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(existingContext.folderID, privacy: .public) boundary=\(String(describing: existingContext.boundary), privacy: .public) selectedNodeID=\(existingContext.targetNodeID, privacy: .public) reason=request-superseded")
+                completeFolderJump(folderID: existingContext.folderID)
+            }
+        }
+
+        let token = UUID()
+        let request = ThreadCanvasScrollRequest(nodeID: nodeID,
+                                                token: token,
+                                                folderID: folderID,
+                                                boundary: boundary)
+        pendingScrollRequest = request
+        pendingScrollContextByToken[token] = PendingFolderJumpScrollContext(folderID: folderID,
+                                                                             boundary: boundary,
+                                                                             targetNodeID: selectedBoundaryNodeID)
+        pendingScrollTimeoutTasks[token]?.cancel()
+        pendingScrollTimeoutTasks[token] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: self?.jumpScrollTimeoutInterval ?? 0)
+            await MainActor.run {
+                self?.handlePendingScrollTimeout(token: token)
+            }
+        }
+    }
+
+    private func handlePendingScrollTimeout(token: UUID) {
+        guard pendingScrollRequest?.token == token else { return }
+        pendingScrollRequest = nil
+        pendingScrollTimeoutTasks[token]?.cancel()
+        pendingScrollTimeoutTasks.removeValue(forKey: token)
+        guard let context = pendingScrollContextByToken.removeValue(forKey: token) else { return }
+        Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) selectedNodeID=\(context.targetNodeID, privacy: .public)")
+        completeFolderJump(folderID: context.folderID)
+    }
+
+    private func completeFolderJump(folderID: String) {
+        folderJumpTasks[folderID]?.cancel()
+        folderJumpTasks.removeValue(forKey: folderID)
+        folderJumpInProgressIDs.remove(folderID)
+        jumpPhaseByFolderID.removeValue(forKey: folderID)
+        guard let boundary = coalescedFolderJumpBoundaries.removeValue(forKey: folderID) else { return }
+        beginFolderJump(folderID: folderID, boundary: boundary)
+    }
+
+    private func updateJumpPhase(_ phase: FolderJumpPhase,
+                                 folderID: String) {
+        jumpPhaseByFolderID[folderID] = phase
+        Log.app.debug("Folder jump phase. folderID=\(folderID, privacy: .public) phase=\(phase.rawValue, privacy: .public)")
+    }
+
+    private func renderableJumpCandidates(folderThreadIDs: Set<String>,
+                                          today: Date = Date(),
+                                          calendar: Calendar = .current) -> [ThreadNode] {
+        guard !folderThreadIDs.isEmpty else { return [] }
+        return Self.flatten(nodes: roots).filter { node in
+            guard let threadID = effectiveThreadID(for: node), folderThreadIDs.contains(threadID) else {
+                return false
+            }
+            return isNodeRenderable(node, today: today, calendar: calendar)
+        }
+    }
+
+    private func isNodeRenderable(_ node: ThreadNode,
+                                  today: Date,
+                                  calendar: Calendar) -> Bool {
+        ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                        today: today,
+                                        calendar: calendar,
+                                        dayCount: dayWindowCount) != nil
+    }
 }
 
 private extension ThreadCanvasViewModel {
@@ -2203,6 +2576,47 @@ private extension ThreadCanvasViewModel {
 }
 
 extension ThreadCanvasViewModel {
+    internal static let verticalJumpScrollTolerance: CGFloat = 1
+
+    internal static func resolvedPreservedJumpX(existingPreservedX: CGFloat?,
+                                                currentX: CGFloat) -> CGFloat {
+        existingPreservedX ?? currentX
+    }
+
+    internal static func resolveVerticalJump(boundary: MessageStore.ThreadMessageBoundary,
+                                             targetMinYInScrollContent: CGFloat,
+                                             targetMidYInScrollContent: CGFloat,
+                                             totalTopPadding: CGFloat,
+                                             viewportHeight: CGFloat,
+                                             documentHeight: CGFloat,
+                                             clipHeight: CGFloat) -> ThreadCanvasVerticalJumpResolution {
+        let topVisibilityInset = max(24, totalTopPadding * 0.25)
+        let desiredY: CGFloat
+        switch boundary {
+        case .oldest:
+            desiredY = max(targetMinYInScrollContent - topVisibilityInset, 0)
+        case .newest:
+            desiredY = max(targetMidYInScrollContent - (viewportHeight / 2), 0)
+        }
+
+        let maxY = max(documentHeight - clipHeight, 0)
+        let clampedY = min(desiredY, maxY)
+        let didClampToBottom = desiredY > maxY && abs(clampedY - maxY) <= verticalJumpScrollTolerance
+
+        return ThreadCanvasVerticalJumpResolution(desiredY: desiredY,
+                                                  clampedY: clampedY,
+                                                  maxY: maxY,
+                                                  didClampToBottom: didClampToBottom)
+    }
+
+    internal static func shouldConsumeVerticalJump(finalY: CGFloat,
+                                                   targetY: CGFloat,
+                                                   didClampToBottom: Bool,
+                                                   tolerance: CGFloat = verticalJumpScrollTolerance) -> Bool {
+        let reachedTarget = abs(finalY - targetY) <= tolerance
+        return reachedTarget || didClampToBottom
+    }
+
     internal static func pinnedFirstFolders(_ folders: [ThreadFolder],
                                             pinnedIDs: Set<String>) -> [ThreadFolder] {
         guard !pinnedIDs.isEmpty else { return folders }
@@ -2218,6 +2632,91 @@ extension ThreadCanvasViewModel {
             }
         }
         return pinned + unpinned
+    }
+
+    internal static func planJumpExpansionTargets(currentDayCount: Int,
+                                                  requiredDayCount: Int,
+                                                  dayWindowIncrement: Int = ThreadCanvasLayoutMetrics.defaultDayCount,
+                                                  maxDayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount * 520,
+                                                  maxSteps: Int = 18) -> ThreadCanvasJumpExpansionPlan {
+        let normalizedCurrent = max(currentDayCount, 1)
+        let normalizedRequired = max(requiredDayCount, normalizedCurrent)
+        guard normalizedRequired > normalizedCurrent else {
+            return ThreadCanvasJumpExpansionPlan(targets: [],
+                                                 reachedRequiredDayCount: true,
+                                                 cappedDayCount: normalizedCurrent,
+                                                 requiredDayCount: normalizedRequired)
+        }
+
+        var targets: [Int] = []
+        var current = normalizedCurrent
+        let cap = max(maxDayCount, normalizedCurrent)
+
+        while current < normalizedRequired && targets.count < maxSteps {
+            let remaining = normalizedRequired - current
+            let increment = adaptiveJumpExpansionIncrement(remaining: remaining,
+                                                           dayWindowIncrement: max(dayWindowIncrement, 1))
+            let next = min(current + increment, cap, normalizedRequired)
+            guard next > current else { break }
+            targets.append(next)
+            current = next
+        }
+
+        return ThreadCanvasJumpExpansionPlan(targets: targets,
+                                             reachedRequiredDayCount: current >= normalizedRequired,
+                                             cappedDayCount: current,
+                                             requiredDayCount: normalizedRequired)
+    }
+
+    internal static func boundaryNodeID(in nodes: [ThreadNode],
+                                        boundary: MessageStore.ThreadMessageBoundary) -> String? {
+        guard !nodes.isEmpty else { return nil }
+        switch boundary {
+        case .newest:
+            return nodes.max { lhs, rhs in
+                if lhs.message.date == rhs.message.date {
+                    return lhs.id < rhs.id
+                }
+                return lhs.message.date < rhs.message.date
+            }?.id
+        case .oldest:
+            return nodes.min { lhs, rhs in
+                if lhs.message.date == rhs.message.date {
+                    return lhs.id > rhs.id
+                }
+                return lhs.message.date > rhs.message.date
+            }?.id
+        }
+    }
+
+    internal static func resolveRenderableJumpTargetID(preferredNodeID: String,
+                                                       renderableCandidates: [ThreadNode],
+                                                       boundary: MessageStore.ThreadMessageBoundary,
+                                                       allowFallback: Bool = true) -> String? {
+        guard !renderableCandidates.isEmpty else { return nil }
+        if renderableCandidates.contains(where: { $0.id == preferredNodeID }) {
+            return preferredNodeID
+        }
+        guard allowFallback else { return nil }
+        return boundaryNodeID(in: renderableCandidates, boundary: boundary)
+    }
+
+    private static func adaptiveJumpExpansionIncrement(remaining: Int,
+                                                       dayWindowIncrement: Int) -> Int {
+        switch remaining {
+        case let value where value > dayWindowIncrement * 32:
+            return dayWindowIncrement * 16
+        case let value where value > dayWindowIncrement * 16:
+            return dayWindowIncrement * 10
+        case let value where value > dayWindowIncrement * 8:
+            return dayWindowIncrement * 6
+        case let value where value > dayWindowIncrement * 4:
+            return dayWindowIncrement * 4
+        case let value where value > dayWindowIncrement * 2:
+            return dayWindowIncrement * 2
+        default:
+            return dayWindowIncrement
+        }
     }
 
     internal static func canvasLayout(for roots: [ThreadNode],
@@ -2374,12 +2873,16 @@ extension ThreadCanvasViewModel {
                                             nodeSummaries: nodeSummaries,
                                             timelineTagsByNodeID: timelineTagsByNodeID,
                                             measurementCache: &measurementCache)
+                    let unreadCount = nodes.reduce(0) { partial, node in
+                        partial + (node.message.isUnread ? 1 : 0)
+                    }
                     let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
                     let folderID = normalizedMembership[thread.threadID]
                     columns.append(ThreadCanvasColumn(id: thread.threadID,
                                                       title: title,
                                                       xOffset: columnX,
                                                       nodes: nodes,
+                                                      unreadCount: unreadCount,
                                                       latestDate: thread.latestDate,
                                                       folderID: folderID))
                     currentColumnIndex += 1

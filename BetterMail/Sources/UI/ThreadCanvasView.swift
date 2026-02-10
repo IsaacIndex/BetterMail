@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 internal import os
+import os.signpost
 
 internal struct ThreadCanvasView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
@@ -13,14 +14,25 @@ internal struct ThreadCanvasView: View {
     @State private var rawScrollOffset: CGFloat = 0
     @State private var rawScrollOffsetX: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
-    @State private var viewportWidth: CGFloat = 0
+    @State private var canvasScrollView: NSScrollView?
     @State private var activeDropFolderID: String?
     @State private var dropHighlightPulseToken: Int = 0
     @State private var isDropHighlightPulsing: Bool = false
     @State private var dragState: ThreadCanvasDragState?
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
+    @State private var pendingScrollConsumeTask: Task<Void, Never>?
+    @State private var preservedJumpScrollXByToken: [UUID: CGFloat] = [:]
+    @State private var suppressPendingScrollCancellation = false
+    @State private var lastScrollTraceDirection: Int = 0
+    @State private var lastScrollTraceTimestamp: TimeInterval = 0
     private let headerSpacing: CGFloat = 0
+    private let visualScrollQuantizationStep: CGFloat = 1
+    private let logicalScrollQuantizationStep: CGFloat = 1
+    private let horizontalScrollQuantizationStep: CGFloat = 1
+    private let layoutZoomQuantizationStep: CGFloat = 0.025
+    private let scrollTraceMinimumDelta: CGFloat = 2
+    private let scrollTraceInterval: TimeInterval = 0.12
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -34,7 +46,8 @@ internal struct ThreadCanvasView: View {
             let columnWidthAdjustment = displaySettings.viewMode == .timeline
                 ? ThreadTimelineLayoutConstants.summaryColumnExtraWidth
                 : 0
-            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale,
+            let layoutZoomScale = quantized(zoomScale, step: layoutZoomQuantizationStep)
+            let metrics = ThreadCanvasLayoutMetrics(zoom: layoutZoomScale,
                                                     dayCount: viewModel.dayWindowCount,
                                                     columnWidthAdjustment: columnWidthAdjustment)
             let today = Date()
@@ -42,6 +55,7 @@ internal struct ThreadCanvasView: View {
                                                 viewMode: displaySettings.viewMode,
                                                 today: today,
                                                 calendar: calendar)
+            let jumpAnchorVersion = jumpAnchorVersion(for: layout)
             let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
             let readabilityMode = displaySettings.readabilityMode(for: zoomScale)
             let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
@@ -112,142 +126,197 @@ internal struct ThreadCanvasView: View {
                 return maxX >= visibleXStart && minX <= visibleXEnd
             }
 
-            ScrollView([.horizontal, .vertical]) {
-                ZStack(alignment: .topLeading) {
-                    dayBands(days: visibleDays,
-                             metrics: metrics,
-                             contentWidth: layout.contentSize.width)
-                    folderColumnBackgroundLayer(chromeData: visibleChromeData,
+            ScrollViewReader { _ in
+                ScrollView([.horizontal, .vertical]) {
+                    ZStack(alignment: .topLeading) {
+                        dayBands(layout: layout,
+                                 metrics: metrics,
+                                 readabilityMode: readabilityMode)
+                        folderColumnBackgroundLayer(chromeData: chromeData,
+                                                     metrics: metrics,
+                                                     headerHeight: headerStackHeight + headerSpacing)
+                        columnDividers(layout: layout, metrics: metrics)
+                        connectorLayer(layout: layout,
+                                       metrics: metrics,
+                                       readabilityMode: readabilityMode,
+                                       timelineTagsByNodeID: viewModel.timelineTagsByNodeID)
+                        nodesLayer(layout: layout,
+                                   metrics: metrics,
+                                   chromeData: chromeData,
+                                   readabilityMode: readabilityMode,
+                                   folderHeaderHeight: headerStackHeight + headerSpacing)
+                        folderDropHighlightLayer(chromeData: chromeData,
                                                  metrics: metrics,
                                                  headerHeight: headerStackHeight + headerSpacing)
-                    columnDividers(columns: visibleColumns, metrics: metrics, contentHeight: layout.contentSize.height)
-                    connectorLayer(columns: visibleColumns,
-                                   visibleNodesByColumnID: visibleNodesByColumnID,
-                                    metrics: metrics,
-                                    readabilityMode: readabilityMode,
-                                    timelineTagsByNodeID: viewModel.timelineTagsByNodeID,
-                                    contentHeight: layout.contentSize.height)
-                    nodesLayer(columns: visibleColumns,
-                               visibleNodesByColumnID: visibleNodesByColumnID,
-                               metrics: metrics,
-                               chromeData: chromeData,
-                               readabilityMode: readabilityMode,
-                               folderHeaderHeight: headerStackHeight + headerSpacing)
-                    folderDropHighlightLayer(chromeData: visibleChromeData,
-                                             metrics: metrics,
-                                             headerHeight: headerStackHeight + headerSpacing)
-                    dragPreviewLayer()
-                    folderColumnHeaderLayer(chromeData: visibleHeaderChromeData,
-                                            metrics: metrics,
-                                            rawZoom: zoomScale,
-                                            readabilityMode: readabilityMode)
-                        .offset(y: -(headerStackHeight + headerSpacing))
-                    folderHeaderHitTargets(chromeData: visibleHeaderChromeData, metrics: metrics)
-                        .offset(y: -(headerStackHeight + headerSpacing))
+                        dragPreviewLayer()
+                        folderColumnHeaderLayer(chromeData: chromeData,
+                                                metrics: metrics,
+                                                rawScrollOffset: rawScrollOffset,
+                                                rawZoom: zoomScale,
+                                                readabilityMode: readabilityMode)
+                            .offset(y: -(headerStackHeight + headerSpacing))
+                    }
+                    .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
+                    .coordinateSpace(name: "ThreadCanvasContent")
+                    .padding(.top, totalTopPadding)
+                    .background(
+                        ScrollViewResolver { scrollView in
+                            configureScrollViewBehavior(scrollView)
+                            if canvasScrollView !== scrollView {
+                                canvasScrollView = scrollView
+                                Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
+                            }
+                        }
+                    )
+                    .background(
+                        GeometryReader { contentProxy in
+                            let minY = contentProxy.frame(in: .named("ThreadCanvasScroll")).minY
+                            let minX = contentProxy.frame(in: .named("ThreadCanvasScroll")).minX
+                            Color.clear
+                                .onChange(of: minY) { _, newValue in
+                                    let signpostID = OSSignpostID(log: Log.performance)
+                                    os_signpost(.begin, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
+                                    defer {
+                                        os_signpost(.end, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
+                                    }
+                                    let rawOffset = -newValue
+                                    let snappedRawOffset = quantized(max(0, rawOffset),
+                                                                     step: visualScrollQuantizationStep)
+                                    let adjustedOffset = max(0, rawOffset + totalTopPadding)
+                                    let snappedAdjustedOffset = quantized(adjustedOffset,
+                                                                          step: logicalScrollQuantizationStep)
+                                    let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
+                                    let signedRawDelta = snappedRawOffset - rawScrollOffset
+                                    traceScrollSample(rawOffset: snappedRawOffset,
+                                                      signedDelta: signedRawDelta,
+                                                      pendingRequestToken: viewModel.pendingScrollRequest?.token)
+                                    let scrollDelta = abs(snappedRawOffset - rawScrollOffset)
+                                    if !suppressPendingScrollCancellation,
+                                       scrollDelta >= 2,
+                                       viewModel.pendingScrollRequest != nil {
+                                        viewModel.cancelPendingScrollRequest(reason: "manual_scroll")
+                                    }
+                                    withNoAnimation {
+                                        if rawScrollOffset != snappedRawOffset {
+                                            rawScrollOffset = snappedRawOffset
+                                        }
+                                    }
+                                    guard scrollOffset != snappedAdjustedOffset else { return }
+                                    withNoAnimation {
+                                        scrollOffset = snappedAdjustedOffset
+                                    }
+                                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: snappedAdjustedOffset,
+                                                                            viewportHeight: effectiveHeight,
+                                                                            layout: layout,
+                                                                            metrics: metrics,
+                                                                            today: today,
+                                                                            calendar: calendar)
+                                }
+                                .onChange(of: minX) { _, newValue in
+                                    let snappedX = quantized(max(0, -newValue),
+                                                             step: horizontalScrollQuantizationStep)
+                                    withNoAnimation {
+                                        if rawScrollOffsetX != snappedX {
+                                            rawScrollOffsetX = snappedX
+                                        }
+                                    }
+                                }
+                        }
+                    )
                 }
-                .frame(width: layout.contentSize.width, height: layout.contentSize.height, alignment: .topLeading)
-                .coordinateSpace(name: "ThreadCanvasContent")
-                .padding(.top, totalTopPadding)
+                .scrollIndicators(.visible)
+                .background(canvasBackground)
+                .overlay(alignment: .topLeading) {
+                    floatingDateRail(layout: layout,
+                                     metrics: metrics,
+                                     readabilityMode: readabilityMode,
+                                     totalTopPadding: totalTopPadding,
+                                     rawScrollOffset: rawScrollOffset,
+                                     viewportHeight: proxy.size.height)
+                }
+                .gesture(magnificationGesture)
+                .coordinateSpace(name: "ThreadCanvasScroll")
                 .background(
-                    GeometryReader { contentProxy in
-                        let frame = contentProxy.frame(in: .named("ThreadCanvasScroll"))
-                        let minY = frame.minY
-                        let minX = frame.minX
-                        Color.clear
-                            .onChange(of: minY) { _, newValue in
-                                let rawOffset = -newValue
-                                rawScrollOffset = max(0, rawOffset)
-                                let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
-                                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
-                                                                        viewportHeight: effectiveHeight,
-                                                                        layout: layout,
-                                                                        metrics: metrics,
-                                                                        today: today,
-                                                                        calendar: calendar)
-                            }
-                            .onChange(of: minX) { _, newValue in
-                                let rawOffset = -newValue
-                                rawScrollOffsetX = max(0, rawOffset)
-                            }
+                    GeometryReader { sizeProxy in
+                        Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
+                                               value: sizeProxy.size.height)
                     }
                 )
-            }
-            .scrollIndicators(.visible)
-            .background(canvasBackground)
-            .overlay(alignment: .topLeading) {
-                floatingDateRail(layout: layout,
-                                 metrics: metrics,
-                                 readabilityMode: readabilityMode,
-                                 totalTopPadding: totalTopPadding,
-                                 rawScrollOffset: rawScrollOffset,
-                                 viewportHeight: proxy.size.height,
-                                 visibleYStart: visibleYStart,
-                                 visibleYEnd: visibleYEnd)
-            }
-            .gesture(magnificationGesture)
-            .coordinateSpace(name: "ThreadCanvasScroll")
-            .background(
-                GeometryReader { sizeProxy in
-                    Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
-                                           value: sizeProxy.size.height)
-                        .preference(key: ThreadCanvasViewportWidthPreferenceKey.self,
-                                    value: sizeProxy.size.width)
+                .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
+                    let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
+                    let clampedHeight = max(effectiveHeight, 1)
+                    viewportHeight = effectiveHeight
+                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                            viewportHeight: clampedHeight,
+                                                            layout: layout,
+                                                            metrics: metrics,
+                                                            today: today,
+                                                            calendar: calendar,
+                                                            immediate: true)
                 }
-            )
-            .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
-                let effectiveHeight = max(height, proxy.size.height) - totalTopPadding
-                let clampedHeight = max(effectiveHeight, 1)
-                viewportHeight = effectiveHeight
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
-                                                        viewportHeight: clampedHeight,
-                                                        layout: layout,
-                                                        metrics: metrics,
-                                                        today: today,
-                                                        calendar: calendar,
-                                                        immediate: true)
-            }
-            .onPreferenceChange(ThreadCanvasViewportWidthPreferenceKey.self) { width in
-                viewportWidth = width
-            }
-            .onChange(of: layout.contentSize.height) { _, _ in
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
-                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                        layout: layout,
-                                                        metrics: metrics,
-                                                        today: today,
-                                                        calendar: calendar,
-                                                        immediate: true)
-            }
-            .onChange(of: activeDropFolderID) { oldValue, newValue in
-                guard newValue != nil else {
-                    isDropHighlightPulsing = false
-                    return
+                .onChange(of: layout.contentSize.height) { _ in
+                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                            viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                            layout: layout,
+                                                            metrics: metrics,
+                                                            today: today,
+                                                            calendar: calendar,
+                                                            immediate: true)
+                    if let request = viewModel.pendingScrollRequest {
+                        scrollToPendingRequestIfAvailable(request,
+                                                         layout: layout,
+                                                         viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                         totalTopPadding: totalTopPadding)
+                    }
                 }
-                if newValue != oldValue {
-                    startDropHighlightPulse()
+                .onChange(of: viewModel.pendingScrollRequest) { oldRequest, request in
+                    if let oldRequest {
+                        preservedJumpScrollXByToken.removeValue(forKey: oldRequest.token)
+                    }
+                    guard let request else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                     totalTopPadding: totalTopPadding)
                 }
-            }
-            .onAppear {
-                accumulatedZoom = zoomScale
-                displaySettings.updateCurrentZoom(zoomScale)
-                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: rawScrollOffset,
-                                                        viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
-                                                        layout: layout,
-                                                        metrics: metrics,
-                                                        today: today,
-                                                        calendar: calendar,
-                                                        immediate: true)
-            }
-            .onChange(of: zoomScale) { _, newValue in
-                displaySettings.updateCurrentZoom(newValue)
-            }
-            .onHover { isInside in
-                if !isInside {
+                .onChange(of: jumpAnchorVersion) { _, _ in
+                    guard let request = viewModel.pendingScrollRequest else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                     totalTopPadding: totalTopPadding)
+                }
+                .onChange(of: activeDropFolderID) { oldValue, newValue in
+                    guard newValue != nil else {
+                        isDropHighlightPulsing = false
+                        return
+                    }
+                    if newValue != oldValue {
+                        startDropHighlightPulse()
+                    }
+                }
+                .onAppear {
+                    accumulatedZoom = zoomScale
+                    displaySettings.updateCurrentZoom(zoomScale)
+                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                            viewportHeight: max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1),
+                                                            layout: layout,
+                                                            metrics: metrics,
+                                                            today: today,
+                                                            calendar: calendar,
+                                                            immediate: true)
+                }
+                .onChange(of: zoomScale) { _, newValue in
+                    displaySettings.updateCurrentZoom(newValue)
+                }
+                .onHover { isInside in
+                    if !isInside {
+                        cancelDrag()
+                    }
+                }
+                .onExitCommand {
                     cancelDrag()
                 }
-            }
-            .onExitCommand {
-                cancelDrag()
             }
         }
         .contentShape(Rectangle())
@@ -279,6 +348,159 @@ internal struct ThreadCanvasView: View {
 
     private func clampedZoom(_ value: CGFloat) -> CGFloat {
         min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
+    }
+
+    private func quantized(_ value: CGFloat, step: CGFloat) -> CGFloat {
+        guard step > 0 else { return value }
+        return (value / step).rounded() * step
+    }
+
+    private func withNoAnimation(_ updates: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, updates)
+    }
+
+    private func configureScrollViewBehavior(_ scrollView: NSScrollView) {
+        if scrollView.verticalScrollElasticity != .none {
+            scrollView.verticalScrollElasticity = .none
+            Log.app.debug("Canvas vertical elasticity disabled. marker=scroll-elasticity-config axis=vertical")
+        }
+        if scrollView.horizontalScrollElasticity != .none {
+            scrollView.horizontalScrollElasticity = .none
+            Log.app.debug("Canvas horizontal elasticity disabled. marker=scroll-elasticity-config axis=horizontal")
+        }
+    }
+
+    private func traceScrollSample(rawOffset: CGFloat,
+                                   signedDelta: CGFloat,
+                                   pendingRequestToken: UUID?) {
+#if DEBUG
+        let magnitude = abs(signedDelta)
+        guard magnitude >= scrollTraceMinimumDelta else { return }
+        let direction = signedDelta > 0 ? 1 : -1
+        let now = Date().timeIntervalSinceReferenceDate
+        let directionFlipped = lastScrollTraceDirection != 0 && direction != lastScrollTraceDirection
+        let intervalElapsed = now - lastScrollTraceTimestamp >= scrollTraceInterval
+        guard directionFlipped || intervalElapsed else { return }
+
+        Log.app.debug("Scroll sample. marker=scroll-sample rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) direction=\(direction, privacy: .public) flipped=\(directionFlipped, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
+        if directionFlipped {
+            Log.app.info("Scroll direction flipped. marker=scroll-direction-flip rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
+        }
+        lastScrollTraceDirection = direction
+        lastScrollTraceTimestamp = now
+#endif
+    }
+
+    private func jumpAnchorVersion(for layout: ThreadCanvasLayout) -> Int {
+        var hasher = Hasher()
+        hasher.combine(layout.columns.count)
+        for column in layout.columns {
+            hasher.combine(column.id)
+            hasher.combine(column.nodes.count)
+            hasher.combine(Int(column.latestDate.timeIntervalSinceReferenceDate))
+        }
+        return hasher.finalize()
+    }
+
+    private func scrollToPendingRequestIfAvailable(_ request: ThreadCanvasScrollRequest,
+                                                   layout: ThreadCanvasLayout,
+                                                   viewportHeight: CGFloat,
+                                                   totalTopPadding: CGFloat,
+                                                   retryCount: Int = 0) {
+        let matchingNodes = layout.columns
+            .flatMap(\.nodes)
+            .filter { $0.id == request.nodeID }
+        guard let targetNode = matchingNodes.first else {
+            Log.app.debug("Folder jump scroll deferred. marker=scroll-anchor-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public)")
+            return
+        }
+        Log.app.debug("Folder jump scroll dispatch. marker=scroll-dispatch folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) x=\(targetNode.frame.midX, privacy: .public) y=\(targetNode.frame.midY, privacy: .public) matchCount=\(matchingNodes.count, privacy: .public) targetType=appkit-vertical-only currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
+        let requestToken = request.token
+        guard let scrollView = canvasScrollView,
+              let documentView = scrollView.documentView else {
+            let nextRetry = retryCount + 1
+            Log.app.debug("Folder jump scroll host missing. marker=scroll-host-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
+            if nextRetry <= 45 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: viewportHeight,
+                                                     totalTopPadding: totalTopPadding,
+                                                     retryCount: nextRetry)
+                }
+                return
+            }
+            Log.app.debug("Folder jump scroll host unavailable after retries. marker=scroll-host-fallback folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
+            return
+        }
+        let clipView = scrollView.contentView
+        let preservedX = ThreadCanvasViewModel.resolvedPreservedJumpX(existingPreservedX: preservedJumpScrollXByToken[requestToken],
+                                                                       currentX: clipView.bounds.origin.x)
+        preservedJumpScrollXByToken[requestToken] = preservedX
+        let effectiveViewportHeight = max(viewportHeight, clipView.bounds.height)
+        let targetMinYInScrollContent = targetNode.frame.minY + totalTopPadding
+        let targetMidYInScrollContent = targetNode.frame.midY + totalTopPadding
+        let resolution = ThreadCanvasViewModel.resolveVerticalJump(boundary: request.boundary,
+                                                                   targetMinYInScrollContent: targetMinYInScrollContent,
+                                                                   targetMidYInScrollContent: targetMidYInScrollContent,
+                                                                   totalTopPadding: totalTopPadding,
+                                                                   viewportHeight: effectiveViewportHeight,
+                                                                   documentHeight: documentView.bounds.height,
+                                                                   clipHeight: clipView.bounds.height)
+
+        func applyVerticalOnlyScroll(targetY: CGFloat, preservedX: CGFloat) {
+            suppressPendingScrollCancellation = true
+            let currentY = clipView.bounds.origin.y
+            Log.app.debug("Programmatic vertical scroll apply. marker=scroll-programmatic-apply token=\(requestToken, privacy: .public) currentY=\(currentY, privacy: .public) targetY=\(targetY, privacy: .public) preservedX=\(preservedX, privacy: .public)")
+            let next = CGPoint(x: preservedX, y: targetY)
+            clipView.setBoundsOrigin(next)
+            scrollView.reflectScrolledClipView(clipView)
+            DispatchQueue.main.async {
+                suppressPendingScrollCancellation = false
+            }
+        }
+        applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
+        DispatchQueue.main.async {
+            guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+            applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
+            let finalOrigin = clipView.bounds.origin
+            let didConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: finalOrigin.y,
+                                                                             targetY: resolution.clampedY,
+                                                                             didClampToBottom: resolution.didClampToBottom)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                Log.app.debug("Folder jump scroll postflight. marker=scroll-postflight folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) targetType=appkit-vertical-only targetScrollY=\(resolution.clampedY, privacy: .public) desiredY=\(resolution.desiredY, privacy: .public) maxY=\(resolution.maxY, privacy: .public) preservedX=\(preservedX, privacy: .public) finalX=\(finalOrigin.x, privacy: .public) didConsume=\(didConsume, privacy: .public) currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
+            }
+            if didConsume {
+                schedulePendingScrollConsumption(request)
+            } else {
+                let nextRetry = retryCount + 1
+                guard nextRetry <= 8 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    scrollToPendingRequestIfAvailable(request,
+                                                     layout: layout,
+                                                     viewportHeight: viewportHeight,
+                                                     totalTopPadding: totalTopPadding,
+                                                     retryCount: nextRetry)
+                }
+            }
+        }
+    }
+
+    private func schedulePendingScrollConsumption(_ request: ThreadCanvasScrollRequest) {
+        pendingScrollConsumeTask?.cancel()
+        let requestToken = request.token
+        pendingScrollConsumeTask = Task {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                viewModel.consumeScrollRequest(request)
+            }
+        }
     }
 
     @ViewBuilder
@@ -344,6 +566,7 @@ internal struct ThreadCanvasView: View {
 
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
                                          metrics: ThreadCanvasLayoutMetrics,
+                                         rawScrollOffset: CGFloat,
                                          rawZoom: CGFloat,
                                          readabilityMode: ThreadCanvasReadabilityMode) -> some View {
         ZStack(alignment: .topLeading) {
@@ -352,62 +575,33 @@ internal struct ThreadCanvasView: View {
                 let headerFrame = folderHeaderFrame(for: chrome,
                                                     metrics: metrics,
                                                     maxDepth: maxDepth)
+                let maxPinnedY = max(headerFrame.minY, chrome.frame.maxY - chrome.headerHeight)
+                let pinnedY = min(headerFrame.minY + rawScrollOffset, maxPinnedY)
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
-                                   summaryState: chrome.summaryState,
+                                   summaryState: viewModel.folderSummaryState(for: chrome.id),
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
                                    readabilityMode: readabilityMode,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
                                    isPinned: viewModel.isFolderPinned(id: chrome.id),
-                                   isSelected: viewModel.selectedFolderID == chrome.id)
+                                   isSelected: viewModel.selectedFolderID == chrome.id,
+                                   isJumping: viewModel.isJumpInProgress(for: chrome.id),
+                                   onSelect: { viewModel.selectFolder(id: chrome.id) },
+                                   onPinToggle: {
+                                       if viewModel.isFolderPinned(id: chrome.id) {
+                                           viewModel.unpinFolder(id: chrome.id)
+                                       } else {
+                                           viewModel.pinFolder(id: chrome.id)
+                                       }
+                                   },
+                                   onJumpLatest: { viewModel.jumpToLatestNode(in: chrome.id) },
+                                   onJumpFirst: { viewModel.jumpToFirstNode(in: chrome.id) })
                 .frame(width: headerFrame.width, alignment: .leading)
-                .offset(x: headerFrame.minX, y: headerFrame.minY)
-                .allowsHitTesting(false)
+                .offset(x: headerFrame.minX, y: pinnedY)
                 .accessibilityElement(children: .combine)
-            }
-        }
-    }
-
-    private func folderHeaderHitTargets(chromeData: [FolderChromeData],
-                                        metrics: ThreadCanvasLayoutMetrics) -> some View {
-        ZStack(alignment: .topLeading) {
-            let maxDepth = chromeData.map(\.depth).max() ?? 0
-            ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
-                let headerFrame = folderHeaderFrame(for: chrome,
-                                                    metrics: metrics,
-                                                    maxDepth: maxDepth)
-                let isPinned = viewModel.isFolderPinned(id: chrome.id)
-                Button {
-                    viewModel.selectFolder(id: chrome.id)
-                } label: {
-                    Color.clear
-                        .frame(width: headerFrame.width, height: headerFrame.height)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    if isPinned {
-                        Button {
-                            viewModel.unpinFolder(id: chrome.id)
-                        } label: {
-                            Label(NSLocalizedString("threadcanvas.folder.menu.unpin",
-                                                   comment: "Context menu action to unpin a folder"),
-                                  systemImage: "pin.slash")
-                        }
-                    } else {
-                        Button {
-                            viewModel.pinFolder(id: chrome.id)
-                        } label: {
-                            Label(NSLocalizedString("threadcanvas.folder.menu.pin",
-                                                   comment: "Context menu action to pin a folder"),
-                                  systemImage: "pin")
-                        }
-                    }
-                }
-                .offset(x: headerFrame.minX, y: headerFrame.minY)
                 .accessibilityLabel(chrome.title.isEmpty
                                     ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
                                                         comment: "Accessibility label for a folder header")
@@ -515,7 +709,8 @@ internal struct ThreadCanvasView: View {
                     }
                 }
                     .frame(width: node.frame.width, height: node.frame.height)
-                    .offset(x: node.frame.minX, y: node.frame.minY)
+                    .position(x: node.frame.midX, y: node.frame.midY)
+                    .id(node.id)
                     .gesture(
                         DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasContent"))
                             .onChanged { value in
@@ -722,14 +917,12 @@ internal struct ThreadCanvasView: View {
             guard !columns.isEmpty else { return nil }
             let headerTopOffset = CGFloat(overlay.depth) * (headerMetrics.height + headerMetrics.spacing)
             let headerIndent = CGFloat(overlay.depth) * headerMetrics.indent
-            let summaryState = viewModel.folderSummaryState(for: overlay.id)
             return folderChrome(for: overlay.id,
                                 title: overlay.title,
                                 color: overlay.color,
                                 frame: overlay.frame,
                                 columns: columns,
                                 depth: overlay.depth,
-                                summaryState: summaryState,
                                 headerHeight: headerMetrics.height,
                                 headerTopOffset: headerTopOffset,
                                 headerIndent: headerIndent,
@@ -743,22 +936,20 @@ internal struct ThreadCanvasView: View {
                               frame: CGRect,
                               columns: [ThreadCanvasColumn],
                               depth: Int,
-                              summaryState: ThreadSummaryState?,
                               headerHeight: CGFloat,
                               headerTopOffset: CGFloat,
                               headerIndent: CGFloat,
                               indentStep: CGFloat) -> FolderChromeData {
-        let unread = columns.flatMap(\.nodes).reduce(0) { partial, node in
-            partial + (node.message.isUnread ? 1 : 0)
+        let unread = columns.reduce(0) { partial, column in
+            partial + column.unreadCount
         }
-        let latest = columns.flatMap(\.nodes).map(\.message.date).max()
+        let latest = columns.map(\.latestDate).max()
         return FolderChromeData(id: id,
                                 title: title,
                                 color: color,
                                 frame: frame,
                                 columnIDs: columns.map(\.id),
                                 depth: depth,
-                                summaryState: summaryState,
                                 unreadCount: unread,
                                 updated: latest,
                                 headerHeight: headerHeight,
@@ -1082,6 +1273,11 @@ private struct FolderColumnHeader: View {
     let cornerRadius: CGFloat
     let isPinned: Bool
     let isSelected: Bool
+    let isJumping: Bool
+    let onSelect: () -> Void
+    let onPinToggle: () -> Void
+    let onJumpLatest: () -> Void
+    let onJumpFirst: () -> Void
 
     private var sizeScale: CGFloat {
         // Track zoom more closely than the clamped fontScale to keep the header proportional.
@@ -1090,12 +1286,12 @@ private struct FolderColumnHeader: View {
 
     private var headerBackground: some View {
         let gradient = LinearGradient(colors: [
-            accentColor.opacity(reduceTransparency ? 0.26 : 0.36),
-            accentColor.opacity(reduceTransparency ? 0.22 : 0.30)
+            accentColor.opacity(reduceTransparency ? 0.36 : 0.82),
+            accentColor.opacity(reduceTransparency ? 0.32 : 0.75)
         ], startPoint: .topLeading, endPoint: .bottomTrailing)
 
         let backgroundStyle: AnyShapeStyle = reduceTransparency
-            ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
+            ? AnyShapeStyle(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.97))
             : AnyShapeStyle(gradient)
 
         return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -1172,6 +1368,18 @@ private struct FolderColumnHeader: View {
                     } else {
                         Color.clear
                     }
+                    Spacer()
+                    HStack(spacing: 6 * sizeScale) {
+                        headerActionButton(systemName: "arrow.up.to.line",
+                                           accessibilityKey: "threadcanvas.folder.jump.latest.accessibility",
+                                           tooltipKey: "threadcanvas.folder.jump.latest.tooltip",
+                                           action: onJumpLatest)
+                        headerActionButton(systemName: "arrow.down.to.line",
+                                           accessibilityKey: "threadcanvas.folder.jump.first.accessibility",
+                                           tooltipKey: "threadcanvas.folder.jump.first.tooltip",
+                                           action: onJumpFirst)
+                    }
+                    badge(unread: unreadCount)
                 }
                 .frame(height: footerSectionHeight, alignment: .leading)
             }
@@ -1195,6 +1403,21 @@ private struct FolderColumnHeader: View {
         }
         .overlay(selectionOverlay)
         .shadow(color: accentColor.opacity(0.25), radius: 10, y: 6)
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .onTapGesture {
+            onSelect()
+        }
+        .contextMenu {
+            Button {
+                onPinToggle()
+            } label: {
+                Label(
+                    NSLocalizedString(isPinned ? "threadcanvas.folder.menu.unpin" : "threadcanvas.folder.menu.pin",
+                                      comment: "Context menu action to pin or unpin a folder"),
+                    systemImage: isPinned ? "pin.slash" : "pin"
+                )
+            }
+        }
     }
 
     private var summaryPreviewText: String? {
@@ -1290,6 +1513,33 @@ private struct FolderColumnHeader: View {
 
     private func textVisibility() -> TextVisibility {
         FolderHeaderLayout.textVisibility(readabilityMode: readabilityMode)
+    }
+
+    @ViewBuilder
+    private func headerActionButton(systemName: String,
+                                    accessibilityKey: String,
+                                    tooltipKey: String,
+                                    action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: max(FolderHeaderLayout.footerBaseSize * sizeScale - 1, 9), weight: .semibold))
+                .frame(width: 22 * sizeScale, height: 20 * sizeScale)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.white.opacity(isJumping ? 0.5 : 0.92))
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(accentColor.opacity(reduceTransparency ? 0.2 : 0.32))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.white.opacity(0.22))
+        )
+        .help(NSLocalizedString(tooltipKey, comment: "Tooltip for folder header jump action"))
+        .accessibilityLabel(NSLocalizedString(accessibilityKey,
+                                              comment: "Accessibility label for folder header jump action"))
+        .disabled(isJumping)
     }
 
     @ViewBuilder
@@ -2001,6 +2251,40 @@ internal enum TextVisibility {
     case hidden
 }
 
+private struct ScrollViewResolver: NSViewRepresentable {
+    let onResolve: (NSScrollView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak view] in
+            guard let view, let scrollView = Self.findScrollView(startingAt: view) else { return }
+            onResolve(scrollView)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            guard let nsView, let scrollView = Self.findScrollView(startingAt: nsView) else { return }
+            onResolve(scrollView)
+        }
+    }
+
+    private static func findScrollView(startingAt view: NSView) -> NSScrollView? {
+        if let direct = view.enclosingScrollView {
+            return direct
+        }
+        var current: NSView? = view
+        while let candidate = current {
+            if let scrollView = candidate as? NSScrollView {
+                return scrollView
+            }
+            current = candidate.superview
+        }
+        return nil
+    }
+}
+
 private enum DayLabelMode {
     case month
     case year
@@ -2021,7 +2305,6 @@ private struct FolderChromeData: Identifiable {
     let frame: CGRect
     let columnIDs: [String]
     let depth: Int
-    let summaryState: ThreadSummaryState?
     let unreadCount: Int
     let updated: Date?
     let headerHeight: CGFloat
