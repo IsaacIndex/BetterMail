@@ -262,22 +262,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                    folders: folders)
         }
 
-        func performBackfill(ranges: [DateInterval],
-                             limit: Int,
-                             snippetLineLimit: Int) async throws -> Int {
-            Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) limit=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
-            guard !ranges.isEmpty else { return 0 }
-            var totalFetched = 0
-            for range in ranges {
-                let fetched = try await client.fetchMessages(in: range,
-                                                             limit: limit,
-                                                             snippetLineLimit: snippetLineLimit)
-                totalFetched += fetched.count
-                try await store.upsert(messages: fetched)
-            }
-            return totalFetched
-        }
-
         func nodeSummaryInputs(for roots: [ThreadNode],
                                manualAttachmentMessageIDs: Set<String>,
                                snippetLineLimit: Int,
@@ -433,6 +417,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
     private let pinnedFolderSettings: PinnedFolderSettings
+    private let backfillService: BatchBackfillServicing
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
@@ -476,6 +461,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   store: MessageStore = .shared,
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
+                  backfillService: BatchBackfillServicing? = nil,
                   summaryCapability: EmailSummaryCapability? = nil,
                   tagCapability: EmailTagCapability? = nil,
                   folderSummaryDebounceInterval: TimeInterval = 30) {
@@ -484,6 +470,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.threader = threader
         self.settings = settings
         self.inspectorSettings = inspectorSettings
+        self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
         self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
@@ -1959,14 +1946,23 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard !ranges.isEmpty else { return }
         isBackfilling = true
         status = NSLocalizedString("threadlist.backfill.status.fetching", comment: "Status when backfill begins")
-        let limit = limitOverride ?? fetchLimit
+        let limit = max(1, limitOverride ?? fetchLimit)
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         Task { [weak self] in
             guard let self else { return }
             do {
-                let fetchedCount = try await worker.performBackfill(ranges: ranges,
-                                                                    limit: limit,
-                                                                    snippetLineLimit: snippetLineLimit)
+                Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) limit=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
+                var fetchedCount = 0
+                for range in ranges {
+                    let total = try await backfillService.countMessages(in: range, mailbox: "inbox")
+                    guard total > 0 else { continue }
+                    let result = try await backfillService.runBackfill(range: range,
+                                                                       mailbox: "inbox",
+                                                                       preferredBatchSize: limit,
+                                                                       totalExpected: total,
+                                                                       snippetLineLimit: snippetLineLimit) { _ in }
+                    fetchedCount += result.fetched
+                }
                 await MainActor.run {
                     self.isBackfilling = false
                     self.status = String.localizedStringWithFormat(
