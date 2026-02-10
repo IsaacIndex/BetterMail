@@ -151,6 +151,7 @@ internal struct ThreadCanvasColumn: Identifiable, Hashable {
     internal let title: String
     internal let xOffset: CGFloat
     internal let nodes: [ThreadCanvasNode]
+    internal let unreadCount: Int
     internal let latestDate: Date
     internal let folderID: String?
 }

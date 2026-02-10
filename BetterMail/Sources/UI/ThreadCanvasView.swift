@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 internal import os
+import os.signpost
 
 internal struct ThreadCanvasView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
@@ -23,7 +24,16 @@ internal struct ThreadCanvasView: View {
     @State private var dragPreviewScale: CGFloat = 0.94
     @State private var pendingScrollConsumeTask: Task<Void, Never>?
     @State private var preservedJumpScrollXByToken: [UUID: CGFloat] = [:]
+    @State private var suppressPendingScrollCancellation = false
+    @State private var lastScrollTraceDirection: Int = 0
+    @State private var lastScrollTraceTimestamp: TimeInterval = 0
     private let headerSpacing: CGFloat = 0
+    private let visualScrollQuantizationStep: CGFloat = 1
+    private let logicalScrollQuantizationStep: CGFloat = 1
+    private let horizontalScrollQuantizationStep: CGFloat = 1
+    private let layoutZoomQuantizationStep: CGFloat = 0.025
+    private let scrollTraceMinimumDelta: CGFloat = 2
+    private let scrollTraceInterval: TimeInterval = 0.12
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -38,7 +48,8 @@ internal struct ThreadCanvasView: View {
             let columnWidthAdjustment = displaySettings.viewMode == .timeline
                 ? ThreadTimelineLayoutConstants.summaryColumnExtraWidth
                 : 0
-            let metrics = ThreadCanvasLayoutMetrics(zoom: zoomScale,
+            let layoutZoomScale = quantized(zoomScale, step: layoutZoomQuantizationStep)
+            let metrics = ThreadCanvasLayoutMetrics(zoom: layoutZoomScale,
                                                     dayCount: viewModel.dayWindowCount,
                                                     columnWidthAdjustment: columnWidthAdjustment)
             let today = Date()
@@ -91,6 +102,7 @@ internal struct ThreadCanvasView: View {
                     .padding(.top, totalTopPadding)
                     .background(
                         ScrollViewResolver { scrollView in
+                            configureScrollViewBehavior(scrollView)
                             if canvasScrollView !== scrollView {
                                 canvasScrollView = scrollView
                                 Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
@@ -103,12 +115,38 @@ internal struct ThreadCanvasView: View {
                             let minX = contentProxy.frame(in: .named("ThreadCanvasScroll")).minX
                             Color.clear
                                 .onChange(of: minY) { _, newValue in
+                                    let signpostID = OSSignpostID(log: Log.performance)
+                                    os_signpost(.begin, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
+                                    defer {
+                                        os_signpost(.end, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
+                                    }
                                     let rawOffset = -newValue
-                                    rawScrollOffset = max(0, rawOffset)
+                                    let snappedRawOffset = quantized(max(0, rawOffset),
+                                                                     step: visualScrollQuantizationStep)
                                     let adjustedOffset = max(0, rawOffset + totalTopPadding)
+                                    let snappedAdjustedOffset = quantized(adjustedOffset,
+                                                                          step: logicalScrollQuantizationStep)
                                     let effectiveHeight = max(max(viewportHeight, proxy.size.height) - totalTopPadding, 1)
-                                    scrollOffset = adjustedOffset
-                                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: adjustedOffset,
+                                    let signedRawDelta = snappedRawOffset - rawScrollOffset
+                                    traceScrollSample(rawOffset: snappedRawOffset,
+                                                      signedDelta: signedRawDelta,
+                                                      pendingRequestToken: viewModel.pendingScrollRequest?.token)
+                                    let scrollDelta = abs(snappedRawOffset - rawScrollOffset)
+                                    if !suppressPendingScrollCancellation,
+                                       scrollDelta >= 2,
+                                       viewModel.pendingScrollRequest != nil {
+                                        viewModel.cancelPendingScrollRequest(reason: "manual_scroll")
+                                    }
+                                    withNoAnimation {
+                                        if rawScrollOffset != snappedRawOffset {
+                                            rawScrollOffset = snappedRawOffset
+                                        }
+                                    }
+                                    guard scrollOffset != snappedAdjustedOffset else { return }
+                                    withNoAnimation {
+                                        scrollOffset = snappedAdjustedOffset
+                                    }
+                                    viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: snappedAdjustedOffset,
                                                                             viewportHeight: effectiveHeight,
                                                                             layout: layout,
                                                                             metrics: metrics,
@@ -116,7 +154,13 @@ internal struct ThreadCanvasView: View {
                                                                             calendar: calendar)
                                 }
                                 .onChange(of: minX) { _, newValue in
-                                    rawScrollOffsetX = max(0, -newValue)
+                                    let snappedX = quantized(max(0, -newValue),
+                                                             step: horizontalScrollQuantizationStep)
+                                    withNoAnimation {
+                                        if rawScrollOffsetX != snappedX {
+                                            rawScrollOffsetX = snappedX
+                                        }
+                                    }
                                 }
                         }
                     )
@@ -247,14 +291,56 @@ internal struct ThreadCanvasView: View {
         min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
     }
 
+    private func quantized(_ value: CGFloat, step: CGFloat) -> CGFloat {
+        guard step > 0 else { return value }
+        return (value / step).rounded() * step
+    }
+
+    private func withNoAnimation(_ updates: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, updates)
+    }
+
+    private func configureScrollViewBehavior(_ scrollView: NSScrollView) {
+        if scrollView.verticalScrollElasticity != .none {
+            scrollView.verticalScrollElasticity = .none
+            Log.app.debug("Canvas vertical elasticity disabled. marker=scroll-elasticity-config axis=vertical")
+        }
+        if scrollView.horizontalScrollElasticity != .none {
+            scrollView.horizontalScrollElasticity = .none
+            Log.app.debug("Canvas horizontal elasticity disabled. marker=scroll-elasticity-config axis=horizontal")
+        }
+    }
+
+    private func traceScrollSample(rawOffset: CGFloat,
+                                   signedDelta: CGFloat,
+                                   pendingRequestToken: UUID?) {
+#if DEBUG
+        let magnitude = abs(signedDelta)
+        guard magnitude >= scrollTraceMinimumDelta else { return }
+        let direction = signedDelta > 0 ? 1 : -1
+        let now = Date().timeIntervalSinceReferenceDate
+        let directionFlipped = lastScrollTraceDirection != 0 && direction != lastScrollTraceDirection
+        let intervalElapsed = now - lastScrollTraceTimestamp >= scrollTraceInterval
+        guard directionFlipped || intervalElapsed else { return }
+
+        Log.app.debug("Scroll sample. marker=scroll-sample rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) direction=\(direction, privacy: .public) flipped=\(directionFlipped, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
+        if directionFlipped {
+            Log.app.info("Scroll direction flipped. marker=scroll-direction-flip rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
+        }
+        lastScrollTraceDirection = direction
+        lastScrollTraceTimestamp = now
+#endif
+    }
+
     private func jumpAnchorVersion(for layout: ThreadCanvasLayout) -> Int {
         var hasher = Hasher()
+        hasher.combine(layout.columns.count)
         for column in layout.columns {
             hasher.combine(column.id)
             hasher.combine(column.nodes.count)
-            for node in column.nodes {
-                hasher.combine(node.id)
-            }
+            hasher.combine(Int(column.latestDate.timeIntervalSinceReferenceDate))
         }
         return hasher.finalize()
     }
@@ -307,9 +393,15 @@ internal struct ThreadCanvasView: View {
                                                                    clipHeight: clipView.bounds.height)
 
         func applyVerticalOnlyScroll(targetY: CGFloat, preservedX: CGFloat) {
+            suppressPendingScrollCancellation = true
+            let currentY = clipView.bounds.origin.y
+            Log.app.debug("Programmatic vertical scroll apply. marker=scroll-programmatic-apply token=\(requestToken, privacy: .public) currentY=\(currentY, privacy: .public) targetY=\(targetY, privacy: .public) preservedX=\(preservedX, privacy: .public)")
             let next = CGPoint(x: preservedX, y: targetY)
             clipView.setBoundsOrigin(next)
             scrollView.reflectScrolledClipView(clipView)
+            DispatchQueue.main.async {
+                suppressPendingScrollCancellation = false
+            }
         }
         applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
         DispatchQueue.main.async {
@@ -429,7 +521,7 @@ internal struct ThreadCanvasView: View {
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
-                                   summaryState: chrome.summaryState,
+                                   summaryState: viewModel.folderSummaryState(for: chrome.id),
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
@@ -761,14 +853,12 @@ internal struct ThreadCanvasView: View {
             guard !columns.isEmpty else { return nil }
             let headerTopOffset = CGFloat(overlay.depth) * (headerMetrics.height + headerMetrics.spacing)
             let headerIndent = CGFloat(overlay.depth) * headerMetrics.indent
-            let summaryState = viewModel.folderSummaryState(for: overlay.id)
             return folderChrome(for: overlay.id,
                                 title: overlay.title,
                                 color: overlay.color,
                                 frame: overlay.frame,
                                 columns: columns,
                                 depth: overlay.depth,
-                                summaryState: summaryState,
                                 headerHeight: headerMetrics.height,
                                 headerTopOffset: headerTopOffset,
                                 headerIndent: headerIndent,
@@ -782,22 +872,20 @@ internal struct ThreadCanvasView: View {
                               frame: CGRect,
                               columns: [ThreadCanvasColumn],
                               depth: Int,
-                              summaryState: ThreadSummaryState?,
                               headerHeight: CGFloat,
                               headerTopOffset: CGFloat,
                               headerIndent: CGFloat,
                               indentStep: CGFloat) -> FolderChromeData {
-        let unread = columns.flatMap(\.nodes).reduce(0) { partial, node in
-            partial + (node.message.isUnread ? 1 : 0)
+        let unread = columns.reduce(0) { partial, column in
+            partial + column.unreadCount
         }
-        let latest = columns.flatMap(\.nodes).map(\.message.date).max()
+        let latest = columns.map(\.latestDate).max()
         return FolderChromeData(id: id,
                                 title: title,
                                 color: color,
                                 frame: frame,
                                 columnIDs: columns.map(\.id),
                                 depth: depth,
-                                summaryState: summaryState,
                                 unreadCount: unread,
                                 updated: latest,
                                 headerHeight: headerHeight,
@@ -2088,7 +2176,6 @@ private struct FolderChromeData: Identifiable {
     let frame: CGRect
     let columnIDs: [String]
     let depth: Int
-    let summaryState: ThreadSummaryState?
     let unreadCount: Int
     let updated: Date?
     let headerHeight: CGFloat

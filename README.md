@@ -149,6 +149,8 @@ sequenceDiagram
 ### Infinite Canvas Paging
 - The thread canvas expands in 7-day blocks when you scroll near the bottom of the current range.
 - Scroll detection for paging is driven by `GeometryReader` content-frame updates so two-axis scrolling (horizontal + vertical) still triggers expansion.
+- Scroll offsets are quantized before updating visible-range state, and paging expansion now uses a short near-bottom hysteresis/cooldown to avoid thrashing while scrubbing in and out near the threshold.
+- Timeline layout cache keys use coarse zoom buckets so pinch gestures reuse layout work instead of rebuilding on tiny zoom deltas.
 - Folder headers include icon-only jump actions (with hover tooltips) to move directly to the latest or first email node in that folder.
 - Jump targets are resolved from DataStore-backed folder thread membership, and day-window expansion is applied in bounded increments to avoid large one-shot layout stalls.
 

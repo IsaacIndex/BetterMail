@@ -3,6 +3,7 @@ import Combine
 import CoreGraphics
 import Foundation
 import OSLog
+import os.signpost
 
 internal struct ThreadSummaryState {
     internal var text: String
@@ -452,6 +453,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var timelineTextMeasurementCache = TimelineTextMeasurementCache()
     private var visibleRangeUpdateTask: Task<Void, Never>?
     private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
+    private let dayWindowExpansionCooldown: TimeInterval = 0.35
+    private let dayWindowExpansionNearBottomHitThreshold = 2
     private static let timelineVisibleTagLimit = 3
     private let jumpExpansionThrottleInterval: UInt64 = 70_000_000
     private let jumpAnchorRetryInterval: UInt64 = 60_000_000
@@ -464,6 +467,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var jumpPhaseByFolderID: [String: FolderJumpPhase] = [:]
     private var pendingScrollContextByToken: [UUID: PendingFolderJumpScrollContext] = [:]
     private var pendingScrollTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+    private var nearBottomHitCount = 0
+    private var lastDayWindowExpansionTime: Date?
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
@@ -1506,6 +1511,17 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    internal func cancelPendingScrollRequest(reason: String = "user_scroll") {
+        guard let request = pendingScrollRequest else { return }
+        pendingScrollRequest = nil
+        pendingScrollTimeoutTasks[request.token]?.cancel()
+        pendingScrollTimeoutTasks.removeValue(forKey: request.token)
+        if let context = pendingScrollContextByToken.removeValue(forKey: request.token) {
+            Log.app.info("Folder jump cancelled. marker=cancelled folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) targetNodeID=\(context.targetNodeID, privacy: .public) reason=\(reason, privacy: .public)")
+            completeFolderJump(folderID: context.folderID)
+        }
+    }
+
     internal func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
         folderEditsByID[id] = ThreadFolderEdit(title: title, color: color)
     }
@@ -1790,16 +1806,22 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                viewMode: ThreadCanvasViewMode = .default,
                                today: Date = Date(),
                                calendar: Calendar = .current) -> ThreadCanvasLayout {
+        let signpostID = OSSignpostID(log: Log.performance)
+        os_signpost(.begin, log: Log.performance, name: "CanvasLayout", signpostID: signpostID)
+        defer {
+            os_signpost(.end, log: Log.performance, name: "CanvasLayout", signpostID: signpostID)
+        }
         let dayStart = calendar.startOfDay(for: today)
         let cacheKey = TimelineLayoutCacheKey(viewMode: viewMode,
                                               dayCount: metrics.dayCount,
-                                              zoomBucket: Self.metricsBucket(metrics.zoom),
+                                              zoomBucket: Self.zoomCacheBucket(metrics.zoom),
                                               columnWidthBucket: Self.metricsBucket(metrics.columnWidthAdjustment),
                                               dataVersion: layoutCacheVersion,
                                               dayStart: dayStart)
         if let cachedKey = layoutCacheKey,
            cachedKey == cacheKey,
            let cachedLayout = layoutCache {
+            os_signpost(.event, log: Log.performance, name: "CanvasLayoutCacheHit")
             return cachedLayout
         }
 
@@ -1816,6 +1838,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        nodeSummaries: nodeSummaries,
                                        timelineTagsByNodeID: timelineTagsByNodeID,
                                        measurementCache: &timelineTextMeasurementCache)
+        os_signpost(.event, log: Log.performance, name: "CanvasLayoutCacheMiss")
         layoutCacheKey = cacheKey
         layoutCache = layout
         return layout
@@ -1832,6 +1855,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                 today: Date = Date(),
                                                 calendar: Calendar = .current,
                                                 immediate: Bool = false) {
+        os_signpost(.event, log: Log.performance, name: "VisibleRangeSchedule")
         if immediate {
             visibleRangeUpdateTask?.cancel()
             updateVisibleDayRange(scrollOffset: scrollOffset,
@@ -1853,6 +1877,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         visibleRangeUpdateTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: visibleRangeUpdateThrottleInterval)
             guard !Task.isCancelled else { return }
+            os_signpost(.event, log: Log.performance, name: "VisibleRangeScheduleFired")
             self.updateVisibleDayRange(scrollOffset: scroll,
                                        viewportHeight: height,
                                        layout: layoutSnapshot,
@@ -1868,6 +1893,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                         metrics: ThreadCanvasLayoutMetrics,
                                         today: Date = Date(),
                                         calendar: Calendar = .current) {
+        let signpostID = OSSignpostID(log: Log.performance)
+        os_signpost(.begin, log: Log.performance, name: "VisibleRangeUpdate", signpostID: signpostID)
+        defer {
+            os_signpost(.end, log: Log.performance, name: "VisibleRangeUpdate", signpostID: signpostID)
+        }
         guard viewportHeight > 0 else { return }
         let range = Self.visibleDayRange(for: layout,
                                          scrollOffset: scrollOffset,
@@ -1889,11 +1919,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         if visibleRangeHasMessages != hasMessages {
             visibleRangeHasMessages = hasMessages
         }
-        let nearBottom = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
-                                                    viewportHeight: viewportHeight,
-                                                    contentHeight: layout.contentSize.height,
-                                                    threshold: metrics.dayHeight * 2)
-        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: nearBottom)
+        let forceExpansion = shouldForceDayWindowExpansion(scrollOffset: scrollOffset,
+                                                           viewportHeight: viewportHeight,
+                                                           contentHeight: layout.contentSize.height,
+                                                           threshold: metrics.dayHeight * 2)
+        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: forceExpansion)
     }
 
     private func invalidateLayoutCache() {
@@ -1904,6 +1934,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private static func metricsBucket(_ value: CGFloat) -> Int {
         Int((value * 1000).rounded())
+    }
+
+    private static func zoomCacheBucket(_ value: CGFloat) -> Int {
+        let bucketStep: CGFloat = 0.025
+        return Int((value / bucketStep).rounded())
     }
 
     internal func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
@@ -2166,6 +2201,33 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return Self.pinnedFirstFolders(baseFolders, pinnedIDs: pinnedFolderIDs)
     }
 
+    private func shouldForceDayWindowExpansion(scrollOffset: CGFloat,
+                                               viewportHeight: CGFloat,
+                                               contentHeight: CGFloat,
+                                               threshold: CGFloat,
+                                               now: Date = Date()) -> Bool {
+        let nearBottom = Self.shouldExpandDayWindow(scrollOffset: scrollOffset,
+                                                    viewportHeight: viewportHeight,
+                                                    contentHeight: contentHeight,
+                                                    threshold: threshold)
+        if nearBottom {
+            nearBottomHitCount += 1
+        } else {
+            nearBottomHitCount = 0
+            return false
+        }
+        guard nearBottomHitCount >= dayWindowExpansionNearBottomHitThreshold else {
+            return false
+        }
+        if let lastExpansion = lastDayWindowExpansionTime,
+           now.timeIntervalSince(lastExpansion) < dayWindowExpansionCooldown {
+            return false
+        }
+        lastDayWindowExpansionTime = now
+        nearBottomHitCount = 0
+        return true
+    }
+
     private func expandDayWindowIfNeeded(visibleRange: ClosedRange<Int>?,
                                          forceIncrement: Bool) {
         var targetDayCount = dayWindowCount
@@ -2183,6 +2245,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Log.app.info("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount, privacy: .public) -> \(targetDayCount, privacy: .public) visibleRange=\(String(describing: visibleRange), privacy: .public) forceIncrement=\(forceIncrement, privacy: .public)")
         print("ThreadCanvas expand dayWindowCount=\(self.dayWindowCount) -> \(targetDayCount) visibleRange=\(String(describing: visibleRange)) forceIncrement=\(forceIncrement)")
 #endif
+        nearBottomHitCount = 0
         dayWindowCount = targetDayCount
         scheduleRethread()
     }
@@ -2802,12 +2865,16 @@ extension ThreadCanvasViewModel {
                                             nodeSummaries: nodeSummaries,
                                             timelineTagsByNodeID: timelineTagsByNodeID,
                                             measurementCache: &measurementCache)
+                    let unreadCount = nodes.reduce(0) { partial, node in
+                        partial + (node.message.isUnread ? 1 : 0)
+                    }
                     let title = thread.root.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : thread.root.message.subject
                     let folderID = normalizedMembership[thread.threadID]
                     columns.append(ThreadCanvasColumn(id: thread.threadID,
                                                       title: title,
                                                       xOffset: columnX,
                                                       nodes: nodes,
+                                                      unreadCount: unreadCount,
                                                       latestDate: thread.latestDate,
                                                       folderID: folderID))
                     currentColumnIndex += 1
