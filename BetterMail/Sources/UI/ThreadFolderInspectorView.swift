@@ -359,7 +359,7 @@ internal struct FolderMinimapSurface: View {
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.setLocalizedDateFormatFromTemplate("MMM d HH:mm")
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
         return formatter
     }()
 

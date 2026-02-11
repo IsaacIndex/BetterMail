@@ -154,7 +154,15 @@ The system SHALL project the current thread canvas viewport into selected-folder
 #### Scenario: Viewport projection updates while navigating
 - **WHEN** the user scrolls or zooms the canvas
 - **THEN** the selected folder minimap receives an updated folder-scoped viewport projection
-- **AND** the projection remains clipped to the selected folder bounds
+- **AND** the projection remains clipped to the selected folder node bounds (excluding non-node padded areas)
+
+### Requirement: Folder Minimap Time Labels Use Real Node Dates
+The system SHALL derive folder minimap time labels from actual timestamps of nodes in the selected folder and SHALL not render interpolated labels for timestamps where no node exists.
+
+#### Scenario: Minimap labels map to real nodes only
+- **WHEN** the selected folder minimap renders time labels
+- **THEN** each label timestamp corresponds to at least one in-folder node
+- **AND** labels include the folder's newest and oldest node timestamps when both exist
 
 ### Requirement: Nested Folder Drag Targets
 The system SHALL support dragging threads into or out of any folder depth on the canvas, treating each nested folder as its own drop target and updating membership accordingly.

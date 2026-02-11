@@ -2834,7 +2834,7 @@ extension ThreadCanvasViewModel {
             if orderedThreadIDs.count == 1 {
                 normalizedX = 0.5
             } else {
-                normalizedX = CGFloat(threadIndex) / CGFloat(orderedThreadIDs.count - 1)
+                normalizedX = (CGFloat(threadIndex) + 0.5) / CGFloat(orderedThreadIDs.count)
             }
             let normalizedY: CGFloat
             if dateRange > 0 {
@@ -2871,8 +2871,7 @@ extension ThreadCanvasViewModel {
                                   edges: edges,
                                   newestDate: newestDate,
                                   oldestDate: oldestDate,
-                                  timeTicks: makeFolderMinimapTimeTicks(newestDate: newestDate,
-                                                                        oldestDate: oldestDate))
+                                  timeTicks: makeFolderMinimapTimeTicks(nodeDates: orderedByDate.map { $0.message.date }))
     }
 
     internal static func resolveFolderMinimapTargetNodeID(model: FolderMinimapModel,
@@ -2935,19 +2934,49 @@ extension ThreadCanvasViewModel {
         }
     }
 
-    internal static func makeFolderMinimapTimeTicks(newestDate: Date,
-                                                    oldestDate: Date,
+    internal static func makeFolderMinimapTimeTicks(nodeDates: [Date],
                                                     tickCount: Int = 5) -> [FolderMinimapTimeTick] {
+        guard !nodeDates.isEmpty else { return [] }
+
+        let calendar = Calendar.current
+        let latestByDay = nodeDates.reduce(into: [Date: Date]()) { result, date in
+            let day = calendar.startOfDay(for: date)
+            if let existing = result[day] {
+                result[day] = max(existing, date)
+            } else {
+                result[day] = date
+            }
+        }
+        let uniqueSortedDates = latestByDay.values.sorted(by: >)
+        guard let newestDate = uniqueSortedDates.first,
+              let oldestDate = uniqueSortedDates.last else {
+            return []
+        }
+
+        let selectedDates: [Date]
         let clampedTickCount = max(tickCount, 2)
+        if uniqueSortedDates.count <= clampedTickCount {
+            selectedDates = uniqueSortedDates
+        } else {
+            var selectedIndices: [Int] = []
+            selectedIndices.reserveCapacity(clampedTickCount)
+            for index in 0..<clampedTickCount {
+                let progress = Double(index) / Double(clampedTickCount - 1)
+                let scaledIndex = Int(round(progress * Double(uniqueSortedDates.count - 1)))
+                if selectedIndices.last != scaledIndex {
+                    selectedIndices.append(scaledIndex)
+                }
+            }
+            selectedDates = selectedIndices.map { uniqueSortedDates[$0] }
+        }
+
         let range = newestDate.timeIntervalSince(oldestDate)
         guard range > 0 else {
-            return [FolderMinimapTimeTick(date: newestDate, normalizedY: 0.5)]
+            return selectedDates.map { FolderMinimapTimeTick(date: $0, normalizedY: 0.5) }
         }
-        return (0..<clampedTickCount).map { index in
-            let progress = CGFloat(index) / CGFloat(clampedTickCount - 1)
-            let timestamp = newestDate.timeIntervalSinceReferenceDate - (range * Double(progress))
-            let tickDate = Date(timeIntervalSinceReferenceDate: timestamp)
-            return FolderMinimapTimeTick(date: tickDate, normalizedY: progress)
+        return selectedDates.map { date in
+            let progress = CGFloat(newestDate.timeIntervalSince(date) / range)
+            return FolderMinimapTimeTick(date: date, normalizedY: progress)
         }
     }
 
@@ -2967,8 +2996,19 @@ extension ThreadCanvasViewModel {
                                      width: max(viewportWidth, 1),
                                      height: max(viewportHeight, 1))
         var rectsByFolderID: [String: CGRect] = [:]
+        let columnsByID = Dictionary(uniqueKeysWithValues: layout.columns.map { ($0.id, $0) })
         for overlay in layout.folderOverlays {
-            guard let normalized = projectFolderMinimapViewport(overlayFrame: overlay.frame,
+            let folderNodes = overlay.columnIDs
+                .compactMap { columnsByID[$0] }
+                .flatMap(\.nodes)
+            guard !folderNodes.isEmpty else { continue }
+            let nodeMinY = folderNodes.map { $0.frame.minY }.min() ?? overlay.frame.minY
+            let nodeMaxY = folderNodes.map { $0.frame.maxY }.max() ?? overlay.frame.maxY
+            let nodeOverlayFrame = CGRect(x: overlay.frame.minX,
+                                          y: nodeMinY,
+                                          width: overlay.frame.width,
+                                          height: max(nodeMaxY - nodeMinY, 1))
+            guard let normalized = projectFolderMinimapViewport(overlayFrame: nodeOverlayFrame,
                                                                 viewportRect: clampedViewport) else {
                 continue
             }
