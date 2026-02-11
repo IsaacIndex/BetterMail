@@ -998,6 +998,57 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(intervals[0].end, expectedEnd)
     }
 
+    func test_makeFolderMinimapModel_usesProvidedThreadScopeIDs() {
+        let calendar = Calendar(identifier: .gregorian)
+        let base = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let oldNode = ThreadNode(message: makeMessage(id: "a", date: calendar.date(byAdding: .day, value: -1, to: base)!))
+        let newNode = ThreadNode(message: makeMessage(id: "b", date: base))
+        let sourceNodes = [
+            FolderMinimapSourceNode(threadID: "manual-group", node: oldNode),
+            FolderMinimapSourceNode(threadID: "manual-group", node: newNode)
+        ]
+
+        let model = ThreadCanvasViewModel.makeFolderMinimapModel(folderID: "folder-1", sourceNodes: sourceNodes)
+
+        XCTAssertEqual(model?.folderID, "folder-1")
+        XCTAssertEqual(Set(model?.nodes.map(\.threadID) ?? []), Set(["manual-group"]))
+        XCTAssertEqual(model?.edges.count, 1)
+    }
+
+    func test_resolveFolderMinimapTargetNodeID_coordinateMapping_prefersNearestInColumn() {
+        let model = FolderMinimapModel(
+            folderID: "folder-1",
+            nodes: [
+                FolderMinimapNode(id: "old-left", threadID: "left", normalizedX: 0.0, normalizedY: 0.9),
+                FolderMinimapNode(id: "new-left", threadID: "left", normalizedX: 0.0, normalizedY: 0.1),
+                FolderMinimapNode(id: "right", threadID: "right", normalizedX: 1.0, normalizedY: 0.5)
+            ],
+            edges: []
+        )
+
+        let target = ThreadCanvasViewModel.resolveFolderMinimapTargetNodeID(model: model,
+                                                                            normalizedPoint: CGPoint(x: 0.05, y: 0.12))
+
+        XCTAssertEqual(target, "new-left")
+    }
+
+    func test_resolveFolderMinimapTargetNodeID_unstableMapping_fallsBackToNearestNode() {
+        let model = FolderMinimapModel(
+            folderID: "folder-1",
+            nodes: [
+                FolderMinimapNode(id: "left", threadID: "left", normalizedX: 0.0, normalizedY: 0.2),
+                FolderMinimapNode(id: "right", threadID: "right", normalizedX: 1.0, normalizedY: 0.8)
+            ],
+            edges: []
+        )
+
+        let target = ThreadCanvasViewModel.resolveFolderMinimapTargetNodeID(model: model,
+                                                                            normalizedPoint: CGPoint(x: 0.45, y: 0.78),
+                                                                            mappingTolerance: 0.1)
+
+        XCTAssertEqual(target, "right")
+    }
+
     @MainActor
     func testTimelineTagsRequestedOncePerNode() async {
         let expectation = XCTestExpectation(description: "Tag request")

@@ -51,6 +51,13 @@
 "threadcanvas.folder.inspector.cancel" = "Cancel";
 "threadcanvas.folder.inspector.save" = "Save";
 "threadcanvas.folder.inspector.accessibility" = "Folder";
+"threadcanvas.folder.inspector.minimap" = "Minimap";
+"threadcanvas.folder.inspector.minimap.empty" = "No folder nodes to preview yet.";
+"threadcanvas.folder.inspector.minimap.jump.oldest" = "Jump to first email in folder";
+"threadcanvas.folder.inspector.minimap.jump.latest" = "Jump to latest email in folder";
+"threadcanvas.folder.inspector.minimap.accessibility.label" = "Folder minimap";
+"threadcanvas.folder.inspector.minimap.accessibility.hint" = "Click to jump within this folder.";
+"threadcanvas.folder.inspector.minimap.help" = "Click any point to jump within this folder.";
 "threadcanvas.folder.menu.pin" = "Pin Folder";
 "threadcanvas.folder.menu.unpin" = "Unpin Folder";
 "threadcanvas.folder.pin.action" = "Pin Folder";
