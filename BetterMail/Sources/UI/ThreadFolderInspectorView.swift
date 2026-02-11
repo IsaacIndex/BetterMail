@@ -104,19 +104,8 @@ internal struct ThreadFolderInspectorView: View {
                     .font(.caption)
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Spacer()
-                Button(action: onJumpToOldest) {
-                    Image(systemName: "arrow.up.to.line.compact")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .controlSize(.mini)
-                .disabled(!hasMinimapNodes)
-                .accessibilityLabel(NSLocalizedString("threadcanvas.folder.inspector.minimap.jump.oldest",
-                                                      comment: "Accessibility label for jump to oldest folder node"))
-                .help(NSLocalizedString("threadcanvas.folder.inspector.minimap.jump.oldest",
-                                        comment: "Help text for jump to oldest folder node"))
                 Button(action: onJumpToLatest) {
-                    Image(systemName: "arrow.down.to.line.compact")
+                    Image(systemName: "arrow.up.to.line.compact")
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
@@ -126,6 +115,17 @@ internal struct ThreadFolderInspectorView: View {
                                                       comment: "Accessibility label for jump to latest folder node"))
                 .help(NSLocalizedString("threadcanvas.folder.inspector.minimap.jump.latest",
                                         comment: "Help text for jump to latest folder node"))
+                Button(action: onJumpToOldest) {
+                    Image(systemName: "arrow.down.to.line.compact")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .controlSize(.mini)
+                .disabled(!hasMinimapNodes)
+                .accessibilityLabel(NSLocalizedString("threadcanvas.folder.inspector.minimap.jump.oldest",
+                                                      comment: "Accessibility label for jump to oldest folder node"))
+                .help(NSLocalizedString("threadcanvas.folder.inspector.minimap.jump.oldest",
+                                        comment: "Help text for jump to oldest folder node"))
             }
             FolderMinimapSurface(model: minimapModel,
                                  selectedNodeID: minimapSelectedNodeID,
