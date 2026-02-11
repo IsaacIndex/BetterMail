@@ -404,16 +404,30 @@ internal struct FolderMinimapSurface: View {
 
                         for node in model.nodes {
                             let center = point(for: node, in: graphFrame)
-                            let rect = CGRect(x: center.x - 3.5, y: center.y - 3.5, width: 7, height: 7)
-                            context.fill(Path(ellipseIn: rect), with: .color(foreground))
-                        }
+                            let isSelected = node.id == selectedNodeID
 
-                        if let selectedNodeID,
-                           let selectedCenter = pointsByID[selectedNodeID] {
-                            let haloRect = CGRect(x: selectedCenter.x - 7, y: selectedCenter.y - 7, width: 14, height: 14)
-                            context.stroke(Path(ellipseIn: haloRect),
-                                           with: .color(foreground.opacity(0.95)),
-                                           lineWidth: 2)
+                            if isSelected {
+                                let haloRect = CGRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)
+                                context.fill(Path(ellipseIn: haloRect),
+                                             with: .color(Color.black.opacity(0.26)))
+
+                                let markerRect = CGRect(x: center.x - 4.25, y: center.y - 4.25, width: 8.5, height: 8.5)
+                                context.fill(Path(ellipseIn: markerRect), with: .color(foreground))
+                                context.stroke(Path(ellipseIn: markerRect),
+                                               with: .color(secondaryForeground.opacity(0.55)),
+                                               lineWidth: 1)
+                            } else {
+                                let haloRect = CGRect(x: center.x - 6.5, y: center.y - 3.5, width: 13, height: 7)
+                                context.fill(Path(roundedRect: haloRect, cornerRadius: 3.5),
+                                             with: .color(Color.black.opacity(0.23)))
+
+                                let tickRect = CGRect(x: center.x - 5, y: center.y - 1.5, width: 10, height: 3)
+                                context.fill(Path(roundedRect: tickRect, cornerRadius: 1.5),
+                                             with: .color(foreground.opacity(0.96)))
+                                context.stroke(Path(roundedRect: tickRect, cornerRadius: 1.5),
+                                               with: .color(secondaryForeground.opacity(0.45)),
+                                               lineWidth: 0.8)
+                            }
                         }
 
                         for tick in model.timeTicks {

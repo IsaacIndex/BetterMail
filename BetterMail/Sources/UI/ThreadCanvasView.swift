@@ -181,6 +181,7 @@ internal struct ThreadCanvasView: View {
                         .onChange(of: minY) { _, newValue in
                             handleVerticalContentOffsetChange(newValue,
                                                               totalTopPadding: context.totalTopPadding,
+                                                              proxyWidth: proxy.size.width,
                                                               proxyHeight: proxy.size.height,
                                                               layout: context.layout,
                                                               metrics: context.metrics,
@@ -217,6 +218,7 @@ internal struct ThreadCanvasView: View {
         )
         .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
             handleViewportHeightPreferenceChange(height,
+                                                 proxyWidth: proxy.size.width,
                                                  proxyHeight: proxy.size.height,
                                                  totalTopPadding: context.totalTopPadding,
                                                  layout: context.layout,
@@ -224,7 +226,9 @@ internal struct ThreadCanvasView: View {
                                                  today: context.today)
         }
         .onChange(of: context.layout.contentSize.height) { _ in
+            viewportWidth = proxy.size.width
             handleLayoutContentHeightChange(proxyHeight: proxy.size.height,
+                                            proxyWidth: proxy.size.width,
                                             totalTopPadding: context.totalTopPadding,
                                             layout: context.layout,
                                             metrics: context.metrics,
@@ -260,6 +264,7 @@ internal struct ThreadCanvasView: View {
         }
         .onAppear {
             accumulatedZoom = zoomScale
+            viewportWidth = proxy.size.width
             displaySettings.updateCurrentZoom(zoomScale)
             viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                     viewportHeight: effectiveViewportHeight(proxyHeight: proxy.size.height,
@@ -293,6 +298,7 @@ internal struct ThreadCanvasView: View {
 
     private func handleVerticalContentOffsetChange(_ newValue: CGFloat,
                                                    totalTopPadding: CGFloat,
+                                                   proxyWidth: CGFloat,
                                                    proxyHeight: CGFloat,
                                                    layout: ThreadCanvasLayout,
                                                    metrics: ThreadCanvasLayoutMetrics,
@@ -323,7 +329,7 @@ internal struct ThreadCanvasView: View {
             }
         }
         syncFolderMinimapViewportSnapshot(layout: layout,
-                                          proxySize: CGSize(width: viewportWidth, height: proxyHeight),
+                                          proxySize: CGSize(width: proxyWidth, height: proxyHeight),
                                           totalTopPadding: totalTopPadding)
         guard scrollOffset != snappedAdjustedOffset else { return }
         withNoAnimation {
@@ -353,6 +359,7 @@ internal struct ThreadCanvasView: View {
     }
 
     private func handleViewportHeightPreferenceChange(_ height: CGFloat,
+                                                      proxyWidth: CGFloat,
                                                       proxyHeight: CGFloat,
                                                       totalTopPadding: CGFloat,
                                                       layout: ThreadCanvasLayout,
@@ -362,7 +369,7 @@ internal struct ThreadCanvasView: View {
         let clampedHeight = max(effectiveHeight, 1)
         viewportHeight = effectiveHeight
         syncFolderMinimapViewportSnapshot(layout: layout,
-                                          proxySize: CGSize(width: viewportWidth, height: proxyHeight),
+                                          proxySize: CGSize(width: proxyWidth, height: proxyHeight),
                                           totalTopPadding: totalTopPadding)
         viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                 viewportHeight: clampedHeight,
@@ -374,13 +381,14 @@ internal struct ThreadCanvasView: View {
     }
 
     private func handleLayoutContentHeightChange(proxyHeight: CGFloat,
+                                                 proxyWidth: CGFloat,
                                                  totalTopPadding: CGFloat,
                                                  layout: ThreadCanvasLayout,
                                                  metrics: ThreadCanvasLayoutMetrics,
                                                  today: Date) {
         let viewportHeight = effectiveViewportHeight(proxyHeight: proxyHeight, totalTopPadding: totalTopPadding)
         syncFolderMinimapViewportSnapshot(layout: layout,
-                                          proxySize: CGSize(width: viewportWidth, height: proxyHeight),
+                                          proxySize: CGSize(width: proxyWidth, height: proxyHeight),
                                           totalTopPadding: totalTopPadding)
         viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                 viewportHeight: viewportHeight,
