@@ -1016,6 +1016,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
     }
 
     func test_resolveFolderMinimapTargetNodeID_coordinateMapping_prefersNearestInColumn() {
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
         let model = FolderMinimapModel(
             folderID: "folder-1",
             nodes: [
@@ -1023,7 +1024,10 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                 FolderMinimapNode(id: "new-left", threadID: "left", normalizedX: 0.0, normalizedY: 0.1),
                 FolderMinimapNode(id: "right", threadID: "right", normalizedX: 1.0, normalizedY: 0.5)
             ],
-            edges: []
+            edges: [],
+            newestDate: now,
+            oldestDate: now.addingTimeInterval(-3_600),
+            timeTicks: []
         )
 
         let target = ThreadCanvasViewModel.resolveFolderMinimapTargetNodeID(model: model,
@@ -1033,13 +1037,17 @@ final class ThreadCanvasLayoutTests: XCTestCase {
     }
 
     func test_resolveFolderMinimapTargetNodeID_unstableMapping_fallsBackToNearestNode() {
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
         let model = FolderMinimapModel(
             folderID: "folder-1",
             nodes: [
                 FolderMinimapNode(id: "left", threadID: "left", normalizedX: 0.0, normalizedY: 0.2),
                 FolderMinimapNode(id: "right", threadID: "right", normalizedX: 1.0, normalizedY: 0.8)
             ],
-            edges: []
+            edges: [],
+            newestDate: now,
+            oldestDate: now.addingTimeInterval(-3_600),
+            timeTicks: []
         )
 
         let target = ThreadCanvasViewModel.resolveFolderMinimapTargetNodeID(model: model,
@@ -1047,6 +1055,65 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                                                             mappingTolerance: 0.1)
 
         XCTAssertEqual(target, "right")
+    }
+
+    func test_selectFolder_preservesNodeSelection() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(),
+                                              inspectorSettings: InspectorViewSettings(),
+                                              pinnedFolderSettings: PinnedFolderSettings())
+        viewModel.selectNode(id: "node-1")
+        viewModel.selectFolder(id: "folder-1")
+
+        XCTAssertEqual(viewModel.selectedNodeID, "node-1")
+        XCTAssertEqual(viewModel.selectedNodeIDs, Set(["node-1"]))
+    }
+
+    func test_resolveFolderMinimapSelectedNodeID_returnsOnlyInScope() {
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+        let model = FolderMinimapModel(
+            folderID: "folder-1",
+            nodes: [
+                FolderMinimapNode(id: "in-scope", threadID: "left", normalizedX: 0.0, normalizedY: 0.2)
+            ],
+            edges: [],
+            newestDate: now,
+            oldestDate: now.addingTimeInterval(-1_800),
+            timeTicks: []
+        )
+
+        XCTAssertEqual(ThreadCanvasViewModel.resolveFolderMinimapSelectedNodeID(selectedNodeID: "in-scope",
+                                                                                 model: model),
+                       "in-scope")
+        XCTAssertNil(ThreadCanvasViewModel.resolveFolderMinimapSelectedNodeID(selectedNodeID: "outside",
+                                                                               model: model))
+    }
+
+    func test_projectFolderMinimapViewport_clampsToOverlayBounds() {
+        let overlay = CGRect(x: 100, y: 200, width: 120, height: 80)
+        let viewport = CGRect(x: 60, y: 220, width: 100, height: 50)
+
+        let projected = ThreadCanvasViewModel.projectFolderMinimapViewport(overlayFrame: overlay,
+                                                                            viewportRect: viewport)
+
+        XCTAssertEqual(projected?.minX, 0, accuracy: 0.0001)
+        XCTAssertEqual(projected?.minY, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(projected?.width, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(projected?.height, 0.625, accuracy: 0.0001)
+    }
+
+    func test_makeFolderMinimapTimeTicks_ordersNewestToOldest() {
+        let newest = Date(timeIntervalSinceReferenceDate: 10_000)
+        let oldest = newest.addingTimeInterval(-4_000)
+
+        let ticks = ThreadCanvasViewModel.makeFolderMinimapTimeTicks(newestDate: newest,
+                                                                      oldestDate: oldest,
+                                                                      tickCount: 5)
+
+        XCTAssertEqual(ticks.count, 5)
+        XCTAssertEqual(ticks.first?.normalizedY, 0, accuracy: 0.0001)
+        XCTAssertEqual(ticks.last?.normalizedY, 1, accuracy: 0.0001)
+        XCTAssertEqual(ticks.first?.date, newest)
+        XCTAssertEqual(ticks.last?.date, oldest)
     }
 
     @MainActor

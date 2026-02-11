@@ -187,7 +187,10 @@ internal struct ThreadCanvasView: View {
                                                               today: context.today)
                         }
                         .onChange(of: minX) { _, newValue in
-                            handleHorizontalContentOffsetChange(newValue)
+                            handleHorizontalContentOffsetChange(newValue,
+                                                                proxySize: proxy.size,
+                                                                totalTopPadding: context.totalTopPadding,
+                                                                layout: context.layout)
                         }
                 }
             )
@@ -266,6 +269,9 @@ internal struct ThreadCanvasView: View {
                                                     today: context.today,
                                                     calendar: calendar,
                                                     immediate: true)
+            syncFolderMinimapViewportSnapshot(layout: context.layout,
+                                              proxySize: proxy.size,
+                                              totalTopPadding: context.totalTopPadding)
         }
         .onChange(of: zoomScale) { _, newValue in
             displaySettings.updateCurrentZoom(newValue)
@@ -316,6 +322,9 @@ internal struct ThreadCanvasView: View {
                 rawScrollOffset = snappedRawOffset
             }
         }
+        syncFolderMinimapViewportSnapshot(layout: layout,
+                                          proxySize: CGSize(width: viewportWidth, height: proxyHeight),
+                                          totalTopPadding: totalTopPadding)
         guard scrollOffset != snappedAdjustedOffset else { return }
         withNoAnimation {
             scrollOffset = snappedAdjustedOffset
@@ -328,13 +337,19 @@ internal struct ThreadCanvasView: View {
                                                 calendar: calendar)
     }
 
-    private func handleHorizontalContentOffsetChange(_ newValue: CGFloat) {
+    private func handleHorizontalContentOffsetChange(_ newValue: CGFloat,
+                                                     proxySize: CGSize,
+                                                     totalTopPadding: CGFloat,
+                                                     layout: ThreadCanvasLayout) {
         let snappedX = quantized(max(0, -newValue), step: horizontalScrollQuantizationStep)
         withNoAnimation {
             if rawScrollOffsetX != snappedX {
                 rawScrollOffsetX = snappedX
             }
         }
+        syncFolderMinimapViewportSnapshot(layout: layout,
+                                          proxySize: proxySize,
+                                          totalTopPadding: totalTopPadding)
     }
 
     private func handleViewportHeightPreferenceChange(_ height: CGFloat,
@@ -346,6 +361,9 @@ internal struct ThreadCanvasView: View {
         let effectiveHeight = max(height, proxyHeight) - totalTopPadding
         let clampedHeight = max(effectiveHeight, 1)
         viewportHeight = effectiveHeight
+        syncFolderMinimapViewportSnapshot(layout: layout,
+                                          proxySize: CGSize(width: viewportWidth, height: proxyHeight),
+                                          totalTopPadding: totalTopPadding)
         viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                 viewportHeight: clampedHeight,
                                                 layout: layout,
@@ -361,6 +379,9 @@ internal struct ThreadCanvasView: View {
                                                  metrics: ThreadCanvasLayoutMetrics,
                                                  today: Date) {
         let viewportHeight = effectiveViewportHeight(proxyHeight: proxyHeight, totalTopPadding: totalTopPadding)
+        syncFolderMinimapViewportSnapshot(layout: layout,
+                                          proxySize: CGSize(width: viewportWidth, height: proxyHeight),
+                                          totalTopPadding: totalTopPadding)
         viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                 viewportHeight: viewportHeight,
                                                 layout: layout,
@@ -457,6 +478,19 @@ internal struct ThreadCanvasView: View {
                                      visibleNodesByColumnID: visibleNodesByColumnID,
                                      visibleChromeData: visibleChromeData,
                                      visibleHeaderChromeData: visibleHeaderChromeData)
+    }
+
+    private func syncFolderMinimapViewportSnapshot(layout: ThreadCanvasLayout,
+                                                   proxySize: CGSize,
+                                                   totalTopPadding: CGFloat) {
+        let effectiveWidth = max(viewportWidth, proxySize.width, 1)
+        let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                      totalTopPadding: totalTopPadding)
+        viewModel.updateFolderMinimapViewportSnapshot(layout: layout,
+                                                      scrollOffsetX: rawScrollOffsetX,
+                                                      scrollOffsetY: rawScrollOffset,
+                                                      viewportWidth: effectiveWidth,
+                                                      viewportHeight: effectiveHeight)
     }
 
     private var canvasBackground: some View {

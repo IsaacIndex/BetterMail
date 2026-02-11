@@ -4,6 +4,8 @@ import SwiftUI
 internal struct ThreadFolderInspectorView: View {
     internal let folder: ThreadFolder
     internal let minimapModel: FolderMinimapModel?
+    internal let minimapSelectedNodeID: String?
+    internal let minimapViewportRect: CGRect?
     internal let summaryState: ThreadSummaryState?
     internal let canRegenerateSummary: Bool
     internal let onRegenerateSummary: (() -> Void)?
@@ -26,6 +28,8 @@ internal struct ThreadFolderInspectorView: View {
 
     internal init(folder: ThreadFolder,
                   minimapModel: FolderMinimapModel?,
+                  minimapSelectedNodeID: String?,
+                  minimapViewportRect: CGRect?,
                   summaryState: ThreadSummaryState?,
                   canRegenerateSummary: Bool,
                   onRegenerateSummary: (() -> Void)?,
@@ -36,6 +40,8 @@ internal struct ThreadFolderInspectorView: View {
                   onSave: @escaping (String, ThreadFolderColor) -> Void) {
         self.folder = folder
         self.minimapModel = minimapModel
+        self.minimapSelectedNodeID = minimapSelectedNodeID
+        self.minimapViewportRect = minimapViewportRect
         self.summaryState = summaryState
         self.canRegenerateSummary = canRegenerateSummary
         self.onRegenerateSummary = onRegenerateSummary
@@ -122,6 +128,8 @@ internal struct ThreadFolderInspectorView: View {
                                         comment: "Help text for jump to latest folder node"))
             }
             FolderMinimapSurface(model: minimapModel,
+                                 selectedNodeID: minimapSelectedNodeID,
+                                 viewportRect: minimapViewportRect,
                                  foreground: inspectorPrimaryForegroundStyle,
                                  secondaryForeground: inspectorSecondaryForegroundStyle,
                                  onJump: onMinimapJump)
@@ -343,9 +351,17 @@ private struct FolderInspectorColorSchemeModifier: ViewModifier {
 
 internal struct FolderMinimapSurface: View {
     let model: FolderMinimapModel?
+    let selectedNodeID: String?
+    let viewportRect: CGRect?
     let foreground: Color
     let secondaryForeground: Color
     let onJump: (CGPoint) -> Void
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMM d HH:mm")
+        return formatter
+    }()
 
     var body: some View {
         GeometryReader { proxy in
@@ -359,8 +375,9 @@ internal struct FolderMinimapSurface: View {
 
                 if let model, !model.nodes.isEmpty {
                     Canvas { context, size in
+                        let graphFrame = graphRect(in: size)
                         let pointsByID = Dictionary(uniqueKeysWithValues: model.nodes.map { node in
-                            (node.id, point(for: node, in: size))
+                            (node.id, point(for: node, in: graphFrame))
                         })
 
                         for edge in model.edges {
@@ -376,10 +393,47 @@ internal struct FolderMinimapSurface: View {
                                            lineWidth: 1.5)
                         }
 
+                        if let viewportRect {
+                            let viewportDrawRect = rect(for: viewportRect, in: graphFrame)
+                            context.fill(Path(viewportDrawRect),
+                                         with: .color(secondaryForeground.opacity(0.12)))
+                            context.stroke(Path(viewportDrawRect),
+                                           with: .color(secondaryForeground.opacity(0.9)),
+                                           lineWidth: 1)
+                        }
+
                         for node in model.nodes {
-                            let center = point(for: node, in: size)
+                            let center = point(for: node, in: graphFrame)
                             let rect = CGRect(x: center.x - 3.5, y: center.y - 3.5, width: 7, height: 7)
                             context.fill(Path(ellipseIn: rect), with: .color(foreground))
+                        }
+
+                        if let selectedNodeID,
+                           let selectedCenter = pointsByID[selectedNodeID] {
+                            let haloRect = CGRect(x: selectedCenter.x - 7, y: selectedCenter.y - 7, width: 14, height: 14)
+                            context.stroke(Path(ellipseIn: haloRect),
+                                           with: .color(foreground.opacity(0.95)),
+                                           lineWidth: 2)
+                        }
+
+                        for tick in model.timeTicks {
+                            let tickY = graphFrame.minY + (tick.normalizedY * graphFrame.height)
+                            var tickPath = Path()
+                            tickPath.move(to: CGPoint(x: graphFrame.maxX + 2, y: tickY))
+                            tickPath.addLine(to: CGPoint(x: graphFrame.maxX + 8, y: tickY))
+                            context.stroke(tickPath,
+                                           with: .color(secondaryForeground.opacity(0.85)),
+                                           lineWidth: 1)
+
+                            let text = Self.timeFormatter.string(from: tick.date)
+                            let resolved = context.resolve(
+                                Text(text)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(secondaryForeground)
+                            )
+                            context.draw(resolved,
+                                         at: CGPoint(x: graphFrame.maxX + 10, y: tickY),
+                                         anchor: .leading)
                         }
                     }
                 } else {
@@ -407,25 +461,56 @@ internal struct FolderMinimapSurface: View {
                                                  comment: "Accessibility hint for folder minimap"))
             .help(NSLocalizedString("threadcanvas.folder.inspector.minimap.help",
                                     comment: "Help text for folder minimap"))
+            .accessibilityValue(accessibilityValueText)
         }
     }
 
-    private func point(for node: FolderMinimapNode, in size: CGSize) -> CGPoint {
-        let horizontalPadding: CGFloat = 10
+    private var accessibilityValueText: String {
+        var parts: [String] = []
+        if viewportRect != nil {
+            parts.append(NSLocalizedString("threadcanvas.folder.inspector.minimap.viewport.visible",
+                                           comment: "Accessibility value when viewport overlay is visible on minimap"))
+        }
+        if selectedNodeID != nil {
+            parts.append(NSLocalizedString("threadcanvas.folder.inspector.minimap.selected.visible",
+                                           comment: "Accessibility value when selected node is visible on minimap"))
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func graphRect(in size: CGSize) -> CGRect {
+        let leftPadding: CGFloat = 10
+        let rightPadding: CGFloat = 88
         let verticalPadding: CGFloat = 10
-        let width = max(size.width - (horizontalPadding * 2), 1)
+        let width = max(size.width - leftPadding - rightPadding, 1)
         let height = max(size.height - (verticalPadding * 2), 1)
-        let x = horizontalPadding + (node.normalizedX * width)
-        let y = verticalPadding + (node.normalizedY * height)
+        return CGRect(x: leftPadding, y: verticalPadding, width: width, height: height)
+    }
+
+    private func point(for node: FolderMinimapNode, in graphFrame: CGRect) -> CGPoint {
+        let x = graphFrame.minX + (node.normalizedX * graphFrame.width)
+        let y = graphFrame.minY + (node.normalizedY * graphFrame.height)
         return CGPoint(x: x, y: y)
+    }
+
+    private func rect(for normalizedRect: CGRect, in graphFrame: CGRect) -> CGRect {
+        let x = graphFrame.minX + (normalizedRect.minX * graphFrame.width)
+        let y = graphFrame.minY + (normalizedRect.minY * graphFrame.height)
+        let width = max(normalizedRect.width * graphFrame.width, 1)
+        let height = max(normalizedRect.height * graphFrame.height, 1)
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
     internal static func normalizedPoint(_ location: CGPoint, in size: CGSize) -> CGPoint {
         guard size.width > 0, size.height > 0 else {
             return CGPoint(x: 0.5, y: 0.5)
         }
-        let normalizedX = min(max(location.x / size.width, 0), 1)
-        let normalizedY = min(max(location.y / size.height, 0), 1)
+        let graphFrame = CGRect(x: 10,
+                                y: 10,
+                                width: max(size.width - 98, 1),
+                                height: max(size.height - 20, 1))
+        let normalizedX = min(max((location.x - graphFrame.minX) / graphFrame.width, 0), 1)
+        let normalizedY = min(max((location.y - graphFrame.minY) / graphFrame.height, 0), 1)
         return CGPoint(x: normalizedX, y: normalizedY)
     }
 }

@@ -58,6 +58,8 @@
 "threadcanvas.folder.inspector.minimap.accessibility.label" = "Folder minimap";
 "threadcanvas.folder.inspector.minimap.accessibility.hint" = "Click to jump within this folder.";
 "threadcanvas.folder.inspector.minimap.help" = "Click any point to jump within this folder.";
+"threadcanvas.folder.inspector.minimap.viewport.visible" = "Viewport visible";
+"threadcanvas.folder.inspector.minimap.selected.visible" = "Selected node visible";
 "threadcanvas.folder.menu.pin" = "Pin Folder";
 "threadcanvas.folder.menu.unpin" = "Unpin Folder";
 "threadcanvas.folder.pin.action" = "Pin Folder";

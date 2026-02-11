@@ -69,6 +69,23 @@ The system SHALL persist edited folder titles and colors so they are restored af
 - **WHEN** the app is relaunched after editing a folder's title or color
 - **THEN** the folder is restored with the edited title and color
 
+### Requirement: Folder Minimap Legibility Cues
+The system SHALL render folder minimap legibility cues that include (1) a selected-node indicator when the currently selected node belongs to the selected folder, (2) a folder-scoped viewport overlay showing where the current canvas view intersects the folder, and (3) chronological date tick labels while preserving relative node spacing.
+
+#### Scenario: Folder minimap selected-node indicator
+- **WHEN** a folder is selected and the currently selected node is inside that folder scope
+- **THEN** the minimap highlights that node as the active selection
+- **AND** no active-node highlight is shown for out-of-folder selections
+
+#### Scenario: Folder minimap viewport overlay
+- **WHEN** the canvas viewport intersects the selected folder's region
+- **THEN** the minimap shows a folder-scoped viewport overlay clipped to that folder's minimap bounds
+
+#### Scenario: Folder minimap time ticks
+- **WHEN** the minimap renders folder nodes
+- **THEN** it includes date tick labels from newest (top) to oldest (bottom)
+- **AND** node positions continue to use relative temporal spacing
+
 ### Requirement: Nested Folder Creation
 The system SHALL allow creating a child folder from a thread that is already inside a folder, placing the new folder beneath the parent while keeping the parent folder as the owner of the child. Parents MAY contain multiple child folders and MAY also contain loose member threads.
 
@@ -137,4 +154,3 @@ The system SHALL persist pinned folder state locally so it is restored after rel
 #### Scenario: Relaunch restores pins
 - **WHEN** the app is relaunched after pinning folders
 - **THEN** the same folders remain pinned
-

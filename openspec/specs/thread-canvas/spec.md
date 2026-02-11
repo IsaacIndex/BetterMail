@@ -146,7 +146,15 @@ The system SHALL treat clicking a folder header on the thread canvas as a select
 #### Scenario: Folder click shows details panel
 - **WHEN** the user clicks a folder header
 - **THEN** the inspector region shows the folder details panel instead of a thread inspector
-- **AND** the previously selected thread is deselected
+- **AND** the folder is marked selected for inspector context
+
+### Requirement: Folder-Scoped Minimap Viewport Projection
+The system SHALL project the current thread canvas viewport into selected-folder minimap coordinates so the inspector can render where the user is within that folder region.
+
+#### Scenario: Viewport projection updates while navigating
+- **WHEN** the user scrolls or zooms the canvas
+- **THEN** the selected folder minimap receives an updated folder-scoped viewport projection
+- **AND** the projection remains clipped to the selected folder bounds
 
 ### Requirement: Nested Folder Drag Targets
 The system SHALL support dragging threads into or out of any folder depth on the canvas, treating each nested folder as its own drop target and updating membership accordingly.
@@ -316,4 +324,3 @@ The system SHALL render the Timeline View vertical rail so it visually meets eac
 #### Scenario: Variable-height entries stay connected
 - **WHEN** a timeline entry grows taller because of multi-line summaries or wrapped tags
 - **THEN** the rail spans the full entry height and still meets the dot edges without offsets or breaks
-

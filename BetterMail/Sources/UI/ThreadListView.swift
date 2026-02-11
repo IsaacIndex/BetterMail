@@ -106,6 +106,8 @@ internal struct ThreadListView: View {
                 let minimapModel = viewModel.folderMinimapModel(for: selectedFolder.id)
                 ThreadFolderInspectorView(folder: selectedFolder,
                                           minimapModel: minimapModel,
+                                          minimapSelectedNodeID: viewModel.folderMinimapSelectedNodeID(for: selectedFolder.id),
+                                          minimapViewportRect: viewModel.folderMinimapViewport(for: selectedFolder.id),
                                           summaryState: viewModel.folderSummaryState(for: selectedFolder.id),
                                           canRegenerateSummary: viewModel.isSummaryProviderAvailable,
                                           onRegenerateSummary: {
