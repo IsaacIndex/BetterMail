@@ -998,6 +998,204 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(intervals[0].end, expectedEnd)
     }
 
+    func test_makeFolderMinimapModel_usesProvidedThreadScopeIDs() {
+        let calendar = Calendar(identifier: .gregorian)
+        let base = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let oldNode = ThreadNode(message: makeMessage(id: "a", date: calendar.date(byAdding: .day, value: -1, to: base)!))
+        let newNode = ThreadNode(message: makeMessage(id: "b", date: base))
+        let sourceNodes = [
+            FolderMinimapSourceNode(threadID: "manual-group", node: oldNode),
+            FolderMinimapSourceNode(threadID: "manual-group", node: newNode)
+        ]
+
+        let model = ThreadCanvasViewModel.makeFolderMinimapModel(folderID: "folder-1", sourceNodes: sourceNodes)
+
+        XCTAssertEqual(model?.folderID, "folder-1")
+        XCTAssertEqual(Set(model?.nodes.map(\.threadID) ?? []), Set(["manual-group"]))
+        XCTAssertEqual(model?.edges.count, 1)
+    }
+
+    func test_makeFolderMinimapModel_twoThreads_usesCenteredXPositions() {
+        let calendar = Calendar(identifier: .gregorian)
+        let base = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let newerNode = ThreadNode(message: makeMessage(id: "newer", date: base))
+        let olderNode = ThreadNode(message: makeMessage(id: "older", date: calendar.date(byAdding: .hour, value: -1, to: base)!))
+        let sourceNodes = [
+            FolderMinimapSourceNode(threadID: "thread-a", node: newerNode),
+            FolderMinimapSourceNode(threadID: "thread-b", node: olderNode)
+        ]
+
+        let model = ThreadCanvasViewModel.makeFolderMinimapModel(folderID: "folder-1", sourceNodes: sourceNodes)
+        let positions = (model?.nodes.map(\.normalizedX) ?? []).sorted()
+
+        XCTAssertEqual(positions.count, 2)
+        XCTAssertEqual(positions[0], 0.25, accuracy: 0.0001)
+        XCTAssertEqual(positions[1], 0.75, accuracy: 0.0001)
+    }
+
+    func test_resolveFolderMinimapTargetNodeID_coordinateMapping_prefersNearestInColumn() {
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+        let model = FolderMinimapModel(
+            folderID: "folder-1",
+            nodes: [
+                FolderMinimapNode(id: "old-left", threadID: "left", normalizedX: 0.0, normalizedY: 0.9),
+                FolderMinimapNode(id: "new-left", threadID: "left", normalizedX: 0.0, normalizedY: 0.1),
+                FolderMinimapNode(id: "right", threadID: "right", normalizedX: 1.0, normalizedY: 0.5)
+            ],
+            edges: [],
+            newestDate: now,
+            oldestDate: now.addingTimeInterval(-3_600),
+            timeTicks: []
+        )
+
+        let target = ThreadCanvasViewModel.resolveFolderMinimapTargetNodeID(model: model,
+                                                                            normalizedPoint: CGPoint(x: 0.05, y: 0.12))
+
+        XCTAssertEqual(target, "new-left")
+    }
+
+    func test_resolveFolderMinimapTargetNodeID_unstableMapping_fallsBackToNearestNode() {
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+        let model = FolderMinimapModel(
+            folderID: "folder-1",
+            nodes: [
+                FolderMinimapNode(id: "left", threadID: "left", normalizedX: 0.0, normalizedY: 0.2),
+                FolderMinimapNode(id: "right", threadID: "right", normalizedX: 1.0, normalizedY: 0.8)
+            ],
+            edges: [],
+            newestDate: now,
+            oldestDate: now.addingTimeInterval(-3_600),
+            timeTicks: []
+        )
+
+        let target = ThreadCanvasViewModel.resolveFolderMinimapTargetNodeID(model: model,
+                                                                            normalizedPoint: CGPoint(x: 0.45, y: 0.78),
+                                                                            mappingTolerance: 0.1)
+
+        XCTAssertEqual(target, "right")
+    }
+
+    func test_selectFolder_preservesNodeSelection() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(),
+                                              inspectorSettings: InspectorViewSettings(),
+                                              pinnedFolderSettings: PinnedFolderSettings())
+        viewModel.selectNode(id: "node-1")
+        viewModel.selectFolder(id: "folder-1")
+
+        XCTAssertEqual(viewModel.selectedNodeID, "node-1")
+        XCTAssertEqual(viewModel.selectedNodeIDs, Set(["node-1"]))
+    }
+
+    func test_resolveFolderMinimapSelectedNodeID_returnsOnlyInScope() {
+        let now = Date(timeIntervalSinceReferenceDate: 10_000)
+        let model = FolderMinimapModel(
+            folderID: "folder-1",
+            nodes: [
+                FolderMinimapNode(id: "in-scope", threadID: "left", normalizedX: 0.0, normalizedY: 0.2)
+            ],
+            edges: [],
+            newestDate: now,
+            oldestDate: now.addingTimeInterval(-1_800),
+            timeTicks: []
+        )
+
+        XCTAssertEqual(ThreadCanvasViewModel.resolveFolderMinimapSelectedNodeID(selectedNodeID: "in-scope",
+                                                                                 model: model),
+                       "in-scope")
+        XCTAssertNil(ThreadCanvasViewModel.resolveFolderMinimapSelectedNodeID(selectedNodeID: "outside",
+                                                                               model: model))
+    }
+
+    func test_projectFolderMinimapViewport_clampsToOverlayBounds() {
+        let overlay = CGRect(x: 100, y: 200, width: 120, height: 80)
+        let viewport = CGRect(x: 60, y: 220, width: 100, height: 50)
+
+        let projected = ThreadCanvasViewModel.projectFolderMinimapViewport(overlayFrame: overlay,
+                                                                            viewportRect: viewport)
+
+        XCTAssertEqual(projected?.minX, 0, accuracy: 0.0001)
+        XCTAssertEqual(projected?.minY, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(projected?.width, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(projected?.height, 0.625, accuracy: 0.0001)
+    }
+
+    func test_makeFolderMinimapViewportSnapshot_usesNodeVerticalBounds() {
+        let messageDate = Date(timeIntervalSinceReferenceDate: 10_000)
+        let node = ThreadCanvasNode(id: "node-1",
+                                    message: makeMessage(id: "node-1", date: messageDate),
+                                    threadID: "thread-1",
+                                    jwzThreadID: "jwz-1",
+                                    frame: CGRect(x: 120, y: 200, width: 100, height: 20),
+                                    dayIndex: 0,
+                                    isManualAttachment: false)
+        let column = ThreadCanvasColumn(id: "thread-1",
+                                        title: "Thread 1",
+                                        xOffset: 110,
+                                        nodes: [node],
+                                        unreadCount: 0,
+                                        latestDate: messageDate,
+                                        folderID: "folder-1")
+        let overlay = ThreadCanvasFolderOverlay(id: "folder-1",
+                                                title: "Folder 1",
+                                                color: ThreadFolderColor(red: 0.3, green: 0.4, blue: 0.6, alpha: 1),
+                                                frame: CGRect(x: 100, y: 50, width: 140, height: 300),
+                                                columnIDs: ["thread-1"],
+                                                parentID: nil,
+                                                depth: 0)
+        let layout = ThreadCanvasLayout(days: [],
+                                        columns: [column],
+                                        contentSize: CGSize(width: 500, height: 500),
+                                        folderOverlays: [overlay],
+                                        populatedDayIndices: Set([0]))
+
+        let aboveNodeSnapshot = ThreadCanvasViewModel.makeFolderMinimapViewportSnapshot(layout: layout,
+                                                                                         scrollOffsetX: 110,
+                                                                                         scrollOffsetY: 90,
+                                                                                         viewportWidth: 60,
+                                                                                         viewportHeight: 30)
+        XCTAssertNil(aboveNodeSnapshot.normalizedRectByFolderID["folder-1"])
+
+        let onNodeSnapshot = ThreadCanvasViewModel.makeFolderMinimapViewportSnapshot(layout: layout,
+                                                                                      scrollOffsetX: 110,
+                                                                                      scrollOffsetY: 205,
+                                                                                      viewportWidth: 60,
+                                                                                      viewportHeight: 10)
+        XCTAssertEqual(onNodeSnapshot.normalizedRectByFolderID["folder-1"]?.minY, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(onNodeSnapshot.normalizedRectByFolderID["folder-1"]?.height, 0.5, accuracy: 0.0001)
+    }
+
+    func test_makeFolderMinimapTimeTicks_ordersNewestToOldest_usingNodeDates() {
+        let calendar = Calendar(identifier: .gregorian)
+        let newest = calendar.date(from: DateComponents(year: 2025, month: 2, day: 11, hour: 12))!
+        let dates = (0..<8).map { offset in
+            calendar.date(byAdding: .day, value: -offset, to: newest)!
+        }
+        let ticks = ThreadCanvasViewModel.makeFolderMinimapTimeTicks(nodeDates: dates,
+                                                                      tickCount: 5)
+
+        XCTAssertEqual(ticks.count, 5)
+        XCTAssertEqual(ticks.first?.normalizedY, 0, accuracy: 0.0001)
+        XCTAssertEqual(ticks.last?.normalizedY, 1, accuracy: 0.0001)
+        XCTAssertEqual(ticks.first?.date, newest)
+        XCTAssertEqual(ticks.last?.date, dates.last)
+        let nodeDateSet = Set(dates)
+        XCTAssertTrue(ticks.allSatisfy { nodeDateSet.contains($0.date) })
+    }
+
+    func test_makeFolderMinimapTimeTicks_deduplicatesSameDayLabels() {
+        let calendar = Calendar(identifier: .gregorian)
+        let morning = calendar.date(from: DateComponents(year: 2025, month: 2, day: 9, hour: 9))!
+        let afternoon = calendar.date(from: DateComponents(year: 2025, month: 2, day: 9, hour: 15))!
+        let previousDay = calendar.date(from: DateComponents(year: 2025, month: 2, day: 8, hour: 14))!
+
+        let ticks = ThreadCanvasViewModel.makeFolderMinimapTimeTicks(nodeDates: [morning, afternoon, previousDay],
+                                                                      tickCount: 5)
+
+        let uniqueDays = Set(ticks.map { calendar.startOfDay(for: $0.date) })
+        XCTAssertEqual(ticks.count, uniqueDays.count)
+        XCTAssertEqual(ticks.count, 2)
+    }
+
     @MainActor
     func testTimelineTagsRequestedOncePerNode() async {
         let expectation = XCTestExpectation(description: "Tag request")

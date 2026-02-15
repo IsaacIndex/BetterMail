@@ -103,11 +103,25 @@ internal struct ThreadListView: View {
     private var inspectorOverlay: some View {
         if isInspectorVisible {
             if let selectedFolder = viewModel.selectedFolder {
+                let minimapModel = viewModel.folderMinimapModel(for: selectedFolder.id)
                 ThreadFolderInspectorView(folder: selectedFolder,
+                                          minimapModel: minimapModel,
+                                          minimapSelectedNodeID: viewModel.folderMinimapSelectedNodeID(for: selectedFolder.id),
+                                          minimapViewportRect: viewModel.folderMinimapViewport(for: selectedFolder.id),
                                           summaryState: viewModel.folderSummaryState(for: selectedFolder.id),
                                           canRegenerateSummary: viewModel.isSummaryProviderAvailable,
                                           onRegenerateSummary: {
                                               viewModel.regenerateFolderSummary(for: selectedFolder.id)
+                                          },
+                                          onMinimapJump: { point in
+                                              viewModel.jumpToFolderMinimapPoint(in: selectedFolder.id,
+                                                                                 normalizedPoint: point)
+                                          },
+                                          onJumpToLatest: {
+                                              viewModel.jumpToLatestNode(in: selectedFolder.id)
+                                          },
+                                          onJumpToOldest: {
+                                              viewModel.jumpToFirstNode(in: selectedFolder.id)
                                           },
                                           onPreview: { title, color in
                                               viewModel.previewFolderEdits(id: selectedFolder.id,

@@ -51,6 +51,41 @@ internal struct ThreadCanvasVerticalJumpResolution: Equatable {
     internal let didClampToBottom: Bool
 }
 
+internal struct FolderMinimapNode: Identifiable, Hashable {
+    internal let id: String
+    internal let threadID: String
+    internal let normalizedX: CGFloat
+    internal let normalizedY: CGFloat
+}
+
+internal struct FolderMinimapEdge: Hashable {
+    internal let sourceID: String
+    internal let destinationID: String
+}
+
+internal struct FolderMinimapTimeTick: Hashable {
+    internal let date: Date
+    internal let normalizedY: CGFloat
+}
+
+internal struct FolderMinimapModel: Hashable {
+    internal let folderID: String
+    internal let nodes: [FolderMinimapNode]
+    internal let edges: [FolderMinimapEdge]
+    internal let newestDate: Date
+    internal let oldestDate: Date
+    internal let timeTicks: [FolderMinimapTimeTick]
+}
+
+internal struct FolderMinimapSourceNode {
+    internal let threadID: String
+    internal let node: ThreadNode
+}
+
+internal struct FolderMinimapViewportSnapshot: Equatable {
+    internal let normalizedRectByFolderID: [String: CGRect]
+}
+
 private struct NodeSummaryInput {
     let nodeID: String
     let cacheKey: String
@@ -395,6 +430,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
     @Published internal private(set) var folderJumpInProgressIDs: Set<String> = []
+    @Published internal private(set) var minimapViewportSnapshot = FolderMinimapViewportSnapshot(normalizedRectByFolderID: [:])
     @Published internal var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -1456,10 +1492,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         if let selectedFolderID, selectedFolderID != id {
             clearFolderEdits(id: selectedFolderID)
         }
-        if id != nil {
-            selectedNodeID = nil
-            selectedNodeIDs = []
-        }
         selectedFolderID = id
     }
 
@@ -1471,8 +1503,55 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         jumpToFolderBoundaryNode(in: folderID, boundary: .oldest)
     }
 
+    internal func folderMinimapModel(for folderID: String) -> FolderMinimapModel? {
+        let threadIDs = folderThreadIDs(for: folderID)
+        guard !threadIDs.isEmpty else { return nil }
+        let sourceNodes = Self.flatten(nodes: roots).compactMap { node -> FolderMinimapSourceNode? in
+            guard let threadID = effectiveThreadID(for: node),
+                  threadIDs.contains(threadID) else {
+                return nil
+            }
+            return FolderMinimapSourceNode(threadID: threadID, node: node)
+        }
+        return Self.makeFolderMinimapModel(folderID: folderID, sourceNodes: sourceNodes)
+    }
+
+    internal func jumpToFolderMinimapPoint(in folderID: String, normalizedPoint: CGPoint) {
+        guard let model = folderMinimapModel(for: folderID) else { return }
+        guard let targetNodeID = Self.resolveFolderMinimapTargetNodeID(model: model,
+                                                                        normalizedPoint: normalizedPoint) else {
+            return
+        }
+        jumpToFolderNode(folderID: folderID, preferredNodeID: targetNodeID)
+    }
+
     internal func isJumpInProgress(for folderID: String) -> Bool {
         folderJumpInProgressIDs.contains(folderID)
+    }
+
+    internal func folderMinimapSelectedNodeID(for folderID: String) -> String? {
+        guard let model = folderMinimapModel(for: folderID) else { return nil }
+        return Self.resolveFolderMinimapSelectedNodeID(selectedNodeID: selectedNodeID,
+                                                       model: model)
+    }
+
+    internal func folderMinimapViewport(for folderID: String) -> CGRect? {
+        minimapViewportSnapshot.normalizedRectByFolderID[folderID]
+    }
+
+    internal func updateFolderMinimapViewportSnapshot(layout: ThreadCanvasLayout,
+                                                      scrollOffsetX: CGFloat,
+                                                      scrollOffsetY: CGFloat,
+                                                      viewportWidth: CGFloat,
+                                                      viewportHeight: CGFloat) {
+        let snapshot = Self.makeFolderMinimapViewportSnapshot(layout: layout,
+                                                              scrollOffsetX: scrollOffsetX,
+                                                              scrollOffsetY: scrollOffsetY,
+                                                              viewportWidth: viewportWidth,
+                                                              viewportHeight: viewportHeight)
+        if minimapViewportSnapshot != snapshot {
+            minimapViewportSnapshot = snapshot
+        }
     }
 
     internal func isFolderPinned(id: String) -> Bool {
@@ -2340,6 +2419,59 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         beginFolderJump(folderID: folderID, boundary: boundary)
     }
 
+    private func jumpToFolderNode(folderID: String, preferredNodeID: String) {
+        if folderJumpInProgressIDs.contains(folderID) {
+            Log.app.debug("Folder minimap jump ignored while another jump is running. folderID=\(folderID, privacy: .public)")
+            return
+        }
+        folderJumpInProgressIDs.insert(folderID)
+        updateJumpPhase(.resolvingTarget, folderID: folderID)
+        folderJumpTasks[folderID]?.cancel()
+        folderJumpTasks[folderID] = Task { [weak self] in
+            guard let self else { return }
+            let threadIDs = folderThreadIDs(for: folderID)
+            guard !threadIDs.isEmpty else {
+                completeFolderJump(folderID: folderID)
+                return
+            }
+            guard let preferredNode = Self.node(matching: preferredNodeID, in: roots),
+                  let preferredThreadID = effectiveThreadID(for: preferredNode),
+                  threadIDs.contains(preferredThreadID) else {
+                completeFolderJump(folderID: folderID)
+                return
+            }
+
+            updateJumpPhase(.expandingCoverage, folderID: folderID)
+            let expansion = await expandDayWindow(toInclude: preferredNode.message.date)
+            if !expansion.reachedRequiredDayCount {
+                completeFolderJump(folderID: folderID)
+                return
+            }
+            guard !Task.isCancelled else {
+                completeFolderJump(folderID: folderID)
+                return
+            }
+
+            selectNode(id: preferredNodeID)
+            updateJumpPhase(.awaitingAnchor, folderID: folderID)
+            guard let scrollTargetID = await waitForRenderableJumpTargetID(preferredNodeID: preferredNodeID,
+                                                                           folderThreadIDs: threadIDs,
+                                                                           boundary: .newest) else {
+                completeFolderJump(folderID: folderID)
+                return
+            }
+            guard !Task.isCancelled else {
+                completeFolderJump(folderID: folderID)
+                return
+            }
+            updateJumpPhase(.scrolling, folderID: folderID)
+            enqueueScrollRequest(nodeID: scrollTargetID,
+                                 folderID: folderID,
+                                 boundary: .newest,
+                                 selectedBoundaryNodeID: preferredNodeID)
+        }
+    }
+
     private func beginFolderJump(folderID: String,
                                  boundary: MessageStore.ThreadMessageBoundary) {
         folderJumpInProgressIDs.insert(folderID)
@@ -2656,6 +2788,131 @@ extension ThreadCanvasViewModel {
                                              requiredDayCount: normalizedRequired)
     }
 
+    internal static func makeFolderMinimapModel(folderID: String,
+                                                sourceNodes: [FolderMinimapSourceNode]) -> FolderMinimapModel? {
+        guard !sourceNodes.isEmpty else { return nil }
+
+        var nodesByThreadID: [String: [ThreadNode]] = [:]
+        for sourceNode in sourceNodes {
+            let threadID = sourceNode.threadID
+            let node = sourceNode.node
+            nodesByThreadID[threadID, default: []].append(node)
+        }
+
+        let orderedThreadIDs = nodesByThreadID
+            .compactMap { threadID, threadNodes -> (String, Date)? in
+                guard let latestDate = threadNodes.map(\.message.date).max() else { return nil }
+                return (threadID, latestDate)
+            }
+            .sorted { lhs, rhs in
+                if lhs.1 == rhs.1 {
+                    return lhs.0 < rhs.0
+                }
+                return lhs.1 > rhs.1
+            }
+            .map(\.0)
+        guard !orderedThreadIDs.isEmpty else { return nil }
+
+        let threadIndexByID = Dictionary(uniqueKeysWithValues: orderedThreadIDs.enumerated().map { ($0.element, $0.offset) })
+        let orderedByDate = sourceNodes.map(\.node).sorted { lhs, rhs in
+            if lhs.message.date == rhs.message.date {
+                return lhs.id < rhs.id
+            }
+            return lhs.message.date < rhs.message.date
+        }
+        guard let oldestDate = orderedByDate.first?.message.date,
+              let newestDate = orderedByDate.last?.message.date else {
+            return nil
+        }
+        let dateRange = newestDate.timeIntervalSince(oldestDate)
+
+        let mappedNodes = sourceNodes.compactMap { sourceNode -> FolderMinimapNode? in
+            let threadID = sourceNode.threadID
+            let node = sourceNode.node
+            guard let threadIndex = threadIndexByID[threadID] else { return nil }
+            let normalizedX: CGFloat
+            if orderedThreadIDs.count == 1 {
+                normalizedX = 0.5
+            } else {
+                normalizedX = (CGFloat(threadIndex) + 0.5) / CGFloat(orderedThreadIDs.count)
+            }
+            let normalizedY: CGFloat
+            if dateRange > 0 {
+                let relative = node.message.date.timeIntervalSince(oldestDate) / dateRange
+                normalizedY = CGFloat(1 - relative)
+            } else {
+                normalizedY = 0.5
+            }
+            return FolderMinimapNode(id: node.id,
+                                     threadID: threadID,
+                                     normalizedX: normalizedX,
+                                     normalizedY: normalizedY)
+        }
+        guard !mappedNodes.isEmpty else { return nil }
+
+        var edges: [FolderMinimapEdge] = []
+        for threadID in orderedThreadIDs {
+            guard let threadNodes = nodesByThreadID[threadID] else { continue }
+            let sortedThreadNodes = threadNodes.sorted { lhs, rhs in
+                if lhs.message.date == rhs.message.date {
+                    return lhs.id < rhs.id
+                }
+                return lhs.message.date < rhs.message.date
+            }
+            guard sortedThreadNodes.count >= 2 else { continue }
+            for index in 1..<sortedThreadNodes.count {
+                edges.append(FolderMinimapEdge(sourceID: sortedThreadNodes[index - 1].id,
+                                               destinationID: sortedThreadNodes[index].id))
+            }
+        }
+
+        return FolderMinimapModel(folderID: folderID,
+                                  nodes: mappedNodes,
+                                  edges: edges,
+                                  newestDate: newestDate,
+                                  oldestDate: oldestDate,
+                                  timeTicks: makeFolderMinimapTimeTicks(nodeDates: orderedByDate.map { $0.message.date }))
+    }
+
+    internal static func resolveFolderMinimapTargetNodeID(model: FolderMinimapModel,
+                                                          normalizedPoint: CGPoint,
+                                                          mappingTolerance: CGFloat = 0.35) -> String? {
+        guard !model.nodes.isEmpty else { return nil }
+        let x = min(max(normalizedPoint.x, 0), 1)
+        let y = min(max(normalizedPoint.y, 0), 1)
+        let clampedPoint = CGPoint(x: x, y: y)
+
+        let sortedColumns = Dictionary(grouping: model.nodes, by: \.threadID)
+            .compactMap { _, nodes -> CGFloat? in nodes.first?.normalizedX }
+            .sorted()
+        guard !sortedColumns.isEmpty else { return nil }
+        let nearestColumnX = sortedColumns.min { abs($0 - clampedPoint.x) < abs($1 - clampedPoint.x) } ?? clampedPoint.x
+        let shouldUseCoordinateMapping = abs(nearestColumnX - clampedPoint.x) <= mappingTolerance
+
+        if shouldUseCoordinateMapping {
+            let columnNodes = model.nodes.filter { abs($0.normalizedX - nearestColumnX) <= 0.0001 }
+            if let matched = columnNodes.min(by: { lhs, rhs in
+                let lhsDelta = abs(lhs.normalizedY - clampedPoint.y)
+                let rhsDelta = abs(rhs.normalizedY - clampedPoint.y)
+                if lhsDelta == rhsDelta {
+                    return lhs.id < rhs.id
+                }
+                return lhsDelta < rhsDelta
+            }) {
+                return matched.id
+            }
+        }
+
+        return model.nodes.min { lhs, rhs in
+            let lhsDistance = hypot(lhs.normalizedX - clampedPoint.x, lhs.normalizedY - clampedPoint.y)
+            let rhsDistance = hypot(rhs.normalizedX - clampedPoint.x, rhs.normalizedY - clampedPoint.y)
+            if lhsDistance == rhsDistance {
+                return lhs.id < rhs.id
+            }
+            return lhsDistance < rhsDistance
+        }?.id
+    }
+
     internal static func boundaryNodeID(in nodes: [ThreadNode],
                                         boundary: MessageStore.ThreadMessageBoundary) -> String? {
         guard !nodes.isEmpty else { return nil }
@@ -2675,6 +2932,102 @@ extension ThreadCanvasViewModel {
                 return lhs.message.date > rhs.message.date
             }?.id
         }
+    }
+
+    internal static func makeFolderMinimapTimeTicks(nodeDates: [Date],
+                                                    tickCount: Int = 5) -> [FolderMinimapTimeTick] {
+        guard !nodeDates.isEmpty else { return [] }
+
+        let calendar = Calendar.current
+        let latestByDay = nodeDates.reduce(into: [Date: Date]()) { result, date in
+            let day = calendar.startOfDay(for: date)
+            if let existing = result[day] {
+                result[day] = max(existing, date)
+            } else {
+                result[day] = date
+            }
+        }
+        let uniqueSortedDates = latestByDay.values.sorted(by: >)
+        guard let newestDate = uniqueSortedDates.first,
+              let oldestDate = uniqueSortedDates.last else {
+            return []
+        }
+
+        let selectedDates: [Date]
+        let clampedTickCount = max(tickCount, 2)
+        if uniqueSortedDates.count <= clampedTickCount {
+            selectedDates = uniqueSortedDates
+        } else {
+            var selectedIndices: [Int] = []
+            selectedIndices.reserveCapacity(clampedTickCount)
+            for index in 0..<clampedTickCount {
+                let progress = Double(index) / Double(clampedTickCount - 1)
+                let scaledIndex = Int(round(progress * Double(uniqueSortedDates.count - 1)))
+                if selectedIndices.last != scaledIndex {
+                    selectedIndices.append(scaledIndex)
+                }
+            }
+            selectedDates = selectedIndices.map { uniqueSortedDates[$0] }
+        }
+
+        let range = newestDate.timeIntervalSince(oldestDate)
+        guard range > 0 else {
+            return selectedDates.map { FolderMinimapTimeTick(date: $0, normalizedY: 0.5) }
+        }
+        return selectedDates.map { date in
+            let progress = CGFloat(newestDate.timeIntervalSince(date) / range)
+            return FolderMinimapTimeTick(date: date, normalizedY: progress)
+        }
+    }
+
+    internal static func resolveFolderMinimapSelectedNodeID(selectedNodeID: String?,
+                                                            model: FolderMinimapModel) -> String? {
+        guard let selectedNodeID else { return nil }
+        return model.nodes.contains(where: { $0.id == selectedNodeID }) ? selectedNodeID : nil
+    }
+
+    internal static func makeFolderMinimapViewportSnapshot(layout: ThreadCanvasLayout,
+                                                           scrollOffsetX: CGFloat,
+                                                           scrollOffsetY: CGFloat,
+                                                           viewportWidth: CGFloat,
+                                                           viewportHeight: CGFloat) -> FolderMinimapViewportSnapshot {
+        let clampedViewport = CGRect(x: max(scrollOffsetX, 0),
+                                     y: max(scrollOffsetY, 0),
+                                     width: max(viewportWidth, 1),
+                                     height: max(viewportHeight, 1))
+        var rectsByFolderID: [String: CGRect] = [:]
+        let columnsByID = Dictionary(uniqueKeysWithValues: layout.columns.map { ($0.id, $0) })
+        for overlay in layout.folderOverlays {
+            let folderNodes = overlay.columnIDs
+                .compactMap { columnsByID[$0] }
+                .flatMap(\.nodes)
+            guard !folderNodes.isEmpty else { continue }
+            let nodeMinY = folderNodes.map { $0.frame.minY }.min() ?? overlay.frame.minY
+            let nodeMaxY = folderNodes.map { $0.frame.maxY }.max() ?? overlay.frame.maxY
+            let nodeOverlayFrame = CGRect(x: overlay.frame.minX,
+                                          y: nodeMinY,
+                                          width: overlay.frame.width,
+                                          height: max(nodeMaxY - nodeMinY, 1))
+            guard let normalized = projectFolderMinimapViewport(overlayFrame: nodeOverlayFrame,
+                                                                viewportRect: clampedViewport) else {
+                continue
+            }
+            rectsByFolderID[overlay.id] = normalized
+        }
+        return FolderMinimapViewportSnapshot(normalizedRectByFolderID: rectsByFolderID)
+    }
+
+    internal static func projectFolderMinimapViewport(overlayFrame: CGRect,
+                                                      viewportRect: CGRect) -> CGRect? {
+        guard overlayFrame.width > 0, overlayFrame.height > 0 else { return nil }
+        let intersection = overlayFrame.intersection(viewportRect)
+        guard !intersection.isNull, !intersection.isEmpty else { return nil }
+        let normalizedX = min(max((intersection.minX - overlayFrame.minX) / overlayFrame.width, 0), 1)
+        let normalizedY = min(max((intersection.minY - overlayFrame.minY) / overlayFrame.height, 0), 1)
+        let normalizedWidth = min(max(intersection.width / overlayFrame.width, 0), 1 - normalizedX)
+        let normalizedHeight = min(max(intersection.height / overlayFrame.height, 0), 1 - normalizedY)
+        guard normalizedWidth > 0, normalizedHeight > 0 else { return nil }
+        return CGRect(x: normalizedX, y: normalizedY, width: normalizedWidth, height: normalizedHeight)
     }
 
     internal static func resolveRenderableJumpTargetID(preferredNodeID: String,
