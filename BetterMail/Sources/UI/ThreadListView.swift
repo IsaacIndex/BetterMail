@@ -7,6 +7,7 @@ internal struct ThreadListView: View {
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
     @State private var navHeight: CGFloat = 96
     @State private var isShowingBackfillConfirmation = false
     @State private var backfillStartDate = Date()
@@ -196,21 +197,23 @@ internal struct ThreadListView: View {
     }
 
     private var navPrimaryForegroundStyle: Color {
-        isGlassNavEnabled ? Color.white : Color.primary
+        guard isGlassNavEnabled else { return Color.primary }
+        if colorScheme == .light {
+            return Color.black.opacity(0.82)
+        }
+        return Color.white
     }
 
     private var navSecondaryForegroundStyle: Color {
-        isGlassNavEnabled ? Color.white.opacity(0.75) : Color.secondary
+        guard isGlassNavEnabled else { return Color.secondary }
+        if colorScheme == .light {
+            return Color.black.opacity(0.62)
+        }
+        return Color.white.opacity(0.75)
     }
 
-    @ViewBuilder
     private var navBar: some View {
-        if isGlassNavEnabled {
-            navBarContent
-                .colorScheme(.dark)
-        } else {
-            navBarContent
-        }
+        navBarContent
     }
 
     private var navBarContent: some View {
@@ -244,11 +247,14 @@ internal struct ThreadListView: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(navPrimaryForegroundStyle)
-        .shadow(color: Color.black.opacity(isGlassNavEnabled ? 0.45 : 0), radius: 1.5, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(isGlassNavEnabled ? (colorScheme == .light ? 0.18 : 0.45) : 0),
+                radius: 1.5,
+                x: 0,
+                y: 1)
         .background(navBackground)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.white.opacity(reduceTransparency ? 0.2 : 0.12))
+                .fill(navDividerColor)
                 .frame(height: 1)
                 .blur(radius: reduceTransparency ? 0 : 0.5)
         }
@@ -315,20 +321,23 @@ internal struct ThreadListView: View {
     @ViewBuilder
     private var limitField: some View {
         if isGlassNavEnabled {
+            let fieldFill = colorScheme == .light ? Color.white.opacity(0.55) : Color.white.opacity(0.18)
+            let fieldStroke = colorScheme == .light ? Color.black.opacity(0.2) : Color.white.opacity(0.55)
+            let fieldForeground = colorScheme == .light ? Color.black.opacity(0.9) : Color.white
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.white.opacity(0.18))
+                        .fill(fieldFill)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.white.opacity(0.55))
+                        .stroke(fieldStroke)
                 )
-                .foregroundStyle(Color.white)
-                .tint(Color.white)
+                .foregroundStyle(fieldForeground)
+                .tint(fieldForeground)
                 .frame(width: 60)
         } else {
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
@@ -357,22 +366,26 @@ internal struct ThreadListView: View {
         if reduceTransparency {
             shape
                 .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-                .overlay(shape.stroke(Color.white.opacity(0.3)))
+                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.15) : Color.white.opacity(0.3)))
         } else if #available(macOS 26, *) {
+            let strokeColor = colorScheme == .light ? Color.black.opacity(0.16) : Color.white.opacity(0.35)
+            let shadowOpacity = colorScheme == .light ? 0.12 : 0.25
+            let tintOpacity = colorScheme == .light ? 0.52 : 0.2
+            let fillOpacity = colorScheme == .light ? 0.24 : 0.08
             shape
-                .fill(Color.white.opacity(0.08))
+                .fill(Color.white.opacity(fillOpacity))
                 .glassEffect(
                     .regular
-                        .tint(Color.white.opacity(0.2))
+                        .tint(Color.white.opacity(tintOpacity))
                         .interactive(),
                     in: .rect(cornerRadius: navCornerRadius)
                 )
-                .overlay(shape.stroke(Color.white.opacity(0.35)))
-                .shadow(color: Color.black.opacity(0.25), radius: 16, y: 8)
+                .overlay(shape.stroke(strokeColor))
+                .shadow(color: Color.black.opacity(shadowOpacity), radius: 16, y: 8)
         } else {
             shape
                 .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(Color.white.opacity(0.25)))
+                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.14) : Color.white.opacity(0.25)))
         }
     }
 
@@ -432,7 +445,7 @@ internal struct ThreadListView: View {
                 .background(selectionActionBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(reduceTransparency ? 0.15 : 0.25))
+                        .stroke(actionBarStrokeColor)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .shadow(color: Color.black.opacity(isGlassNavEnabled ? 0.3 : 0.2), radius: 12, y: 6)
@@ -476,17 +489,33 @@ internal struct ThreadListView: View {
         if reduceTransparency {
             shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.92))
         } else if #available(macOS 26, *), isGlassNavEnabled {
+            let fillOpacity = colorScheme == .light ? 0.24 : 0.1
+            let tintOpacity = colorScheme == .light ? 0.36 : 0.16
             shape
-                .fill(Color.white.opacity(0.1))
+                .fill(Color.white.opacity(fillOpacity))
                 .glassEffect(
                     .regular
-                        .tint(Color.white.opacity(0.16))
+                        .tint(Color.white.opacity(tintOpacity))
                         .interactive(),
                     in: .rect(cornerRadius: 14)
                 )
         } else {
             shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.86))
         }
+    }
+
+    private var navDividerColor: Color {
+        if colorScheme == .light {
+            return Color.black.opacity(reduceTransparency ? 0.14 : 0.1)
+        }
+        return Color.white.opacity(reduceTransparency ? 0.2 : 0.12)
+    }
+
+    private var actionBarStrokeColor: Color {
+        if colorScheme == .light {
+            return Color.black.opacity(reduceTransparency ? 0.18 : 0.14)
+        }
+        return Color.white.opacity(reduceTransparency ? 0.15 : 0.25)
     }
 
     private var selectedSummaryState: ThreadSummaryState? {

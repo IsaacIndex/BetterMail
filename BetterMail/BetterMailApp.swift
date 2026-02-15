@@ -13,6 +13,7 @@ internal struct BetterMailApp: App {
     @StateObject private var inspectorSettings = InspectorViewSettings()
     @StateObject private var displaySettings = ThreadCanvasDisplaySettings()
     @StateObject private var pinnedFolderSettings = PinnedFolderSettings()
+    @StateObject private var appearanceSettings = AppearanceSettings()
 
     internal var body: some Scene {
         WindowGroup {
@@ -20,11 +21,14 @@ internal struct BetterMailApp: App {
                         inspectorSettings: inspectorSettings,
                         displaySettings: displaySettings,
                         pinnedFolderSettings: pinnedFolderSettings)
+                .preferredColorScheme(appearanceSettings.preferredColorScheme)
         }
         Settings {
             AutoRefreshSettingsView(settings: settings,
                                     inspectorSettings: inspectorSettings,
-                                    displaySettings: displaySettings)
+                                    displaySettings: displaySettings,
+                                    appearanceSettings: appearanceSettings)
+                .preferredColorScheme(appearanceSettings.preferredColorScheme)
         }
     }
 }

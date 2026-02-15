@@ -73,6 +73,12 @@
 "threadlist.selection.group" = "Group";
 "threadlist.selection.add_folder" = "Add to Folder";
 "threadlist.selection.ungroup" = "Ungroup";
+"settings.appearance.title" = "Appearance";
+"settings.appearance.mode" = "Mode";
+"settings.appearance.footer" = "Choose whether BetterMail follows your Mac appearance or always uses Light or Dark.";
+"settings.appearance.mode.system" = "System";
+"settings.appearance.mode.light" = "Light";
+"settings.appearance.mode.dark" = "Dark";
 "settings.inspector.title" = "Inspector View";
 "settings.inspector.snippet_lines" = "Max snippet lines";
 "settings.inspector.snippet_lines.value" = "%d lines";
