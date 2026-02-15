@@ -494,9 +494,10 @@ internal struct ThreadCanvasView: View {
         let effectiveWidth = max(viewportWidth, proxySize.width, 1)
         let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
                                                       totalTopPadding: totalTopPadding)
+        let logicalScrollOffsetY = max(0, rawScrollOffset + totalTopPadding)
         viewModel.updateFolderMinimapViewportSnapshot(layout: layout,
                                                       scrollOffsetX: rawScrollOffsetX,
-                                                      scrollOffsetY: rawScrollOffset,
+                                                      scrollOffsetY: logicalScrollOffsetY,
                                                       viewportWidth: effectiveWidth,
                                                       viewportHeight: effectiveHeight)
     }
