@@ -11,6 +11,7 @@ import OSLog
 internal enum MailControlError: LocalizedError {
     case invalidMessageID
     case filteredFallbackFailed
+    case invalidMailboxName
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +19,8 @@ internal enum MailControlError: LocalizedError {
             return "Invalid Message-ID."
         case .filteredFallbackFailed:
             return "Failed to search Mail for the message."
+        case .invalidMailboxName:
+            return "Mailbox name cannot be empty."
         }
     }
 }
@@ -156,6 +159,40 @@ internal struct MailControl {
         _ = try runAppleScript(script)
     }
 
+    internal static func moveMessages(messageIDs: [String],
+                                      to mailboxPath: String,
+                                      in account: String) throws {
+        let cleanedIDs = Array(
+            Set(
+                messageIDs
+                    .map(cleanMessageIDPreservingCase)
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+        guard !cleanedIDs.isEmpty else { return }
+        let script = buildMoveMessagesScript(messageIDs: cleanedIDs,
+                                             mailboxPath: mailboxPath,
+                                             account: account)
+        _ = try runAppleScript(script)
+    }
+
+    @discardableResult
+    internal static func createMailbox(named folderName: String,
+                                       in account: String,
+                                       parentPath: String?) throws -> String {
+        let trimmedName = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { throw MailControlError.invalidMailboxName }
+        let script = buildCreateMailboxScript(folderName: trimmedName,
+                                              account: account,
+                                              parentPath: parentPath)
+        _ = try runAppleScript(script)
+        let trimmedParent = parentPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedParent.isEmpty {
+            return trimmedName
+        }
+        return "\(trimmedParent)/\(trimmedName)"
+    }
+
     internal static func flagSelection(colorIndex: Int = 4) throws {
         // Apple Mail uses 0..7; common mapping: 1=red 2=orange 3=yellow 4=green 5=blue 6=purple 7=gray
         let script = """
@@ -285,6 +322,65 @@ internal struct MailControl {
             end try
             activate
             return true
+          end timeout
+        end tell
+        """
+    }
+
+    internal static func buildMoveMessagesScript(messageIDs: [String],
+                                                 mailboxPath: String,
+                                                 account: String) -> String {
+        let escapedIDs = messageIDs.map { "\"\(escapedForAppleScript($0))\"" }.joined(separator: ", ")
+        let destinationReference = mailboxReference(path: mailboxPath, account: account)
+        return """
+        set _messageIDs to {\(escapedIDs)}
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
+            set _destMailbox to \(destinationReference)
+            repeat with _targetID in _messageIDs
+              set _normalizedID to (contents of _targetID)
+              set _bracketedID to "<" & _normalizedID & ">"
+              set _matches to {}
+              ignoring case
+                try
+                  repeat with _m in (every message whose message id is _normalizedID)
+                    copy _m to end of _matches
+                  end repeat
+                end try
+                try
+                  repeat with _m in (every message whose message id is _bracketedID)
+                    copy _m to end of _matches
+                  end repeat
+                end try
+              end ignoring
+              repeat with _match in _matches
+                try
+                  move _match to _destMailbox
+                end try
+              end repeat
+            end repeat
+          end timeout
+        end tell
+        """
+    }
+
+    internal static func buildCreateMailboxScript(folderName: String,
+                                                  account: String,
+                                                  parentPath: String?) -> String {
+        let safeName = escapedForAppleScript(folderName)
+        let trimmedParent = parentPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let containerReference: String
+        if trimmedParent.isEmpty {
+            containerReference = "account \"\(escapedForAppleScript(account))\""
+        } else {
+            containerReference = mailboxReference(path: trimmedParent, account: account)
+        }
+        return """
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
+            set _container to \(containerReference)
+            set _newMailbox to make new mailbox at _container with properties {name:"\(safeName)"}
+            return (name of _newMailbox as string)
           end timeout
         end tell
         """

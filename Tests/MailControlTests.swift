@@ -64,4 +64,31 @@ final class MailControlTests: XCTestCase {
 
         XCTAssertEqual(result, .notFound)
     }
+
+    func test_buildMoveMessagesScript_includesDestinationAndMessageIDs() {
+        let script = MailControl.buildMoveMessagesScript(messageIDs: ["abc@example.com", "def@example.com"],
+                                                         mailboxPath: "Projects/Acme",
+                                                         account: "Work")
+
+        XCTAssertTrue(script.contains("set _messageIDs to {\"abc@example.com\", \"def@example.com\"}"))
+        XCTAssertTrue(script.contains("mailbox \"Acme\" of mailbox \"Projects\" of account \"Work\""))
+    }
+
+    func test_buildCreateMailboxScript_withParent_usesParentMailboxReference() {
+        let script = MailControl.buildCreateMailboxScript(folderName: "Follow Up",
+                                                          account: "Work",
+                                                          parentPath: "Projects/Acme")
+
+        XCTAssertTrue(script.contains("set _container to mailbox \"Acme\" of mailbox \"Projects\" of account \"Work\""))
+        XCTAssertTrue(script.contains("name:\"Follow Up\""))
+    }
+
+    func test_buildCreateMailboxScript_withoutParent_targetsAccountRoot() {
+        let script = MailControl.buildCreateMailboxScript(folderName: "Receipts",
+                                                          account: "Work",
+                                                          parentPath: nil)
+
+        XCTAssertTrue(script.contains("set _container to account \"Work\""))
+        XCTAssertTrue(script.contains("name:\"Receipts\""))
+    }
 }

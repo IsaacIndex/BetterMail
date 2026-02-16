@@ -62,12 +62,16 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let total = try await service.countMessages(in: orderedRange, mailbox: backfillMailbox)
+                let backfillAccount: String? = nil
+                let total = try await service.countMessages(in: orderedRange,
+                                                            mailbox: backfillMailbox,
+                                                            account: backfillAccount)
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
                 let result = try await service.runBackfill(range: orderedRange,
                                                            mailbox: backfillMailbox,
+                                                           account: backfillAccount,
                                                            preferredBatchSize: defaultBatchSize,
                                                            totalExpected: total,
                                                            snippetLineLimit: snippetLimit) { [weak self] progress in

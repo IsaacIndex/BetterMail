@@ -46,6 +46,8 @@ final class ThreadCanvasBackfillTests: XCTestCase {
                        ))
         XCTAssertEqual(await backfillService.recordedCountMailbox, "inbox")
         XCTAssertEqual(await backfillService.recordedRunMailbox, "inbox")
+        XCTAssertNil(await backfillService.recordedCountAccount)
+        XCTAssertNil(await backfillService.recordedRunAccount)
         XCTAssertEqual(await backfillService.recordedPreferredBatchSize, 7)
         XCTAssertEqual(await backfillService.recordedSnippetLineLimit, inspectorSettings.snippetLineLimit)
         XCTAssertEqual(viewModel.roots.count, 1)
@@ -152,7 +154,9 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
     private let store: MessageStore?
 
     private(set) var recordedCountMailbox: String?
+    private(set) var recordedCountAccount: String?
     private(set) var recordedRunMailbox: String?
+    private(set) var recordedRunAccount: String?
     private(set) var recordedPreferredBatchSize: Int?
     private(set) var recordedSnippetLineLimit: Int?
     private(set) var didRunBackfill = false
@@ -171,8 +175,9 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
         self.store = store
     }
 
-    func countMessages(in range: DateInterval, mailbox: String) async throws -> Int {
+    func countMessages(in range: DateInterval, mailbox: String, account: String?) async throws -> Int {
         recordedCountMailbox = mailbox
+        recordedCountAccount = account
         if shouldCancelOnCount {
             throw CancellationError()
         }
@@ -181,12 +186,14 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
 
     func runBackfill(range: DateInterval,
                      mailbox: String,
+                     account: String?,
                      preferredBatchSize: Int,
                      totalExpected: Int,
                      snippetLineLimit: Int,
                      progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult {
         didRunBackfill = true
         recordedRunMailbox = mailbox
+        recordedRunAccount = account
         recordedPreferredBatchSize = preferredBatchSize
         recordedSnippetLineLimit = snippetLineLimit
         if let runError {

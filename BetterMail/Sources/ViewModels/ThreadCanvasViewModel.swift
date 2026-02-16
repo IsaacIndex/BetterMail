@@ -128,6 +128,30 @@ private struct PendingFolderJumpScrollContext {
     let targetNodeID: String
 }
 
+private enum MailboxFolderActionError: LocalizedError {
+    case noSelection
+    case mixedAccounts
+    case missingAccount
+    case missingFolderName
+
+    var errorDescription: String? {
+        switch self {
+        case .noSelection:
+            return NSLocalizedString("mailbox.action.error.no_selection",
+                                     comment: "Error when no messages are selected for mailbox action")
+        case .mixedAccounts:
+            return NSLocalizedString("mailbox.action.error.mixed_accounts",
+                                     comment: "Error when selected messages span multiple accounts")
+        case .missingAccount:
+            return NSLocalizedString("mailbox.action.error.missing_account",
+                                     comment: "Error when no account is available for mailbox action")
+        case .missingFolderName:
+            return NSLocalizedString("mailbox.action.error.missing_folder_name",
+                                     comment: "Error when new mailbox folder name is empty")
+        }
+    }
+}
+
 @MainActor
 internal final class ThreadCanvasViewModel: ObservableObject {
     private struct TimelineLayoutCacheKey: Hashable {
@@ -263,17 +287,28 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
         func performRefresh(effectiveLimit: Int,
                             since: Date?,
+                            mailbox: String,
+                            account: String?,
                             snippetLineLimit: Int) async throws -> RefreshOutcome {
             let fetched = try await client.fetchMessages(since: since,
                                                          limit: effectiveLimit,
+                                                         mailbox: mailbox,
+                                                         account: account,
                                                          snippetLineLimit: snippetLineLimit)
             try await store.upsert(messages: fetched)
             let latest = fetched.map(\.date).max()
             return RefreshOutcome(fetchedCount: fetched.count, latestDate: latest)
         }
 
-        func performRethread(cutoffDate: Date?) async throws -> RethreadOutcome {
-            let messages = try await store.fetchMessages(since: cutoffDate)
+        func performRethread(cutoffDate: Date?,
+                             mailbox: String?,
+                             account: String?,
+                             includeAllInboxesAliases: Bool) async throws -> RethreadOutcome {
+            let messages = try await store.fetchMessages(since: cutoffDate,
+                                                         limit: nil,
+                                                         mailbox: mailbox,
+                                                         account: account,
+                                                         includeAllInboxesAliases: includeAllInboxesAliases)
             let baseResult = threader.buildThreads(from: messages)
             let manualGroups = try await store.fetchManualThreadGroups()
             let applied = threader.applyManualGroups(manualGroups, to: baseResult)
@@ -383,6 +418,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var isRefreshing = false
     @Published internal private(set) var status: String = ""
+    @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
+    @Published internal private(set) var activeMailboxScope: MailboxScope = .allInboxes
+    @Published internal private(set) var isMailboxHierarchyLoading = false
+    @Published internal private(set) var mailboxActionStatusMessage: String?
+    @Published internal private(set) var isMailboxActionRunning = false
     @Published internal private(set) var unreadTotal: Int = 0
     @Published internal private(set) var lastRefreshDate: Date?
     @Published internal private(set) var nextRefreshDate: Date?
@@ -550,6 +590,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didStart = true
         Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
         Task { await loadCachedMessages() }
+        refreshMailboxHierarchy()
         refreshNow()
         applyAutoRefreshSettings()
     }
@@ -563,6 +604,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         isRefreshing = true
         status = NSLocalizedString("refresh.status.refreshing", comment: "Status when refresh begins")
         let useFullReload = shouldForceFullReload
+        let mailboxTarget = activeMailboxFetchTarget
         let since: Date?
         if useFullReload {
             Log.refresh.info("Forcing full reload due to fetchLimit change.")
@@ -578,6 +620,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let snippetLineLimit = inspectorSettings.snippetLineLimit
                 let outcome = try await worker.performRefresh(effectiveLimit: effectiveLimit,
                                                               since: since,
+                                                              mailbox: mailboxTarget.mailbox,
+                                                              account: mailboxTarget.account,
                                                               snippetLineLimit: snippetLineLimit)
                 if let latest = outcome.latestDate {
                     store.lastSyncDate = latest
@@ -670,7 +714,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let previousNodeIDs = Set(Self.flatten(nodes: self.roots).map(\.id))
             let previousFolderIDs = Set(self.threadFolders.map(\.id))
             let cutoffDate = cachedMessageCutoffDate()
-            let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate)
+            let storeFilter = activeMailboxStoreFilter
+            let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate,
+                                                                  mailbox: storeFilter.mailbox,
+                                                                  account: storeFilter.account,
+                                                                  includeAllInboxesAliases: storeFilter.includeAllInboxesAliases)
             self.roots = rethreadResult.roots
             self.unreadTotal = rethreadResult.unreadTotal
             self.manualGroupByMessageKey = rethreadResult.manualGroupByMessageKey
@@ -688,7 +736,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let currentNodeIDs = Set(Self.flatten(nodes: rethreadResult.roots).map(\.id))
             let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
             let removedFolderIDs = previousFolderIDs.subtracting(rethreadResult.folders.map(\.id))
-            if !removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty {
+            if activeMailboxScope == .allInboxes && (!removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty) {
                 Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -1495,6 +1543,188 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         selectedFolderID = id
     }
 
+    internal func selectMailboxScope(_ scope: MailboxScope) {
+        guard activeMailboxScope != scope else { return }
+        activeMailboxScope = scope
+        mailboxActionStatusMessage = nil
+        shouldForceFullReload = true
+        scheduleRethread(delay: 0)
+        refreshNow()
+    }
+
+    internal func refreshMailboxHierarchy() {
+        guard !isMailboxHierarchyLoading else { return }
+        isMailboxHierarchyLoading = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor in
+                    self.isMailboxHierarchyLoading = false
+                }
+            }
+            do {
+                let folders = try await client.fetchMailboxHierarchy()
+                let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+                await MainActor.run {
+                    self.mailboxAccounts = accounts
+                    if case .mailboxFolder(let account, let path) = self.activeMailboxScope {
+                        let exists = accounts.contains { mailboxAccount in
+                            mailboxAccount.name == account &&
+                                MailboxHierarchyBuilder.folderChoices(for: mailboxAccount).contains(where: { $0.path == path })
+                        }
+                        if !exists {
+                            self.activeMailboxScope = .allInboxes
+                            self.shouldForceFullReload = true
+                            self.scheduleRethread(delay: 0)
+                            self.refreshNow()
+                        }
+                    }
+                }
+            } catch {
+                Log.appleScript.error("Failed to fetch mailbox hierarchy: \(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.mailboxActionStatusMessage = String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.hierarchy.error", comment: "Error when mailbox hierarchy cannot be loaded"),
+                        error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    internal var mailboxActionAccountNames: [String] {
+        mailboxAccounts.map(\.name).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    internal func mailboxFolderChoices(for account: String) -> [MailboxFolderChoice] {
+        guard let mailboxAccount = mailboxAccounts.first(where: { $0.name == account }) else { return [] }
+        return MailboxHierarchyBuilder.folderChoices(for: mailboxAccount)
+    }
+
+    internal var mailboxActionSelectionAccount: String? {
+        selectedAccountNameForMailboxActions()
+    }
+
+    internal var mailboxActionDisabledReason: String? {
+        guard !selectedNodes(in: roots).isEmpty else {
+            return NSLocalizedString("mailbox.action.error.no_selection",
+                                     comment: "Error when no messages are selected for mailbox action")
+        }
+        let accounts = mailboxActionAccountSet()
+        if accounts.count > 1 {
+            return NSLocalizedString("mailbox.action.error.mixed_accounts",
+                                     comment: "Error when selected messages span multiple accounts")
+        }
+        guard let account = accounts.first else {
+            return NSLocalizedString("mailbox.action.error.missing_account",
+                                     comment: "Error when no account is available for mailbox action")
+        }
+        return nil
+    }
+
+    internal var canMoveSelectionToMailboxFolder: Bool {
+        mailboxActionDisabledReason == nil
+    }
+
+    internal func moveSelectionToMailboxFolder(path: String, in account: String) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else { return }
+        guard let selectedAccount = selectedAccountNameForMailboxActions() else {
+            mailboxActionStatusMessage = mailboxActionAccountSet().isEmpty
+                ? MailboxFolderActionError.missingAccount.localizedDescription
+                : MailboxFolderActionError.mixedAccounts.localizedDescription
+            return
+        }
+        guard selectedAccount == account else {
+            mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            return
+        }
+        let messageIDs = selectedMessageIDsForMailboxActions()
+        guard !messageIDs.isEmpty else {
+            mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
+            return
+        }
+
+        isMailboxActionRunning = true
+        mailboxActionStatusMessage = nil
+        Task.detached { [weak self] in
+            guard let self else { return }
+            do {
+                try MailControl.moveMessages(messageIDs: messageIDs, to: trimmedPath, in: account)
+                await MainActor.run {
+                    self.isMailboxActionRunning = false
+                    self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.move.success",
+                                                                        comment: "Status after moving messages to mailbox folder")
+                    self.shouldForceFullReload = true
+                    self.refreshMailboxHierarchy()
+                    self.refreshNow()
+                }
+            } catch {
+                await MainActor.run {
+                    self.isMailboxActionRunning = false
+                    self.mailboxActionStatusMessage = String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.action.move.failed", comment: "Status when moving messages fails"),
+                        error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    internal func createMailboxFolderAndMoveSelection(name: String,
+                                                      in account: String,
+                                                      parentPath: String?) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            mailboxActionStatusMessage = MailboxFolderActionError.missingFolderName.localizedDescription
+            return
+        }
+        guard let selectedAccount = selectedAccountNameForMailboxActions() else {
+            mailboxActionStatusMessage = mailboxActionAccountSet().isEmpty
+                ? MailboxFolderActionError.missingAccount.localizedDescription
+                : MailboxFolderActionError.mixedAccounts.localizedDescription
+            return
+        }
+        guard selectedAccount == account else {
+            mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            return
+        }
+        let messageIDs = selectedMessageIDsForMailboxActions()
+        guard !messageIDs.isEmpty else {
+            mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
+            return
+        }
+
+        isMailboxActionRunning = true
+        mailboxActionStatusMessage = nil
+        Task.detached { [weak self] in
+            guard let self else { return }
+            do {
+                let destinationPath = try MailControl.createMailbox(named: trimmedName,
+                                                                    in: account,
+                                                                    parentPath: parentPath)
+                try MailControl.moveMessages(messageIDs: messageIDs, to: destinationPath, in: account)
+                await MainActor.run {
+                    self.isMailboxActionRunning = false
+                    self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.create_and_move.success",
+                                                                        comment: "Status after creating folder and moving messages")
+                    self.shouldForceFullReload = true
+                    self.refreshMailboxHierarchy()
+                    self.refreshNow()
+                }
+            } catch {
+                await MainActor.run {
+                    self.isMailboxActionRunning = false
+                    self.mailboxActionStatusMessage = String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.action.create_and_move.failed",
+                                          comment: "Status when creating mailbox folder and moving messages fails"),
+                        error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
     internal func jumpToLatestNode(in folderID: String) {
         jumpToFolderBoundaryNode(in: folderID, boundary: .newest)
     }
@@ -2015,16 +2245,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         status = NSLocalizedString("threadlist.backfill.status.fetching", comment: "Status when backfill begins")
         let limit = max(1, limitOverride ?? fetchLimit)
         let snippetLineLimit = inspectorSettings.snippetLineLimit
+        let mailboxTarget = activeMailboxFetchTarget
         Task { [weak self] in
             guard let self else { return }
             do {
                 Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) limit=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
                 var fetchedCount = 0
                 for range in ranges {
-                    let total = try await backfillService.countMessages(in: range, mailbox: "inbox")
+                    let total = try await backfillService.countMessages(in: range,
+                                                                        mailbox: mailboxTarget.mailbox,
+                                                                        account: mailboxTarget.account)
                     guard total > 0 else { continue }
                     let result = try await backfillService.runBackfill(range: range,
-                                                                       mailbox: "inbox",
+                                                                       mailbox: mailboxTarget.mailbox,
+                                                                       account: mailboxTarget.account,
                                                                        preferredBatchSize: limit,
                                                                        totalExpected: total,
                                                                        snippetLineLimit: snippetLineLimit) { _ in }
@@ -2232,6 +2466,36 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return Self.nodes(matching: selectedNodeIDs, in: roots)
     }
 
+    private func mailboxActionAccountSet() -> Set<String> {
+        Set(
+            selectedNodes(in: roots)
+                .map { $0.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    private func selectedAccountNameForMailboxActions() -> String? {
+        Self.selectedMailboxActionAccount(for: selectedNodes(in: roots))
+    }
+
+    private func selectedMessageIDsForMailboxActions() -> [String] {
+        let selected = selectedNodes(in: roots)
+        let normalized = selected
+            .map { MailControl.cleanMessageIDPreservingCase($0.message.messageID) }
+            .filter { !$0.isEmpty }
+        return Array(Set(normalized)).sorted()
+    }
+
+    internal static func selectedMailboxActionAccount(for nodes: [ThreadNode]) -> String? {
+        let accounts = Set(
+            nodes
+                .map { $0.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+        guard accounts.count == 1 else { return nil }
+        return accounts.first
+    }
+
     private func pruneSelection(using roots: [ThreadNode]) {
         let validIDs = Set(Self.flatten(nodes: roots).map(\.id))
         if selectedNodeIDs.isEmpty {
@@ -2323,6 +2587,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         nearBottomHitCount = 0
         dayWindowCount = targetDayCount
         scheduleRethread()
+    }
+
+    private var activeMailboxFetchTarget: (mailbox: String, account: String?) {
+        (mailbox: activeMailboxScope.mailboxPath, account: activeMailboxScope.accountName)
+    }
+
+    private var activeMailboxStoreFilter: (mailbox: String?, account: String?, includeAllInboxesAliases: Bool) {
+        switch activeMailboxScope {
+        case .allInboxes:
+            return (mailbox: "inbox", account: nil, includeAllInboxesAliases: true)
+        case .mailboxFolder(let account, let path):
+            let leaf = MailboxScope.mailboxFolder(account: account, path: path).mailboxLeafName
+            return (mailbox: leaf, account: account, includeAllInboxesAliases: false)
+        }
     }
 
     private func cachedMessageCutoffDate(today: Date = Date(),

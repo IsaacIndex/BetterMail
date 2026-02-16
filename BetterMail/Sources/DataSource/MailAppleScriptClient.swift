@@ -25,13 +25,21 @@ internal actor MailAppleScriptClient {
         static let body = 8
     }
 
+    private enum MailboxRowIndex {
+        static let account = 1
+        static let path = 2
+        static let name = 3
+        static let parentPath = 4
+    }
+
     internal func fetchMessages(since date: Date?,
                                 limit: Int = 10,
                                 mailbox: String = "inbox",
+                                account: String? = nil,
                                 snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
-        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
-        let script = buildScript(mailbox: mailbox, limit: limit, since: date)
+        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
+        let script = buildScript(mailbox: mailbox, account: account, limit: limit, since: date)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
@@ -40,13 +48,15 @@ internal actor MailAppleScriptClient {
     internal func fetchMessages(in range: DateInterval,
                                 limit: Int = 10,
                                 mailbox: String = "inbox",
+                                account: String? = nil,
                                 snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
         let now = Date()
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
         let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
-        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
         let script = buildScript(mailbox: mailbox,
+                                 account: account,
                                  limit: limit,
                                  startWindow: startWindow,
                                  endWindow: endWindow)
@@ -55,13 +65,14 @@ internal actor MailAppleScriptClient {
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
-    internal func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
+    internal func countMessages(in range: DateInterval, mailbox: String = "inbox", account: String? = nil) async throws -> Int {
         let now = Date()
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
         let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
-        Log.appleScript.info("countMessages requested. mailbox=\(mailbox, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        Log.appleScript.info("countMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
         let script = buildCountScript(mailbox: mailbox,
+                                      account: account,
                                       startWindow: startWindow,
                                       endWindow: endWindow)
         Log.appleScript.debug("Generated count AppleScript of \(script.count, privacy: .public) characters.")
@@ -75,7 +86,14 @@ internal actor MailAppleScriptClient {
         return Int(countValue)
     }
 
-    private func buildScript(mailbox: String, limit: Int, since: Date?) -> String {
+    internal func fetchMailboxHierarchy() async throws -> [MailboxFolder] {
+        let script = buildMailboxHierarchyScript()
+        Log.appleScript.debug("Generated mailbox hierarchy AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script)
+        return try decodeMailboxFolders(from: descriptor)
+    }
+
+    private func buildScript(mailbox: String, account: String?, limit: Int, since: Date?) -> String {
         let windowSeconds: Int
         if let since {
             windowSeconds = max(0, Int(Date().timeIntervalSince(since)))
@@ -83,7 +101,7 @@ internal actor MailAppleScriptClient {
             windowSeconds = 0
         }
 
-        let escapedPath = MailControl.mailboxReference(path: mailbox, account: nil)
+        let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
         set _rows to {}
         set _limit to \(limit)
@@ -134,8 +152,8 @@ internal actor MailAppleScriptClient {
         """
     }
 
-    private func buildScript(mailbox: String, limit: Int, startWindow: Int, endWindow: Int) -> String {
-        let escapedPath = MailControl.mailboxReference(path: mailbox, account: nil)
+    private func buildScript(mailbox: String, account: String?, limit: Int, startWindow: Int, endWindow: Int) -> String {
+        let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
         set _rows to {}
         set _limit to \(limit)
@@ -194,8 +212,8 @@ internal actor MailAppleScriptClient {
         """
     }
 
-    private func buildCountScript(mailbox: String, startWindow: Int, endWindow: Int) -> String {
-        let escapedPath = MailControl.mailboxReference(path: mailbox, account: nil)
+    private func buildCountScript(mailbox: String, account: String?, startWindow: Int, endWindow: Int) -> String {
+        let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
         set _count to 0
         set _startWindow to \(startWindow)
@@ -228,6 +246,52 @@ internal actor MailAppleScriptClient {
           end timeout
         end tell
         return _count
+        """
+    }
+
+    private func buildMailboxHierarchyScript() -> String {
+        """
+        on appendMailboxRows(_mailboxes, _accountName, _parentPath, _rows)
+          set _resultRows to _rows
+          repeat with _mailbox in _mailboxes
+            set _name to (name of _mailbox as string)
+            if _parentPath is \"\" then
+              set _path to _name
+            else
+              set _path to _parentPath & \"/\" & _name
+            end if
+            copy {_accountName, _path, _name, _parentPath} to end of _resultRows
+            set _children to {}
+            try
+              set _children to (every mailbox of _mailbox)
+            on error
+              set _children to {}
+            end try
+            if (count of _children) is greater than 0 then
+              set _resultRows to my appendMailboxRows(_children, _accountName, _path, _resultRows)
+            end if
+          end repeat
+          return _resultRows
+        end appendMailboxRows
+
+        set _rows to {}
+        tell application id \"com.apple.mail\"
+          with timeout of 60 seconds
+            repeat with _account in (every account)
+              set _accountName to (name of _account as string)
+              set _mailboxes to {}
+              try
+                set _mailboxes to (every mailbox of _account)
+              on error
+                set _mailboxes to {}
+              end try
+              if (count of _mailboxes) is greater than 0 then
+                set _rows to my appendMailboxRows(_mailboxes, _accountName, \"\", _rows)
+              end if
+            end repeat
+          end timeout
+        end tell
+        return _rows
         """
     }
 
@@ -286,6 +350,36 @@ internal actor MailAppleScriptClient {
         }
         Log.appleScript.info("Decoded \(messages.count, privacy: .public) messages from AppleScript response.")
         return messages
+    }
+
+    private func decodeMailboxFolders(from descriptor: NSAppleEventDescriptor) throws -> [MailboxFolder] {
+        guard descriptor.descriptorType == typeAEList else {
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+        guard descriptor.numberOfItems > 0 else { return [] }
+
+        var folders: [MailboxFolder] = []
+        folders.reserveCapacity(descriptor.numberOfItems)
+
+        for index in 1...descriptor.numberOfItems {
+            guard let row = descriptor.atIndex(index),
+                  row.numberOfItems >= MailboxRowIndex.parentPath else {
+                continue
+            }
+            let account = row.atIndex(MailboxRowIndex.account)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let path = row.atIndex(MailboxRowIndex.path)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let name = row.atIndex(MailboxRowIndex.name)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rawParentPath = row.atIndex(MailboxRowIndex.parentPath)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let parentPath = rawParentPath.isEmpty ? nil : rawParentPath
+            guard !account.isEmpty, !path.isEmpty, !name.isEmpty else { continue }
+
+            folders.append(MailboxFolder(account: account,
+                                         path: path,
+                                         name: name,
+                                         parentPath: parentPath))
+        }
+
+        return folders
     }
 }
 

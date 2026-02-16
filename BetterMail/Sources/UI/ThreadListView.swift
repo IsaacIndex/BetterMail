@@ -14,6 +14,7 @@ internal struct ThreadListView: View {
     @State private var backfillEndDate = Date()
     @State private var backfillLimit: Int = 10
     @State private var isInspectorVisible = false
+    @State private var isShowingMailboxMoveSheet = false
 
     private let navCornerRadius: CGFloat = 18
     private let navHorizontalPadding: CGFloat = 16
@@ -57,6 +58,10 @@ internal struct ThreadListView: View {
                     onCancel: { isShowingBackfillConfirmation = false }
                 )
                 .frame(minWidth: 360)
+            }
+            .sheet(isPresented: $isShowingMailboxMoveSheet) {
+                MailboxFolderMoveSheet(viewModel: viewModel)
+                    .frame(minWidth: 420, minHeight: 380)
             }
     }
 
@@ -393,49 +398,65 @@ internal struct ThreadListView: View {
         Group {
             if shouldShowActionBar {
                 Group {
-                    if viewModel.shouldShowSelectionActions {
-                        HStack(spacing: 12) {
-                            Text(String.localizedStringWithFormat(
-                                NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
-                                viewModel.selectedNodeIDs.count
-                            ))
-                            .font(.caption)
-                            .foregroundStyle(navSecondaryForegroundStyle)
-                            Spacer()
-                            Button(action: { viewModel.groupSelectedMessages() }) {
-                                Label(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"),
-                                      systemImage: "link")
-                            }
-                            .disabled(!viewModel.canGroupSelection)
-                            Button(action: { viewModel.addFolderForSelection() }) {
-                                Label(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"),
-                                      systemImage: "folder")
-                            }
-                            .disabled(viewModel.selectedNodeIDs.isEmpty)
-                            Button(action: { viewModel.ungroupSelectedMessages() }) {
-                                Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
-                                      systemImage: "personalhotspot.slash")
-                            }
-                            .disabled(!viewModel.canUngroupSelection)
-                            if shouldShowBackfillAction {
-                                Button(action: { presentBackfillConfirmation() }) {
-                                    Label(NSLocalizedString("threadlist.backfill.button",
-                                                            comment: "Backfill visible days button"),
-                                          systemImage: "tray.and.arrow.down")
+                    VStack(alignment: .leading, spacing: 0) {
+                        if viewModel.shouldShowSelectionActions {
+                            HStack(spacing: 12) {
+                                Text(String.localizedStringWithFormat(
+                                    NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
+                                    viewModel.selectedNodeIDs.count
+                                ))
+                                .font(.caption)
+                                .foregroundStyle(navSecondaryForegroundStyle)
+                                Spacer()
+                                Button(action: { viewModel.groupSelectedMessages() }) {
+                                    Label(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"),
+                                          systemImage: "link")
                                 }
-                                .disabled(viewModel.isBackfilling)
+                                .disabled(!viewModel.canGroupSelection)
+                                Button(action: { viewModel.addFolderForSelection() }) {
+                                    Label(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"),
+                                          systemImage: "folder")
+                                }
+                                .disabled(viewModel.selectedNodeIDs.isEmpty)
+                                Button(action: { isShowingMailboxMoveSheet = true }) {
+                                    Label(NSLocalizedString("threadlist.selection.move_mailbox_folder",
+                                                            comment: "Move selected nodes to mailbox folder button"),
+                                          systemImage: "folder.badge.plus")
+                                }
+                                .disabled(!viewModel.canMoveSelectionToMailboxFolder || viewModel.isMailboxActionRunning)
+                                .help(viewModel.mailboxActionDisabledReason ?? "")
+                                Button(action: { viewModel.ungroupSelectedMessages() }) {
+                                    Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
+                                          systemImage: "personalhotspot.slash")
+                                }
+                                .disabled(!viewModel.canUngroupSelection)
+                                if shouldShowBackfillAction {
+                                    Button(action: { presentBackfillConfirmation() }) {
+                                        Label(NSLocalizedString("threadlist.backfill.button",
+                                                                comment: "Backfill visible days button"),
+                                              systemImage: "tray.and.arrow.down")
+                                    }
+                                    .disabled(viewModel.isBackfilling)
+                                }
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                if shouldShowBackfillAction {
+                                    Button(action: { presentBackfillConfirmation() }) {
+                                        Label(NSLocalizedString("threadlist.backfill.button",
+                                                                comment: "Backfill visible days button"),
+                                              systemImage: "tray.and.arrow.down")
+                                    }
+                                    .disabled(viewModel.isBackfilling)
+                                }
                             }
                         }
-                    } else {
-                        HStack(spacing: 12) {
-                            if shouldShowBackfillAction {
-                                Button(action: { presentBackfillConfirmation() }) {
-                                    Label(NSLocalizedString("threadlist.backfill.button",
-                                                            comment: "Backfill visible days button"),
-                                          systemImage: "tray.and.arrow.down")
-                                }
-                                .disabled(viewModel.isBackfilling)
-                            }
+
+                        if let mailboxActionStatus = viewModel.mailboxActionStatusMessage {
+                            Text(mailboxActionStatus)
+                                .font(.caption2)
+                                .foregroundStyle(navSecondaryForegroundStyle)
+                                .padding(.top, 2)
                         }
                     }
                 }
@@ -593,6 +614,121 @@ private struct BackfillConfirmationSheet: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MailboxFolderMoveSheet: View {
+    @ObservedObject var viewModel: ThreadCanvasViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedAccount: String = ""
+    @State private var selectedExistingPath: String = ""
+    @State private var selectedParentPath: String?
+    @State private var newFolderName: String = ""
+
+    private var forcedAccount: String? {
+        viewModel.mailboxActionSelectionAccount
+    }
+
+    private var accountOptions: [String] {
+        if let forcedAccount {
+            return [forcedAccount]
+        }
+        return viewModel.mailboxActionAccountNames
+    }
+
+    private var folderChoices: [MailboxFolderChoice] {
+        guard !selectedAccount.isEmpty else { return [] }
+        return viewModel.mailboxFolderChoices(for: selectedAccount)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(NSLocalizedString("mailbox.sheet.title", comment: "Mailbox folder move sheet title"))
+                .font(.title3.bold())
+
+            if let disabledReason = viewModel.mailboxActionDisabledReason {
+                Text(disabledReason)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Form {
+                Section {
+                    Picker(NSLocalizedString("mailbox.sheet.account", comment: "Mailbox action account picker label"),
+                           selection: $selectedAccount) {
+                        ForEach(accountOptions, id: \.self) { account in
+                            Text(account).tag(account)
+                        }
+                    }
+                    .disabled(forcedAccount != nil)
+
+                    Picker(NSLocalizedString("mailbox.sheet.existing_folder", comment: "Existing mailbox folder picker label"),
+                           selection: $selectedExistingPath) {
+                        ForEach(folderChoices) { choice in
+                            Text(choice.displayPath).tag(choice.path)
+                        }
+                    }
+                    .disabled(folderChoices.isEmpty)
+
+                    Button(NSLocalizedString("mailbox.sheet.move_existing", comment: "Move to existing mailbox folder button")) {
+                        viewModel.moveSelectionToMailboxFolder(path: selectedExistingPath, in: selectedAccount)
+                        dismiss()
+                    }
+                    .disabled(selectedAccount.isEmpty || selectedExistingPath.isEmpty || folderChoices.isEmpty)
+                } header: {
+                    Text(NSLocalizedString("mailbox.sheet.section.existing", comment: "Header for existing folder move section"))
+                }
+
+                Section {
+                    TextField(NSLocalizedString("mailbox.sheet.new_name", comment: "New mailbox folder name field"),
+                              text: $newFolderName)
+
+                    Picker(NSLocalizedString("mailbox.sheet.parent_folder", comment: "Parent mailbox folder picker label"),
+                           selection: $selectedParentPath) {
+                        Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
+                            .tag(String?.none)
+                        ForEach(folderChoices) { choice in
+                            Text(choice.displayPath).tag(String?.some(choice.path))
+                        }
+                    }
+                    .disabled(folderChoices.isEmpty)
+
+                    Button(NSLocalizedString("mailbox.sheet.create_and_move", comment: "Create mailbox folder and move button")) {
+                        viewModel.createMailboxFolderAndMoveSelection(name: newFolderName,
+                                                                      in: selectedAccount,
+                                                                      parentPath: selectedParentPath)
+                        dismiss()
+                    }
+                    .disabled(selectedAccount.isEmpty || newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } header: {
+                    Text(NSLocalizedString("mailbox.sheet.section.new", comment: "Header for new mailbox folder section"))
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button(NSLocalizedString("mailbox.sheet.cancel", comment: "Cancel mailbox action sheet button")) {
+                    dismiss()
+                }
+            }
+        }
+        .padding(20)
+        .onAppear {
+            if selectedAccount.isEmpty {
+                selectedAccount = forcedAccount ?? accountOptions.first ?? ""
+            }
+            if selectedExistingPath.isEmpty {
+                selectedExistingPath = folderChoices.first?.path ?? ""
+            }
+            if selectedParentPath == nil {
+                selectedParentPath = nil
+            }
+        }
+        .onChange(of: selectedAccount) { _, _ in
+            selectedExistingPath = folderChoices.first?.path ?? ""
+            selectedParentPath = nil
+        }
     }
 }
 

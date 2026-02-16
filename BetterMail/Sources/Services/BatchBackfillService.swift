@@ -1,9 +1,12 @@
 import Foundation
 
 internal protocol BatchBackfillServicing {
-    func countMessages(in range: DateInterval, mailbox: String) async throws -> Int
+    func countMessages(in range: DateInterval,
+                       mailbox: String,
+                       account: String?) async throws -> Int
     func runBackfill(range: DateInterval,
                      mailbox: String,
+                     account: String?,
                      preferredBatchSize: Int,
                      totalExpected: Int,
                      snippetLineLimit: Int,
@@ -39,7 +42,9 @@ internal actor BatchBackfillService: BatchBackfillServicing {
         self.store = store
     }
 
-    internal func countMessages(in range: DateInterval, mailbox: String = "inbox") async throws -> Int {
+    internal func countMessages(in range: DateInterval,
+                                mailbox: String = "inbox",
+                                account: String? = nil) async throws -> Int {
         let now = Date()
         if range.start > now {
             return 0
@@ -47,11 +52,12 @@ internal actor BatchBackfillService: BatchBackfillServicing {
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
-        return try await client.countMessages(in: clampedRange, mailbox: mailbox)
+        return try await client.countMessages(in: clampedRange, mailbox: mailbox, account: account)
     }
 
     internal func runBackfill(range: DateInterval,
                               mailbox: String = "inbox",
+                              account: String? = nil,
                               preferredBatchSize: Int = 5,
                               totalExpected: Int,
                               snippetLineLimit: Int,
@@ -78,6 +84,7 @@ internal actor BatchBackfillService: BatchBackfillServicing {
                 let messages = try await client.fetchMessages(in: remainingRange,
                                                               limit: batchSize,
                                                               mailbox: mailbox,
+                                                              account: account,
                                                               snippetLineLimit: snippetLineLimit)
                 guard !messages.isEmpty else { break }
                 let uniqueMessages = messages.filter { seenMessageIDs.insert($0.messageID).inserted }

@@ -5,11 +5,12 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
+- Account-aware mailbox sidebar with nested Apple Mail folders while keeping `All Inboxes` as the default landing scope.
 - Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator.
 - Folder details inspector includes a non-scrollable minimap with selected-node highlight, folder-scoped viewport overlay, and date ticks/labels while preserving relative spacing for click-to-jump navigation.
 - Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
 - Appearance preferences support System, Light, and Dark modes from BetterMail Settings while keeping the glassmorphism styling consistent.
-- AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
+- AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/create mailbox-folder, flag, and search actions against Apple Mail.
 - Inspector "Open in Mail" uses AppleScript targeting (Message-ID plus filtered fallback search) without `message://` URLs.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
@@ -64,7 +65,7 @@ Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Cor
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
 - `EmailSummaryProviderFactory` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
-- `MailControl` demonstrates how to execute follow-up AppleScript commands (move, flag, search) against the current Mail selection.
+- `MailControl` provides AppleScript helpers for message targeting, move/create mailbox-folder actions, flagging, and search workflows.
 
 ## Technical Notes
 
@@ -191,13 +192,15 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 
 ## UI Layers (Current)
 - App entry point: `BetterMail/BetterMailApp.swift` shows `ContentView` in the main `WindowGroup`.
-- `BetterMail/ContentView.swift` renders only `ThreadListView` (no split view/sidebar container at the moment).
+- `BetterMail/ContentView.swift` renders a split layout with:
+  - `MailboxSidebarView` on the left for account + mailbox-folder navigation.
+  - `ThreadListView` on the right for the thread canvas, inspector, and action bars.
 - `BetterMail/Sources/UI/ThreadListView.swift` composes the main canvas stack:
   - `ThreadCanvasView` as the full-window canvas.
   - `ThreadInspectorView` as a right-side overlay panel.
   - `navigationBarOverlay` as the top bar above the canvas.
   - `selectionActionBar` as a bottom overlay for multi-select actions.
-- The older left sidebar thread list (vertical list of subjects/unread counts) has been removed; the canvas UI is the canonical surface. See `TechDocs/MigrationLog.md` for legacy removals.
+- Mailbox-folder actions in the selection bar target Apple Mail folders (existing or newly created), while `Add to Thread Folder` keeps using BetterMail's internal canvas grouping feature.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:

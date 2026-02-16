@@ -98,18 +98,38 @@ internal final class MessageStore {
     }
 
     internal func fetchMessages(limit: Int? = nil) async throws -> [EmailMessage] {
-        try await fetchMessages(since: nil, limit: limit)
+        try await fetchMessages(since: nil,
+                                limit: limit,
+                                mailbox: nil,
+                                account: nil,
+                                includeAllInboxesAliases: false)
     }
 
-    internal func fetchMessages(since date: Date?, limit: Int? = nil) async throws -> [EmailMessage] {
+    internal func fetchMessages(since date: Date?,
+                                limit: Int? = nil,
+                                mailbox: String? = nil,
+                                account: String? = nil,
+                                includeAllInboxesAliases: Bool = false) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
             request.sortDescriptors = [
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
             ]
+            var predicates: [NSPredicate] = []
             if let date {
-                request.predicate = NSPredicate(format: "date >= %@", date as NSDate)
+                predicates.append(NSPredicate(format: "date >= %@", date as NSDate))
+            }
+            if let mailbox {
+                predicates.append(self.mailboxPredicate(mailbox: mailbox,
+                                                        includeAllInboxesAliases: includeAllInboxesAliases))
+            }
+            let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedAccount.isEmpty {
+                predicates.append(NSPredicate(format: "accountName ==[c] %@", trimmedAccount))
+            }
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
@@ -163,6 +183,8 @@ internal final class MessageStore {
 
     internal func fetchMessages(in range: DateInterval,
                                 mailbox: String? = nil,
+                                account: String? = nil,
+                                includeAllInboxesAliases: Bool = false,
                                 limit: Int? = nil,
                                 offset: Int = 0) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
@@ -176,7 +198,12 @@ internal final class MessageStore {
                 NSPredicate(format: "date <= %@", range.end as NSDate)
             ]
             if let mailbox {
-                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+                predicates.append(self.mailboxPredicate(mailbox: mailbox,
+                                                        includeAllInboxesAliases: includeAllInboxesAliases))
+            }
+            let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedAccount.isEmpty {
+                predicates.append(NSPredicate(format: "accountName ==[c] %@", trimmedAccount))
             }
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             if let limit {
@@ -642,6 +669,17 @@ internal final class MessageStore {
                 try context.save()
             }
         }
+    }
+
+    private func mailboxPredicate(mailbox: String, includeAllInboxesAliases: Bool) -> NSPredicate {
+        if includeAllInboxesAliases {
+            let inboxAliases = ["inbox", "all inboxes"]
+            let aliasPredicates = inboxAliases.map {
+                NSPredicate(format: "mailboxID ==[c] %@", $0)
+            }
+            return NSCompoundPredicate(orPredicateWithSubpredicates: aliasPredicates)
+        }
+        return NSPredicate(format: "mailboxID ==[c] %@", mailbox)
     }
 
     private static func makeModel() -> NSManagedObjectModel {
