@@ -9,6 +9,7 @@ internal struct ThreadCanvasView: View {
     internal let topInset: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var scrollOffset: CGFloat = 0
@@ -822,7 +823,9 @@ internal struct ThreadCanvasView: View {
     private func columnDividers(columns: [ThreadCanvasColumn],
                                 metrics: ThreadCanvasLayoutMetrics,
                                 contentHeight: CGFloat) -> some View {
-        let lineColor = reduceTransparency ? Color.secondary.opacity(0.2) : Color.white.opacity(0.12)
+        let lineColor = reduceTransparency
+            ? Color.secondary.opacity(0.2)
+            : (colorScheme == .light ? Color.black.opacity(0.16) : Color.white.opacity(0.12))
         ForEach(columns) { column in
             Rectangle()
                 .fill(lineColor)
@@ -1277,6 +1280,7 @@ private struct ThreadCanvasDayBand: View {
     let labelText: String?
     let contentWidth: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let isEven = day.id % 2 == 0
@@ -1305,11 +1309,20 @@ private struct ThreadCanvasDayBand: View {
         if reduceTransparency {
             return Color(nsColor: NSColor.windowBackgroundColor)
         }
+        if colorScheme == .light {
+            return Color.black.opacity(isEven ? 0.015 : 0.03)
+        }
         return Color.white.opacity(isEven ? 0.02 : 0.05)
     }
 
     private var separatorColor: Color {
-        reduceTransparency ? Color.secondary.opacity(0.25) : Color.white.opacity(0.08)
+        if reduceTransparency {
+            return Color.secondary.opacity(0.25)
+        }
+        if colorScheme == .light {
+            return Color.black.opacity(0.12)
+        }
+        return Color.white.opacity(0.08)
     }
 }
 
