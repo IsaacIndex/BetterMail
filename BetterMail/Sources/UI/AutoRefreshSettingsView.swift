@@ -5,15 +5,18 @@ internal struct AutoRefreshSettingsView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
+    @ObservedObject internal var appearanceSettings: AppearanceSettings
     @StateObject private var backfillViewModel: BatchBackfillSettingsViewModel
     @State private var isResetConfirmationPresented = false
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
-                  displaySettings: ThreadCanvasDisplaySettings) {
+                  displaySettings: ThreadCanvasDisplaySettings,
+                  appearanceSettings: AppearanceSettings) {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
+        self.appearanceSettings = appearanceSettings
         _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
             snippetLineLimitProvider: { inspectorSettings.snippetLineLimit },
             stopPhrasesProvider: { inspectorSettings.stopPhrases }
@@ -22,6 +25,20 @@ internal struct AutoRefreshSettingsView: View {
 
     internal var body: some View {
         Form {
+            Section {
+                Picker(NSLocalizedString("settings.appearance.mode", comment: "Appearance mode picker label"),
+                       selection: $appearanceSettings.mode) {
+                    ForEach(AppAppearanceMode.allCases, id: \.self) { mode in
+                        Text(mode.localizedTitle).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text(NSLocalizedString("settings.appearance.title", comment: "Header for appearance settings section"))
+            } footer: {
+                Text(NSLocalizedString("settings.appearance.footer", comment: "Footer for appearance settings section"))
+            }
+
             Section {
                 Toggle("Enable auto refresh", isOn: $settings.isEnabled)
 

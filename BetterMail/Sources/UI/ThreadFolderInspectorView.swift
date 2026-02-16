@@ -18,6 +18,7 @@ internal struct ThreadFolderInspectorView: View {
     internal static let minimapHeight: CGFloat = 160
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var draftTitle: String
     @State private var draftColor: Color
@@ -85,9 +86,11 @@ internal struct ThreadFolderInspectorView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .foregroundStyle(inspectorPrimaryForegroundStyle)
-        .shadow(color: Color.black.opacity(isGlassInspectorEnabled ? 0.35 : 0), radius: 1.2, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(isGlassInspectorEnabled ? (colorScheme == .light ? 0.14 : 0.35) : 0),
+                radius: 1.2,
+                x: 0,
+                y: 1)
         .background(inspectorBackground)
-        .modifier(FolderInspectorColorSchemeModifier(isEnabled: isGlassInspectorEnabled))
         .onChange(of: folder.id) { _, _ in
             resetDraft(with: folder)
         }
@@ -245,11 +248,19 @@ internal struct ThreadFolderInspectorView: View {
     }
 
     private var inspectorPrimaryForegroundStyle: Color {
-        isGlassInspectorEnabled ? Color.white : Color.primary
+        guard isGlassInspectorEnabled else { return Color.primary }
+        if colorScheme == .light {
+            return Color.black.opacity(0.82)
+        }
+        return Color.white
     }
 
     private var inspectorSecondaryForegroundStyle: Color {
-        isGlassInspectorEnabled ? Color.white.opacity(0.75) : Color.secondary
+        guard isGlassInspectorEnabled else { return Color.secondary }
+        if colorScheme == .light {
+            return Color.black.opacity(0.62)
+        }
+        return Color.white.opacity(0.75)
     }
 
     @ViewBuilder
@@ -258,21 +269,25 @@ internal struct ThreadFolderInspectorView: View {
         if reduceTransparency {
             shape
                 .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-                .overlay(shape.stroke(Color.white.opacity(0.3)))
+                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.15) : Color.white.opacity(0.3)))
         } else if #available(macOS 26, *) {
+            let strokeColor = colorScheme == .light ? Color.black.opacity(0.16) : Color.white.opacity(0.35)
+            let shadowOpacity = colorScheme == .light ? 0.12 : 0.25
+            let tintOpacity = colorScheme == .light ? 0.52 : 0.2
+            let fillOpacity = colorScheme == .light ? 0.24 : 0.08
             shape
-                .fill(Color.white.opacity(0.08))
+                .fill(Color.white.opacity(fillOpacity))
                 .glassEffect(
                     .regular
-                        .tint(Color.white.opacity(0.2)),
+                        .tint(Color.white.opacity(tintOpacity)),
                     in: .rect(cornerRadius: 18)
                 )
-                .overlay(shape.stroke(Color.white.opacity(0.35)))
-                .shadow(color: Color.black.opacity(0.25), radius: 16, y: 8)
+                .overlay(shape.stroke(strokeColor))
+                .shadow(color: Color.black.opacity(shadowOpacity), radius: 16, y: 8)
         } else {
             shape
                 .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(Color.white.opacity(0.25)))
+                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.14) : Color.white.opacity(0.25)))
         }
     }
 
@@ -334,18 +349,6 @@ internal struct ThreadFolderInspectorView: View {
         onSave(draftTitle, color)
         baselineTitle = draftTitle
         baselineColor = color
-    }
-}
-
-private struct FolderInspectorColorSchemeModifier: ViewModifier {
-    let isEnabled: Bool
-
-    func body(content: Content) -> some View {
-        if isEnabled {
-            content.colorScheme(.dark)
-        } else {
-            content
-        }
     }
 }
 
