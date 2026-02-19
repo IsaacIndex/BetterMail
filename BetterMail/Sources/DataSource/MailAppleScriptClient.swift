@@ -251,6 +251,7 @@ internal actor MailAppleScriptClient {
 
     private func buildMailboxHierarchyScript() -> String {
         """
+        using terms from application id \"com.apple.mail\"
         on appendMailboxRows(_mailboxes, _accountName, _parentPath, _rows)
           set _resultRows to _rows
           repeat with _mailbox in _mailboxes
@@ -273,6 +274,7 @@ internal actor MailAppleScriptClient {
           end repeat
           return _resultRows
         end appendMailboxRows
+        end using terms from
 
         set _rows to {}
         tell application id \"com.apple.mail\"
