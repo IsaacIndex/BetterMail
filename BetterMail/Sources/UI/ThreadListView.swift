@@ -407,47 +407,70 @@ internal struct ThreadListView: View {
                                 ))
                                 .font(.caption)
                                 .foregroundStyle(navSecondaryForegroundStyle)
-                                Spacer()
                                 Button(action: { viewModel.groupSelectedMessages() }) {
-                                    Label(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"),
-                                          systemImage: "link")
+                                    actionBarButtonLabel(
+                                        systemImage: "link",
+                                        verbKey: "threadlist.selection.group.verb",
+                                        accessibilityKey: "threadlist.selection.group"
+                                    )
                                 }
                                 .disabled(!viewModel.canGroupSelection)
+                                .help(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"))
                                 Button(action: { viewModel.addFolderForSelection() }) {
-                                    Label(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"),
-                                          systemImage: "folder")
+                                    actionBarButtonLabel(
+                                        systemImage: "folder",
+                                        verbKey: "threadlist.selection.add_folder.verb",
+                                        accessibilityKey: "threadlist.selection.add_folder"
+                                    )
                                 }
                                 .disabled(viewModel.selectedNodeIDs.isEmpty)
+                                .help(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"))
                                 Button(action: { isShowingMailboxMoveSheet = true }) {
-                                    Label(NSLocalizedString("threadlist.selection.move_mailbox_folder",
-                                                            comment: "Move selected nodes to mailbox folder button"),
-                                          systemImage: "folder.badge.plus")
+                                    actionBarButtonLabel(
+                                        systemImage: "folder.badge.plus",
+                                        verbKey: "threadlist.selection.move_mailbox_folder.verb",
+                                        accessibilityKey: "threadlist.selection.move_mailbox_folder"
+                                    )
                                 }
                                 .disabled(!viewModel.canMoveSelectionToMailboxFolder || viewModel.isMailboxActionRunning)
-                                .help(viewModel.mailboxActionDisabledReason ?? "")
+                                .help(viewModel.mailboxActionDisabledReason ??
+                                      NSLocalizedString("threadlist.selection.move_mailbox_folder",
+                                                        comment: "Move selected nodes to mailbox folder button"))
                                 Button(action: { viewModel.ungroupSelectedMessages() }) {
-                                    Label(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"),
-                                          systemImage: "personalhotspot.slash")
+                                    actionBarButtonLabel(
+                                        systemImage: "personalhotspot.slash",
+                                        verbKey: "threadlist.selection.ungroup.verb",
+                                        accessibilityKey: "threadlist.selection.ungroup"
+                                    )
                                 }
                                 .disabled(!viewModel.canUngroupSelection)
+                                .help(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"))
                                 if shouldShowBackfillAction {
                                     Button(action: { presentBackfillConfirmation() }) {
-                                        Label(NSLocalizedString("threadlist.backfill.button",
-                                                                comment: "Backfill visible days button"),
-                                              systemImage: "tray.and.arrow.down")
+                                        actionBarButtonLabel(
+                                            systemImage: "tray.and.arrow.down",
+                                            verbKey: "threadlist.backfill.button.verb",
+                                            accessibilityKey: "threadlist.backfill.button"
+                                        )
                                     }
                                     .disabled(viewModel.isBackfilling)
+                                    .help(NSLocalizedString("threadlist.backfill.button",
+                                                            comment: "Backfill visible days button"))
                                 }
                             }
                         } else {
                             HStack(spacing: 12) {
                                 if shouldShowBackfillAction {
                                     Button(action: { presentBackfillConfirmation() }) {
-                                        Label(NSLocalizedString("threadlist.backfill.button",
-                                                                comment: "Backfill visible days button"),
-                                              systemImage: "tray.and.arrow.down")
+                                        actionBarButtonLabel(
+                                            systemImage: "tray.and.arrow.down",
+                                            verbKey: "threadlist.backfill.button.verb",
+                                            accessibilityKey: "threadlist.backfill.button"
+                                        )
                                     }
                                     .disabled(viewModel.isBackfilling)
+                                    .help(NSLocalizedString("threadlist.backfill.button",
+                                                            comment: "Backfill visible days button"))
                                 }
                             }
                         }
@@ -487,7 +510,18 @@ internal struct ThreadListView: View {
     }
 
     private var actionBarMaxWidth: CGFloat? {
-        viewModel.shouldShowSelectionActions ? 600 : nil
+        viewModel.shouldShowSelectionActions ? 520 : nil
+    }
+
+    private func actionBarButtonLabel(systemImage: String,
+                                      verbKey: String,
+                                      accessibilityKey: String) -> some View {
+        Label(NSLocalizedString(verbKey, comment: "Selection action short verb"),
+              systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
+            .font(.caption)
+            .help(NSLocalizedString(accessibilityKey, comment: "Selection action button"))
+            .accessibilityLabel(NSLocalizedString(accessibilityKey, comment: "Selection action button"))
     }
 
     private var backfillIntervalDescription: String? {
