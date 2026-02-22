@@ -1563,10 +1563,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
             do {
-                let folders = try await client.fetchMailboxHierarchy()
+                let folders = try await fetchMailboxHierarchyWithRetry()
                 let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
                 await MainActor.run {
                     self.mailboxAccounts = accounts
+                    self.mailboxActionStatusMessage = nil
                     if case .mailboxFolder(let account, let path) = self.activeMailboxScope {
                         let exists = accounts.contains { mailboxAccount in
                             mailboxAccount.name == account &&
@@ -1590,6 +1591,35 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func fetchMailboxHierarchyWithRetry(maxAttempts: Int = 3) async throws -> [MailboxFolder] {
+        precondition(maxAttempts > 0)
+        var lastError: Error?
+        for attempt in 1...maxAttempts {
+            do {
+                return try await client.fetchMailboxHierarchy()
+            } catch {
+                lastError = error
+                let shouldRetry = attempt < maxAttempts && Self.shouldRetryMailboxHierarchyFetch(after: error)
+                guard shouldRetry else { throw error }
+                Log.appleScript.info("Retrying mailbox hierarchy fetch after timeout. attempt \(attempt + 1, privacy: .public)/\(maxAttempts, privacy: .public)")
+                let delayNanoseconds = UInt64(attempt) * 750_000_000
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+            }
+        }
+        throw lastError ?? NSError(domain: "BetterMail.MailboxHierarchy", code: -1)
+    }
+
+    private static func shouldRetryMailboxHierarchyFetch(after error: Error) -> Bool {
+        if let scriptError = error as? NSAppleScriptRunner.ScriptError,
+           case let .executionFailed(details) = scriptError,
+           let errorNumber = details[NSAppleScript.errorNumber] as? Int {
+            return errorNumber == -1712
+        }
+
+        let description = error.localizedDescription
+        return description.contains("-1712") || description.localizedCaseInsensitiveContains("timed out")
     }
 
     internal var mailboxActionAccountNames: [String] {

@@ -758,6 +758,22 @@ private struct MailboxFolderMoveSheet: View {
             if selectedParentPath == nil {
                 selectedParentPath = nil
             }
+            if viewModel.mailboxAccounts.isEmpty || folderChoices.isEmpty {
+                viewModel.refreshMailboxHierarchy()
+            }
+        }
+        .onChange(of: viewModel.mailboxAccounts) { _, _ in
+            let resolvedAccount = forcedAccount ?? (accountOptions.contains(selectedAccount) ? selectedAccount : (accountOptions.first ?? ""))
+            if selectedAccount != resolvedAccount {
+                selectedAccount = resolvedAccount
+            }
+            if !folderChoices.contains(where: { $0.path == selectedExistingPath }) {
+                selectedExistingPath = folderChoices.first?.path ?? ""
+            }
+            if let existingParentPath = selectedParentPath,
+               !folderChoices.contains(where: { $0.path == existingParentPath }) {
+                selectedParentPath = nil
+            }
         }
         .onChange(of: selectedAccount) { _, _ in
             selectedExistingPath = folderChoices.first?.path ?? ""
