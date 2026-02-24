@@ -558,9 +558,9 @@ internal struct ThreadCanvasView: View {
         let intervalElapsed = now - lastScrollTraceTimestamp >= scrollTraceInterval
         guard directionFlipped || intervalElapsed else { return }
 
-        Log.app.debug("Scroll sample. marker=scroll-sample rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) direction=\(direction, privacy: .public) flipped=\(directionFlipped, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
+//        Log.app.debug("Scroll sample. marker=scroll-sample rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) direction=\(direction, privacy: .public) flipped=\(directionFlipped, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
         if directionFlipped {
-            Log.app.info("Scroll direction flipped. marker=scroll-direction-flip rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
+//            Log.app.info("Scroll direction flipped. marker=scroll-direction-flip rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
         }
         lastScrollTraceDirection = direction
         lastScrollTraceTimestamp = now

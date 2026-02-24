@@ -77,6 +77,7 @@ internal final class MessageStore {
                 entity.messageID = message.messageID
                 let normalized = message.normalizedMessageID.isEmpty ? message.id.uuidString.lowercased() : message.normalizedMessageID
                 entity.normalizedMessageID = normalized
+                entity.internalMailID = message.internalMailID
                 entity.mailboxID = message.mailboxID
                 entity.accountName = message.accountName
                 entity.subject = message.subject
@@ -706,6 +707,12 @@ internal final class MessageStore {
         normalizedAttr.isOptional = false
         normalizedAttr.isIndexed = true
 
+        let internalMailIDAttr = NSAttributeDescription()
+        internalMailIDAttr.name = "internalMailID"
+        internalMailIDAttr.attributeType = .stringAttributeType
+        internalMailIDAttr.isOptional = true
+        internalMailIDAttr.isIndexed = true
+
         let mailboxAttr = NSAttributeDescription()
         mailboxAttr.name = "mailboxID"
         mailboxAttr.attributeType = .stringAttributeType
@@ -772,6 +779,7 @@ internal final class MessageStore {
             idAttr,
             msgIDAttr,
             normalizedAttr,
+            internalMailIDAttr,
             mailboxAttr,
             accountAttr,
             subjectAttr,
@@ -1210,6 +1218,7 @@ internal final class MessageEntity: NSManagedObject {
     @NSManaged var id: UUID
     @NSManaged var messageID: String
     @NSManaged var normalizedMessageID: String
+    @NSManaged var internalMailID: String?
     @NSManaged var mailboxID: String
     @NSManaged var accountName: String?
     @NSManaged var subject: String
@@ -1233,6 +1242,7 @@ internal final class MessageEntity: NSManagedObject {
         let rawURL = rawSourcePath.flatMap { URL(fileURLWithPath: $0) }
         return EmailMessage(id: id,
                             messageID: messageID,
+                            internalMailID: internalMailID,
                             mailboxID: mailboxID,
                             accountName: accountName ?? "",
                             subject: subject,

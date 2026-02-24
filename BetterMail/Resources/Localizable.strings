@@ -91,6 +91,17 @@
 "mailbox.action.move.failed" = "Move failed: %@";
 "mailbox.action.create_and_move.success" = "Mailbox folder created and messages moved.";
 "mailbox.action.create_and_move.failed" = "Create-and-move failed: %@";
+"mailbox.action.move.summary" = "Moved %d messages.";
+"mailbox.action.move.summary.partial" = "Moved %1$d messages. Skipped %2$d ambiguous, %3$d unresolved.";
+"mailbox.action.move.summary.none" = "No messages moved. Skipped %1$d ambiguous, %2$d unresolved. Refresh mailbox and retry to populate internal message IDs.";
+"mailbox.action.move.summary.none_generic" = "No messages moved.";
+"mailbox.action.create_and_move.summary" = "Mailbox folder created. Moved %d messages.";
+"mailbox.action.create_and_move.summary.partial" = "Mailbox folder created. Moved %1$d messages. Skipped %2$d ambiguous, %3$d unresolved.";
+"mailbox.action.create_and_move.summary.none" = "Mailbox folder created, but no messages moved. Skipped %1$d ambiguous, %2$d unresolved. Refresh mailbox and retry to populate internal message IDs.";
+"mailbox.action.progress.move" = "Moving messages…";
+"mailbox.action.progress.create_and_move" = "Creating folder and moving messages…";
+"mailbox.action.error.appleevent_privilege" = "Mailbox move is unavailable in this build due to Apple Mail automation permissions.";
+"mailbox.action.error.timed_out" = "Mailbox move timed out while waiting for Apple Mail. Please retry.";
 "mailbox.sheet.title" = "Mailbox Folder Actions";
 "mailbox.sheet.account" = "Account";
 "mailbox.sheet.existing_folder" = "Existing mailbox folder";

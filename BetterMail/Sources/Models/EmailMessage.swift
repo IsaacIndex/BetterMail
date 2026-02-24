@@ -3,6 +3,7 @@ import Foundation
 internal struct EmailMessage: Identifiable, Hashable {
     internal let id: UUID
     internal let messageID: String
+    internal let internalMailID: String?
     internal let mailboxID: String
     internal let accountName: String
     internal let subject: String
@@ -18,6 +19,7 @@ internal struct EmailMessage: Identifiable, Hashable {
 
     internal init(id: UUID = UUID(),
                   messageID: String,
+                  internalMailID: String? = nil,
                   mailboxID: String,
                   accountName: String,
                   subject: String,
@@ -32,6 +34,7 @@ internal struct EmailMessage: Identifiable, Hashable {
                   rawSourceLocation: URL? = nil) {
         self.id = id
         self.messageID = messageID
+        self.internalMailID = internalMailID
         self.mailboxID = mailboxID
         self.accountName = accountName
         self.subject = subject
@@ -58,6 +61,25 @@ internal struct EmailMessage: Identifiable, Hashable {
     internal func assigning(threadID: String?) -> EmailMessage {
         EmailMessage(id: id,
                      messageID: messageID,
+                     internalMailID: internalMailID,
+                     mailboxID: mailboxID,
+                     accountName: accountName,
+                     subject: subject,
+                     from: from,
+                     to: to,
+                     date: date,
+                     snippet: snippet,
+                     isUnread: isUnread,
+                     inReplyTo: inReplyTo,
+                     references: references,
+                     threadID: threadID,
+                     rawSourceLocation: rawSourceLocation)
+    }
+
+    internal func assigning(internalMailID: String?) -> EmailMessage {
+        EmailMessage(id: id,
+                     messageID: messageID,
+                     internalMailID: internalMailID,
                      mailboxID: mailboxID,
                      accountName: accountName,
                      subject: subject,

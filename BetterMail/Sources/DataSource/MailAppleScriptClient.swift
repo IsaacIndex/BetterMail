@@ -15,14 +15,15 @@ internal actor MailAppleScriptClient {
     }
 
     private enum RowIndex {
-        static let messageID = 1
-        static let subject = 2
-        static let mailbox = 3
-        static let account = 4
-        static let date = 5
-        static let read = 6
-        static let source = 7
-        static let body = 8
+        static let internalMailID = 1
+        static let messageID = 2
+        static let subject = 3
+        static let mailbox = 4
+        static let account = 5
+        static let date = 6
+        static let read = 7
+        static let source = 8
+        static let body = 9
     }
 
     private enum MailboxRowIndex {
@@ -93,6 +94,33 @@ internal actor MailAppleScriptClient {
         return try decodeMailboxFolders(from: descriptor)
     }
 
+    private func mailboxPathHelpersScript() -> String {
+        """
+        on mailboxPathForMailbox(_mailboxRef)
+          set _parts to {}
+          set _current to _mailboxRef
+          repeat
+            try
+              set _name to (name of _current as string)
+            on error
+              exit repeat
+            end try
+            set beginning of _parts to _name
+            try
+              set _current to (mailbox of _current)
+            on error
+              exit repeat
+            end try
+          end repeat
+          set _originalTIDs to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to "/"
+          set _path to _parts as string
+          set AppleScript's text item delimiters to _originalTIDs
+          return _path
+        end mailboxPathForMailbox
+        """
+    }
+
     private func buildScript(mailbox: String, account: String?, limit: Int, since: Date?) -> String {
         let windowSeconds: Int
         if let since {
@@ -103,6 +131,7 @@ internal actor MailAppleScriptClient {
 
         let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
+        \(mailboxPathHelpersScript())
         set _rows to {}
         set _limit to \(limit)
         set _window to \(windowSeconds)
@@ -131,6 +160,20 @@ internal actor MailAppleScriptClient {
               if _shouldInclude then
                 set _src to ""
                 set _body to ""
+                set _msgMailboxPath to _mailboxName
+                set _msgAccountName to _accountName
+                try
+                  set _msgMailbox to (mailbox of m)
+                  set _msgMailboxPath to my mailboxPathForMailbox(_msgMailbox)
+                  try
+                    set _msgAccountName to (name of account of _msgMailbox as string)
+                  on error
+                    set _msgAccountName to _accountName
+                  end try
+                on error
+                  set _msgMailboxPath to _mailboxName
+                  set _msgAccountName to _accountName
+                end try
                 try
                   set _src to (source of m as string)
                 on error
@@ -141,7 +184,7 @@ internal actor MailAppleScriptClient {
                 on error
                   set _body to ""
                 end try
-                copy {(message id of m as string), (subject of m as string), _mailboxName, _accountName, (date received of m), (read status of m), _src, _body} to end of _rows
+                copy {(id of m as string), (message id of m as string), (subject of m as string), _msgMailboxPath, _msgAccountName, (date received of m), (read status of m), _src, _body} to end of _rows
                 set _count to _count + 1
                 if _count is greater than or equal to _limit then exit repeat
               end if
@@ -155,6 +198,7 @@ internal actor MailAppleScriptClient {
     private func buildScript(mailbox: String, account: String?, limit: Int, startWindow: Int, endWindow: Int) -> String {
         let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
+        \(mailboxPathHelpersScript())
         set _rows to {}
         set _limit to \(limit)
         set _startWindow to \(startWindow)
@@ -191,6 +235,20 @@ internal actor MailAppleScriptClient {
               if _shouldInclude then
                 set _src to ""
                 set _body to ""
+                set _msgMailboxPath to _mailboxName
+                set _msgAccountName to _accountName
+                try
+                  set _msgMailbox to (mailbox of m)
+                  set _msgMailboxPath to my mailboxPathForMailbox(_msgMailbox)
+                  try
+                    set _msgAccountName to (name of account of _msgMailbox as string)
+                  on error
+                    set _msgAccountName to _accountName
+                  end try
+                on error
+                  set _msgMailboxPath to _mailboxName
+                  set _msgAccountName to _accountName
+                end try
                 try
                   set _src to (source of m as string)
                 on error
@@ -201,7 +259,7 @@ internal actor MailAppleScriptClient {
                 on error
                   set _body to ""
                 end try
-                copy {(message id of m as string), (subject of m as string), _mailboxName, _accountName, (date received of m), (read status of m), _src, _body} to end of _rows
+                copy {(id of m as string), (message id of m as string), (subject of m as string), _msgMailboxPath, _msgAccountName, (date received of m), (read status of m), _src, _body} to end of _rows
                 set _count to _count + 1
                 if _count is greater than or equal to _limit then exit repeat
               end if
@@ -316,9 +374,19 @@ internal actor MailAppleScriptClient {
 
         for index in 1...descriptor.numberOfItems {
             guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.body else { continue }
+            let internalMailID = row.atIndex(RowIndex.internalMailID)?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             guard let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue else { continue }
             let normalizedID = JWZThreader.normalizeIdentifier(rawMessageID)
-            let canonicalID = normalizedID.isEmpty ? UUID().uuidString.lowercased() : normalizedID
+            let cleanedRawMessageID = MailControl.cleanMessageIDPreservingCase(rawMessageID)
+            let canonicalID: String
+            if !normalizedID.isEmpty {
+                canonicalID = normalizedID
+            } else if !cleanedRawMessageID.isEmpty {
+                canonicalID = cleanedRawMessageID
+            } else {
+                canonicalID = UUID().uuidString.lowercased()
+            }
             let subject = row.atIndex(RowIndex.subject)?.stringValue ?? "(No Subject)"
             let mailboxID = row.atIndex(RowIndex.mailbox)?.stringValue ?? mailbox
             let accountName = row.atIndex(RowIndex.account)?.stringValue ?? ""
@@ -338,6 +406,7 @@ internal actor MailAppleScriptClient {
                                               maxLines: snippetPreviewLineLimit)
 
             let email = EmailMessage(messageID: canonicalID,
+                                     internalMailID: (internalMailID?.isEmpty == false) ? internalMailID : nil,
                                      mailboxID: mailboxID,
                                      accountName: accountName,
                                      subject: subject,

@@ -401,6 +401,17 @@ internal struct ThreadListView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         if viewModel.shouldShowSelectionActions {
                             HStack(spacing: 12) {
+                                if viewModel.isMailboxActionRunning {
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text(viewModel.mailboxActionProgressMessage ??
+                                             NSLocalizedString("mailbox.action.progress.move",
+                                                               comment: "Status while moving messages to mailbox folder"))
+                                            .font(.caption)
+                                            .foregroundStyle(navSecondaryForegroundStyle)
+                                    }
+                                }
                                 Text(String.localizedStringWithFormat(
                                     NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
                                     viewModel.selectedNodeIDs.count
@@ -656,7 +667,7 @@ private struct MailboxFolderMoveSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedAccount: String = ""
-    @State private var selectedExistingPath: String = ""
+    @State private var selectedExistingPath: String?
     @State private var selectedParentPath: String?
     @State private var newFolderName: String = ""
 
@@ -699,17 +710,20 @@ private struct MailboxFolderMoveSheet: View {
 
                     Picker(NSLocalizedString("mailbox.sheet.existing_folder", comment: "Existing mailbox folder picker label"),
                            selection: $selectedExistingPath) {
+                        Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
+                            .tag(String?.none)
                         ForEach(folderChoices) { choice in
-                            Text(choice.displayPath).tag(choice.path)
+                            Text(choice.displayPath).tag(String?.some(choice.path))
                         }
                     }
                     .disabled(folderChoices.isEmpty)
 
                     Button(NSLocalizedString("mailbox.sheet.move_existing", comment: "Move to existing mailbox folder button")) {
+                        guard let selectedExistingPath else { return }
                         viewModel.moveSelectionToMailboxFolder(path: selectedExistingPath, in: selectedAccount)
                         dismiss()
                     }
-                    .disabled(selectedAccount.isEmpty || selectedExistingPath.isEmpty || folderChoices.isEmpty)
+                    .disabled(selectedAccount.isEmpty || selectedExistingPath == nil || folderChoices.isEmpty)
                 } header: {
                     Text(NSLocalizedString("mailbox.sheet.section.existing", comment: "Header for existing folder move section"))
                 }
@@ -752,8 +766,8 @@ private struct MailboxFolderMoveSheet: View {
             if selectedAccount.isEmpty {
                 selectedAccount = forcedAccount ?? accountOptions.first ?? ""
             }
-            if selectedExistingPath.isEmpty {
-                selectedExistingPath = folderChoices.first?.path ?? ""
+            if selectedExistingPath == nil {
+                selectedExistingPath = folderChoices.first?.path
             }
             if selectedParentPath == nil {
                 selectedParentPath = nil
@@ -767,8 +781,11 @@ private struct MailboxFolderMoveSheet: View {
             if selectedAccount != resolvedAccount {
                 selectedAccount = resolvedAccount
             }
-            if !folderChoices.contains(where: { $0.path == selectedExistingPath }) {
-                selectedExistingPath = folderChoices.first?.path ?? ""
+            if let selectedExistingPath,
+               !folderChoices.contains(where: { $0.path == selectedExistingPath }) {
+                self.selectedExistingPath = folderChoices.first?.path
+            } else if self.selectedExistingPath == nil {
+                self.selectedExistingPath = folderChoices.first?.path
             }
             if let existingParentPath = selectedParentPath,
                !folderChoices.contains(where: { $0.path == existingParentPath }) {
@@ -776,7 +793,7 @@ private struct MailboxFolderMoveSheet: View {
             }
         }
         .onChange(of: selectedAccount) { _, _ in
-            selectedExistingPath = folderChoices.first?.path ?? ""
+            selectedExistingPath = folderChoices.first?.path
             selectedParentPath = nil
         }
     }

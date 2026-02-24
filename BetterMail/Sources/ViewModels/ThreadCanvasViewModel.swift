@@ -110,6 +110,13 @@ private struct NodeTagInput {
     let fingerprint: String
 }
 
+private struct MailboxMoveCandidate {
+    let nodeID: String
+    let message: EmailMessage
+    let account: String
+    let mailboxPath: String
+}
+
 private struct ThreadFolderEdit: Hashable {
     let title: String
     let color: ThreadFolderColor
@@ -423,6 +430,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var isMailboxHierarchyLoading = false
     @Published internal private(set) var mailboxActionStatusMessage: String?
     @Published internal private(set) var isMailboxActionRunning = false
+    @Published internal private(set) var mailboxActionProgressMessage: String?
     @Published internal private(set) var unreadTotal: Int = 0
     @Published internal private(set) var lastRefreshDate: Date?
     @Published internal private(set) var nextRefreshDate: Date?
@@ -1645,7 +1653,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return NSLocalizedString("mailbox.action.error.mixed_accounts",
                                      comment: "Error when selected messages span multiple accounts")
         }
-        guard let account = accounts.first else {
+        if accounts.isEmpty && mailboxActionAccountNames.isEmpty {
             return NSLocalizedString("mailbox.action.error.missing_account",
                                      comment: "Error when no account is available for mailbox action")
         }
@@ -1659,32 +1667,53 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal func moveSelectionToMailboxFolder(path: String, in account: String) {
         let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
-        guard let selectedAccount = selectedAccountNameForMailboxActions() else {
-            mailboxActionStatusMessage = mailboxActionAccountSet().isEmpty
-                ? MailboxFolderActionError.missingAccount.localizedDescription
-                : MailboxFolderActionError.mixedAccounts.localizedDescription
-            return
-        }
-        guard selectedAccount == account else {
+        let selectedAccounts = mailboxActionAccountSet()
+        if selectedAccounts.count > 1 {
             mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
             return
         }
-        let messageIDs = selectedMessageIDsForMailboxActions()
-        guard !messageIDs.isEmpty else {
+        if let selectedAccount = selectedAccounts.first, selectedAccount != account {
+            mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            return
+        }
+        let selectedNodes = selectedNodes(in: roots)
+        guard !selectedNodes.isEmpty else {
             mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
             return
         }
 
         isMailboxActionRunning = true
         mailboxActionStatusMessage = nil
+        mailboxActionProgressMessage = NSLocalizedString("mailbox.action.progress.move",
+                                                         comment: "Status while moving messages to mailbox folder")
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                try MailControl.moveMessages(messageIDs: messageIDs, to: trimmedPath, in: account)
+                let sourceMailboxes = Set(selectedNodes.map { $0.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines) }).sorted()
+                Log.appleScript.debug("Mailbox move requested. destination=\(trimmedPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
+                var resolution = try await self.resolveMailboxMoveTargets(from: selectedNodes, account: account)
+                var moveResult = try await MailControl.moveMessagesByInternalID(targets: resolution.moveTargets,
+                                                                                to: trimmedPath,
+                                                                                in: account)
+                if moveResult.matchedCount == 0, moveResult.errorCount == 0 {
+                    Log.appleScript.debug("Mailbox move matched zero messages on first attempt. Retrying with forced internal-ID resolution.")
+                    let retryResolution = try await self.resolveMailboxMoveTargets(from: selectedNodes,
+                                                                                   account: account,
+                                                                                   forceResolveAll: true)
+                    if retryResolution.moveTargets != resolution.moveTargets {
+                        let retryMoveResult = try await MailControl.moveMessagesByInternalID(targets: retryResolution.moveTargets,
+                                                                                             to: trimmedPath,
+                                                                                             in: account)
+                        resolution = retryResolution
+                        moveResult = retryMoveResult
+                    }
+                }
                 await MainActor.run {
                     self.isMailboxActionRunning = false
-                    self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.move.success",
-                                                                        comment: "Status after moving messages to mailbox folder")
+                    self.mailboxActionProgressMessage = nil
+                    self.mailboxActionStatusMessage = Self.mailboxMoveStatusMessage(moveResult: moveResult,
+                                                                                     ambiguousCount: resolution.ambiguousCount,
+                                                                                     unresolvedCount: resolution.unresolvedCount)
                     self.shouldForceFullReload = true
                     self.refreshMailboxHierarchy()
                     self.refreshNow()
@@ -1692,10 +1721,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isMailboxActionRunning = false
-                    self.mailboxActionStatusMessage = String.localizedStringWithFormat(
-                        NSLocalizedString("mailbox.action.move.failed", comment: "Status when moving messages fails"),
-                        error.localizedDescription
-                    )
+                    self.mailboxActionProgressMessage = nil
+                    self.mailboxActionStatusMessage = Self.mailboxMoveFailureMessage(for: error)
                 }
             }
         }
@@ -1709,35 +1736,56 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             mailboxActionStatusMessage = MailboxFolderActionError.missingFolderName.localizedDescription
             return
         }
-        guard let selectedAccount = selectedAccountNameForMailboxActions() else {
-            mailboxActionStatusMessage = mailboxActionAccountSet().isEmpty
-                ? MailboxFolderActionError.missingAccount.localizedDescription
-                : MailboxFolderActionError.mixedAccounts.localizedDescription
-            return
-        }
-        guard selectedAccount == account else {
+        let selectedAccounts = mailboxActionAccountSet()
+        if selectedAccounts.count > 1 {
             mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
             return
         }
-        let messageIDs = selectedMessageIDsForMailboxActions()
-        guard !messageIDs.isEmpty else {
+        if let selectedAccount = selectedAccounts.first, selectedAccount != account {
+            mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            return
+        }
+        let selectedNodes = selectedNodes(in: roots)
+        guard !selectedNodes.isEmpty else {
             mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
             return
         }
 
         isMailboxActionRunning = true
         mailboxActionStatusMessage = nil
+        mailboxActionProgressMessage = NSLocalizedString("mailbox.action.progress.create_and_move",
+                                                         comment: "Status while creating mailbox and moving messages")
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                let destinationPath = try MailControl.createMailbox(named: trimmedName,
-                                                                    in: account,
-                                                                    parentPath: parentPath)
-                try MailControl.moveMessages(messageIDs: messageIDs, to: destinationPath, in: account)
+                let destinationPath = try await MailControl.createMailbox(named: trimmedName,
+                                                                          in: account,
+                                                                          parentPath: parentPath)
+                let sourceMailboxes = Set(selectedNodes.map { $0.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines) }).sorted()
+                Log.appleScript.debug("Mailbox create-and-move requested. destination=\(destinationPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
+                var resolution = try await self.resolveMailboxMoveTargets(from: selectedNodes, account: account)
+                var moveResult = try await MailControl.moveMessagesByInternalID(targets: resolution.moveTargets,
+                                                                                to: destinationPath,
+                                                                                in: account)
+                if moveResult.matchedCount == 0, moveResult.errorCount == 0 {
+                    Log.appleScript.debug("Mailbox create-and-move matched zero messages on first attempt. Retrying with forced internal-ID resolution.")
+                    let retryResolution = try await self.resolveMailboxMoveTargets(from: selectedNodes,
+                                                                                   account: account,
+                                                                                   forceResolveAll: true)
+                    if retryResolution.moveTargets != resolution.moveTargets {
+                        let retryMoveResult = try await MailControl.moveMessagesByInternalID(targets: retryResolution.moveTargets,
+                                                                                             to: destinationPath,
+                                                                                             in: account)
+                        resolution = retryResolution
+                        moveResult = retryMoveResult
+                    }
+                }
                 await MainActor.run {
                     self.isMailboxActionRunning = false
-                    self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.create_and_move.success",
-                                                                        comment: "Status after creating folder and moving messages")
+                    self.mailboxActionProgressMessage = nil
+                    self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveStatusMessage(moveResult: moveResult,
+                                                                                              ambiguousCount: resolution.ambiguousCount,
+                                                                                              unresolvedCount: resolution.unresolvedCount)
                     self.shouldForceFullReload = true
                     self.refreshMailboxHierarchy()
                     self.refreshNow()
@@ -1745,11 +1793,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isMailboxActionRunning = false
-                    self.mailboxActionStatusMessage = String.localizedStringWithFormat(
-                        NSLocalizedString("mailbox.action.create_and_move.failed",
-                                          comment: "Status when creating mailbox folder and moving messages fails"),
-                        error.localizedDescription
-                    )
+                    self.mailboxActionProgressMessage = nil
+                    self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveFailureMessage(for: error)
                 }
             }
         }
@@ -1890,9 +1935,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                let resolution = try MailControl.resolveTargetingPath(messageID: messageID,
-                                                                      metadata: metadata,
-                                                                      onMessageIDFailure: { [weak self] in
+                let resolution = try await MailControl.resolveTargetingPath(messageID: messageID,
+                                                                            metadata: metadata,
+                                                                            onMessageIDFailure: { [weak self] in
                                                                           Task { @MainActor in
                                                                               guard let self else { return }
                                                                               self.setOpenInMailState(.searchingFilteredFallback,
@@ -2497,33 +2542,276 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func mailboxActionAccountSet() -> Set<String> {
-        Set(
-            selectedNodes(in: roots)
-                .map { $0.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        )
+        Set(selectedNodes(in: roots).compactMap(mailboxActionAccountName(for:)))
     }
 
     private func selectedAccountNameForMailboxActions() -> String? {
-        Self.selectedMailboxActionAccount(for: selectedNodes(in: roots))
-    }
-
-    private func selectedMessageIDsForMailboxActions() -> [String] {
-        let selected = selectedNodes(in: roots)
-        let normalized = selected
-            .map { MailControl.cleanMessageIDPreservingCase($0.message.messageID) }
-            .filter { !$0.isEmpty }
-        return Array(Set(normalized)).sorted()
-    }
-
-    internal static func selectedMailboxActionAccount(for nodes: [ThreadNode]) -> String? {
-        let accounts = Set(
-            nodes
-                .map { $0.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        )
+        let accounts = mailboxActionAccountSet()
         guard accounts.count == 1 else { return nil }
         return accounts.first
+    }
+
+    private func resolveMailboxMoveTargets(from nodes: [ThreadNode],
+                                           account: String,
+                                           forceResolveAll: Bool = false) async throws -> (internalMailIDs: [String], moveTargets: [MailControl.InternalIDMoveTarget], ambiguousCount: Int, unresolvedCount: Int) {
+        let candidates = mailboxMoveCandidates(from: nodes, account: account)
+        guard !candidates.isEmpty else {
+            return ([], [], 0, 0)
+        }
+
+        var resolvedTargetsByID: [String: MailControl.InternalIDMoveTarget] = [:]
+        var ambiguousCount = 0
+        var unresolvedCount = 0
+        var resolvedMessagesByNodeID: [String: EmailMessage] = [:]
+
+        for candidate in candidates {
+            if !forceResolveAll,
+               let existingInternalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existingInternalID.isEmpty {
+                let existingTarget = MailControl.InternalIDMoveTarget(internalID: existingInternalID,
+                                                                      sourceAccount: candidate.account,
+                                                                      sourceMailboxPath: candidate.mailboxPath)
+                if resolvedTargetsByID[existingInternalID] == nil || !existingTarget.sourceMailboxPath.isEmpty {
+                    resolvedTargetsByID[existingInternalID] = existingTarget
+                }
+                continue
+            }
+
+            do {
+                let resolution = try await MailControl.resolveInternalMailID(mailboxPath: candidate.mailboxPath,
+                                                                             account: candidate.account,
+                                                                             subject: candidate.message.subject,
+                                                                             sender: candidate.message.from,
+                                                                             receivedAt: candidate.message.date)
+                switch resolution {
+                case .resolved(let internalID):
+                    let trimmedID = internalID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmedID.isEmpty else {
+                        unresolvedCount += 1
+                        continue
+                    }
+                    let resolvedTarget = MailControl.InternalIDMoveTarget(internalID: trimmedID,
+                                                                          sourceAccount: candidate.account,
+                                                                          sourceMailboxPath: candidate.mailboxPath)
+                    if resolvedTargetsByID[trimmedID] == nil || !resolvedTarget.sourceMailboxPath.isEmpty {
+                        resolvedTargetsByID[trimmedID] = resolvedTarget
+                    }
+                    resolvedMessagesByNodeID[candidate.nodeID] = candidate.message.assigning(internalMailID: trimmedID)
+                case .ambiguous:
+                    ambiguousCount += 1
+                case .notFound:
+                    unresolvedCount += 1
+                }
+            } catch {
+                unresolvedCount += 1
+            }
+        }
+
+        if !resolvedMessagesByNodeID.isEmpty {
+            let updatedMessages = nodes.compactMap { node in
+                resolvedMessagesByNodeID[node.id]
+            }
+            if !updatedMessages.isEmpty {
+                try? await store.upsert(messages: updatedMessages)
+            }
+        }
+
+        let sortedTargets = resolvedTargetsByID.values.sorted { lhs, rhs in
+            lhs.internalID < rhs.internalID
+        }
+        return (sortedTargets.map(\.internalID), sortedTargets, ambiguousCount, unresolvedCount)
+    }
+
+    private func mailboxMoveCandidates(from nodes: [ThreadNode],
+                                       account: String) -> [MailboxMoveCandidate] {
+        let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAccount.isEmpty else { return [] }
+        return nodes.map { node in
+            let mailboxPath = mailboxPathForMailboxMove(node: node, account: trimmedAccount)
+            return MailboxMoveCandidate(nodeID: node.id,
+                                        message: node.message,
+                                        account: trimmedAccount,
+                                        mailboxPath: mailboxPath)
+        }
+    }
+
+    private func mailboxPathForMailboxMove(node: ThreadNode, account: String) -> String {
+        if case .mailboxFolder(let scopedAccount, let scopedPath) = activeMailboxScope,
+           scopedAccount.caseInsensitiveCompare(account) == .orderedSame {
+            let trimmedScopedPath = scopedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedScopedPath.isEmpty {
+                return trimmedScopedPath
+            }
+        }
+        let mailboxID = node.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mailboxID.isEmpty {
+            return "inbox"
+        }
+        if mailboxID.compare("all inboxes", options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
+            return ""
+        }
+        return mailboxID
+    }
+
+    private static func mailboxMoveFailureMessage(for error: Error) -> String {
+        if let code = MailControl.appleScriptErrorCode(from: error) {
+            if code == -10004 {
+                return NSLocalizedString("mailbox.action.error.appleevent_privilege",
+                                         comment: "Error shown when app lacks AppleEvent permission to control Mail")
+            }
+            if code == -1712 {
+                return NSLocalizedString("mailbox.action.error.timed_out",
+                                         comment: "Error shown when AppleScript operation times out")
+            }
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("mailbox.action.move.failed", comment: "Status when moving messages fails"),
+            error.localizedDescription
+        )
+    }
+
+    private static func mailboxCreateAndMoveFailureMessage(for error: Error) -> String {
+        if let code = MailControl.appleScriptErrorCode(from: error) {
+            if code == -10004 {
+                return NSLocalizedString("mailbox.action.error.appleevent_privilege",
+                                         comment: "Error shown when app lacks AppleEvent permission to control Mail")
+            }
+            if code == -1712 {
+                return NSLocalizedString("mailbox.action.error.timed_out",
+                                         comment: "Error shown when AppleScript operation times out")
+            }
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("mailbox.action.create_and_move.failed",
+                              comment: "Status when creating mailbox folder and moving messages fails"),
+            error.localizedDescription
+        )
+    }
+
+    private static func mailboxMoveStatusMessage(moveResult: MailControl.MailboxMoveResult,
+                                                 ambiguousCount: Int,
+                                                 unresolvedCount: Int) -> String {
+        let firstErrorDetail: String? = {
+            guard moveResult.errorCount > 0 else { return nil }
+            let message = moveResult.firstErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if let code = moveResult.firstErrorNumber {
+                return message.isEmpty ? "Apple Mail move error code \(code)." : "Apple Mail move error (\(code)): \(message)"
+            }
+            return message.isEmpty ? nil : "Apple Mail move error: \(message)"
+        }()
+
+        if moveResult.movedCount > 0 {
+            if ambiguousCount > 0 || unresolvedCount > 0 {
+                var status = String.localizedStringWithFormat(
+                    NSLocalizedString("mailbox.action.move.summary.partial",
+                                      comment: "Status after partially moving messages with skipped ambiguous/unresolved candidates"),
+                    moveResult.movedCount,
+                    ambiguousCount,
+                    unresolvedCount
+                )
+                if let firstErrorDetail {
+                    status += " \(firstErrorDetail)"
+                }
+                return status
+            }
+            var status = String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.action.move.summary",
+                                  comment: "Status after moving messages to mailbox folder with count"),
+                moveResult.movedCount
+            )
+            if let firstErrorDetail {
+                status += " \(firstErrorDetail)"
+            }
+            return status
+        }
+        if ambiguousCount > 0 || unresolvedCount > 0 {
+            var status = String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.action.move.summary.none",
+                                  comment: "Status when no messages were moved due to ambiguous or unresolved lookup"),
+                ambiguousCount,
+                unresolvedCount
+            )
+            if let firstErrorDetail {
+                status += " \(firstErrorDetail)"
+            }
+            return status
+        }
+        var status = NSLocalizedString("mailbox.action.move.summary.none_generic",
+                                       comment: "Status when no messages were moved and no additional lookup details are available")
+        if let firstErrorDetail {
+            status += " \(firstErrorDetail)"
+        }
+        return status
+    }
+
+    private static func mailboxCreateAndMoveStatusMessage(moveResult: MailControl.MailboxMoveResult,
+                                                          ambiguousCount: Int,
+                                                          unresolvedCount: Int) -> String {
+        let firstErrorDetail: String? = {
+            guard moveResult.errorCount > 0 else { return nil }
+            let message = moveResult.firstErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if let code = moveResult.firstErrorNumber {
+                return message.isEmpty ? "Apple Mail move error code \(code)." : "Apple Mail move error (\(code)): \(message)"
+            }
+            return message.isEmpty ? nil : "Apple Mail move error: \(message)"
+        }()
+
+        if moveResult.movedCount > 0 {
+            if ambiguousCount > 0 || unresolvedCount > 0 {
+                var status = String.localizedStringWithFormat(
+                    NSLocalizedString("mailbox.action.create_and_move.summary.partial",
+                                      comment: "Status after creating folder and partially moving messages"),
+                    moveResult.movedCount,
+                    ambiguousCount,
+                    unresolvedCount
+                )
+                if let firstErrorDetail {
+                    status += " \(firstErrorDetail)"
+                }
+                return status
+            }
+            var status = String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.action.create_and_move.summary",
+                                  comment: "Status after creating folder and moving messages"),
+                moveResult.movedCount
+            )
+            if let firstErrorDetail {
+                status += " \(firstErrorDetail)"
+            }
+            return status
+        }
+        if ambiguousCount > 0 || unresolvedCount > 0 {
+            var status = String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.action.create_and_move.summary.none",
+                                  comment: "Status when folder was created but no messages moved"),
+                ambiguousCount,
+                unresolvedCount
+            )
+            if let firstErrorDetail {
+                status += " \(firstErrorDetail)"
+            }
+            return status
+        }
+        var status = NSLocalizedString("mailbox.action.move.summary.none_generic",
+                                       comment: "Status when no messages were moved and no additional lookup details are available")
+        if let firstErrorDetail {
+            status += " \(firstErrorDetail)"
+        }
+        return status
+    }
+
+    private func mailboxActionAccountName(for node: ThreadNode) -> String? {
+        let account = node.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !account.isEmpty {
+            return account
+        }
+        switch activeMailboxScope {
+        case .mailboxFolder(let scopedAccount, _):
+            let trimmedScopedAccount = scopedAccount.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedScopedAccount.isEmpty ? nil : trimmedScopedAccount
+        case .allInboxes:
+            return nil
+        }
     }
 
     private func pruneSelection(using roots: [ThreadNode]) {

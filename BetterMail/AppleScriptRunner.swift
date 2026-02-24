@@ -9,8 +9,15 @@ import Foundation
 import Cocoa
 import OSLog
 
-internal enum AppleScriptError: Error {
+internal enum AppleScriptError: Error, LocalizedError {
     case executionFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .executionFailed(message):
+            return message
+        }
+    }
 }
 
 internal actor NSAppleScriptRunner {

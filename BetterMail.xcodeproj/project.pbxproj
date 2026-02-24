@@ -47,6 +47,7 @@
 
 /* Begin PBXFileReference section */
 		08CE01DE8A1C40779BF22717 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		1E2D3C4B5A69788796A5B4C3 /* Tests/AppearanceSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/AppearanceSettingsTests.swift; sourceTree = SOURCE_ROOT; };
 		3C49E9582D184F838AB8DF93 /* BetterMailTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BetterMailTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AD11AEB2EBCAC2100881D51 /* MailHelperExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MailHelperExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AD2C65B2EBB0927004783B6 /* BetterMail.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterMail.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -55,7 +56,6 @@
 		5AE0F0032EE03E570066A869 /* ExtensionSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ExtensionSigning.xcconfig; sourceTree = "<group>"; };
 		5AE0F0042EE03E570066A869 /* ExtensionSigning.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ExtensionSigning.xcconfig.example; sourceTree = "<group>"; };
 		5B28F8B02F0B1F0E007D1200 /* BetterMail/Resources/Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = BetterMail/Resources/Localizable.strings; sourceTree = SOURCE_ROOT; };
-		1E2D3C4B5A69788796A5B4C3 /* Tests/AppearanceSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/AppearanceSettingsTests.swift; sourceTree = SOURCE_ROOT; };
 		C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasLayoutTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -479,7 +479,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = BetterMail/BetterMail.entitlements;
+					CODE_SIGN_ENTITLEMENTS = BetterMail/BetterMail.Debug.entitlements;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -544,7 +544,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = BetterMail/BetterMail.entitlements;
+					CODE_SIGN_ENTITLEMENTS = BetterMail/BetterMail.Release.entitlements;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;

@@ -12,7 +12,7 @@ final class MailControlTests: XCTestCase {
         XCTAssertEqual(cleaned, "CaseSensitive@Host.COM")
     }
 
-    func test_resolveTargetingPath_whenMessageIDOpens_returnsMessageID() throws {
+    func test_resolveTargetingPath_whenMessageIDOpens_returnsMessageID() async throws {
         let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
                                                        sender: "a@example.com",
                                                        date: Date(),
@@ -20,10 +20,10 @@ final class MailControlTests: XCTestCase {
                                                        account: "iCloud")
         var filteredFallbackCalled = false
 
-        let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
-                                                          metadata: metadata,
-                                                          openViaAppleScript: { _ in true },
-                                                          openViaFilteredFallback: { _ in
+        let result = try await MailControl.resolveTargetingPath(messageID: "Test@Example.com",
+                                                                metadata: metadata,
+                                                                openViaAppleScript: { _ in true },
+                                                                openViaFilteredFallback: { _ in
                                                               filteredFallbackCalled = true
                                                               return .notFound
                                                           })
@@ -32,7 +32,7 @@ final class MailControlTests: XCTestCase {
         XCTAssertFalse(filteredFallbackCalled)
     }
 
-    func test_resolveTargetingPath_whenMessageIDFails_usesFilteredFallback() throws {
+    func test_resolveTargetingPath_whenMessageIDFails_usesFilteredFallback() async throws {
         let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
                                                        sender: "a@example.com",
                                                        date: Date(),
@@ -40,27 +40,27 @@ final class MailControlTests: XCTestCase {
                                                        account: "iCloud")
         var failureNotified = false
 
-        let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
-                                                          metadata: metadata,
-                                                          openViaAppleScript: { _ in false },
-                                                          openViaFilteredFallback: { _ in .opened },
-                                                          onMessageIDFailure: { failureNotified = true })
+        let result = try await MailControl.resolveTargetingPath(messageID: "Test@Example.com",
+                                                                metadata: metadata,
+                                                                openViaAppleScript: { _ in false },
+                                                                openViaFilteredFallback: { _ in .opened },
+                                                                onMessageIDFailure: { failureNotified = true })
 
         XCTAssertEqual(result, .openedFilteredFallback)
         XCTAssertTrue(failureNotified)
     }
 
-    func test_resolveTargetingPath_whenNoMatch_returnsNotFound() throws {
+    func test_resolveTargetingPath_whenNoMatch_returnsNotFound() async throws {
         let metadata = MailControl.OpenMessageMetadata(subject: "Subject",
                                                        sender: "a@example.com",
                                                        date: Date(),
                                                        mailbox: "",
                                                        account: "")
 
-        let result = try MailControl.resolveTargetingPath(messageID: "Test@Example.com",
-                                                          metadata: metadata,
-                                                          openViaAppleScript: { _ in false },
-                                                          openViaFilteredFallback: { _ in .notFound })
+        let result = try await MailControl.resolveTargetingPath(messageID: "Test@Example.com",
+                                                                metadata: metadata,
+                                                                openViaAppleScript: { _ in false },
+                                                                openViaFilteredFallback: { _ in .notFound })
 
         XCTAssertEqual(result, .notFound)
     }
@@ -90,5 +90,39 @@ final class MailControlTests: XCTestCase {
 
         XCTAssertTrue(script.contains("set _container to account \"Work\""))
         XCTAssertTrue(script.contains("name:\"Receipts\""))
+    }
+
+    func test_buildMoveMessagesByInternalIDScript_includesDestinationAndInternalIDs() {
+        let script = MailControl.buildMoveMessagesByInternalIDScript(internalIDs: ["101", "202"],
+                                                                     mailboxPath: "Projects/Acme",
+                                                                     account: "Work")
+
+        XCTAssertTrue(script.contains("set _internalIDs to {\"101\", \"202\"}"))
+        XCTAssertTrue(script.contains("set _sourceAccounts to {\"\", \"\"}"))
+        XCTAssertTrue(script.contains("set _sourceMailboxPaths to {\"\", \"\"}"))
+        XCTAssertTrue(script.contains("set _destinationAccount to \"Work\""))
+        XCTAssertTrue(script.contains("set _destinationPath to \"Projects/Acme\""))
+        XCTAssertTrue(script.contains("set _destMailbox to my resolveMailboxByPath(_destinationAccount, _destinationPath)"))
+        XCTAssertTrue(script.contains("if _sourceMailboxPath is not \"\" then"))
+        XCTAssertTrue(script.contains("every message whose id is _idText"))
+    }
+
+    func test_buildResolveInternalMailIDScript_includesMailboxAndMatchingFields() {
+        let receivedAt = Date(timeIntervalSince1970: 1_720_000_000)
+        let script = MailControl.buildResolveInternalMailIDScript(mailboxPath: "Inbox",
+                                                                  account: "Work",
+                                                                  subject: "Status Update",
+                                                                  senderToken: "alice@example.com",
+                                                                  receivedAt: receivedAt,
+                                                                  toleranceSeconds: 120)
+
+        XCTAssertTrue(script.contains("set _sourceAccount to \"Work\""))
+        XCTAssertTrue(script.contains("set _sourceMailboxPath to \"Inbox\""))
+        XCTAssertTrue(script.contains("set _accounts to my matchingAccounts(_sourceAccount)"))
+        XCTAssertTrue(script.contains("set _mbx to my resolveMailboxByPath(_sourceAccount, _sourceMailboxPath)"))
+        XCTAssertTrue(script.contains("set _allowAccountWideFallback to true"))
+        XCTAssertTrue(script.contains("set _targetSubject to \"Status Update\""))
+        XCTAssertTrue(script.contains("set _targetSender to \"alice@example.com\""))
+        XCTAssertTrue(script.contains("return {_matchCount, _firstID, _usedAccountWideFallback, _fallbackMailboxCount, _fallbackMessageCount}"))
     }
 }
