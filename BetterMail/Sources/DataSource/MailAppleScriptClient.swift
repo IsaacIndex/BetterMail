@@ -14,6 +14,12 @@ internal actor MailAppleScriptClient {
         self.scriptRunner = scriptRunner
     }
 
+    private func escapedForAppleScript(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     private enum RowIndex {
         static let internalMailID = 1
         static let messageID = 2
@@ -121,6 +127,166 @@ internal actor MailAppleScriptClient {
         """
     }
 
+    private func mailboxResolverScript(mailbox: String, account: String?) -> String {
+        let safeMailboxPath = escapedForAppleScript(mailbox.trimmingCharacters(in: .whitespacesAndNewlines))
+        let safeAccount = escapedForAppleScript((account ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        return """
+        \(mailboxPathHelpersScript())
+        on trimText(_value)
+          set _s to _value as string
+          set _ws to {space, tab, return, linefeed}
+          repeat while _s is not "" and character 1 of _s is in _ws
+            set _s to text 2 thru -1 of _s
+          end repeat
+          repeat while _s is not "" and character -1 of _s is in _ws
+            set _s to text 1 thru -2 of _s
+          end repeat
+          return _s
+        end trimText
+
+        on splitMailboxPath(_pathText)
+          set _trimmedPath to my trimText(_pathText)
+          if _trimmedPath is "" then return {}
+          set _originalTIDs to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to "/"
+          set _parts to text items of _trimmedPath
+          set AppleScript's text item delimiters to _originalTIDs
+          set _trimmedParts to {}
+          repeat with _part in _parts
+            set _value to my trimText(contents of _part as string)
+            if _value is not "" then
+              copy _value to end of _trimmedParts
+            end if
+          end repeat
+          return _trimmedParts
+        end splitMailboxPath
+
+        on matchingAccounts(_accountToken)
+          set _results to {}
+          set _token to my trimText(_accountToken)
+          tell application id "com.apple.mail"
+            repeat with _acct in every account
+              set _acctValue to contents of _acct
+              set _matched to false
+              if _token is "" then
+                set _matched to true
+              else
+                ignoring case
+                  try
+                    if (name of _acctValue as string) is _token then
+                      set _matched to true
+                    end if
+                  end try
+                  if not _matched then
+                    try
+                      if (id of _acctValue as string) is _token then
+                        set _matched to true
+                      end if
+                    end try
+                  end if
+                end ignoring
+              end if
+              if _matched then
+                copy _acctValue to end of _results
+              end if
+            end repeat
+          end tell
+          return _results
+        end matchingAccounts
+
+        on resolveMailboxByPath(_accountToken, _mailboxPathToken)
+          set _wantedPath to my trimText(_mailboxPathToken)
+          set _wantedParts to my splitMailboxPath(_wantedPath)
+          if (count of _wantedParts) is 0 then return missing value
+          set _leaf to item -1 of _wantedParts as string
+          set _accounts to my matchingAccounts(_accountToken)
+          if (count of _accounts) is 0 then return missing value
+
+          tell application id "com.apple.mail"
+            -- pass 1: exact leaf-name match among all account mailboxes
+            repeat with _acct in _accounts
+              set _allMailboxes to {}
+              try
+                set _allMailboxes to every mailbox of _acct
+              end try
+              repeat with _candidate in _allMailboxes
+                try
+                  ignoring case
+                    if (name of _candidate as string) is _leaf then
+                      return _candidate
+                    end if
+                  end ignoring
+                end try
+              end repeat
+            end repeat
+
+            -- pass 2: hierarchical path walk
+            repeat with _acct in _accounts
+              set _candidates to {}
+              try
+                set _candidates to every mailbox of _acct
+              end try
+              set _resolvedMailbox to missing value
+              repeat with _part in _wantedParts
+                set _partName to contents of _part as string
+                set _foundMailbox to missing value
+                ignoring case
+                  repeat with _candidate in _candidates
+                    try
+                      if (name of _candidate as string) is _partName then
+                        set _foundMailbox to _candidate
+                        exit repeat
+                      end if
+                    end try
+                  end repeat
+                end ignoring
+                if _foundMailbox is missing value then
+                  set _resolvedMailbox to missing value
+                  exit repeat
+                end if
+                set _resolvedMailbox to _foundMailbox
+                try
+                  set _candidates to every mailbox of _resolvedMailbox
+                on error
+                  set _candidates to {}
+                end try
+              end repeat
+              if _resolvedMailbox is not missing value then
+                return _resolvedMailbox
+              end if
+            end repeat
+
+            -- pass 3: exact full-path or suffix full-path match
+            repeat with _acct in _accounts
+              set _allMailboxes to {}
+              try
+                set _allMailboxes to every mailbox of _acct
+              end try
+              repeat with _candidate in _allMailboxes
+                set _candidatePath to my mailboxPathForMailbox(_candidate)
+                ignoring case
+                  if _candidatePath is _wantedPath then
+                    return _candidate
+                  end if
+                  if _candidatePath ends with ("/" & _leaf) then
+                    return _candidate
+                  end if
+                end ignoring
+              end repeat
+            end repeat
+          end tell
+          return missing value
+        end resolveMailboxByPath
+
+        set _mailboxPathToken to "\(safeMailboxPath)"
+        set _accountToken to "\(safeAccount)"
+        set _mbx to my resolveMailboxByPath(_accountToken, _mailboxPathToken)
+        if _mbx is missing value then
+          error "Mailbox not found for path: " & _mailboxPathToken & " account: " & _accountToken number -1728
+        end if
+        """
+    }
+
     private func buildScript(mailbox: String, account: String?, limit: Int, since: Date?) -> String {
         let windowSeconds: Int
         if let since {
@@ -129,9 +295,8 @@ internal actor MailAppleScriptClient {
             windowSeconds = 0
         }
 
-        let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
-        \(mailboxPathHelpersScript())
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
         set _rows to {}
         set _limit to \(limit)
         set _window to \(windowSeconds)
@@ -139,7 +304,6 @@ internal actor MailAppleScriptClient {
         set _cutoff to _now
         tell application id "com.apple.mail"
           with timeout of 60 seconds
-            set _mbx to \(escapedPath)
             set _mailboxName to (name of _mbx as string)
             set _accountName to ""
             try
@@ -196,9 +360,8 @@ internal actor MailAppleScriptClient {
     }
 
     private func buildScript(mailbox: String, account: String?, limit: Int, startWindow: Int, endWindow: Int) -> String {
-        let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
-        \(mailboxPathHelpersScript())
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
         set _rows to {}
         set _limit to \(limit)
         set _startWindow to \(startWindow)
@@ -208,7 +371,6 @@ internal actor MailAppleScriptClient {
         set _endCutoff to _now
         tell application id "com.apple.mail"
           with timeout of 60 seconds
-            set _mbx to \(escapedPath)
             set _mailboxName to (name of _mbx as string)
             set _accountName to ""
             try
@@ -271,8 +433,8 @@ internal actor MailAppleScriptClient {
     }
 
     private func buildCountScript(mailbox: String, account: String?, startWindow: Int, endWindow: Int) -> String {
-        let escapedPath = MailControl.mailboxReference(path: mailbox, account: account)
         return """
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
         set _count to 0
         set _startWindow to \(startWindow)
         set _endWindow to \(endWindow)
@@ -281,7 +443,6 @@ internal actor MailAppleScriptClient {
         set _endCutoff to _now
         tell application id "com.apple.mail"
           with timeout of 60 seconds
-            set _mbx to \(escapedPath)
             set _msgs to messages of _mbx
             if _startWindow > 0 then
               set _startCutoff to _now - _startWindow
