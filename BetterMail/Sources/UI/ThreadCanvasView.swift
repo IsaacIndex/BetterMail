@@ -2064,6 +2064,7 @@ private struct ThreadTimelineCanvasNodeView: View {
     let readabilityMode: ThreadCanvasReadabilityMode
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -2096,11 +2097,7 @@ private struct ThreadTimelineCanvasNodeView: View {
                 Spacer(minLength: 0)
 
                 if textVisibility == .normal, let mailboxLabel {
-                    Text(mailboxLabel)
-                        .font(.system(size: timeFontSize, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
+                    mailboxFolderChip(label: mailboxLabel)
                 }
             }
 
@@ -2220,6 +2217,60 @@ private struct ThreadTimelineCanvasNodeView: View {
 
     private var mailboxLabel: String? {
         MailboxPathFormatter.leafName(from: node.message.mailboxID)
+    }
+
+    private func mailboxFolderChip(label: String) -> some View {
+        Label(label, systemImage: "folder")
+            .labelStyle(.titleAndIcon)
+            .font(.system(size: max(timeFontSize - scaled(1), scaled(9)), weight: .semibold))
+            .foregroundStyle(mailboxChipForeground)
+            .lineLimit(1)
+            .truncationMode(.head)
+            .padding(.vertical, scaled(3))
+            .padding(.horizontal, scaled(8))
+            .background(
+                Capsule(style: .continuous)
+                    .fill(mailboxChipFill)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(mailboxChipStroke, lineWidth: scaled(0.8))
+            )
+            .shadow(color: mailboxChipShadowColor, radius: scaled(3), y: scaled(1))
+    }
+
+    private var mailboxChipForeground: Color {
+        if isSelected {
+            return .accentColor
+        }
+        return colorScheme == .dark ? Color.white.opacity(0.86) : Color.primary.opacity(0.78)
+    }
+
+    private var mailboxChipFill: Color {
+        if isSelected {
+            return Color.accentColor.opacity(reduceTransparency ? 0.22 : 0.16)
+        }
+        if colorScheme == .dark {
+            return Color.white.opacity(reduceTransparency ? 0.12 : 0.08)
+        }
+        return Color.black.opacity(reduceTransparency ? 0.08 : 0.05)
+    }
+
+    private var mailboxChipStroke: Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.55)
+        }
+        return colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.12)
+    }
+
+    private var mailboxChipShadowColor: Color {
+        guard !reduceTransparency else {
+            return .clear
+        }
+        if isSelected {
+            return Color.accentColor.opacity(0.2)
+        }
+        return colorScheme == .dark ? Color.black.opacity(0.2) : Color.black.opacity(0.08)
     }
 
     private func scaled(_ value: CGFloat) -> CGFloat {
