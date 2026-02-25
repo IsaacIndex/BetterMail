@@ -5,6 +5,10 @@ internal struct MailboxSidebarView: View {
 
     internal var body: some View {
         List {
+            sidebarRow(scope: .allEmails,
+                       title: NSLocalizedString("mailbox.sidebar.all_emails",
+                                                comment: "All Emails sidebar entry"),
+                       systemImage: "tray.2")
             sidebarRow(scope: .allInboxes,
                        title: NSLocalizedString("mailbox.sidebar.all_inboxes",
                                                 comment: "All Inboxes sidebar entry"),

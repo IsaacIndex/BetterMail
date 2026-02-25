@@ -93,6 +93,24 @@ internal struct EmailMessage: Identifiable, Hashable {
                      threadID: threadID,
                      rawSourceLocation: rawSourceLocation)
     }
+
+    internal func assigning(mailboxID: String, accountName: String) -> EmailMessage {
+        EmailMessage(id: id,
+                     messageID: messageID,
+                     internalMailID: internalMailID,
+                     mailboxID: mailboxID,
+                     accountName: accountName,
+                     subject: subject,
+                     from: from,
+                     to: to,
+                     date: date,
+                     snippet: snippet,
+                     isUnread: isUnread,
+                     inReplyTo: inReplyTo,
+                     references: references,
+                     threadID: threadID,
+                     rawSourceLocation: rawSourceLocation)
+    }
 }
 
 internal extension EmailMessage {

@@ -744,7 +744,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let currentNodeIDs = Set(Self.flatten(nodes: rethreadResult.roots).map(\.id))
             let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
             let removedFolderIDs = previousFolderIDs.subtracting(rethreadResult.folders.map(\.id))
-            if activeMailboxScope == .allInboxes && (!removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty) {
+            if activeMailboxScope == .allEmails && (!removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty) {
                 Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -1708,6 +1708,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         moveResult = retryMoveResult
                     }
                 }
+                await self.applyOptimisticMailboxMove(selectedNodes: selectedNodes,
+                                                      moveTargets: resolution.moveTargets,
+                                                      resolvedInternalIDsByNodeID: resolution.resolvedInternalIDsByNodeID,
+                                                      destinationPath: trimmedPath,
+                                                      destinationAccount: account)
                 await MainActor.run {
                     self.isMailboxActionRunning = false
                     self.mailboxActionProgressMessage = nil
@@ -1780,6 +1785,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         moveResult = retryMoveResult
                     }
                 }
+                await self.applyOptimisticMailboxMove(selectedNodes: selectedNodes,
+                                                      moveTargets: resolution.moveTargets,
+                                                      resolvedInternalIDsByNodeID: resolution.resolvedInternalIDsByNodeID,
+                                                      destinationPath: destinationPath,
+                                                      destinationAccount: account)
                 await MainActor.run {
                     self.isMailboxActionRunning = false
                     self.mailboxActionProgressMessage = nil
@@ -2553,16 +2563,17 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private func resolveMailboxMoveTargets(from nodes: [ThreadNode],
                                            account: String,
-                                           forceResolveAll: Bool = false) async throws -> (internalMailIDs: [String], moveTargets: [MailControl.InternalIDMoveTarget], ambiguousCount: Int, unresolvedCount: Int) {
+                                           forceResolveAll: Bool = false) async throws -> (internalMailIDs: [String], moveTargets: [MailControl.InternalIDMoveTarget], ambiguousCount: Int, unresolvedCount: Int, resolvedInternalIDsByNodeID: [String: String]) {
         let candidates = mailboxMoveCandidates(from: nodes, account: account)
         guard !candidates.isEmpty else {
-            return ([], [], 0, 0)
+            return ([], [], 0, 0, [:])
         }
 
         var resolvedTargetsByID: [String: MailControl.InternalIDMoveTarget] = [:]
         var ambiguousCount = 0
         var unresolvedCount = 0
         var resolvedMessagesByNodeID: [String: EmailMessage] = [:]
+        var resolvedInternalIDsByNodeID: [String: String] = [:]
 
         for candidate in candidates {
             if !forceResolveAll,
@@ -2574,6 +2585,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 if resolvedTargetsByID[existingInternalID] == nil || !existingTarget.sourceMailboxPath.isEmpty {
                     resolvedTargetsByID[existingInternalID] = existingTarget
                 }
+                resolvedInternalIDsByNodeID[candidate.nodeID] = existingInternalID
                 continue
             }
 
@@ -2597,6 +2609,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         resolvedTargetsByID[trimmedID] = resolvedTarget
                     }
                     resolvedMessagesByNodeID[candidate.nodeID] = candidate.message.assigning(internalMailID: trimmedID)
+                    resolvedInternalIDsByNodeID[candidate.nodeID] = trimmedID
                 case .ambiguous:
                     ambiguousCount += 1
                 case .notFound:
@@ -2619,7 +2632,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let sortedTargets = resolvedTargetsByID.values.sorted { lhs, rhs in
             lhs.internalID < rhs.internalID
         }
-        return (sortedTargets.map(\.internalID), sortedTargets, ambiguousCount, unresolvedCount)
+        return (sortedTargets.map(\.internalID), sortedTargets, ambiguousCount, unresolvedCount, resolvedInternalIDsByNodeID)
     }
 
     private func mailboxMoveCandidates(from nodes: [ThreadNode],
@@ -2809,7 +2822,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         case .mailboxFolder(let scopedAccount, _):
             let trimmedScopedAccount = scopedAccount.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedScopedAccount.isEmpty ? nil : trimmedScopedAccount
-        case .allInboxes:
+        case .allEmails, .allInboxes:
             return nil
         }
     }
@@ -2908,16 +2921,55 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private var activeMailboxFetchTarget: (mailbox: String, account: String?) {
-        (mailbox: activeMailboxScope.mailboxPath, account: activeMailboxScope.accountName)
+        switch activeMailboxScope {
+        case .allEmails, .allInboxes:
+            return (mailbox: "inbox", account: nil)
+        case .mailboxFolder(let account, let path):
+            return (mailbox: path, account: account)
+        }
     }
 
     private var activeMailboxStoreFilter: (mailbox: String?, account: String?, includeAllInboxesAliases: Bool) {
         switch activeMailboxScope {
+        case .allEmails:
+            return (mailbox: nil, account: nil, includeAllInboxesAliases: false)
         case .allInboxes:
             return (mailbox: "inbox", account: nil, includeAllInboxesAliases: true)
         case .mailboxFolder(let account, let path):
-            let leaf = MailboxScope.mailboxFolder(account: account, path: path).mailboxLeafName
-            return (mailbox: leaf, account: account, includeAllInboxesAliases: false)
+            return (mailbox: path, account: account, includeAllInboxesAliases: false)
+        }
+    }
+
+    private func applyOptimisticMailboxMove(selectedNodes: [ThreadNode],
+                                            moveTargets: [MailControl.InternalIDMoveTarget],
+                                            resolvedInternalIDsByNodeID: [String: String],
+                                            destinationPath: String,
+                                            destinationAccount: String) async {
+        let destinationMailbox = destinationPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let destinationAcct = destinationAccount.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !destinationMailbox.isEmpty, !destinationAcct.isEmpty else { return }
+        let movedInternalIDs = Set(moveTargets.map { $0.internalID.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
+        guard !movedInternalIDs.isEmpty else { return }
+        let optimisticUpdates = selectedNodes.compactMap { node -> EmailMessage? in
+            let resolvedInternalID = resolvedInternalIDsByNodeID[node.id]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let messageInternalID = node.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let internalID = [resolvedInternalID, messageInternalID]
+                .compactMap({ $0 })
+                .first(where: { !$0.isEmpty }),
+                  movedInternalIDs.contains(internalID) else {
+                return nil
+            }
+            return node.message.assigning(mailboxID: destinationMailbox, accountName: destinationAcct)
+        }
+        guard !optimisticUpdates.isEmpty else { return }
+        do {
+            try await store.upsert(messages: optimisticUpdates)
+            await MainActor.run {
+                self.scheduleRethread(delay: 0)
+            }
+        } catch {
+            Log.app.error("Failed optimistic mailbox update after move: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -1,12 +1,13 @@
 import Foundation
 
 internal enum MailboxScope: Hashable {
+    case allEmails
     case allInboxes
     case mailboxFolder(account: String, path: String)
 
     internal var mailboxPath: String {
         switch self {
-        case .allInboxes:
+        case .allEmails, .allInboxes:
             return "inbox"
         case .mailboxFolder(_, let path):
             return path
@@ -15,7 +16,7 @@ internal enum MailboxScope: Hashable {
 
     internal var accountName: String? {
         switch self {
-        case .allInboxes:
+        case .allEmails, .allInboxes:
             return nil
         case .mailboxFolder(let account, _):
             return account
@@ -34,6 +35,17 @@ internal enum MailboxScope: Hashable {
             return true
         }
         return false
+    }
+}
+
+internal enum MailboxPathFormatter {
+    internal static func leafName(from path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let parts = trimmed
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        return (parts.last ?? trimmed).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

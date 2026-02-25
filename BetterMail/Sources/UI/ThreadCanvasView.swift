@@ -2092,6 +2092,16 @@ private struct ThreadTimelineCanvasNodeView: View {
                         }
                     }
                 }
+
+                Spacer(minLength: 0)
+
+                if textVisibility == .normal, let mailboxLabel {
+                    Text(mailboxLabel)
+                        .font(.system(size: timeFontSize, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
             }
 
             if textVisibility == .normal {
@@ -2203,8 +2213,13 @@ private struct ThreadTimelineCanvasNodeView: View {
         return [
             titleText,
             Self.timeFormatter.string(from: node.message.date),
-            tagText
+            tagText,
+            mailboxLabel ?? ""
         ].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    private var mailboxLabel: String? {
+        MailboxPathFormatter.leafName(from: node.message.mailboxID)
     }
 
     private func scaled(_ value: CGFloat) -> CGFloat {
@@ -2268,11 +2283,7 @@ private struct ThreadCanvasNodeView: View {
                      weight: .regular,
                      color: secondaryTextColor,
                      isTitleLine: false)
-            textLine(Self.timeFormatter.string(from: node.message.date),
-                     baseSize: 11,
-                     weight: .regular,
-                     color: secondaryTextColor,
-                     isTitleLine: false)
+            metadataLine
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -2346,8 +2357,14 @@ private struct ThreadCanvasNodeView: View {
             NSLocalizedString("threadcanvas.node.accessibility", comment: "Accessibility label for a node"),
             node.message.from,
             titleText,
-            Self.timeFormatter.string(from: node.message.date)
+            [Self.timeFormatter.string(from: node.message.date), mailboxLabel]
+                .compactMap { $0 }
+                .joined(separator: ", ")
         )
+    }
+
+    private var mailboxLabel: String? {
+        MailboxPathFormatter.leafName(from: node.message.mailboxID)
     }
 
     private var primaryTextColor: Color {
@@ -2367,6 +2384,34 @@ private struct ThreadCanvasNodeView: View {
 
     private var textShadowRadius: CGFloat {
         (reduceTransparency || colorScheme == .light) ? 0 : 1
+    }
+
+    @ViewBuilder
+    private var metadataLine: some View {
+        switch nodeTextVisibility(readabilityMode: readabilityMode, isTitleLine: false) {
+        case .normal:
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Self.timeFormatter.string(from: node.message.date))
+                    .font(.system(size: 11 * fontScale, weight: .regular))
+                    .foregroundStyle(secondaryTextColor)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let mailboxLabel {
+                    Text(mailboxLabel)
+                        .font(.system(size: 11 * fontScale, weight: .medium))
+                        .foregroundStyle(secondaryTextColor)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+            }
+        case .ellipsis:
+            Text("…")
+                .font(.system(size: 11 * fontScale, weight: .regular))
+                .foregroundStyle(secondaryTextColor)
+                .lineLimit(1)
+        case .hidden:
+            EmptyView()
+        }
     }
 
     @ViewBuilder

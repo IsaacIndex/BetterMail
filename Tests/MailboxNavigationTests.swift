@@ -54,6 +54,17 @@ final class MailboxNavigationTests: XCTestCase {
 
         XCTAssertNil(ThreadCanvasViewModel.selectedMailboxActionAccount(for: nodes))
     }
+
+    func test_mailboxScope_allEmails_defaultsToInboxFetchPath() {
+        XCTAssertEqual(MailboxScope.allEmails.mailboxPath, "inbox")
+        XCTAssertNil(MailboxScope.allEmails.accountName)
+    }
+
+    func test_mailboxPathFormatter_leafName_returnsFinalPathSegment() {
+        XCTAssertEqual(MailboxPathFormatter.leafName(from: "Projects/Acme/Invoices"), "Invoices")
+        XCTAssertEqual(MailboxPathFormatter.leafName(from: "Inbox"), "Inbox")
+        XCTAssertNil(MailboxPathFormatter.leafName(from: "   "))
+    }
 }
 
 private extension MailboxNavigationTests {
