@@ -3,28 +3,19 @@ import SwiftUI
 internal struct MailboxSidebarView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
 
-    private var selectionBinding: Binding<MailboxScope?> {
-        Binding(
-            get: { viewModel.activeMailboxScope },
-            set: { scope in
-                guard let scope else { return }
-                viewModel.selectMailboxScope(scope)
-            }
-        )
-    }
-
     internal var body: some View {
-        List(selection: selectionBinding) {
-            Label(NSLocalizedString("mailbox.sidebar.all_inboxes", comment: "All Inboxes sidebar entry"),
-                  systemImage: "tray.full")
-                .tag(Optional(MailboxScope.allInboxes))
+        List {
+            sidebarRow(scope: .allInboxes,
+                       title: NSLocalizedString("mailbox.sidebar.all_inboxes",
+                                                comment: "All Inboxes sidebar entry"),
+                       systemImage: "tray.full")
 
             ForEach(viewModel.mailboxAccounts) { account in
                 Section(account.name) {
                     OutlineGroup(account.folders, children: \.childNodes) { folder in
-                        Label(folder.name, systemImage: "folder")
-                            .tag(Optional(MailboxScope.mailboxFolder(account: folder.account,
-                                                                     path: folder.path)))
+                        sidebarRow(scope: .mailboxFolder(account: folder.account, path: folder.path),
+                                   title: folder.name,
+                                   systemImage: "folder")
                     }
                 }
             }
@@ -40,6 +31,7 @@ internal struct MailboxSidebarView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(10)
+                .allowsHitTesting(false)
             }
         }
         .onAppear {
@@ -47,5 +39,17 @@ internal struct MailboxSidebarView: View {
                 viewModel.refreshMailboxHierarchy()
             }
         }
+    }
+
+    private func sidebarRow(scope: MailboxScope, title: String, systemImage: String) -> some View {
+        Button {
+            viewModel.selectMailboxScope(scope)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(viewModel.activeMailboxScope == scope ? Color.accentColor.opacity(0.18) : Color.clear)
     }
 }

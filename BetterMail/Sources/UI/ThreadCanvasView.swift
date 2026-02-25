@@ -516,7 +516,7 @@ internal struct ThreadCanvasView: View {
                 let clamped = clampedZoom(accumulatedZoom * value)
                 zoomScale = clamped
                 accumulatedZoom = clamped
-                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
+//                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
             }
     }
 
