@@ -653,6 +653,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             } catch {
                 Log.refresh.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
+                    if Self.isMailboxResolveNotFound(error) {
+                        self.status = NSLocalizedString("refresh.status.mailbox_unavailable",
+                                                        comment: "Status when selected mailbox scope cannot be resolved in Mail")
+                        return
+                    }
                     self.status = String.localizedStringWithFormat(
                         NSLocalizedString("refresh.status.failed", comment: "Status when refresh fails"),
                         error.localizedDescription
@@ -1575,18 +1580,23 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
                 await MainActor.run {
                     self.mailboxAccounts = accounts
-                    self.mailboxActionStatusMessage = nil
                     if case .mailboxFolder(let account, let path) = self.activeMailboxScope {
                         let exists = accounts.contains { mailboxAccount in
                             mailboxAccount.name == account &&
                                 MailboxHierarchyBuilder.folderChoices(for: mailboxAccount).contains(where: { $0.path == path })
                         }
                         if !exists {
-                            self.activeMailboxScope = .allInboxes
-                            self.shouldForceFullReload = true
-                            self.scheduleRethread(delay: 0)
-                            self.refreshNow()
+                            self.mailboxActionStatusMessage = String.localizedStringWithFormat(
+                                NSLocalizedString("mailbox.hierarchy.selected_scope_missing",
+                                                  comment: "Error when selected mailbox scope no longer exists in hierarchy"),
+                                account,
+                                path
+                            )
+                        } else {
+                            self.mailboxActionStatusMessage = nil
                         }
+                    } else {
+                        self.mailboxActionStatusMessage = nil
                     }
                 }
             } catch {
@@ -1628,6 +1638,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
         let description = error.localizedDescription
         return description.contains("-1712") || description.localizedCaseInsensitiveContains("timed out")
+    }
+
+    private static func isMailboxResolveNotFound(_ error: Error) -> Bool {
+        if let code = MailControl.appleScriptErrorCode(from: error) {
+            return code == -1728
+        }
+        return false
     }
 
     internal var mailboxActionAccountNames: [String] {

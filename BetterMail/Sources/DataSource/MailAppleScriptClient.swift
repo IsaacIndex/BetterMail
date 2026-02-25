@@ -309,30 +309,42 @@ internal actor MailAppleScriptClient {
 
     private func buildMailboxHierarchyScript() -> String {
         """
-        using terms from application id \"com.apple.mail\"
-        on appendMailboxRows(_mailboxes, _accountName, _parentPath, _rows)
-          set _resultRows to _rows
-          repeat with _mailbox in _mailboxes
-            set _name to (name of _mailbox as string)
-            if _parentPath is \"\" then
-              set _path to _name
-            else
-              set _path to _parentPath & \"/\" & _name
-            end if
-            copy {_accountName, _path, _name, _parentPath} to end of _resultRows
-            set _children to {}
+        on mailboxPathForMailbox(_mailboxRef)
+          set _parts to {}
+          set _current to _mailboxRef
+          repeat
             try
-              set _children to (every mailbox of _mailbox)
+              set _name to (name of _current as string)
             on error
-              set _children to {}
+              exit repeat
             end try
-            if (count of _children) is greater than 0 then
-              set _resultRows to my appendMailboxRows(_children, _accountName, _path, _resultRows)
-            end if
+            set beginning of _parts to _name
+            try
+              set _current to (mailbox of _current)
+            on error
+              exit repeat
+            end try
           end repeat
-          return _resultRows
-        end appendMailboxRows
-        end using terms from
+          set _originalTIDs to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to "/"
+          set _path to _parts as string
+          set AppleScript's text item delimiters to _originalTIDs
+          return _path
+        end mailboxPathForMailbox
+
+        on parentPathForMailboxPath(_pathText)
+          if _pathText is "" then return ""
+          set _originalTIDs to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to "/"
+          set _parts to text items of _pathText
+          set AppleScript's text item delimiters to _originalTIDs
+          if (count of _parts) is less than or equal to 1 then return ""
+          set _parentParts to items 1 thru -2 of _parts
+          set AppleScript's text item delimiters to "/"
+          set _parentPath to _parentParts as string
+          set AppleScript's text item delimiters to _originalTIDs
+          return _parentPath
+        end parentPathForMailboxPath
 
         set _rows to {}
         tell application id \"com.apple.mail\"
@@ -345,9 +357,12 @@ internal actor MailAppleScriptClient {
               on error
                 set _mailboxes to {}
               end try
-              if (count of _mailboxes) is greater than 0 then
-                set _rows to my appendMailboxRows(_mailboxes, _accountName, \"\", _rows)
-              end if
+              repeat with _mailbox in _mailboxes
+                set _name to (name of _mailbox as string)
+                set _path to my mailboxPathForMailbox(_mailbox)
+                set _parentPath to my parentPathForMailboxPath(_path)
+                copy {_accountName, _path, _name, _parentPath} to end of _rows
+              end repeat
             end repeat
           end timeout
         end tell

@@ -1,6 +1,7 @@
 "refresh.status.refreshing" = "Refreshing...";
 "refresh.status.updated" = "Updated %@";
 "refresh.status.failed" = "Refresh failed: %@";
+"refresh.status.mailbox_unavailable" = "Refresh failed: selected mailbox could not be resolved in Mail. Reopen the mailbox sidebar and reselect the folder.";
 "refresh.status.threading_failed" = "Threading failed: %@";
 "threadlist.status.unread" = "Unread: %d - %@";
 "threadlist.viewmode.default" = "Default View";
@@ -83,6 +84,7 @@
 "mailbox.sidebar.all_inboxes" = "All Inboxes";
 "mailbox.sidebar.loading" = "Loading mailboxes...";
 "mailbox.hierarchy.error" = "Mailbox hierarchy unavailable: %@";
+"mailbox.hierarchy.selected_scope_missing" = "Selected mailbox scope is no longer available: %@ / %@. Reopen the mailbox sidebar and select a folder again.";
 "mailbox.action.error.no_selection" = "Select at least one message to move.";
 "mailbox.action.error.mixed_accounts" = "Select messages from a single account to move them.";
 "mailbox.action.error.missing_account" = "Selected messages must include a valid account.";
