@@ -1578,6 +1578,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             do {
                 let folders = try await fetchMailboxHierarchyWithRetry()
                 let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+                Self.logMailboxHierarchyDebug(folders: folders, accounts: accounts)
                 await MainActor.run {
                     self.mailboxAccounts = accounts
                     if case .mailboxFolder(let account, let path) = self.activeMailboxScope {
@@ -1627,6 +1628,61 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
         }
         throw lastError ?? NSError(domain: "BetterMail.MailboxHierarchy", code: -1)
+    }
+
+    private static func logMailboxHierarchyDebug(folders: [MailboxFolder], accounts: [MailboxAccount]) {
+        let maxRows = 250
+        let total = folders.count
+        let shown = min(total, maxRows)
+        let header = "Mailbox hierarchy fetched. folders=\(total) accounts=\(accounts.count)"
+
+        let rowLines = folders.prefix(maxRows).enumerated().map { index, folder in
+            let parent = folder.parentPath ?? "<nil>"
+            let inferredParent = inferredParentPathForDebug(from: folder.path) ?? "<nil>"
+            return "[\(index)] account='\(folder.account)' name='\(folder.name)' path='\(folder.path)' parentPath='\(parent)' inferredParent='\(inferredParent)'"
+        }
+
+        var treeLines: [String] = []
+        for account in accounts {
+            treeLines.append("account '\(account.name)'")
+            treeLines.append(contentsOf: debugTreeLines(nodes: account.folders, depth: 1))
+        }
+
+        var summary = "\(header)\n-- raw rows (\(shown)/\(total)) --\n"
+        summary += rowLines.joined(separator: "\n")
+        if total > shown {
+            summary += "\n... \(total - shown) more rows omitted ..."
+        }
+        summary += "\n-- built tree --\n"
+        summary += treeLines.joined(separator: "\n")
+
+        Log.appleScript.debug("\(summary, privacy: .public)")
+#if DEBUG
+        print(summary)
+#endif
+    }
+
+    private static func debugTreeLines(nodes: [MailboxFolderNode], depth: Int) -> [String] {
+        var lines: [String] = []
+        for node in nodes {
+            let indent = String(repeating: "  ", count: max(depth, 0))
+            lines.append("\(indent)- \(node.name) [path='\(node.path)']")
+            lines.append(contentsOf: debugTreeLines(nodes: node.children, depth: depth + 1))
+        }
+        return lines
+    }
+
+    private static func inferredParentPathForDebug(from path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        for delimiter in ["/", ".", ":"] {
+            guard let index = trimmed.lastIndex(of: Character(delimiter)) else { continue }
+            let candidate = String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !candidate.isEmpty {
+                return candidate
+            }
+        }
+        return nil
     }
 
     private static func shouldRetryMailboxHierarchyFetch(after error: Error) -> Bool {

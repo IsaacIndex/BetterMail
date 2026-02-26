@@ -97,13 +97,20 @@ internal struct MailboxFolderChoice: Identifiable, Hashable {
 
 internal enum MailboxHierarchyBuilder {
     internal static func buildAccounts(from folders: [MailboxFolder]) -> [MailboxAccount] {
-        let grouped = Dictionary(grouping: folders) { $0.account }
-        return grouped
-            .map { account, accountFolders in
-                MailboxAccount(name: account,
-                               folders: buildTree(from: accountFolders))
+        var accountOrder: [String] = []
+        var foldersByAccount: [String: [MailboxFolder]] = [:]
+
+        for folder in folders {
+            if foldersByAccount[folder.account] == nil {
+                accountOrder.append(folder.account)
             }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            foldersByAccount[folder.account, default: []].append(folder)
+        }
+
+        return accountOrder.map { account in
+            MailboxAccount(name: account,
+                           folders: buildTree(from: foldersByAccount[account] ?? []))
+        }
     }
 
     internal static func folderChoices(for account: MailboxAccount) -> [MailboxFolderChoice] {
@@ -113,34 +120,49 @@ internal enum MailboxHierarchyBuilder {
                                     path: $0.path,
                                     displayPath: $0.path)
             }
-            .sorted { $0.displayPath.localizedCaseInsensitiveCompare($1.displayPath) == .orderedAscending }
     }
 
     private static func buildTree(from folders: [MailboxFolder]) -> [MailboxFolderNode] {
         let foldersByPath = Dictionary(uniqueKeysWithValues: folders.map { ($0.path, $0) })
+        let knownPaths = Set(foldersByPath.keys)
         var childrenByParent: [String?: [MailboxFolder]] = [:]
 
         for folder in folders {
-            let validParent = folder.parentPath.flatMap { foldersByPath[$0] == nil ? nil : $0 }
+            let inferredParent = inferredParentPath(from: folder.path, knownPaths: knownPaths)
+            let candidateParent = folder.parentPath ?? inferredParent
+            let validParent = candidateParent.flatMap { foldersByPath[$0] == nil ? nil : $0 }
             childrenByParent[validParent, default: []].append(folder)
         }
 
         func buildNode(_ folder: MailboxFolder) -> MailboxFolderNode {
-            let sortedChildren = (childrenByParent[folder.path] ?? [])
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            let childNodes = (childrenByParent[folder.path] ?? [])
                 .map(buildNode)
             return MailboxFolderNode(account: folder.account,
                                      path: folder.path,
                                      name: folder.name,
                                      parentPath: folder.parentPath,
-                                     children: sortedChildren)
+                                     children: childNodes)
         }
 
         let roots = (childrenByParent[nil] ?? [])
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map(buildNode)
 
         return roots
+    }
+
+    private static func inferredParentPath(from path: String, knownPaths: Set<String>) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        for delimiter in ["/", ".", ":"] {
+            guard let index = trimmed.lastIndex(of: Character(delimiter)) else { continue }
+            let candidate = String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if knownPaths.contains(candidate) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     private static func flatten(_ nodes: [MailboxFolderNode]) -> [MailboxFolderNode] {

@@ -2,9 +2,18 @@ import SwiftUI
 
 internal struct MailboxSidebarView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
+    private var selectedScope: Binding<MailboxScope?> {
+        Binding(
+            get: { viewModel.activeMailboxScope },
+            set: { scope in
+                guard let scope else { return }
+                viewModel.selectMailboxScope(scope)
+            }
+        )
+    }
 
     internal var body: some View {
-        List {
+        List(selection: selectedScope) {
             sidebarRow(scope: .allEmails,
                        title: NSLocalizedString("mailbox.sidebar.all_emails",
                                                 comment: "All Emails sidebar entry"),
@@ -39,21 +48,13 @@ internal struct MailboxSidebarView: View {
             }
         }
         .onAppear {
-            if viewModel.mailboxAccounts.isEmpty {
-                viewModel.refreshMailboxHierarchy()
-            }
+            viewModel.refreshMailboxHierarchy()
         }
     }
 
     private func sidebarRow(scope: MailboxScope, title: String, systemImage: String) -> some View {
-        Button {
-            viewModel.selectMailboxScope(scope)
-        } label: {
-            Label(title, systemImage: systemImage)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .listRowBackground(viewModel.activeMailboxScope == scope ? Color.accentColor.opacity(0.18) : Color.clear)
+        Label(title, systemImage: systemImage)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .tag(scope)
     }
 }

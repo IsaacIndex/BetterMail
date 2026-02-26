@@ -12,10 +12,46 @@ final class MailboxNavigationTests: XCTestCase {
 
         let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
 
-        XCTAssertEqual(accounts.map(\.name), ["Personal", "Work"])
+        XCTAssertEqual(accounts.map(\.name), ["Work", "Personal"])
         let work = accounts.first(where: { $0.name == "Work" })
         XCTAssertEqual(work?.folders.map(\.name), ["Clients", "Receipts"])
         XCTAssertEqual(work?.folders.first?.children.map(\.name), ["Acme"])
+    }
+
+    func test_buildAccounts_preservesSourceSiblingOrder() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Projects", name: "Projects", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Projects/Zeta", name: "Zeta", parentPath: "Projects"),
+            MailboxFolder(account: "Work", path: "Projects/Alpha", name: "Alpha", parentPath: "Projects")
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+
+        XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["Zeta", "Alpha"])
+    }
+
+    func test_buildAccounts_infersParentFromPath_whenParentPathMissing() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Projects", name: "Projects", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Projects/Azure", name: "Azure", parentPath: nil)
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+
+        XCTAssertEqual(accounts.first?.folders.map(\.name), ["Projects"])
+        XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["Azure"])
+    }
+
+    func test_buildAccounts_infersParentFromDotDelimitedPath_whenParentPathMissing() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Projects", name: "Projects", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Projects.Azure", name: "Azure", parentPath: nil)
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+
+        XCTAssertEqual(accounts.first?.folders.map(\.name), ["Projects"])
+        XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["Azure"])
     }
 
     func test_folderChoices_returnsFullPathChoices() {

@@ -470,60 +470,74 @@ internal actor MailAppleScriptClient {
 
     private func buildMailboxHierarchyScript() -> String {
         """
-        on mailboxPathForMailbox(_mailboxRef)
-          set _parts to {}
-          set _current to _mailboxRef
-          repeat
-            try
-              set _name to (name of _current as string)
-            on error
-              exit repeat
-            end try
-            set beginning of _parts to _name
-            try
-              set _current to (mailbox of _current)
-            on error
-              exit repeat
-            end try
-          end repeat
-          set _originalTIDs to AppleScript's text item delimiters
-          set AppleScript's text item delimiters to "/"
-          set _path to _parts as string
-          set AppleScript's text item delimiters to _originalTIDs
-          return _path
-        end mailboxPathForMailbox
+        on appendMailboxRows(_mailboxes, _accountName, _parentPath)
+          set _rows to {}
+          tell application id "com.apple.mail"
+            repeat with _mailbox in _mailboxes
+              set _name to ""
+              try
+                set _name to (name of _mailbox as string)
+              on error
+                set _name to ""
+              end try
+              if _name is "" then
+                -- skip malformed entries
+              else
+                if _parentPath is "" then
+                  set _path to _name
+                  set _parent to ""
+                else
+                  set _path to _parentPath & "/" & _name
+                  set _parent to _parentPath
+                end if
+                copy {_accountName, _path, _name, _parent} to end of _rows
 
-        on parentPathForMailboxPath(_pathText)
-          if _pathText is "" then return ""
-          set _originalTIDs to AppleScript's text item delimiters
-          set AppleScript's text item delimiters to "/"
-          set _parts to text items of _pathText
-          set AppleScript's text item delimiters to _originalTIDs
-          if (count of _parts) is less than or equal to 1 then return ""
-          set _parentParts to items 1 thru -2 of _parts
-          set AppleScript's text item delimiters to "/"
-          set _parentPath to _parentParts as string
-          set AppleScript's text item delimiters to _originalTIDs
-          return _parentPath
-        end parentPathForMailboxPath
+                set _children to {}
+                try
+                  set _children to (every mailbox of _mailbox)
+                on error
+                  set _children to {}
+                end try
+                if (count of _children) > 0 then
+                  set _rows to _rows & my appendMailboxRows(_children, _accountName, _path)
+                end if
+              end if
+            end repeat
+          end tell
+          return _rows
+        end appendMailboxRows
 
         set _rows to {}
         tell application id \"com.apple.mail\"
           with timeout of 60 seconds
             repeat with _account in (every account)
               set _accountName to (name of _account as string)
-              set _mailboxes to {}
+              set _allMailboxes to {}
               try
-                set _mailboxes to (every mailbox of _account)
+                set _allMailboxes to (every mailbox of _account)
               on error
-                set _mailboxes to {}
+                set _allMailboxes to {}
               end try
-              repeat with _mailbox in _mailboxes
-                set _name to (name of _mailbox as string)
-                set _path to my mailboxPathForMailbox(_mailbox)
-                set _parentPath to my parentPathForMailboxPath(_path)
-                copy {_accountName, _path, _name, _parentPath} to end of _rows
+
+              set _rootMailboxes to {}
+              repeat with _mailbox in _allMailboxes
+                set _isRoot to true
+                try
+                  set _parentMailbox to mailbox of _mailbox
+                  set _isRoot to false
+                on error
+                  set _isRoot to true
+                end try
+                if _isRoot then
+                  copy _mailbox to end of _rootMailboxes
+                end if
               end repeat
+
+              if (count of _rootMailboxes) > 0 then
+                set _rows to _rows & my appendMailboxRows(_rootMailboxes, _accountName, "")
+              else
+                set _rows to _rows & my appendMailboxRows(_allMailboxes, _accountName, "")
+              end if
             end repeat
           end timeout
         end tell
