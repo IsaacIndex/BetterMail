@@ -153,7 +153,7 @@ internal final class MessageStore {
 
                 let mailboxRequest: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
                 mailboxRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: basePredicates + [
-                    NSPredicate(format: "mailboxID ==[c] %@", mailbox)
+                    self.mailboxPredicate(mailbox: mailbox, includeAllInboxesAliases: false)
                 ])
                 let mailboxCount = try context.count(for: mailboxRequest)
 
@@ -673,6 +673,11 @@ internal final class MessageStore {
     }
 
     private func mailboxPredicate(mailbox: String, includeAllInboxesAliases: Bool) -> NSPredicate {
+        let trimmedMailbox = mailbox.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMailbox.isEmpty else {
+            return NSPredicate(value: false)
+        }
+
         if includeAllInboxesAliases {
             let inboxAliases = ["inbox", "all inboxes"]
             let aliasPredicates = inboxAliases.map {
@@ -680,7 +685,20 @@ internal final class MessageStore {
             }
             return NSCompoundPredicate(orPredicateWithSubpredicates: aliasPredicates)
         }
-        return NSPredicate(format: "mailboxID ==[c] %@", mailbox)
+
+        var predicates: [NSPredicate] = [
+            NSPredicate(format: "mailboxID ==[c] %@", trimmedMailbox)
+        ]
+
+        if let leafName = MailboxPathFormatter.leafName(from: trimmedMailbox),
+           leafName.caseInsensitiveCompare(trimmedMailbox) != .orderedSame {
+            predicates.append(NSPredicate(format: "mailboxID ==[c] %@", leafName))
+            predicates.append(NSPredicate(format: "mailboxID ENDSWITH[c] %@", "/" + leafName))
+            predicates.append(NSPredicate(format: "mailboxID ENDSWITH[c] %@", "." + leafName))
+            predicates.append(NSPredicate(format: "mailboxID ENDSWITH[c] %@", ":" + leafName))
+        }
+
+        return NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
     }
 
     private static func makeModel() -> NSManagedObjectModel {

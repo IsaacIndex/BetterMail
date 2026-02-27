@@ -1560,9 +1560,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard activeMailboxScope != scope else { return }
         activeMailboxScope = scope
         mailboxActionStatusMessage = nil
-        shouldForceFullReload = true
         scheduleRethread(delay: 0)
-        refreshNow()
     }
 
     internal func refreshMailboxHierarchy() {
