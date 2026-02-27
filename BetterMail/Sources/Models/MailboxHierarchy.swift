@@ -2,12 +2,13 @@ import Foundation
 
 internal enum MailboxScope: Hashable {
     case allEmails
+    case allFolders
     case allInboxes
     case mailboxFolder(account: String, path: String)
 
     internal var mailboxPath: String {
         switch self {
-        case .allEmails, .allInboxes:
+        case .allEmails, .allFolders, .allInboxes:
             return "inbox"
         case .mailboxFolder(_, let path):
             return path
@@ -16,7 +17,7 @@ internal enum MailboxScope: Hashable {
 
     internal var accountName: String? {
         switch self {
-        case .allEmails, .allInboxes:
+        case .allEmails, .allFolders, .allInboxes:
             return nil
         case .mailboxFolder(let account, _):
             return account

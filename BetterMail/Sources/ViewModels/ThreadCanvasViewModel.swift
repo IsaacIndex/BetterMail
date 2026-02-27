@@ -161,9 +161,16 @@ private enum MailboxFolderActionError: LocalizedError {
 
 @MainActor
 internal final class ThreadCanvasViewModel: ObservableObject {
+    internal enum ThreadCanvasRowPackingMode: Hashable {
+        case dateBucketed
+        case folderAlignedDense
+    }
+
     private struct TimelineLayoutCacheKey: Hashable {
         let viewMode: ThreadCanvasViewMode
+        let rowPackingMode: ThreadCanvasRowPackingMode
         let dayCount: Int
+        let showsDayAxis: Bool
         let zoomBucket: Int
         let columnWidthBucket: Int
         let dataVersion: Int
@@ -756,21 +763,28 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                   account: storeFilter.account,
                                                                   includeAllInboxesAliases: storeFilter.includeAllInboxesAliases,
                                                                   includeThreadIDs: includePinnedThreadIDs)
-            self.roots = rethreadResult.roots
-            self.unreadTotal = rethreadResult.unreadTotal
             self.manualGroupByMessageKey = rethreadResult.manualGroupByMessageKey
             self.manualAttachmentMessageIDs = rethreadResult.manualAttachmentMessageIDs
             self.manualGroups = rethreadResult.manualGroups
             self.jwzThreadMap = rethreadResult.jwzThreadMap
             self.threadFolders = rethreadResult.folders
             self.folderMembershipByThreadID = Self.folderMembershipMap(for: rethreadResult.folders)
+            let scopedRoots = Self.rootsForMailboxScope(rethreadResult.roots,
+                                                        scope: activeMailboxScope,
+                                                        folders: rethreadResult.folders,
+                                                        manualGroupByMessageKey: rethreadResult.manualGroupByMessageKey,
+                                                        jwzThreadMap: rethreadResult.jwzThreadMap)
+            self.roots = scopedRoots
+            self.unreadTotal = Self.flatten(nodes: scopedRoots).reduce(0) { partial, node in
+                partial + (node.message.isUnread ? 1 : 0)
+            }
             self.folderEditsByID = [:]
-            pruneSelection(using: rethreadResult.roots)
+            pruneSelection(using: scopedRoots)
             pruneFolderSelection(using: rethreadResult.folders)
-            refreshNodeSummaries(for: rethreadResult.roots)
-            refreshTimelineTags(for: rethreadResult.roots)
-            refreshFolderSummaries(for: rethreadResult.roots, folders: rethreadResult.folders)
-            let currentNodeIDs = Set(Self.flatten(nodes: rethreadResult.roots).map(\.id))
+            refreshNodeSummaries(for: scopedRoots)
+            refreshTimelineTags(for: scopedRoots)
+            refreshFolderSummaries(for: scopedRoots, folders: rethreadResult.folders)
+            let currentNodeIDs = Set(Self.flatten(nodes: scopedRoots).map(\.id))
             let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
             let removedFolderIDs = previousFolderIDs.subtracting(rethreadResult.folders.map(\.id))
             if activeMailboxScope == .allEmails && (!removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty) {
@@ -2288,8 +2302,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             os_signpost(.end, log: Log.performance, name: "CanvasLayout", signpostID: signpostID)
         }
         let dayStart = calendar.startOfDay(for: today)
+        let rowPackingMode: ThreadCanvasRowPackingMode = activeMailboxScope == .allFolders ? .folderAlignedDense : .dateBucketed
         let cacheKey = TimelineLayoutCacheKey(viewMode: viewMode,
+                                              rowPackingMode: rowPackingMode,
                                               dayCount: metrics.dayCount,
+                                              showsDayAxis: metrics.showsDayAxis,
                                               zoomBucket: Self.zoomCacheBucket(metrics.zoom),
                                               columnWidthBucket: Self.metricsBucket(metrics.columnWidthAdjustment),
                                               dataVersion: layoutCacheVersion,
@@ -2304,6 +2321,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let layout = Self.canvasLayout(for: roots,
                                        metrics: metrics,
                                        viewMode: viewMode,
+                                       rowPackingMode: rowPackingMode,
                                        today: today,
                                        calendar: calendar,
                                        manualAttachmentMessageIDs: manualAttachmentMessageIDs,
@@ -2917,7 +2935,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         case .mailboxFolder(let scopedAccount, _):
             let trimmedScopedAccount = scopedAccount.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedScopedAccount.isEmpty ? nil : trimmedScopedAccount
-        case .allEmails, .allInboxes:
+        case .allEmails, .allFolders, .allInboxes:
             return nil
         }
     }
@@ -3017,7 +3035,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private var activeMailboxFetchTarget: (mailbox: String, account: String?) {
         switch activeMailboxScope {
-        case .allEmails, .allInboxes:
+        case .allEmails, .allFolders, .allInboxes:
             return (mailbox: "inbox", account: nil)
         case .mailboxFolder(let account, let path):
             return (mailbox: path, account: account)
@@ -3026,7 +3044,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private var activeMailboxStoreFilter: (mailbox: String?, account: String?, includeAllInboxesAliases: Bool) {
         switch activeMailboxScope {
-        case .allEmails:
+        case .allEmails, .allFolders:
             return (mailbox: nil, account: nil, includeAllInboxesAliases: false)
         case .allInboxes:
             return (mailbox: "inbox", account: nil, includeAllInboxesAliases: true)
@@ -3077,7 +3095,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private func pinnedThreadIDsToIncludeForRethread() async throws -> Set<String> {
         guard !pinnedFolderIDs.isEmpty else { return [] }
-        guard activeMailboxScope == .allEmails || activeMailboxScope == .allInboxes else { return [] }
+        guard activeMailboxScope == .allEmails || activeMailboxScope == .allFolders || activeMailboxScope == .allInboxes else { return [] }
         let storedFolders = try await store.fetchThreadFolders()
         let threadIDsByFolder = Self.folderThreadIDsByFolder(folders: storedFolders)
         var included: Set<String> = []
@@ -3086,6 +3104,24 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             included.formUnion(threadIDsByFolder[pinnedFolderID] ?? [])
         }
         return included
+    }
+
+    internal static func rootsForMailboxScope(_ roots: [ThreadNode],
+                                              scope: MailboxScope,
+                                              folders: [ThreadFolder],
+                                              manualGroupByMessageKey: [String: String],
+                                              jwzThreadMap: [String: String]) -> [ThreadNode] {
+        guard scope == .allFolders else { return roots }
+        let folderThreadIDs = Set(folderThreadIDsByFolder(folders: folders).values.flatMap(\.self))
+        guard !folderThreadIDs.isEmpty else { return [] }
+        return roots.filter { root in
+            guard let threadID = effectiveThreadID(for: root,
+                                                   manualGroupByMessageKey: manualGroupByMessageKey,
+                                                   jwzThreadMap: jwzThreadMap) else {
+                return false
+            }
+            return folderThreadIDs.contains(threadID)
+        }
     }
 
     private func removeManualGroupMembership(removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)]) async throws {
@@ -3819,6 +3855,7 @@ extension ThreadCanvasViewModel {
     internal static func canvasLayout(for roots: [ThreadNode],
                                       metrics: ThreadCanvasLayoutMetrics,
                                       viewMode: ThreadCanvasViewMode = .default,
+                                      rowPackingMode: ThreadCanvasRowPackingMode = .dateBucketed,
                                       today: Date,
                                       calendar: Calendar,
                                       manualAttachmentMessageIDs: Set<String> = [],
@@ -3832,6 +3869,7 @@ extension ThreadCanvasViewModel {
         return canvasLayout(for: roots,
                             metrics: metrics,
                             viewMode: viewMode,
+                            rowPackingMode: rowPackingMode,
                             today: today,
                             calendar: calendar,
                             manualAttachmentMessageIDs: manualAttachmentMessageIDs,
@@ -3847,6 +3885,7 @@ extension ThreadCanvasViewModel {
     private static func canvasLayout(for roots: [ThreadNode],
                                      metrics: ThreadCanvasLayoutMetrics,
                                      viewMode: ThreadCanvasViewMode = .default,
+                                     rowPackingMode: ThreadCanvasRowPackingMode = .dateBucketed,
                                      today: Date,
                                      calendar: Calendar,
                                      manualAttachmentMessageIDs: Set<String> = [],
@@ -3866,7 +3905,7 @@ extension ThreadCanvasViewModel {
                                     timelineTagsByNodeID: timelineTagsByNodeID,
                                     measurementCache: &measurementCache)
         var currentYOffset = metrics.contentPadding
-        let days = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
+        let sourceDays = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
             let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
             let label = ThreadCanvasDateHelper.label(for: date)
             let height = dayHeights[index] ?? metrics.dayHeight
@@ -3874,7 +3913,7 @@ extension ThreadCanvasViewModel {
             currentYOffset += height
             return day
         }
-        let dayLookup = Dictionary(uniqueKeysWithValues: days.map { ($0.id, $0) })
+        let dayLookup = Dictionary(uniqueKeysWithValues: sourceDays.map { ($0.id, $0) })
 
         typealias ThreadInfo = (root: ThreadNode, latestDate: Date, threadID: String)
         enum OrderingItem {
@@ -3989,25 +4028,140 @@ extension ThreadCanvasViewModel {
 
         appendColumns(for: orderedItems(for: nil))
 
+        var layoutColumns = columns
+        let contentHeight: CGFloat
+        let layoutDays: [ThreadCanvasDay]
+        switch rowPackingMode {
+        case .dateBucketed:
+            layoutDays = sourceDays
+            contentHeight = metrics.contentPadding * 2
+                + sourceDays.reduce(0) { $0 + $1.height }
+        case .folderAlignedDense:
+            let packed = densePackColumnsByFolder(columns: columns,
+                                                  metrics: metrics,
+                                                  viewMode: viewMode)
+            layoutColumns = packed.columns
+            contentHeight = packed.contentHeight
+            let dayHeight = max(contentHeight - (metrics.contentPadding * 2), metrics.dayHeight)
+            layoutDays = [ThreadCanvasDay(id: 0,
+                                          date: today,
+                                          label: ThreadCanvasDateHelper.label(for: today),
+                                          yOffset: metrics.contentPadding,
+                                          height: dayHeight)]
+        }
+
         let columnCount = CGFloat(columns.count)
         let totalWidth = metrics.contentPadding * 2
             + metrics.dayLabelWidth
             + (columnCount * metrics.columnWidth)
             + max(columnCount - 1, 0) * metrics.columnSpacing
-        let totalHeight = metrics.contentPadding * 2
-            + days.reduce(0) { $0 + $1.height }
-        let folderOverlays = folderOverlaysForLayout(columns: columns,
+        let folderOverlays = folderOverlaysForLayout(columns: layoutColumns,
                                                      folders: folders,
                                                      pinnedFolderIDs: pinnedFolderIDs,
                                                      membership: normalizedMembership,
-                                                     contentHeight: totalHeight,
+                                                     contentHeight: contentHeight,
                                                      metrics: metrics)
-        let populatedDayIndices = Set(columns.flatMap { $0.nodes.map(\.dayIndex) })
-        return ThreadCanvasLayout(days: days,
-                                  columns: columns,
-                                  contentSize: CGSize(width: totalWidth, height: totalHeight),
+        let populatedDayIndices = Set(layoutColumns.flatMap { $0.nodes.map(\.dayIndex) })
+        return ThreadCanvasLayout(days: layoutDays,
+                                  columns: layoutColumns,
+                                  contentSize: CGSize(width: totalWidth, height: contentHeight),
                                   folderOverlays: folderOverlays,
                                   populatedDayIndices: populatedDayIndices)
+    }
+
+    private static func densePackColumnsByFolder(columns: [ThreadCanvasColumn],
+                                                 metrics: ThreadCanvasLayoutMetrics,
+                                                 viewMode: ThreadCanvasViewMode) -> (columns: [ThreadCanvasColumn], contentHeight: CGFloat) {
+        var packedColumns = columns
+        let groupedIndices = Dictionary(grouping: columns.indices) { index -> String? in
+            columns[index].folderID
+        }
+        let orderedGroups = groupedIndices
+            .sorted { lhs, rhs in
+                let lhsMinX = lhs.value.map { columns[$0].xOffset }.min() ?? .greatestFiniteMagnitude
+                let rhsMinX = rhs.value.map { columns[$0].xOffset }.min() ?? .greatestFiniteMagnitude
+                return lhsMinX < rhsMinX
+            }
+            .map(\.value)
+
+        var globalMaxNodeY: CGFloat = metrics.contentPadding
+        for groupIndices in orderedGroups {
+            let sortedGroupIndices = groupIndices.sorted { lhs, rhs in
+                columns[lhs].xOffset < columns[rhs].xOffset
+            }
+            let groupedNodes: [[ThreadCanvasNode]] = sortedGroupIndices.map { index in
+                columns[index].nodes.sorted { lhs, rhs in
+                    if lhs.message.date == rhs.message.date {
+                        return lhs.id < rhs.id
+                    }
+                    return lhs.message.date > rhs.message.date
+                }
+            }
+            let rowCount = groupedNodes.map(\.count).max() ?? 0
+            guard rowCount > 0 else { continue }
+
+            var rowHeights: [CGFloat] = []
+            rowHeights.reserveCapacity(rowCount)
+            for row in 0..<rowCount {
+                let rowHeight: CGFloat
+                switch viewMode {
+                case .timeline:
+                    rowHeight = groupedNodes.compactMap { nodes in
+                        guard row < nodes.count else { return nil }
+                        return nodes[row].frame.height
+                    }
+                    .max() ?? metrics.nodeHeight
+                case .default:
+                    rowHeight = metrics.nodeHeight
+                }
+                rowHeights.append(max(rowHeight, 1))
+            }
+
+            var rowTopOffsets: [CGFloat] = []
+            rowTopOffsets.reserveCapacity(rowCount)
+            var cursorY = metrics.contentPadding + metrics.nodeVerticalSpacing
+            for rowHeight in rowHeights {
+                rowTopOffsets.append(cursorY)
+                cursorY += rowHeight + metrics.nodeVerticalSpacing
+            }
+
+            for (groupPosition, columnIndex) in sortedGroupIndices.enumerated() {
+                let sourceNodes = groupedNodes[groupPosition]
+                var updatedNodes: [ThreadCanvasNode] = []
+                updatedNodes.reserveCapacity(sourceNodes.count)
+                for (rowIndex, node) in sourceNodes.enumerated() {
+                    let rowTop = rowTopOffsets[rowIndex]
+                    let nodeHeight = viewMode == .timeline ? node.frame.height : metrics.nodeHeight
+                    let frame = CGRect(x: node.frame.minX,
+                                       y: rowTop,
+                                       width: node.frame.width,
+                                       height: nodeHeight)
+                    updatedNodes.append(ThreadCanvasNode(id: node.id,
+                                                         message: node.message,
+                                                         threadID: node.threadID,
+                                                         jwzThreadID: node.jwzThreadID,
+                                                         frame: frame,
+                                                         dayIndex: 0,
+                                                         isManualAttachment: node.isManualAttachment))
+                }
+                packedColumns[columnIndex] = ThreadCanvasColumn(id: columns[columnIndex].id,
+                                                                title: columns[columnIndex].title,
+                                                                xOffset: columns[columnIndex].xOffset,
+                                                                nodes: updatedNodes,
+                                                                unreadCount: columns[columnIndex].unreadCount,
+                                                                latestDate: columns[columnIndex].latestDate,
+                                                                folderID: columns[columnIndex].folderID)
+            }
+
+            let groupMaxY = sortedGroupIndices.compactMap { index in
+                packedColumns[index].nodes.map(\.frame.maxY).max()
+            }.max() ?? globalMaxNodeY
+            globalMaxNodeY = max(globalMaxNodeY, groupMaxY)
+        }
+
+        let minimumHeight = (metrics.contentPadding * 2) + metrics.dayHeight
+        let contentHeight = max(globalMaxNodeY + metrics.contentPadding, minimumHeight)
+        return (packedColumns, contentHeight)
     }
 
     internal static func timelineNodes(for roots: [ThreadNode],

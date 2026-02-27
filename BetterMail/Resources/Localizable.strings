@@ -81,6 +81,7 @@
 "threadlist.selection.ungroup.verb" = "Ungroup";
 "threadlist.backfill.button.verb" = "Backfill";
 "mailbox.sidebar.all_emails" = "All Emails";
+"mailbox.sidebar.all_folders" = "All Folders";
 "mailbox.sidebar.all_inboxes" = "All Inboxes";
 "mailbox.sidebar.loading" = "Loading mailboxes...";
 "mailbox.hierarchy.error" = "Mailbox hierarchy unavailable: %@";

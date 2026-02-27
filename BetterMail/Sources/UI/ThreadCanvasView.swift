@@ -57,6 +57,7 @@ internal struct ThreadCanvasView: View {
 
     private struct CanvasRenderContext {
         let metrics: ThreadCanvasLayoutMetrics
+        let showsDayAxis: Bool
         let today: Date
         let layout: ThreadCanvasLayout
         let jumpAnchorVersion: Int
@@ -89,10 +90,12 @@ internal struct ThreadCanvasView: View {
         let columnWidthAdjustment = displaySettings.viewMode == .timeline
             ? ThreadTimelineLayoutConstants.summaryColumnExtraWidth
             : 0
+        let showsDayAxis = viewModel.activeMailboxScope != .allFolders
         let layoutZoomScale = quantized(zoomScale, step: layoutZoomQuantizationStep)
         let metrics = ThreadCanvasLayoutMetrics(zoom: layoutZoomScale,
                                                 dayCount: viewModel.dayWindowCount,
-                                                columnWidthAdjustment: columnWidthAdjustment)
+                                                columnWidthAdjustment: columnWidthAdjustment,
+                                                showsDayAxis: showsDayAxis)
         let today = Date()
         let layout = viewModel.canvasLayout(metrics: metrics,
                                             viewMode: displaySettings.viewMode,
@@ -108,6 +111,7 @@ internal struct ThreadCanvasView: View {
                                                proxySize: proxy.size)
         let totalTopPadding = visibility.totalTopPadding
         return CanvasRenderContext(metrics: metrics,
+                                   showsDayAxis: showsDayAxis,
                                    today: today,
                                    layout: layout,
                                    jumpAnchorVersion: jumpAnchorVersion,
@@ -199,14 +203,16 @@ internal struct ThreadCanvasView: View {
         .scrollIndicators(.visible)
         .background(canvasBackground)
         .overlay(alignment: .topLeading) {
-            floatingDateRail(layout: context.layout,
-                             metrics: context.metrics,
-                             readabilityMode: context.readabilityMode,
-                             totalTopPadding: context.totalTopPadding,
-                             rawScrollOffset: rawScrollOffset,
-                             viewportHeight: proxy.size.height,
-                             visibleYStart: context.visibility.visibleYStart,
-                             visibleYEnd: context.visibility.visibleYEnd)
+            if context.showsDayAxis {
+                floatingDateRail(layout: context.layout,
+                                 metrics: context.metrics,
+                                 readabilityMode: context.readabilityMode,
+                                 totalTopPadding: context.totalTopPadding,
+                                 rawScrollOffset: rawScrollOffset,
+                                 viewportHeight: proxy.size.height,
+                                 visibleYStart: context.visibility.visibleYStart,
+                                 visibleYEnd: context.visibility.visibleYEnd)
+            }
         }
         .gesture(magnificationGesture)
         .coordinateSpace(name: "ThreadCanvasScroll")

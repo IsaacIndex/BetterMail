@@ -96,6 +96,12 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertNil(MailboxScope.allEmails.accountName)
     }
 
+    func test_mailboxScope_allFolders_defaultsToInboxFetchPath() {
+        XCTAssertEqual(MailboxScope.allFolders.mailboxPath, "inbox")
+        XCTAssertNil(MailboxScope.allFolders.accountName)
+        XCTAssertFalse(MailboxScope.allFolders.usesAllInboxAliases)
+    }
+
     func test_mailboxPathFormatter_leafName_returnsFinalPathSegment() {
         XCTAssertEqual(MailboxPathFormatter.leafName(from: "Projects/Acme/Invoices"), "Invoices")
         XCTAssertEqual(MailboxPathFormatter.leafName(from: "Inbox"), "Inbox")

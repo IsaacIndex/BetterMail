@@ -10,6 +10,10 @@ internal struct MailboxSidebarView: View {
                        title: NSLocalizedString("mailbox.sidebar.all_emails",
                                                 comment: "All Emails sidebar entry"),
                        systemImage: "tray.2")
+            sidebarRow(scope: .allFolders,
+                       title: NSLocalizedString("mailbox.sidebar.all_folders",
+                                                comment: "All Folders sidebar entry"),
+                       systemImage: "folder.stack.fill")
             sidebarRow(scope: .allInboxes,
                        title: NSLocalizedString("mailbox.sidebar.all_inboxes",
                                                 comment: "All Inboxes sidebar entry"),

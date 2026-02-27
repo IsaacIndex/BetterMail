@@ -9,6 +9,7 @@ internal struct ThreadCanvasLayoutMetrics {
     internal let zoom: CGFloat
     internal let dayCount: Int
     internal let columnWidthAdjustment: CGFloat
+    internal let showsDayAxis: Bool
 
     internal var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
@@ -27,7 +28,7 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 
     internal var dayLabelWidth: CGFloat {
-        96 * clampedZoom
+        showsDayAxis ? (96 * clampedZoom) : 0
     }
 
     internal var contentPadding: CGFloat {
@@ -60,10 +61,12 @@ internal struct ThreadCanvasLayoutMetrics {
 
     internal init(zoom: CGFloat,
                   dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount,
-                  columnWidthAdjustment: CGFloat = 0) {
+                  columnWidthAdjustment: CGFloat = 0,
+                  showsDayAxis: Bool = true) {
         self.zoom = zoom
         self.dayCount = max(dayCount, 1)
         self.columnWidthAdjustment = columnWidthAdjustment
+        self.showsDayAxis = showsDayAxis
     }
 }
 
