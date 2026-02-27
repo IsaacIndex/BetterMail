@@ -6,7 +6,7 @@ Source: `BetterMail/Sources/UI/ThreadCanvasView.swift`
 `ThreadCanvasView` builds a scrollable canvas and draws its content inside a `ZStack(alignment: .topLeading)`.
 The order of views in the ZStack defines the visual stacking (earlier = further back, later = on top).
 Timeline layout work is cached in the view model and visible-range updates are throttled to avoid per-scroll recomputation.
-During scrolling, the canvas renders only visible days, columns, and nodes (plus a small buffer) to reduce view work. Columns belonging to pinned folders are always rendered.
+During scrolling, the canvas renders only visible days, columns, and nodes (plus a small buffer) to reduce view work. Columns belonging to pinned folders are always rendered, and pinned folders with out-of-range mail keep header-only chrome visible.
 
 ZStack draw order (back to front):
 1) `dayBands`
@@ -65,7 +65,7 @@ ZStack draw order (back to front):
 ### 9) folderColumnHeaderLayer
 - Role: Draws the visual folder headers (title, summary, unread count, timestamps).
 - Key inputs: `chromeData`, `metrics`, `rawZoom`, `readabilityMode`, selection state.
-- Notes: Offset upward to sit above the day bands; hit testing disabled so clicks pass through.
+- Notes: Offset upward to sit above the day bands; hit testing disabled so clicks pass through. Pinned out-of-range folders remain visible here (including ancestor header context for nested pinned folders).
 
 ### 10) folderHeaderHitTargets
 - Role: Invisible buttons aligned with headers to handle folder selection.

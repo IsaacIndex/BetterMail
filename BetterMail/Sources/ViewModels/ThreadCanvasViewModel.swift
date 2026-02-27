@@ -310,12 +310,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         func performRethread(cutoffDate: Date?,
                              mailbox: String?,
                              account: String?,
-                             includeAllInboxesAliases: Bool) async throws -> RethreadOutcome {
-            let messages = try await store.fetchMessages(since: cutoffDate,
-                                                         limit: nil,
-                                                         mailbox: mailbox,
-                                                         account: account,
-                                                         includeAllInboxesAliases: includeAllInboxesAliases)
+                             includeAllInboxesAliases: Bool,
+                             includeThreadIDs: Set<String> = []) async throws -> RethreadOutcome {
+            let scopedMessages = try await store.fetchMessages(since: cutoffDate,
+                                                               limit: nil,
+                                                               mailbox: mailbox,
+                                                               account: account,
+                                                               includeAllInboxesAliases: includeAllInboxesAliases)
+            let messages = try await Self.mergedMessages(scopedMessages,
+                                                         includeThreadIDs: includeThreadIDs,
+                                                         store: store)
             let baseResult = threader.buildThreads(from: messages)
             let manualGroups = try await store.fetchManualThreadGroups()
             let applied = threader.applyManualGroups(manualGroups, to: baseResult)
@@ -337,6 +341,24 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                    manualGroups: groupsByID,
                                    jwzThreadMap: updatedResult.jwzThreadMap,
                                    folders: folders)
+        }
+
+        private static func mergedMessages(_ scopedMessages: [EmailMessage],
+                                           includeThreadIDs: Set<String>,
+                                           store: MessageStore) async throws -> [EmailMessage] {
+            guard !includeThreadIDs.isEmpty else { return scopedMessages }
+            let includedMessages = try await store.fetchMessages(threadIDs: includeThreadIDs)
+            guard !includedMessages.isEmpty else { return scopedMessages }
+            var messagesByID = Dictionary(uniqueKeysWithValues: scopedMessages.map { ($0.messageID, $0) })
+            for message in includedMessages {
+                messagesByID[message.messageID] = message
+            }
+            return messagesByID.values.sorted { lhs, rhs in
+                if lhs.date == rhs.date {
+                    return lhs.messageID < rhs.messageID
+                }
+                return lhs.date > rhs.date
+            }
         }
 
         func nodeSummaryInputs(for roots: [ThreadNode],
@@ -728,10 +750,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let previousFolderIDs = Set(self.threadFolders.map(\.id))
             let cutoffDate = cachedMessageCutoffDate()
             let storeFilter = activeMailboxStoreFilter
+            let includePinnedThreadIDs = try await pinnedThreadIDsToIncludeForRethread()
             let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate,
                                                                   mailbox: storeFilter.mailbox,
                                                                   account: storeFilter.account,
-                                                                  includeAllInboxesAliases: storeFilter.includeAllInboxesAliases)
+                                                                  includeAllInboxesAliases: storeFilter.includeAllInboxesAliases,
+                                                                  includeThreadIDs: includePinnedThreadIDs)
             self.roots = rethreadResult.roots
             self.unreadTotal = rethreadResult.unreadTotal
             self.manualGroupByMessageKey = rethreadResult.manualGroupByMessageKey
@@ -3051,6 +3075,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return calendar.date(byAdding: .day, value: -(dayCount - 1), to: startOfToday)
     }
 
+    private func pinnedThreadIDsToIncludeForRethread() async throws -> Set<String> {
+        guard !pinnedFolderIDs.isEmpty else { return [] }
+        guard activeMailboxScope == .allEmails || activeMailboxScope == .allInboxes else { return [] }
+        let storedFolders = try await store.fetchThreadFolders()
+        let threadIDsByFolder = Self.folderThreadIDsByFolder(folders: storedFolders)
+        var included: Set<String> = []
+        included.reserveCapacity(pinnedFolderIDs.count)
+        for pinnedFolderID in pinnedFolderIDs {
+            included.formUnion(threadIDsByFolder[pinnedFolderID] ?? [])
+        }
+        return included
+    }
+
     private func removeManualGroupMembership(removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)]) async throws {
         for (groupID, removals) in removalsByGroupID {
             guard var group = manualGroups[groupID] else { continue }
@@ -3961,6 +3998,7 @@ extension ThreadCanvasViewModel {
             + days.reduce(0) { $0 + $1.height }
         let folderOverlays = folderOverlaysForLayout(columns: columns,
                                                      folders: folders,
+                                                     pinnedFolderIDs: pinnedFolderIDs,
                                                      membership: normalizedMembership,
                                                      contentHeight: totalHeight,
                                                      metrics: metrics)
@@ -4341,6 +4379,7 @@ extension ThreadCanvasViewModel {
 
     private static func folderOverlaysForLayout(columns: [ThreadCanvasColumn],
                                                 folders: [ThreadFolder],
+                                                pinnedFolderIDs: Set<String>,
                                                 membership: [String: String],
                                                 contentHeight: CGFloat,
                                                 metrics: ThreadCanvasLayoutMetrics) -> [ThreadCanvasFolderOverlay] {
@@ -4363,6 +4402,18 @@ extension ThreadCanvasViewModel {
             return result
         }
 
+        var pinnedHeaderContextFolderIDs: Set<String> = []
+        pinnedHeaderContextFolderIDs.reserveCapacity(pinnedFolderIDs.count * 2)
+        for folderID in pinnedFolderIDs where hierarchy.foldersByID[folderID] != nil {
+            var currentID: String? = folderID
+            while let resolvedID = currentID,
+                  hierarchy.foldersByID[resolvedID] != nil,
+                  !pinnedHeaderContextFolderIDs.contains(resolvedID) {
+                pinnedHeaderContextFolderIDs.insert(resolvedID)
+                currentID = hierarchy.foldersByID[resolvedID]?.parentID
+            }
+        }
+
         var overlays: [ThreadCanvasFolderOverlay] = []
         overlays.reserveCapacity(folders.count)
 
@@ -4374,17 +4425,24 @@ extension ThreadCanvasViewModel {
             let maxX = (sortedColumns.last.map { $0.xOffset + metrics.columnWidth } ?? 0)
 
             let nodes = sortedColumns.flatMap(\.nodes)
-            guard !nodes.isEmpty else { continue }
-            let minY = nodes.map { $0.frame.minY }.min() ?? 0
-            let maxY = nodes.map { $0.frame.maxY }.max() ?? contentHeight
-            let headerInset = metrics.nodeVerticalSpacing * 1.3
-            let paddedMinY = max(0, minY - headerInset)
-            let paddedHeight = (maxY - minY) + metrics.nodeVerticalSpacing * 2 + headerInset
-
-            let frame = CGRect(x: minX,
+            let frame: CGRect
+            if nodes.isEmpty {
+                guard pinnedHeaderContextFolderIDs.contains(folder.id) else { continue }
+                frame = CGRect(x: minX,
+                               y: 0,
+                               width: maxX - minX,
+                               height: 0)
+            } else {
+                let minY = nodes.map { $0.frame.minY }.min() ?? 0
+                let maxY = nodes.map { $0.frame.maxY }.max() ?? contentHeight
+                let headerInset = metrics.nodeVerticalSpacing * 1.3
+                let paddedMinY = max(0, minY - headerInset)
+                let paddedHeight = (maxY - minY) + metrics.nodeVerticalSpacing * 2 + headerInset
+                frame = CGRect(x: minX,
                                y: paddedMinY,
                                width: maxX - minX,
                                height: paddedHeight)
+            }
 
             overlays.append(ThreadCanvasFolderOverlay(id: folder.id,
                                                       title: folder.title,

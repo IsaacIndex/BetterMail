@@ -467,10 +467,20 @@ internal struct ThreadCanvasView: View {
             let intersectsY = maxY >= visibleYStart && minY <= visibleYEnd
             return intersectsX && intersectsY
         }
+        let overlayByID = Dictionary(uniqueKeysWithValues: layout.folderOverlays.map { ($0.id, $0) })
+        var alwaysVisibleHeaderFolderIDs = pinnedFolderIDs
+        for pinnedFolderID in pinnedFolderIDs {
+            var currentID = overlayByID[pinnedFolderID]?.parentID
+            while let resolvedID = currentID {
+                guard alwaysVisibleHeaderFolderIDs.contains(resolvedID) == false else { break }
+                alwaysVisibleHeaderFolderIDs.insert(resolvedID)
+                currentID = overlayByID[resolvedID]?.parentID
+            }
+        }
         let visibleHeaderChromeData = chromeData.filter { chrome in
             let minX = chrome.frame.minX
             let maxX = chrome.frame.maxX
-            if pinnedFolderIDs.contains(chrome.id) {
+            if alwaysVisibleHeaderFolderIDs.contains(chrome.id) {
                 return true
             }
             return maxX >= visibleXStart && minX <= visibleXEnd

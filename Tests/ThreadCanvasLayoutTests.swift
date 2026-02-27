@@ -643,6 +643,118 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(layout.columns.dropFirst().first?.id, "thread-older")
     }
 
+    func testPinnedOutOfRangeFolderStillProducesOverlay() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let oldThread = EmailMessage(messageID: "old-thread",
+                                     mailboxID: "inbox",
+                                     accountName: "",
+                                     subject: "Old Thread",
+                                     from: "a@example.com",
+                                     to: "me@example.com",
+                                     date: calendar.date(byAdding: .day, value: -30, to: today)!,
+                                     snippet: "",
+                                     isUnread: false,
+                                     inReplyTo: nil,
+                                     references: [],
+                                     threadID: "thread-old")
+
+        let folder = ThreadFolder(id: "folder-old",
+                                  title: "Pinned Old Folder",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                                  threadIDs: ["thread-old"],
+                                  parentID: nil)
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: [folder])
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [ThreadNode(message: oldThread)],
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: [folder],
+                                                        pinnedFolderIDs: Set(["folder-old"]),
+                                                        folderMembershipByThreadID: membership)
+
+        XCTAssertEqual(layout.folderOverlays.map(\.id), ["folder-old"])
+    }
+
+    func testUnpinnedOutOfRangeFolderDoesNotProduceOverlay() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let oldThread = EmailMessage(messageID: "old-thread",
+                                     mailboxID: "inbox",
+                                     accountName: "",
+                                     subject: "Old Thread",
+                                     from: "a@example.com",
+                                     to: "me@example.com",
+                                     date: calendar.date(byAdding: .day, value: -30, to: today)!,
+                                     snippet: "",
+                                     isUnread: false,
+                                     inReplyTo: nil,
+                                     references: [],
+                                     threadID: "thread-old")
+
+        let folder = ThreadFolder(id: "folder-old",
+                                  title: "Old Folder",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                                  threadIDs: ["thread-old"],
+                                  parentID: nil)
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: [folder])
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [ThreadNode(message: oldThread)],
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: [folder],
+                                                        pinnedFolderIDs: [],
+                                                        folderMembershipByThreadID: membership)
+
+        XCTAssertTrue(layout.folderOverlays.isEmpty)
+    }
+
+    func testPinnedNestedFolderOutOfRangeIncludesAncestorOverlayContext() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+
+        let oldThread = EmailMessage(messageID: "old-thread",
+                                     mailboxID: "inbox",
+                                     accountName: "",
+                                     subject: "Old Nested Thread",
+                                     from: "a@example.com",
+                                     to: "me@example.com",
+                                     date: calendar.date(byAdding: .day, value: -30, to: today)!,
+                                     snippet: "",
+                                     isUnread: false,
+                                     inReplyTo: nil,
+                                     references: [],
+                                     threadID: "thread-old")
+
+        let parentFolder = ThreadFolder(id: "folder-parent",
+                                        title: "Parent",
+                                        color: ThreadFolderColor(red: 0.4, green: 0.5, blue: 0.7, alpha: 1),
+                                        threadIDs: [],
+                                        parentID: nil)
+        let childFolder = ThreadFolder(id: "folder-child",
+                                       title: "Child",
+                                       color: ThreadFolderColor(red: 0.6, green: 0.7, blue: 0.8, alpha: 1),
+                                       threadIDs: ["thread-old"],
+                                       parentID: parentFolder.id)
+        let folders = [parentFolder, childFolder]
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: folders)
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [ThreadNode(message: oldThread)],
+                                                        metrics: metrics,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: folders,
+                                                        pinnedFolderIDs: Set(["folder-child"]),
+                                                        folderMembershipByThreadID: membership)
+
+        let overlayIDs = Set(layout.folderOverlays.map(\.id))
+        XCTAssertEqual(overlayIDs, Set(["folder-parent", "folder-child"]))
+    }
+
     func testNestedFolderOrderingKeepsChildAdjacentToParent() {
         let calendar = Calendar(identifier: .gregorian)
         let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
