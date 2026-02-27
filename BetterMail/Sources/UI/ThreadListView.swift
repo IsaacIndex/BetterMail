@@ -245,7 +245,7 @@ internal struct ThreadListView: View {
                     .foregroundStyle(navSecondaryForegroundStyle)
                 limitField
             }
-            .fixedSize()
+            .fixedSize(horizontal: true, vertical: false)
             refreshButton
         }
         .padding(.horizontal, 14)
@@ -331,8 +331,8 @@ internal struct ThreadListView: View {
             let fieldForeground = colorScheme == .light ? Color.black.opacity(0.9) : Color.white
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
                 .textFieldStyle(.plain)
+                .controlSize(.small)
                 .padding(.horizontal, 8)
-                .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(fieldFill)
@@ -343,11 +343,12 @@ internal struct ThreadListView: View {
                 )
                 .foregroundStyle(fieldForeground)
                 .tint(fieldForeground)
-                .frame(width: 60)
+                .frame(width: 60, height: 24)
         } else {
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 60)
+                .controlSize(.small)
+                .frame(width: 60, height: 24)
         }
     }
 
