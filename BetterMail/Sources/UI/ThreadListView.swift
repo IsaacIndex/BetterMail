@@ -61,7 +61,7 @@ internal struct ThreadListView: View {
             }
             .sheet(isPresented: $isShowingMailboxMoveSheet) {
                 MailboxFolderMoveSheet(viewModel: viewModel)
-                    .frame(minWidth: 500, minHeight: 470)
+                    .frame(minWidth: 440, minHeight: 390)
             }
     }
 
@@ -811,7 +811,7 @@ private struct MailboxFolderMoveSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(NSLocalizedString("mailbox.sheet.title", comment: "Mailbox folder move sheet title"))
@@ -843,6 +843,7 @@ private struct MailboxFolderMoveSheet: View {
                 }
             }
             .pickerStyle(.menu)
+            .controlSize(.small)
             .disabled(forcedAccount != nil || viewModel.isMailboxActionRunning)
 
             Picker(NSLocalizedString("mailbox.sheet.mode", comment: "Mailbox move sheet mode segmented control label"),
@@ -853,9 +854,10 @@ private struct MailboxFolderMoveSheet: View {
                     .tag(MailboxMoveMode.create)
             }
             .pickerStyle(.segmented)
+            .controlSize(.small)
             .disabled(viewModel.isMailboxActionRunning)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 if mode == .create {
                     TextField(NSLocalizedString("mailbox.sheet.new_name", comment: "New mailbox folder name field"),
                               text: $newFolderName)
@@ -874,6 +876,7 @@ private struct MailboxFolderMoveSheet: View {
                                             comment: "Search field placeholder for mailbox folder selection"),
                           text: $folderSearchQuery)
                 .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
 
                 Group {
                     if viewModel.isMailboxHierarchyLoading && folderChoices.isEmpty {
@@ -915,8 +918,8 @@ private struct MailboxFolderMoveSheet: View {
                         }
                     }
                 }
-                .frame(minHeight: 170, maxHeight: 230)
-                .padding(8)
+                .frame(minHeight: 160, maxHeight: 210)
+                .padding(6)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(cardFillColor)
@@ -932,7 +935,7 @@ private struct MailboxFolderMoveSheet: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
-            .padding(12)
+            .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(cardFillColor)
@@ -953,16 +956,18 @@ private struct MailboxFolderMoveSheet: View {
                 Button(NSLocalizedString("mailbox.sheet.cancel", comment: "Cancel mailbox action sheet button")) {
                     dismiss()
                 }
+                .controlSize(.small)
                 .keyboardShortcut(.cancelAction)
 
                 Button(submitButtonTitle) {
                     submit()
                 }
+                .controlSize(.small)
                 .disabled(!canSubmit)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
+        .padding(14)
         .onAppear {
             setDefaultSelections()
             if viewModel.mailboxAccounts.isEmpty || folderChoices.isEmpty {
@@ -993,15 +998,16 @@ private struct MailboxFolderMoveSheet: View {
                 Image(systemName: "tray")
                     .foregroundStyle(.secondary)
                 Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
-                    .font(.subheadline)
+                    .font(.caption)
+                    .lineLimit(1)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.tint)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
@@ -1030,29 +1036,24 @@ private struct MailboxFolderMoveSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: "folder")
                     .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(.subheadline)
-                    if depth > 0 {
-                        Text(path)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Text(name)
+                    .font(.caption)
+                    .lineLimit(1)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.tint)
                 }
             }
-            .padding(.leading, CGFloat(depth) * 14 + 8)
-            .padding(.trailing, 8)
-            .padding(.vertical, 6)
+            .padding(.leading, CGFloat(depth) * 12 + 6)
+            .padding(.trailing, 6)
+            .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
             )
         }
+        .help(path)
         .buttonStyle(.plain)
     }
 }
