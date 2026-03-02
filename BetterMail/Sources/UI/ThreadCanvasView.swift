@@ -429,6 +429,7 @@ internal struct ThreadCanvasView: View {
         let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
         let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
         let pinnedFolderIDs = viewModel.pinnedFolderIDs
+        let shouldShowAllNodesInColumn = viewModel.activeMailboxScope == .allFolders
         let visibleDays = layout.days.filter { day in
             let dayStart = day.yOffset
             let dayEnd = day.yOffset + day.height
@@ -449,7 +450,9 @@ internal struct ThreadCanvasView: View {
         }
         let visibleNodesByColumnID: [String: [ThreadCanvasNode]] = Dictionary(uniqueKeysWithValues: visibleColumns.map { column in
             let nodes: [ThreadCanvasNode]
-            if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
+            if shouldShowAllNodesInColumn {
+                nodes = column.nodes
+            } else if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
                 nodes = column.nodes
             } else {
                 nodes = column.nodes.filter { node in

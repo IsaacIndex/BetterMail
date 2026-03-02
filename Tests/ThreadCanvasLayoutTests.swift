@@ -245,6 +245,77 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                        accuracy: 0.001)
     }
 
+    func testCanvasLayout_folderAlignedDense_includesNodesOutsideDayWindow() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let oldThread = ThreadNode(message: EmailMessage(messageID: "old-root",
+                                                         mailboxID: "inbox",
+                                                         accountName: "",
+                                                         subject: "Old Thread",
+                                                         from: "a@example.com",
+                                                         to: "me@example.com",
+                                                         date: calendar.date(byAdding: .day, value: -30, to: today)!,
+                                                         snippet: "",
+                                                         isUnread: false,
+                                                         inReplyTo: nil,
+                                                         references: [],
+                                                         threadID: "thread-old"))
+        let folders = [
+            ThreadFolder(id: "folder-old",
+                         title: "Old Folder",
+                         color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                         threadIDs: ["thread-old"],
+                         parentID: nil)
+        ]
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: folders)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [oldThread],
+                                                        metrics: ThreadCanvasLayoutMetrics(zoom: 1.0, dayCount: 7, showsDayAxis: false),
+                                                        rowPackingMode: .folderAlignedDense,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: folders,
+                                                        folderMembershipByThreadID: membership)
+
+        XCTAssertEqual(layout.columns.count, 1)
+        XCTAssertEqual(layout.columns.first?.nodes.count, 1)
+        XCTAssertEqual(layout.columns.first?.nodes.first?.dayIndex, 0)
+    }
+
+    func testCanvasLayout_dateBucketed_excludesNodesOutsideDayWindow() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let oldThread = ThreadNode(message: EmailMessage(messageID: "old-root",
+                                                         mailboxID: "inbox",
+                                                         accountName: "",
+                                                         subject: "Old Thread",
+                                                         from: "a@example.com",
+                                                         to: "me@example.com",
+                                                         date: calendar.date(byAdding: .day, value: -30, to: today)!,
+                                                         snippet: "",
+                                                         isUnread: false,
+                                                         inReplyTo: nil,
+                                                         references: [],
+                                                         threadID: "thread-old"))
+        let folders = [
+            ThreadFolder(id: "folder-old",
+                         title: "Old Folder",
+                         color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                         threadIDs: ["thread-old"],
+                         parentID: nil)
+        ]
+        let membership = ThreadCanvasViewModel.folderMembershipMap(for: folders)
+        let layout = ThreadCanvasViewModel.canvasLayout(for: [oldThread],
+                                                        metrics: ThreadCanvasLayoutMetrics(zoom: 1.0, dayCount: 7),
+                                                        rowPackingMode: .dateBucketed,
+                                                        today: today,
+                                                        calendar: calendar,
+                                                        folders: folders,
+                                                        folderMembershipByThreadID: membership)
+
+        XCTAssertEqual(layout.columns.count, 1)
+        XCTAssertTrue(layout.columns.first?.nodes.isEmpty ?? false)
+    }
+
     func testColumnOrderingUsesLatestThreadActivity() {
         let calendar = Calendar(identifier: .gregorian)
         var components = DateComponents()

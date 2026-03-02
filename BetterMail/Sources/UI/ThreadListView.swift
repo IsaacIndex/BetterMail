@@ -245,7 +245,6 @@ internal struct ThreadListView: View {
                     .foregroundStyle(navSecondaryForegroundStyle)
                 limitField
             }
-            .fixedSize(horizontal: true, vertical: false)
             refreshButton
         }
         .padding(.horizontal, 14)

@@ -4001,6 +4001,7 @@ extension ThreadCanvasViewModel {
                                             columnX: columnX,
                                             metrics: metrics,
                                             viewMode: viewMode,
+                                            rowPackingMode: rowPackingMode,
                                             today: today,
                                             calendar: calendar,
                                             dayLookup: dayLookup,
@@ -4206,6 +4207,7 @@ extension ThreadCanvasViewModel {
                                     columnX: CGFloat,
                                     metrics: ThreadCanvasLayoutMetrics,
                                     viewMode: ThreadCanvasViewMode,
+                                    rowPackingMode: ThreadCanvasRowPackingMode,
                                     today: Date,
                                     calendar: Calendar,
                                     dayLookup: [Int: ThreadCanvasDay],
@@ -4217,11 +4219,19 @@ extension ThreadCanvasViewModel {
         var grouped: [Int: [ThreadNode]] = [:]
         let allNodes = flatten(node: root)
         for node in allNodes {
-            guard let dayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
-                                                                 today: today,
-                                                                 calendar: calendar,
-                                                                 dayCount: metrics.dayCount) else {
-                continue
+            let dayIndex: Int
+            switch rowPackingMode {
+            case .folderAlignedDense:
+                // In All Folders mode we pack rows independently of the day window.
+                dayIndex = 0
+            case .dateBucketed:
+                guard let resolvedDayIndex = ThreadCanvasDateHelper.dayIndex(for: node.message.date,
+                                                                              today: today,
+                                                                              calendar: calendar,
+                                                                              dayCount: metrics.dayCount) else {
+                    continue
+                }
+                dayIndex = resolvedDayIndex
             }
             grouped[dayIndex, default: []].append(node)
         }

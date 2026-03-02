@@ -6,7 +6,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
 - Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Inboxes` as the default landing scope.
-- Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator, and pinned folder headers remain visible even when their messages are outside the current day window.
+- Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator, and pinned folder headers remain visible even when their messages fall outside the current day window.
 - Folder details inspector includes a non-scrollable minimap with selected-node highlight, folder-scoped viewport overlay, and date ticks/labels while preserving relative spacing for click-to-jump navigation.
 - Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
 - Appearance preferences support System, Light, and Dark modes from BetterMail Settings while keeping the glassmorphism styling consistent.
@@ -160,7 +160,7 @@ sequenceDiagram
 
 ### Canvas Virtualization Window
 - The virtualized render window is computed in content coordinates using the raw scroll offset, so pinned folder headers/top padding do not shift which days and nodes are considered visible.
-- Pinned folders with out-of-range mail render as header-only chrome (with ancestor header context for nested pinned folders) until jump/expansion reveals in-range nodes.
+- In `All Folders`, folder-member nodes render regardless of day-window position so folder columns do not degrade into header-only shells; in other scopes, pinned out-of-range folders still keep header chrome visible (including ancestor context for nested pinned folders).
 
 ### Manual Grouping & Ungrouping
 **User-facing**
@@ -203,7 +203,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
   - `selectionActionBar` as a bottom overlay for multi-select actions.
 - Mailbox-folder actions in the selection bar target Apple Mail folders (existing or newly created), while `Add to Thread Folder` keeps using BetterMail's internal canvas grouping feature.
 - Opening the mailbox-folder move sheet now triggers a hierarchy refresh when account/folder destinations are missing, and hierarchy reads automatically retry AppleEvent timeout failures before surfacing an error.
-- `All Inboxes` remains inbox-only. Messages moved out of inbox appear in `All Emails` and in their destination folder scope after refresh/rethread reconciliation. `All Folders` shows only foldered threads and hides date-rail labels while preserving existing day-window expansion behavior.
+- `All Inboxes` remains inbox-only. Messages moved out of inbox appear in `All Emails` and in their destination folder scope after refresh/rethread reconciliation. `All Folders` shows only foldered threads, hides date-rail labels, and bypasses day-window node filtering so folder members remain visible in dense rows.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:
