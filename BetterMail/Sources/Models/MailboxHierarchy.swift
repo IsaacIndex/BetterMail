@@ -123,6 +123,12 @@ internal enum MailboxHierarchyBuilder {
             }
     }
 
+    internal static func filterFolderTree(_ nodes: [MailboxFolderNode], query: String) -> [MailboxFolderNode] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return nodes }
+        return nodes.compactMap { filterNode($0, query: trimmedQuery) }
+    }
+
     private static func buildTree(from folders: [MailboxFolder]) -> [MailboxFolderNode] {
         let foldersByPath = Dictionary(uniqueKeysWithValues: folders.map { ($0.path, $0) })
         let knownPaths = Set(foldersByPath.keys)
@@ -174,5 +180,20 @@ internal enum MailboxHierarchyBuilder {
             results.append(contentsOf: flatten(node.children))
         }
         return results
+    }
+
+    private static func filterNode(_ node: MailboxFolderNode, query: String) -> MailboxFolderNode? {
+        let normalizedQuery = query.lowercased()
+        let parentMatches = node.path.lowercased().contains(normalizedQuery) || node.name.lowercased().contains(normalizedQuery)
+        if parentMatches {
+            return node
+        }
+        let filteredChildren = node.children.compactMap { filterNode($0, query: query) }
+        guard !filteredChildren.isEmpty else { return nil }
+        return MailboxFolderNode(account: node.account,
+                                 path: node.path,
+                                 name: node.name,
+                                 parentPath: node.parentPath,
+                                 children: filteredChildren)
     }
 }

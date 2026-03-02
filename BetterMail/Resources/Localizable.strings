@@ -107,7 +107,11 @@
 "mailbox.action.error.appleevent_privilege" = "Mailbox move is unavailable in this build due to Apple Mail automation permissions.";
 "mailbox.action.error.timed_out" = "Mailbox move timed out while waiting for Apple Mail. Please retry.";
 "mailbox.sheet.title" = "Mailbox Folder Actions";
+"mailbox.sheet.selection_count" = "%d selected";
 "mailbox.sheet.account" = "Account";
+"mailbox.sheet.mode" = "Action Mode";
+"mailbox.sheet.mode.existing" = "Move Existing";
+"mailbox.sheet.mode.create" = "Create New";
 "mailbox.sheet.existing_folder" = "Existing mailbox folder";
 "mailbox.sheet.move_existing" = "Move to Existing Folder";
 "mailbox.sheet.section.existing" = "Move to Existing";
@@ -116,6 +120,15 @@
 "mailbox.sheet.parent_root" = "Account root";
 "mailbox.sheet.create_and_move" = "Create Folder and Move";
 "mailbox.sheet.section.new" = "Create New Folder";
+"mailbox.sheet.search.placeholder" = "Search folders";
+"mailbox.sheet.loading" = "Loading mailbox folders...";
+"mailbox.sheet.empty.destinations" = "No mailbox folders are available for this account.";
+"mailbox.sheet.empty.filtered" = "No folders match your search.";
+"mailbox.sheet.helper.existing" = "Choose the destination folder for the selected messages.";
+"mailbox.sheet.helper.create" = "Enter a new folder name, then choose where to create it.";
+"mailbox.sheet.action.move" = "Move Messages";
+"mailbox.sheet.action.create_and_move" = "Create Folder and Move";
+"mailbox.sheet.refresh" = "Refresh Folders";
 "mailbox.sheet.cancel" = "Close";
 "settings.appearance.title" = "Appearance";
 "settings.appearance.mode" = "Mode";

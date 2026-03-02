@@ -61,7 +61,7 @@ internal struct ThreadListView: View {
             }
             .sheet(isPresented: $isShowingMailboxMoveSheet) {
                 MailboxFolderMoveSheet(viewModel: viewModel)
-                    .frame(minWidth: 420, minHeight: 380)
+                    .frame(minWidth: 500, minHeight: 470)
             }
     }
 
@@ -663,13 +663,32 @@ private struct BackfillConfirmationSheet: View {
 }
 
 private struct MailboxFolderMoveSheet: View {
+    private enum MailboxMoveMode: String, CaseIterable, Identifiable {
+        case existing
+        case create
+
+        var id: String { rawValue }
+    }
+
+    private struct FolderTreeRow: Identifiable {
+        let path: String
+        let name: String
+        let depth: Int
+
+        var id: String { path }
+    }
+
     @ObservedObject var viewModel: ThreadCanvasViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
+    @State private var mode: MailboxMoveMode = .existing
     @State private var selectedAccount: String = ""
     @State private var selectedExistingPath: String?
     @State private var selectedParentPath: String?
     @State private var newFolderName: String = ""
+    @State private var folderSearchQuery: String = ""
 
     private var forcedAccount: String? {
         viewModel.mailboxActionSelectionAccount
@@ -695,15 +714,121 @@ private struct MailboxFolderMoveSheet: View {
             }
     }
 
+    private var selectedMailboxAccount: MailboxAccount? {
+        viewModel.mailboxAccounts.first(where: { $0.name == selectedAccount })
+    }
+
+    private var filteredFolders: [MailboxFolderNode] {
+        guard let selectedMailboxAccount else { return [] }
+        return MailboxHierarchyBuilder.filterFolderTree(selectedMailboxAccount.folders, query: folderSearchQuery)
+    }
+
+    private var filteredFolderRows: [FolderTreeRow] {
+        Self.flattenRows(nodes: filteredFolders)
+    }
+
+    private var trimmedNewFolderName: String {
+        newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSubmit: Bool {
+        guard !selectedAccount.isEmpty else { return false }
+        guard viewModel.mailboxActionDisabledReason == nil else { return false }
+        guard !viewModel.isMailboxActionRunning else { return false }
+        switch mode {
+        case .existing:
+            return selectedExistingPath != nil && !folderChoices.isEmpty
+        case .create:
+            return !trimmedNewFolderName.isEmpty
+        }
+    }
+
+    private var submitButtonTitle: String {
+        switch mode {
+        case .existing:
+            return NSLocalizedString("mailbox.sheet.action.move", comment: "Primary action to move selection to an existing folder")
+        case .create:
+            return NSLocalizedString("mailbox.sheet.action.create_and_move", comment: "Primary action to create folder and move selection")
+        }
+    }
+
+    private var cardFillColor: Color {
+        if reduceTransparency {
+            return Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96)
+        }
+        if colorScheme == .light {
+            return Color.white.opacity(0.78)
+        }
+        return Color.white.opacity(0.1)
+    }
+
+    private var cardStrokeColor: Color {
+        colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.24)
+    }
+
     private static func isInboxPath(_ path: String) -> Bool {
         guard let leaf = MailboxPathFormatter.leafName(from: path) else { return false }
         return leaf.caseInsensitiveCompare("inbox") == .orderedSame
     }
 
+    private static func flattenRows(nodes: [MailboxFolderNode], depth: Int = 0) -> [FolderTreeRow] {
+        var rows: [FolderTreeRow] = []
+        for node in nodes {
+            rows.append(FolderTreeRow(path: node.path, name: node.name, depth: depth))
+            rows.append(contentsOf: flattenRows(nodes: node.children, depth: depth + 1))
+        }
+        return rows
+    }
+
+    private func setDefaultSelections() {
+        if selectedAccount.isEmpty {
+            selectedAccount = forcedAccount ?? accountOptions.first ?? ""
+        }
+        if selectedExistingPath == nil {
+            selectedExistingPath = folderChoices.first(where: { Self.isInboxPath($0.path) })?.path ?? folderChoices.first?.path
+        } else if let selectedExistingPath,
+                  !folderChoices.contains(where: { $0.path == selectedExistingPath }) {
+            self.selectedExistingPath = folderChoices.first(where: { Self.isInboxPath($0.path) })?.path ?? folderChoices.first?.path
+        }
+        if let selectedParentPath,
+           !folderChoices.contains(where: { $0.path == selectedParentPath }) {
+            self.selectedParentPath = nil
+        }
+    }
+
+    private func submit() {
+        switch mode {
+        case .existing:
+            guard let selectedExistingPath else { return }
+            viewModel.moveSelectionToMailboxFolder(path: selectedExistingPath, in: selectedAccount)
+            dismiss()
+        case .create:
+            viewModel.createMailboxFolderAndMoveSelection(name: trimmedNewFolderName,
+                                                          in: selectedAccount,
+                                                          parentPath: selectedParentPath)
+            dismiss()
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(NSLocalizedString("mailbox.sheet.title", comment: "Mailbox folder move sheet title"))
-                .font(.title3.bold())
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("mailbox.sheet.title", comment: "Mailbox folder move sheet title"))
+                        .font(.title3.bold())
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.sheet.selection_count", comment: "Summary label for selected message count in mailbox move sheet"),
+                        viewModel.selectedNodeIDs.count
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if viewModel.isMailboxActionRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
 
             if let disabledReason = viewModel.mailboxActionDisabledReason {
                 Text(disabledReason)
@@ -711,60 +836,116 @@ private struct MailboxFolderMoveSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            Form {
-                Section {
-                    Picker(NSLocalizedString("mailbox.sheet.account", comment: "Mailbox action account picker label"),
-                           selection: $selectedAccount) {
-                        ForEach(accountOptions, id: \.self) { account in
-                            Text(account).tag(account)
-                        }
-                    }
-                    .disabled(forcedAccount != nil)
-
-                    Picker(NSLocalizedString("mailbox.sheet.existing_folder", comment: "Existing mailbox folder picker label"),
-                           selection: $selectedExistingPath) {
-                        Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
-                            .tag(String?.none)
-                        ForEach(folderChoices) { choice in
-                            Text(choice.displayPath).tag(String?.some(choice.path))
-                        }
-                    }
-                    .disabled(folderChoices.isEmpty)
-
-                    Button(NSLocalizedString("mailbox.sheet.move_existing", comment: "Move to existing mailbox folder button")) {
-                        guard let selectedExistingPath else { return }
-                        viewModel.moveSelectionToMailboxFolder(path: selectedExistingPath, in: selectedAccount)
-                        dismiss()
-                    }
-                    .disabled(selectedAccount.isEmpty || selectedExistingPath == nil || folderChoices.isEmpty)
-                } header: {
-                    Text(NSLocalizedString("mailbox.sheet.section.existing", comment: "Header for existing folder move section"))
+            Picker(NSLocalizedString("mailbox.sheet.account", comment: "Mailbox action account picker label"),
+                   selection: $selectedAccount) {
+                ForEach(accountOptions, id: \.self) { account in
+                    Text(account).tag(account)
                 }
+            }
+            .pickerStyle(.menu)
+            .disabled(forcedAccount != nil || viewModel.isMailboxActionRunning)
 
-                Section {
+            Picker(NSLocalizedString("mailbox.sheet.mode", comment: "Mailbox move sheet mode segmented control label"),
+                   selection: $mode) {
+                Text(NSLocalizedString("mailbox.sheet.mode.existing", comment: "Mode for moving to an existing mailbox folder"))
+                    .tag(MailboxMoveMode.existing)
+                Text(NSLocalizedString("mailbox.sheet.mode.create", comment: "Mode for creating a folder and moving"))
+                    .tag(MailboxMoveMode.create)
+            }
+            .pickerStyle(.segmented)
+            .disabled(viewModel.isMailboxActionRunning)
+
+            VStack(alignment: .leading, spacing: 10) {
+                if mode == .create {
                     TextField(NSLocalizedString("mailbox.sheet.new_name", comment: "New mailbox folder name field"),
                               text: $newFolderName)
+                    .textFieldStyle(.roundedBorder)
 
-                    Picker(NSLocalizedString("mailbox.sheet.parent_folder", comment: "Parent mailbox folder picker label"),
-                           selection: $selectedParentPath) {
-                        Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
-                            .tag(String?.none)
-                        ForEach(folderChoices) { choice in
-                            Text(choice.displayPath).tag(String?.some(choice.path))
+                    Text(NSLocalizedString("mailbox.sheet.parent_folder", comment: "Parent mailbox folder picker label"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(NSLocalizedString("mailbox.sheet.existing_folder", comment: "Existing mailbox folder picker label"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                TextField(NSLocalizedString("mailbox.sheet.search.placeholder",
+                                            comment: "Search field placeholder for mailbox folder selection"),
+                          text: $folderSearchQuery)
+                .textFieldStyle(.roundedBorder)
+
+                Group {
+                    if viewModel.isMailboxHierarchyLoading && folderChoices.isEmpty {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(NSLocalizedString("mailbox.sheet.loading", comment: "Loading mailbox folders indicator"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    } else if folderChoices.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(NSLocalizedString("mailbox.sheet.empty.destinations",
+                                                   comment: "Empty state when no mailbox folders are available for selection"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button(NSLocalizedString("mailbox.sheet.refresh", comment: "Refresh mailbox hierarchy button")) {
+                                viewModel.refreshMailboxHierarchy()
+                            }
+                            .controlSize(.small)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    } else if filteredFolderRows.isEmpty {
+                        Text(NSLocalizedString("mailbox.sheet.empty.filtered",
+                                               comment: "Empty state when no mailbox folders match the search query"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                if mode == .create {
+                                    rootFolderRow
+                                }
+                                ForEach(filteredFolderRows) { row in
+                                    folderRow(path: row.path, name: row.name, depth: row.depth)
+                                }
+                            }
                         }
                     }
-                    .disabled(folderChoices.isEmpty)
-
-                    Button(NSLocalizedString("mailbox.sheet.create_and_move", comment: "Create mailbox folder and move button")) {
-                        viewModel.createMailboxFolderAndMoveSelection(name: newFolderName,
-                                                                      in: selectedAccount,
-                                                                      parentPath: selectedParentPath)
-                        dismiss()
-                    }
-                    .disabled(selectedAccount.isEmpty || newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } header: {
-                    Text(NSLocalizedString("mailbox.sheet.section.new", comment: "Header for new mailbox folder section"))
                 }
+                .frame(minHeight: 170, maxHeight: 230)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(cardFillColor)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(cardStrokeColor)
+                )
+
+                Text(mode == .existing
+                     ? NSLocalizedString("mailbox.sheet.helper.existing", comment: "Helper text for existing folder move mode")
+                     : NSLocalizedString("mailbox.sheet.helper.create", comment: "Helper text for create-and-move mode"))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(cardFillColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(cardStrokeColor)
+            )
+
+            if let status = viewModel.mailboxActionStatusMessage {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             HStack {
@@ -772,43 +953,107 @@ private struct MailboxFolderMoveSheet: View {
                 Button(NSLocalizedString("mailbox.sheet.cancel", comment: "Cancel mailbox action sheet button")) {
                     dismiss()
                 }
+                .keyboardShortcut(.cancelAction)
+
+                Button(submitButtonTitle) {
+                    submit()
+                }
+                .disabled(!canSubmit)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
         .onAppear {
-            if selectedAccount.isEmpty {
-                selectedAccount = forcedAccount ?? accountOptions.first ?? ""
-            }
-            if selectedExistingPath == nil {
-                selectedExistingPath = folderChoices.first?.path
-            }
-            if selectedParentPath == nil {
-                selectedParentPath = nil
-            }
+            setDefaultSelections()
             if viewModel.mailboxAccounts.isEmpty || folderChoices.isEmpty {
                 viewModel.refreshMailboxHierarchy()
             }
         }
         .onChange(of: viewModel.mailboxAccounts) { _, _ in
-            let resolvedAccount = forcedAccount ?? (accountOptions.contains(selectedAccount) ? selectedAccount : (accountOptions.first ?? ""))
+            let resolvedAccount = forcedAccount
+                ?? (accountOptions.contains(selectedAccount) ? selectedAccount : (accountOptions.first ?? ""))
             if selectedAccount != resolvedAccount {
                 selectedAccount = resolvedAccount
             }
-            if let selectedExistingPath,
-               !folderChoices.contains(where: { $0.path == selectedExistingPath }) {
-                self.selectedExistingPath = folderChoices.first?.path
-            } else if self.selectedExistingPath == nil {
-                self.selectedExistingPath = folderChoices.first?.path
-            }
-            if let existingParentPath = selectedParentPath,
-               !folderChoices.contains(where: { $0.path == existingParentPath }) {
-                selectedParentPath = nil
-            }
+            setDefaultSelections()
         }
         .onChange(of: selectedAccount) { _, _ in
-            selectedExistingPath = folderChoices.first?.path
+            selectedExistingPath = folderChoices.first(where: { Self.isInboxPath($0.path) })?.path ?? folderChoices.first?.path
             selectedParentPath = nil
+            folderSearchQuery = ""
         }
+    }
+
+    private var rootFolderRow: some View {
+        let isSelected = selectedParentPath == nil
+        return Button {
+            selectedParentPath = nil
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "tray")
+                    .foregroundStyle(.secondary)
+                Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
+                    .font(.subheadline)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.tint)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func folderRow(path: String, name: String, depth: Int) -> some View {
+        let isSelected: Bool = {
+            switch mode {
+            case .existing:
+                return selectedExistingPath == path
+            case .create:
+                return selectedParentPath == path
+            }
+        }()
+        return Button {
+            switch mode {
+            case .existing:
+                selectedExistingPath = path
+            case .create:
+                selectedParentPath = path
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.subheadline)
+                    if depth > 0 {
+                        Text(path)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.tint)
+                }
+            }
+            .padding(.leading, CGFloat(depth) * 14 + 8)
+            .padding(.trailing, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -73,6 +73,107 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(choices.map(\.displayPath), ["Clients", "Clients/Acme"])
     }
 
+    func test_filterFolderTree_emptyQuery_returnsUnchangedTree() {
+        let nodes = [
+            MailboxFolderNode(account: "Work",
+                              path: "Clients",
+                              name: "Clients",
+                              parentPath: nil,
+                              children: [
+                                MailboxFolderNode(account: "Work",
+                                                  path: "Clients/Acme",
+                                                  name: "Acme",
+                                                  parentPath: "Clients",
+                                                  children: [])
+                              ])
+        ]
+
+        let filtered = MailboxHierarchyBuilder.filterFolderTree(nodes, query: " ")
+
+        XCTAssertEqual(filtered, nodes)
+    }
+
+    func test_filterFolderTree_matchesLeaf_preservesAncestors() {
+        let nodes = [
+            MailboxFolderNode(account: "Work",
+                              path: "Clients",
+                              name: "Clients",
+                              parentPath: nil,
+                              children: [
+                                MailboxFolderNode(account: "Work",
+                                                  path: "Clients/Acme",
+                                                  name: "Acme",
+                                                  parentPath: "Clients",
+                                                  children: []),
+                                MailboxFolderNode(account: "Work",
+                                                  path: "Clients/Globex",
+                                                  name: "Globex",
+                                                  parentPath: "Clients",
+                                                  children: [])
+                              ])
+        ]
+
+        let filtered = MailboxHierarchyBuilder.filterFolderTree(nodes, query: "acme")
+
+        XCTAssertEqual(filtered.count, 1)
+        XCTAssertEqual(filtered.first?.name, "Clients")
+        XCTAssertEqual(filtered.first?.children.map(\.name), ["Acme"])
+    }
+
+    func test_filterFolderTree_caseInsensitiveMatching() {
+        let nodes = [
+            MailboxFolderNode(account: "Work",
+                              path: "Receipts/2025",
+                              name: "2025",
+                              parentPath: "Receipts",
+                              children: [])
+        ]
+
+        let filtered = MailboxHierarchyBuilder.filterFolderTree(nodes, query: "RECEIPTS")
+
+        XCTAssertEqual(filtered.map(\.path), ["Receipts/2025"])
+    }
+
+    func test_filterFolderTree_noMatches_returnsEmpty() {
+        let nodes = [
+            MailboxFolderNode(account: "Work",
+                              path: "Projects",
+                              name: "Projects",
+                              parentPath: nil,
+                              children: [])
+        ]
+
+        let filtered = MailboxHierarchyBuilder.filterFolderTree(nodes, query: "invoices")
+
+        XCTAssertTrue(filtered.isEmpty)
+    }
+
+    func test_filterFolderTree_parentMatch_keepsSubtree() {
+        let nodes = [
+            MailboxFolderNode(account: "Work",
+                              path: "Projects",
+                              name: "Projects",
+                              parentPath: nil,
+                              children: [
+                                MailboxFolderNode(account: "Work",
+                                                  path: "Projects/Alpha",
+                                                  name: "Alpha",
+                                                  parentPath: "Projects",
+                                                  children: []),
+                                MailboxFolderNode(account: "Work",
+                                                  path: "Projects/Beta",
+                                                  name: "Beta",
+                                                  parentPath: "Projects",
+                                                  children: [])
+                              ])
+        ]
+
+        let filtered = MailboxHierarchyBuilder.filterFolderTree(nodes, query: "projects")
+
+        XCTAssertEqual(filtered.count, 1)
+        XCTAssertEqual(filtered.first?.children.map(\.name), ["Alpha", "Beta"])
+    }
+
     func test_selectedMailboxActionAccount_whenSingleAccount_returnsAccount() {
         let nodes = [
             makeNode(messageID: "m1", account: "Work"),
