@@ -13,7 +13,7 @@ internal struct MailboxSidebarView: View {
             sidebarRow(scope: .allFolders,
                        title: NSLocalizedString("mailbox.sidebar.all_folders",
                                                 comment: "All Folders sidebar entry"),
-                       systemImage: "folder.stack.fill")
+                       systemImage: "folder.badge.gearshape")
             sidebarRow(scope: .allInboxes,
                        title: NSLocalizedString("mailbox.sidebar.all_inboxes",
                                                 comment: "All Inboxes sidebar entry"),

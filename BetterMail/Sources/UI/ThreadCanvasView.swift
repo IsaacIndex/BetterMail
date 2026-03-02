@@ -24,8 +24,11 @@ internal struct ThreadCanvasView: View {
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
     @State private var pendingScrollConsumeTask: Task<Void, Never>?
+    @State private var tagFetchResumeTask: Task<Void, Never>?
     @State private var preservedJumpScrollXByToken: [UUID: CGFloat] = [:]
     @State private var suppressPendingScrollCancellation = false
+    @State private var suspendTimelineTagFetch = false
+    @State private var lastMinimapSyncTimestamp: TimeInterval = 0
     @State private var lastScrollTraceDirection: Int = 0
     @State private var lastScrollTraceTimestamp: TimeInterval = 0
     private let headerSpacing: CGFloat = 0
@@ -35,6 +38,10 @@ internal struct ThreadCanvasView: View {
     private let layoutZoomQuantizationStep: CGFloat = 0.025
     private let scrollTraceMinimumDelta: CGFloat = 2
     private let scrollTraceInterval: TimeInterval = 0.12
+    private let tagFetchResumeDebounce: TimeInterval = 0.2
+    private let scrollStateUpdateTolerance: CGFloat = 1
+    private let visibilityHysteresisPadding: CGFloat = 12
+    private let minimapSyncInterval: TimeInterval = 1.0 / 30.0
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -307,15 +314,16 @@ internal struct ThreadCanvasView: View {
                                                    layout: ThreadCanvasLayout,
                                                    metrics: ThreadCanvasLayoutMetrics,
                                                    today: Date) {
+        markScrollingActivityForTimelineTagFetch()
         let signpostID = OSSignpostID(log: Log.performance)
         os_signpost(.begin, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
         defer {
             os_signpost(.end, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
         }
         let rawOffset = -newValue
-        let snappedRawOffset = quantized(max(0, rawOffset), step: visualScrollQuantizationStep)
+        let snappedRawOffset = snappedScrollOffset(max(0, rawOffset), step: visualScrollQuantizationStep)
         let adjustedOffset = max(0, rawOffset + totalTopPadding)
-        let snappedAdjustedOffset = quantized(adjustedOffset, step: logicalScrollQuantizationStep)
+        let snappedAdjustedOffset = snappedScrollOffset(adjustedOffset, step: logicalScrollQuantizationStep)
         let effectiveHeight = effectiveViewportHeight(proxyHeight: proxyHeight, totalTopPadding: totalTopPadding)
         let signedRawDelta = snappedRawOffset - rawScrollOffset
         traceScrollSample(rawOffset: snappedRawOffset,
@@ -328,14 +336,14 @@ internal struct ThreadCanvasView: View {
             viewModel.cancelPendingScrollRequest(reason: "manual_scroll")
         }
         withNoAnimation {
-            if rawScrollOffset != snappedRawOffset {
+            if abs(rawScrollOffset - snappedRawOffset) >= scrollStateUpdateTolerance {
                 rawScrollOffset = snappedRawOffset
             }
         }
         syncFolderMinimapViewportSnapshot(layout: layout,
                                           proxySize: CGSize(width: proxyWidth, height: proxyHeight),
                                           totalTopPadding: totalTopPadding)
-        guard scrollOffset != snappedAdjustedOffset else { return }
+        guard abs(scrollOffset - snappedAdjustedOffset) >= scrollStateUpdateTolerance else { return }
         withNoAnimation {
             scrollOffset = snappedAdjustedOffset
         }
@@ -351,15 +359,39 @@ internal struct ThreadCanvasView: View {
                                                      proxySize: CGSize,
                                                      totalTopPadding: CGFloat,
                                                      layout: ThreadCanvasLayout) {
-        let snappedX = quantized(max(0, -newValue), step: horizontalScrollQuantizationStep)
+        markScrollingActivityForTimelineTagFetch()
+        let snappedX = snappedScrollOffset(max(0, -newValue), step: horizontalScrollQuantizationStep)
         withNoAnimation {
-            if rawScrollOffsetX != snappedX {
+            if abs(rawScrollOffsetX - snappedX) >= scrollStateUpdateTolerance {
                 rawScrollOffsetX = snappedX
             }
         }
         syncFolderMinimapViewportSnapshot(layout: layout,
                                           proxySize: proxySize,
                                           totalTopPadding: totalTopPadding)
+    }
+
+    private func markScrollingActivityForTimelineTagFetch() {
+        guard viewModel.activeMailboxScope == .allFolders, displaySettings.viewMode == .timeline else {
+            tagFetchResumeTask?.cancel()
+            tagFetchResumeTask = nil
+            if suspendTimelineTagFetch {
+                suspendTimelineTagFetch = false
+            }
+            return
+        }
+        if !suspendTimelineTagFetch {
+            suspendTimelineTagFetch = true
+        }
+        tagFetchResumeTask?.cancel()
+        tagFetchResumeTask = Task { [tagFetchResumeDebounce] in
+            try? await Task.sleep(nanoseconds: UInt64(tagFetchResumeDebounce * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                suspendTimelineTagFetch = false
+                tagFetchResumeTask = nil
+            }
+        }
     }
 
     private func handleViewportHeightPreferenceChange(_ height: CGFloat,
@@ -371,6 +403,7 @@ internal struct ThreadCanvasView: View {
                                                       today: Date) {
         let effectiveHeight = max(height, proxyHeight) - totalTopPadding
         let clampedHeight = max(effectiveHeight, 1)
+        guard abs(viewportHeight - effectiveHeight) >= scrollStateUpdateTolerance else { return }
         viewportHeight = effectiveHeight
         syncFolderMinimapViewportSnapshot(layout: layout,
                                           proxySize: CGSize(width: proxyWidth, height: proxyHeight),
@@ -426,6 +459,8 @@ internal struct ThreadCanvasView: View {
         let visibleColumnBuffer: CGFloat = 1
         let visibleYStart = max(0, rawScrollOffset - (metrics.dayHeight * visibleDayBuffer))
         let visibleYEnd = rawScrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
+        let stableVisibleYStart = max(0, visibleYStart - visibilityHysteresisPadding)
+        let stableVisibleYEnd = visibleYEnd + visibilityHysteresisPadding
         let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
         let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
         let pinnedFolderIDs = viewModel.pinnedFolderIDs
@@ -451,7 +486,11 @@ internal struct ThreadCanvasView: View {
         let visibleNodesByColumnID: [String: [ThreadCanvasNode]] = Dictionary(uniqueKeysWithValues: visibleColumns.map { column in
             let nodes: [ThreadCanvasNode]
             if shouldShowAllNodesInColumn {
-                nodes = column.nodes
+                // In All Folders we do not day-window filter, but we still
+                // virtualize by viewport Y-range to avoid rendering every node.
+                nodes = column.nodes.filter { node in
+                    node.frame.maxY >= stableVisibleYStart && node.frame.minY <= stableVisibleYEnd
+                }
             } else if let folderID = column.folderID, pinnedFolderIDs.contains(folderID) {
                 nodes = column.nodes
             } else {
@@ -459,7 +498,7 @@ internal struct ThreadCanvasView: View {
                     if let visibleDayRange, !visibleDayRange.contains(node.dayIndex) {
                         return false
                     }
-                    return node.frame.maxY >= visibleYStart && node.frame.minY <= visibleYEnd
+                    return node.frame.maxY >= stableVisibleYStart && node.frame.minY <= stableVisibleYEnd
                 }
             }
             return (column.id, nodes)
@@ -473,7 +512,7 @@ internal struct ThreadCanvasView: View {
                 return true
             }
             let intersectsX = maxX >= visibleXStart && minX <= visibleXEnd
-            let intersectsY = maxY >= visibleYStart && minY <= visibleYEnd
+            let intersectsY = maxY >= stableVisibleYStart && minY <= stableVisibleYEnd
             return intersectsX && intersectsY
         }
         let overlayByID = Dictionary(uniqueKeysWithValues: layout.folderOverlays.map { ($0.id, $0) })
@@ -507,7 +546,14 @@ internal struct ThreadCanvasView: View {
 
     private func syncFolderMinimapViewportSnapshot(layout: ThreadCanvasLayout,
                                                    proxySize: CGSize,
-                                                   totalTopPadding: CGFloat) {
+                                                   totalTopPadding: CGFloat,
+                                                   force: Bool = false) {
+        guard viewModel.selectedFolderID != nil else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        if !force, now - lastMinimapSyncTimestamp < minimapSyncInterval {
+            return
+        }
+        lastMinimapSyncTimestamp = now
         let effectiveWidth = max(proxySize.width, 1)
         let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
                                                       totalTopPadding: totalTopPadding)
@@ -546,6 +592,13 @@ internal struct ThreadCanvasView: View {
     private func quantized(_ value: CGFloat, step: CGFloat) -> CGFloat {
         guard step > 0 else { return value }
         return (value / step).rounded() * step
+    }
+
+    private func snappedScrollOffset(_ value: CGFloat, step: CGFloat) -> CGFloat {
+        guard step > 0 else { return value }
+        let scaled = value / step
+        let floored = floor(scaled + 1e-6)
+        return floored * step
     }
 
     private func withNoAnimation(_ updates: () -> Void) {
@@ -611,13 +664,17 @@ internal struct ThreadCanvasView: View {
         }
         Log.app.debug("Folder jump scroll dispatch. marker=scroll-dispatch folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) x=\(targetNode.frame.midX, privacy: .public) y=\(targetNode.frame.midY, privacy: .public) matchCount=\(matchingNodes.count, privacy: .public) targetType=appkit-vertical-only currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
         let requestToken = request.token
+        func isRequestActive() -> Bool {
+            viewModel.pendingScrollRequest?.token == requestToken && viewModel.isJumpInProgress(for: request.folderID)
+        }
+        guard isRequestActive() else { return }
         guard let scrollView = canvasScrollView,
               let documentView = scrollView.documentView else {
             let nextRetry = retryCount + 1
             Log.app.debug("Folder jump scroll host missing. marker=scroll-host-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
             if nextRetry <= 45 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    guard isRequestActive() else { return }
                     scrollToPendingRequestIfAvailable(request,
                                                      layout: layout,
                                                      viewportHeight: viewportHeight,
@@ -645,6 +702,7 @@ internal struct ThreadCanvasView: View {
                                                                    clipHeight: clipView.bounds.height)
 
         func applyVerticalOnlyScroll(targetY: CGFloat, preservedX: CGFloat) {
+            guard isRequestActive() else { return }
             suppressPendingScrollCancellation = true
             let currentY = clipView.bounds.origin.y
             Log.app.debug("Programmatic vertical scroll apply. marker=scroll-programmatic-apply token=\(requestToken, privacy: .public) currentY=\(currentY, privacy: .public) targetY=\(targetY, privacy: .public) preservedX=\(preservedX, privacy: .public)")
@@ -657,8 +715,7 @@ internal struct ThreadCanvasView: View {
         }
         applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
         DispatchQueue.main.async {
-            guard viewModel.pendingScrollRequest?.token == requestToken else { return }
-            applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
+            guard isRequestActive() else { return }
             let finalOrigin = clipView.bounds.origin
             let didConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: finalOrigin.y,
                                                                              targetY: resolution.clampedY,
@@ -672,7 +729,7 @@ internal struct ThreadCanvasView: View {
                 let nextRetry = retryCount + 1
                 guard nextRetry <= 8 else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    guard isRequestActive() else { return }
                     scrollToPendingRequestIfAvailable(request,
                                                      layout: layout,
                                                      viewportHeight: viewportHeight,
@@ -892,6 +949,7 @@ internal struct ThreadCanvasView: View {
                                                      fontScale: metrics.fontScale,
                                                      readabilityMode: readabilityMode)
                             .task {
+                                guard !suspendTimelineTagFetch else { return }
                                 viewModel.requestTimelineTagsIfNeeded(for: ThreadNode(message: node.message))
                             }
                     } else {

@@ -4,6 +4,66 @@ import XCTest
 
 @MainActor
 final class ThreadCanvasBackfillTests: XCTestCase {
+    func test_UpdateVisibleDayRange_AllFolders_DoesNotExpandDayWindow() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadCanvasBackfillTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let pinnedFolderSettings = PinnedFolderSettings()
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              pinnedFolderSettings: pinnedFolderSettings,
+                                              store: store)
+        viewModel.selectMailboxScope(.allFolders)
+        let initialDayCount = viewModel.dayWindowCount
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0, dayCount: initialDayCount, showsDayAxis: false)
+        let today = Date()
+        let layout = viewModel.canvasLayout(metrics: metrics,
+                                            viewMode: .default,
+                                            today: today,
+                                            calendar: .current)
+        let nearBottomOffset = max(layout.contentSize.height - 1, 0)
+        for _ in 0..<3 {
+            viewModel.updateVisibleDayRange(scrollOffset: nearBottomOffset,
+                                            viewportHeight: 1,
+                                            layout: layout,
+                                            metrics: metrics,
+                                            today: today,
+                                            calendar: .current)
+        }
+        XCTAssertEqual(viewModel.dayWindowCount, initialDayCount)
+    }
+
+    func test_UpdateVisibleDayRange_AllEmails_ExpandsDayWindowNearBottom() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadCanvasBackfillTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let pinnedFolderSettings = PinnedFolderSettings()
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              pinnedFolderSettings: pinnedFolderSettings,
+                                              store: store)
+        viewModel.selectMailboxScope(.allEmails)
+        let initialDayCount = viewModel.dayWindowCount
+        let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0, dayCount: initialDayCount)
+        let today = Date()
+        let layout = viewModel.canvasLayout(metrics: metrics,
+                                            viewMode: .default,
+                                            today: today,
+                                            calendar: .current)
+        let nearBottomOffset = max(layout.contentSize.height - 1, 0)
+        for _ in 0..<3 {
+            viewModel.updateVisibleDayRange(scrollOffset: nearBottomOffset,
+                                            viewportHeight: 1,
+                                            layout: layout,
+                                            metrics: metrics,
+                                            today: today,
+                                            calendar: .current)
+        }
+        XCTAssertGreaterThan(viewModel.dayWindowCount, initialDayCount)
+    }
+
     func test_BackfillVisibleRange_UsesBackfillServiceAndRethreadsWhenFetched() async throws {
         let defaults = UserDefaults(suiteName: "ThreadCanvasBackfillTests-\(UUID().uuidString)")!
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)

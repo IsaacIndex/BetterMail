@@ -173,7 +173,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let showsDayAxis: Bool
         let zoomBucket: Int
         let columnWidthBucket: Int
-        let dataVersion: Int
+        let structuralVersion: Int
+        let enrichmentVersion: Int
         let dayStart: Date
     }
 
@@ -464,7 +465,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var lastRefreshDate: Date?
     @Published internal private(set) var nextRefreshDate: Date?
     @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(structural: false, enrichment: true) }
     }
     @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
     @Published internal private(set) var expandedSummaryIDs: Set<String> = []
@@ -502,7 +503,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
     @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
     @Published internal private(set) var timelineTagsByNodeID: [String: [String]] = [:] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(structural: false, enrichment: true) }
     }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
@@ -547,7 +548,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let dayWindowIncrement = ThreadCanvasLayoutMetrics.defaultDayCount
     private var layoutCacheKey: TimelineLayoutCacheKey?
     private var layoutCache: ThreadCanvasLayout?
-    private var layoutCacheVersion = 0
+    private var structuralLayoutVersion = 0
+    private var enrichmentLayoutVersion = 0
     private var timelineTextMeasurementCache = TimelineTextMeasurementCache()
     private var visibleRangeUpdateTask: Task<Void, Never>?
     private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
@@ -2007,6 +2009,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         pendingScrollTimeoutTasks[request.token]?.cancel()
         pendingScrollTimeoutTasks.removeValue(forKey: request.token)
         if let context = pendingScrollContextByToken.removeValue(forKey: request.token) {
+            if reason == "manual_scroll" {
+                coalescedFolderJumpBoundaries.removeValue(forKey: context.folderID)
+            }
             Log.app.info("Folder jump cancelled. marker=cancelled folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) targetNodeID=\(context.targetNodeID, privacy: .public) reason=\(reason, privacy: .public)")
             completeFolderJump(folderID: context.folderID)
         }
@@ -2303,13 +2308,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
         let dayStart = calendar.startOfDay(for: today)
         let rowPackingMode: ThreadCanvasRowPackingMode = activeMailboxScope == .allFolders ? .folderAlignedDense : .dateBucketed
+        let enrichmentVersion = viewMode == .timeline ? enrichmentLayoutVersion : 0
         let cacheKey = TimelineLayoutCacheKey(viewMode: viewMode,
                                               rowPackingMode: rowPackingMode,
                                               dayCount: metrics.dayCount,
                                               showsDayAxis: metrics.showsDayAxis,
                                               zoomBucket: Self.zoomCacheBucket(metrics.zoom),
                                               columnWidthBucket: Self.metricsBucket(metrics.columnWidthAdjustment),
-                                              dataVersion: layoutCacheVersion,
+                                              structuralVersion: structuralLayoutVersion,
+                                              enrichmentVersion: enrichmentVersion,
                                               dayStart: dayStart)
         if let cachedKey = layoutCacheKey,
            cachedKey == cacheKey,
@@ -2413,6 +2420,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         if visibleRangeHasMessages != hasMessages {
             visibleRangeHasMessages = hasMessages
         }
+        guard activeMailboxScope != .allFolders else {
+            return
+        }
         let forceExpansion = shouldForceDayWindowExpansion(scrollOffset: scrollOffset,
                                                            viewportHeight: viewportHeight,
                                                            contentHeight: layout.contentSize.height,
@@ -2420,8 +2430,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         expandDayWindowIfNeeded(visibleRange: range, forceIncrement: forceExpansion)
     }
 
-    private func invalidateLayoutCache() {
-        layoutCacheVersion &+= 1
+    private func invalidateLayoutCache(structural: Bool = true, enrichment: Bool = true) {
+        if structural {
+            structuralLayoutVersion &+= 1
+        }
+        if enrichment {
+            enrichmentLayoutVersion &+= 1
+        }
         layoutCacheKey = nil
         layoutCache = nil
     }
@@ -3013,6 +3028,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private func expandDayWindowIfNeeded(visibleRange: ClosedRange<Int>?,
                                          forceIncrement: Bool) {
+        guard activeMailboxScope != .allFolders else { return }
         var targetDayCount = dayWindowCount
         if let visibleRange {
             let highestVisibleDay = visibleRange.upperBound
@@ -3094,10 +3110,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func pinnedThreadIDsToIncludeForRethread() async throws -> Set<String> {
-        guard !pinnedFolderIDs.isEmpty else { return [] }
         guard activeMailboxScope == .allEmails || activeMailboxScope == .allFolders || activeMailboxScope == .allInboxes else { return [] }
         let storedFolders = try await store.fetchThreadFolders()
         let threadIDsByFolder = Self.folderThreadIDsByFolder(folders: storedFolders)
+        if activeMailboxScope == .allFolders {
+            return Set(threadIDsByFolder.values.flatMap(\.self))
+        }
+        guard !pinnedFolderIDs.isEmpty else { return [] }
         var included: Set<String> = []
         included.reserveCapacity(pinnedFolderIDs.count)
         for pinnedFolderID in pinnedFolderIDs {
@@ -3896,22 +3915,32 @@ extension ThreadCanvasViewModel {
                                      nodeSummaries: [String: ThreadSummaryState] = [:],
                                      timelineTagsByNodeID: [String: [String]] = [:],
                                      measurementCache: inout TimelineTextMeasurementCache) -> ThreadCanvasLayout {
-        let dayHeights = dayHeights(for: roots,
-                                    metrics: metrics,
-                                    viewMode: viewMode,
-                                    today: today,
-                                    calendar: calendar,
-                                    nodeSummaries: nodeSummaries,
-                                    timelineTagsByNodeID: timelineTagsByNodeID,
-                                    measurementCache: &measurementCache)
-        var currentYOffset = metrics.contentPadding
-        let sourceDays = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
-            let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
-            let label = ThreadCanvasDateHelper.label(for: date)
-            let height = dayHeights[index] ?? metrics.dayHeight
-            let day = ThreadCanvasDay(id: index, date: date, label: label, yOffset: currentYOffset, height: height)
-            currentYOffset += height
-            return day
+        let sourceDays: [ThreadCanvasDay]
+        switch rowPackingMode {
+        case .dateBucketed:
+            let dayHeights = dayHeights(for: roots,
+                                        metrics: metrics,
+                                        viewMode: viewMode,
+                                        today: today,
+                                        calendar: calendar,
+                                        nodeSummaries: nodeSummaries,
+                                        timelineTagsByNodeID: timelineTagsByNodeID,
+                                        measurementCache: &measurementCache)
+            var currentYOffset = metrics.contentPadding
+            sourceDays = (0..<metrics.dayCount).map { index -> ThreadCanvasDay in
+                let date = ThreadCanvasDateHelper.dayDate(for: index, today: today, calendar: calendar)
+                let label = ThreadCanvasDateHelper.label(for: date)
+                let height = dayHeights[index] ?? metrics.dayHeight
+                let day = ThreadCanvasDay(id: index, date: date, label: label, yOffset: currentYOffset, height: height)
+                currentYOffset += height
+                return day
+            }
+        case .folderAlignedDense:
+            sourceDays = [ThreadCanvasDay(id: 0,
+                                          date: today,
+                                          label: ThreadCanvasDateHelper.label(for: today),
+                                          yOffset: metrics.contentPadding,
+                                          height: metrics.dayHeight)]
         }
         let dayLookup = Dictionary(uniqueKeysWithValues: sourceDays.map { ($0.id, $0) })
 
