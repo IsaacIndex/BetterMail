@@ -109,8 +109,9 @@ internal enum MailboxHierarchyBuilder {
         }
 
         return accountOrder.map { account in
-            MailboxAccount(name: account,
-                           folders: buildTree(from: foldersByAccount[account] ?? []))
+            let deduplicatedFolders = deduplicatedFoldersForAccount(foldersByAccount[account] ?? [])
+            return MailboxAccount(name: account,
+                                  folders: buildTree(from: deduplicatedFolders))
         }
     }
 
@@ -155,6 +156,70 @@ internal enum MailboxHierarchyBuilder {
             .map(buildNode)
 
         return roots
+    }
+
+    private static func deduplicatedFoldersForAccount(_ folders: [MailboxFolder]) -> [MailboxFolder] {
+        let uniqueFolders = deduplicatedByPathPreservingOrder(folders)
+        guard uniqueFolders.count > 1 else { return uniqueFolders }
+
+        let knownPaths = Set(uniqueFolders.map(\.path))
+        var rootPaths: Set<String> = []
+        var rootNameKeys: Set<String> = []
+        var childrenByParent: [String: [MailboxFolder]] = [:]
+
+        for folder in uniqueFolders {
+            if let resolvedParent = resolvedParentPath(for: folder, knownPaths: knownPaths) {
+                childrenByParent[resolvedParent, default: []].append(folder)
+            } else {
+                rootPaths.insert(folder.path)
+                rootNameKeys.insert(normalizedFolderNameKey(folder.name))
+            }
+        }
+
+        guard !rootPaths.isEmpty, !childrenByParent.isEmpty else { return uniqueFolders }
+
+        var rootNameKeysToDrop: Set<String> = []
+        for children in childrenByParent.values {
+            let childNameKeys = Set(children.map { normalizedFolderNameKey($0.name) })
+            let matchedNames = childNameKeys.intersection(rootNameKeys)
+            guard !matchedNames.isEmpty else { continue }
+            rootNameKeysToDrop.formUnion(matchedNames)
+        }
+
+        guard !rootNameKeysToDrop.isEmpty else { return uniqueFolders }
+
+        return uniqueFolders.filter { folder in
+            guard rootPaths.contains(folder.path) else { return true }
+            let key = normalizedFolderNameKey(folder.name)
+            return !rootNameKeysToDrop.contains(key)
+        }
+    }
+
+    private static func resolvedParentPath(for folder: MailboxFolder, knownPaths: Set<String>) -> String? {
+        if let explicitParent = folder.parentPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicitParent.isEmpty,
+           knownPaths.contains(explicitParent) {
+            return explicitParent
+        }
+        return inferredParentPath(from: folder.path, knownPaths: knownPaths)
+    }
+
+    private static func normalizedFolderNameKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func deduplicatedByPathPreservingOrder(_ folders: [MailboxFolder]) -> [MailboxFolder] {
+        var seenPaths: Set<String> = []
+        var deduplicated: [MailboxFolder] = []
+        deduplicated.reserveCapacity(folders.count)
+
+        for folder in folders {
+            let inserted = seenPaths.insert(folder.path).inserted
+            guard inserted else { continue }
+            deduplicated.append(folder)
+        }
+
+        return deduplicated
     }
 
     private static func inferredParentPath(from path: String, knownPaths: Set<String>) -> String? {

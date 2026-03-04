@@ -54,6 +54,106 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["Azure"])
     }
 
+    func test_buildAccounts_dropsRootFolder_whenSameNameExistsUnderParent() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
+            MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
+            MailboxFolder(account: "Work",
+                          path: "-------------------------/Azure Ignored",
+                          name: "Azure Ignored",
+                          parentPath: "-------------------------")
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+        guard let work = accounts.first(where: { $0.name == "Work" }) else {
+            XCTFail("Expected Work account")
+            return
+        }
+
+        XCTAssertFalse(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "-------------------------" }))
+        XCTAssertEqual(work.folders.first(where: { $0.path == "-------------------------" })?.children.map(\.path),
+                       ["-------------------------/Azure Ignored"])
+    }
+
+    func test_buildAccounts_keepsNestedFolders_afterRootMirrorRemoved() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Blue Points", name: "Blue Points", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Archive", name: "Archive", parentPath: nil),
+            MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
+            MailboxFolder(account: "Work",
+                          path: "-------------------------/Azure Ignored",
+                          name: "Azure Ignored",
+                          parentPath: "-------------------------"),
+            MailboxFolder(account: "Work",
+                          path: "-------------------------/Blue Points",
+                          name: "Blue Points",
+                          parentPath: "-------------------------")
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+        guard let work = accounts.first(where: { $0.name == "Work" }) else {
+            XCTFail("Expected Work account")
+            return
+        }
+        guard let dashed = work.folders.first(where: { $0.path == "-------------------------" }) else {
+            XCTFail("Expected dashed root folder")
+            return
+        }
+
+        XCTAssertFalse(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertFalse(work.folders.contains(where: { $0.path == "Blue Points" }))
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "Archive" }))
+        XCTAssertEqual(dashed.children.map(\.path),
+                       ["-------------------------/Azure Ignored", "-------------------------/Blue Points"])
+    }
+
+    func test_buildAccounts_dedupesWithinAccount_only() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
+            MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
+            MailboxFolder(account: "Work",
+                          path: "-------------------------/Azure Ignored",
+                          name: "Azure Ignored",
+                          parentPath: "-------------------------"),
+            MailboxFolder(account: "Personal", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil)
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+        guard let work = accounts.first(where: { $0.name == "Work" }) else {
+            XCTFail("Expected Work account")
+            return
+        }
+        guard let personal = accounts.first(where: { $0.name == "Personal" }) else {
+            XCTFail("Expected Personal account")
+            return
+        }
+
+        XCTAssertFalse(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertEqual(personal.folders.map(\.path), ["Azure Ignored"])
+    }
+
+    func test_buildAccounts_preservesRootFolder_whenNoNestedNameMatch() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
+            MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
+            MailboxFolder(account: "Work",
+                          path: "-------------------------/Blue Points",
+                          name: "Blue Points",
+                          parentPath: "-------------------------")
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+        guard let work = accounts.first(where: { $0.name == "Work" }) else {
+            XCTFail("Expected Work account")
+            return
+        }
+
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "-------------------------" }))
+    }
+
     func test_folderChoices_returnsFullPathChoices() {
         let account = MailboxAccount(name: "Work",
                                      folders: [
@@ -71,6 +171,28 @@ final class MailboxNavigationTests: XCTestCase {
         let choices = MailboxHierarchyBuilder.folderChoices(for: account)
 
         XCTAssertEqual(choices.map(\.displayPath), ["Clients", "Clients/Acme"])
+    }
+
+    func test_folderChoices_excludesRemovedRootMirrorPaths() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
+            MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
+            MailboxFolder(account: "Work",
+                          path: "-------------------------/Azure Ignored",
+                          name: "Azure Ignored",
+                          parentPath: "-------------------------")
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+        guard let work = accounts.first(where: { $0.name == "Work" }) else {
+            XCTFail("Expected Work account")
+            return
+        }
+        let choices = MailboxHierarchyBuilder.folderChoices(for: work)
+        let paths = choices.map(\.path)
+
+        XCTAssertFalse(paths.contains("Azure Ignored"))
+        XCTAssertTrue(paths.contains("-------------------------/Azure Ignored"))
     }
 
     func test_filterFolderTree_emptyQuery_returnsUnchangedTree() {
