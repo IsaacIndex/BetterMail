@@ -54,6 +54,32 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["Azure"])
     }
 
+    func test_buildAccounts_placesInboxFirst_atRoot_preservingOrderForOthers() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Projects", name: "Projects", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Receipts", name: "Receipts", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Inbox", name: "Inbox", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Archive", name: "Archive", parentPath: nil)
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+
+        XCTAssertEqual(accounts.first?.folders.map(\.name), ["Inbox", "Projects", "Receipts", "Archive"])
+    }
+
+    func test_buildAccounts_placesInboxFirst_amongChildren_preservingOrderForOthers() {
+        let folders = [
+            MailboxFolder(account: "Work", path: "Parent", name: "Parent", parentPath: nil),
+            MailboxFolder(account: "Work", path: "Parent/Zeta", name: "Zeta", parentPath: "Parent"),
+            MailboxFolder(account: "Work", path: "Parent/INBOX", name: "INBOX", parentPath: "Parent"),
+            MailboxFolder(account: "Work", path: "Parent/Alpha", name: "Alpha", parentPath: "Parent")
+        ]
+
+        let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
+
+        XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["INBOX", "Zeta", "Alpha"])
+    }
+
     func test_buildAccounts_dropsRootFolder_whenSameNameExistsUnderParent() {
         let folders = [
             MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),

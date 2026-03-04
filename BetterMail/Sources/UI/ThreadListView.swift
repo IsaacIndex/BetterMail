@@ -704,14 +704,6 @@ private struct MailboxFolderMoveSheet: View {
     private var folderChoices: [MailboxFolderChoice] {
         guard !selectedAccount.isEmpty else { return [] }
         return viewModel.mailboxFolderChoices(for: selectedAccount)
-            .sorted { lhs, rhs in
-                let lhsIsInbox = Self.isInboxPath(lhs.path)
-                let rhsIsInbox = Self.isInboxPath(rhs.path)
-                if lhsIsInbox != rhsIsInbox {
-                    return lhsIsInbox
-                }
-                return lhs.displayPath.localizedCaseInsensitiveCompare(rhs.displayPath) == .orderedAscending
-            }
     }
 
     private var selectedMailboxAccount: MailboxAccount? {

@@ -143,7 +143,7 @@ internal enum MailboxHierarchyBuilder {
         }
 
         func buildNode(_ folder: MailboxFolder) -> MailboxFolderNode {
-            let childNodes = (childrenByParent[folder.path] ?? [])
+            let childNodes = inboxFirst((childrenByParent[folder.path] ?? []))
                 .map(buildNode)
             return MailboxFolderNode(account: folder.account,
                                      path: folder.path,
@@ -152,7 +152,7 @@ internal enum MailboxHierarchyBuilder {
                                      children: childNodes)
         }
 
-        let roots = (childrenByParent[nil] ?? [])
+        let roots = inboxFirst((childrenByParent[nil] ?? []))
             .map(buildNode)
 
         return roots
@@ -220,6 +220,27 @@ internal enum MailboxHierarchyBuilder {
         }
 
         return deduplicated
+    }
+
+    private static func inboxFirst(_ folders: [MailboxFolder]) -> [MailboxFolder] {
+        var inboxFolders: [MailboxFolder] = []
+        var otherFolders: [MailboxFolder] = []
+        inboxFolders.reserveCapacity(folders.count)
+        otherFolders.reserveCapacity(folders.count)
+
+        for folder in folders {
+            if isInboxFolder(folder) {
+                inboxFolders.append(folder)
+            } else {
+                otherFolders.append(folder)
+            }
+        }
+
+        return inboxFolders + otherFolders
+    }
+
+    private static func isInboxFolder(_ folder: MailboxFolder) -> Bool {
+        normalizedFolderNameKey(folder.name) == "inbox"
     }
 
     private static func inferredParentPath(from path: String, knownPaths: Set<String>) -> String? {

@@ -1742,7 +1742,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal var mailboxActionAccountNames: [String] {
-        mailboxAccounts.map(\.name).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        mailboxAccounts.map(\.name)
     }
 
     internal func mailboxFolderChoices(for account: String) -> [MailboxFolderChoice] {
