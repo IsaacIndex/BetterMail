@@ -322,6 +322,86 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(filtered.first?.children.map(\.name), ["Alpha", "Beta"])
     }
 
+    func test_applyFolderOrder_reordersSiblingsInSidebarTree() {
+        let account = MailboxAccount(
+            name: "Work",
+            folders: [
+                MailboxFolderNode(
+                    account: "Work",
+                    path: "Inbox",
+                    name: "Inbox",
+                    parentPath: nil,
+                    children: []
+                ),
+                MailboxFolderNode(
+                    account: "Work",
+                    path: "Projects",
+                    name: "Projects",
+                    parentPath: nil,
+                    children: [
+                        MailboxFolderNode(
+                            account: "Work",
+                            path: "Projects/Alpha",
+                            name: "Alpha",
+                            parentPath: "Projects",
+                            children: []
+                        ),
+                        MailboxFolderNode(
+                            account: "Work",
+                            path: "Projects/Beta",
+                            name: "Beta",
+                            parentPath: "Projects",
+                            children: []
+                        )
+                    ]
+                ),
+                MailboxFolderNode(
+                    account: "Work",
+                    path: "Archive",
+                    name: "Archive",
+                    parentPath: nil,
+                    children: []
+                )
+            ]
+        )
+
+        let ordered = MailboxHierarchyBuilder.applyFolderOrder(
+            ["Work|Archive", "Work|Inbox", "Work|Projects/Beta", "Work|Projects/Alpha"],
+            to: [account]
+        )
+
+        XCTAssertEqual(ordered.first?.folders.map(\.path), ["Archive", "Inbox", "Projects"])
+        XCTAssertEqual(ordered.first?.folders.first(where: { $0.path == "Projects" })?.children.map(\.path),
+                       ["Projects/Beta", "Projects/Alpha"])
+    }
+
+    func test_folderIDs_returnsFlattenedFolderIdentifiers() {
+        let account = MailboxAccount(
+            name: "Work",
+            folders: [
+                MailboxFolderNode(
+                    account: "Work",
+                    path: "Inbox",
+                    name: "Inbox",
+                    parentPath: nil,
+                    children: [
+                        MailboxFolderNode(
+                            account: "Work",
+                            path: "Inbox/Flagged",
+                            name: "Flagged",
+                            parentPath: "Inbox",
+                            children: []
+                        )
+                    ]
+                )
+            ]
+        )
+
+        let ids = MailboxHierarchyBuilder.folderIDs(in: [account])
+
+        XCTAssertEqual(ids, ["Work|Inbox", "Work|Inbox/Flagged"])
+    }
+
     func test_selectedMailboxActionAccount_whenSingleAccount_returnsAccount() {
         let nodes = [
             makeNode(messageID: "m1", account: "Work"),

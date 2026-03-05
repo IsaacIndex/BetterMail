@@ -886,7 +886,7 @@ private struct MailboxFolderMoveSheet: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Button(NSLocalizedString("mailbox.sheet.refresh", comment: "Refresh mailbox hierarchy button")) {
-                                viewModel.refreshMailboxHierarchy()
+                                viewModel.refreshMailboxHierarchy(force: true)
                             }
                             .controlSize(.small)
                         }

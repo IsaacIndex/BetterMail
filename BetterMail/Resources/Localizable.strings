@@ -84,6 +84,7 @@
 "mailbox.sidebar.all_folders" = "All Folders";
 "mailbox.sidebar.all_inboxes" = "All Inboxes";
 "mailbox.sidebar.loading" = "Loading mailboxes...";
+"mailbox.sidebar.reorder.hint" = "Drag folders and release at the blue line to reorder (same level).";
 "mailbox.hierarchy.error" = "Mailbox hierarchy unavailable: %@";
 "mailbox.hierarchy.selected_scope_missing" = "Selected mailbox scope is no longer available: %@ / %@. Reopen the mailbox sidebar and select a folder again.";
 "mailbox.action.error.no_selection" = "Select at least one message to move.";

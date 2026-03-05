@@ -130,15 +130,31 @@ internal enum MailboxHierarchyBuilder {
         return nodes.compactMap { filterNode($0, query: trimmedQuery) }
     }
 
+    internal static func applyFolderOrder(_ orderedFolderIDs: [String], to accounts: [MailboxAccount]) -> [MailboxAccount] {
+        let rankByID = Dictionary(uniqueKeysWithValues: orderedFolderIDs.enumerated().map { ($1, $0) })
+        guard !rankByID.isEmpty else { return accounts }
+
+        return accounts.map { account in
+            MailboxAccount(name: account.name,
+                          folders: orderedNodes(account.folders, rankByID: rankByID))
+        }
+    }
+
+    internal static func folderIDs(in accounts: [MailboxAccount]) -> [String] {
+        accounts.flatMap { flattenIDs($0.folders) }
+    }
+
     private static func buildTree(from folders: [MailboxFolder]) -> [MailboxFolderNode] {
         let foldersByPath = Dictionary(uniqueKeysWithValues: folders.map { ($0.path, $0) })
         let knownPaths = Set(foldersByPath.keys)
         var childrenByParent: [String?: [MailboxFolder]] = [:]
+        var resolvedParentByPath: [String: String?] = [:]
 
         for folder in folders {
             let inferredParent = inferredParentPath(from: folder.path, knownPaths: knownPaths)
             let candidateParent = folder.parentPath ?? inferredParent
             let validParent = candidateParent.flatMap { foldersByPath[$0] == nil ? nil : $0 }
+            resolvedParentByPath[folder.path] = validParent
             childrenByParent[validParent, default: []].append(folder)
         }
 
@@ -148,7 +164,7 @@ internal enum MailboxHierarchyBuilder {
             return MailboxFolderNode(account: folder.account,
                                      path: folder.path,
                                      name: folder.name,
-                                     parentPath: folder.parentPath,
+                                     parentPath: resolvedParentByPath[folder.path] ?? folder.parentPath,
                                      children: childNodes)
         }
 
@@ -266,6 +282,35 @@ internal enum MailboxHierarchyBuilder {
             results.append(contentsOf: flatten(node.children))
         }
         return results
+    }
+
+    private static func flattenIDs(_ nodes: [MailboxFolderNode]) -> [String] {
+        var results: [String] = []
+        results.reserveCapacity(nodes.count)
+        for node in nodes {
+            results.append(node.id)
+            results.append(contentsOf: flattenIDs(node.children))
+        }
+        return results
+    }
+
+    private static func orderedNodes(_ nodes: [MailboxFolderNode], rankByID: [String: Int]) -> [MailboxFolderNode] {
+        let sorted = nodes.enumerated()
+            .sorted { lhs, rhs in
+                let lhsRank = rankByID[lhs.element.id] ?? Int.max
+                let rhsRank = rankByID[rhs.element.id] ?? Int.max
+                if lhsRank == rhsRank {
+                    return lhs.offset < rhs.offset
+                }
+                return lhsRank < rhsRank
+            }
+            .map(\.element)
+
+        return sorted.map { node in
+            var updated = node
+            updated.children = orderedNodes(node.children, rankByID: rankByID)
+            return updated
+        }
     }
 
     private static func filterNode(_ node: MailboxFolderNode, query: String) -> MailboxFolderNode? {

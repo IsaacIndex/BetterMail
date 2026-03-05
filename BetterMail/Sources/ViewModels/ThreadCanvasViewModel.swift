@@ -161,6 +161,11 @@ private enum MailboxFolderActionError: LocalizedError {
 
 @MainActor
 internal final class ThreadCanvasViewModel: ObservableObject {
+    internal enum MailboxFolderDropPlacement {
+        case before
+        case after
+    }
+
     internal enum ThreadCanvasRowPackingMode: Hashable {
         case dateBucketed
         case folderAlignedDense
@@ -531,6 +536,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
     private let pinnedFolderSettings: PinnedFolderSettings
+    private let mailboxFolderOrderSettings: MailboxFolderOrderSettings
     private let backfillService: BatchBackfillServicing
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
@@ -573,6 +579,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
                   pinnedFolderSettings: PinnedFolderSettings? = nil,
+                  mailboxFolderOrderSettings: MailboxFolderOrderSettings? = nil,
                   store: MessageStore = .shared,
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
@@ -587,6 +594,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.inspectorSettings = inspectorSettings
         self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
         self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
+        self.mailboxFolderOrderSettings = mailboxFolderOrderSettings ?? MailboxFolderOrderSettings()
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
@@ -610,6 +618,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] ids in
                 self?.pinnedFolderIDs = ids
+            }
+            .store(in: &cancellables)
+        self.mailboxFolderOrderSettings.$orderedFolderIDs
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyMailboxFolderOrderToPublishedAccounts()
             }
             .store(in: &cancellables)
     }
@@ -1603,7 +1617,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         scheduleRethread(delay: 0)
     }
 
-    internal func refreshMailboxHierarchy() {
+    internal func refreshMailboxHierarchy(force: Bool = false) {
+        if !force, !mailboxAccounts.isEmpty {
+            return
+        }
         guard !isMailboxHierarchyLoading else { return }
         isMailboxHierarchyLoading = true
         Task { [weak self] in
@@ -1618,9 +1635,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
                 Self.logMailboxHierarchyDebug(folders: folders, accounts: accounts)
                 await MainActor.run {
-                    self.mailboxAccounts = accounts
+                    let validFolderIDs = Set(MailboxHierarchyBuilder.folderIDs(in: accounts))
+                    self.mailboxFolderOrderSettings.prune(validIDs: validFolderIDs)
+                    self.mailboxAccounts = MailboxHierarchyBuilder.applyFolderOrder(self.mailboxFolderOrderSettings.orderedFolderIDs,
+                                                                                    to: accounts)
                     if case .mailboxFolder(let account, let path) = self.activeMailboxScope {
-                        let exists = accounts.contains { mailboxAccount in
+                        let exists = self.mailboxAccounts.contains { mailboxAccount in
                             mailboxAccount.name == account &&
                                 MailboxHierarchyBuilder.folderChoices(for: mailboxAccount).contains(where: { $0.path == path })
                         }
@@ -1745,9 +1765,72 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         mailboxAccounts.map(\.name)
     }
 
+    internal func canReorderMailboxFolder(sourceID: String,
+                                          targetAccount: String,
+                                          targetParentPath: String?) -> Bool {
+        siblingFolderIDs(account: targetAccount, parentPath: targetParentPath).contains(sourceID)
+    }
+
+    internal func mailboxNeighborFolderIDs(account: String,
+                                           path: String,
+                                           parentPath: String?) -> (previousID: String?, nextID: String?) {
+        let siblings = siblingFolderIDs(account: account, parentPath: parentPath)
+        let currentID = mailboxFolderID(account: account, path: path)
+        guard let index = siblings.firstIndex(of: currentID) else {
+            return (nil, nil)
+        }
+        let previousID = index > 0 ? siblings[index - 1] : nil
+        let nextID = (index + 1) < siblings.count ? siblings[index + 1] : nil
+        return (previousID, nextID)
+    }
+
+    internal func reorderMailboxFolder(sourceID: String,
+                                       targetAccount: String,
+                                       targetPath: String,
+                                       targetParentPath: String?,
+                                       placement: MailboxFolderDropPlacement) {
+        let targetID = mailboxFolderID(account: targetAccount, path: targetPath)
+        let siblingIDs = siblingFolderIDs(account: targetAccount, parentPath: targetParentPath)
+        mailboxFolderOrderSettings.moveRelativeToTarget(sourceID: sourceID,
+                                                        targetID: targetID,
+                                                        siblingIDs: siblingIDs,
+                                                        insertAfterTarget: placement == .after)
+        applyMailboxFolderOrderToPublishedAccounts()
+    }
+
     internal func mailboxFolderChoices(for account: String) -> [MailboxFolderChoice] {
         guard let mailboxAccount = mailboxAccounts.first(where: { $0.name == account }) else { return [] }
         return MailboxHierarchyBuilder.folderChoices(for: mailboxAccount)
+    }
+
+    private func applyMailboxFolderOrderToPublishedAccounts() {
+        mailboxAccounts = MailboxHierarchyBuilder.applyFolderOrder(mailboxFolderOrderSettings.orderedFolderIDs,
+                                                                   to: mailboxAccounts)
+    }
+
+    private func siblingFolderIDs(account: String, parentPath: String?) -> [String] {
+        guard let mailboxAccount = mailboxAccounts.first(where: { $0.name == account }) else { return [] }
+        guard let parentPath else {
+            return mailboxAccount.folders.map(\.id)
+        }
+        return childFolderIDs(in: mailboxAccount.folders, parentPath: parentPath)
+    }
+
+    private func childFolderIDs(in nodes: [MailboxFolderNode], parentPath: String) -> [String] {
+        for node in nodes {
+            if node.path == parentPath {
+                return node.children.map(\.id)
+            }
+            let nested = childFolderIDs(in: node.children, parentPath: parentPath)
+            if !nested.isEmpty {
+                return nested
+            }
+        }
+        return []
+    }
+
+    private func mailboxFolderID(account: String, path: String) -> String {
+        "\(account)|\(path)"
     }
 
     internal var mailboxActionSelectionAccount: String? {
@@ -1831,7 +1914,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                                      ambiguousCount: resolution.ambiguousCount,
                                                                                      unresolvedCount: resolution.unresolvedCount)
                     self.shouldForceFullReload = true
-                    self.refreshMailboxHierarchy()
+                    self.refreshMailboxHierarchy(force: true)
                     self.refreshNow()
                 }
             } catch {
@@ -1908,7 +1991,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                                               ambiguousCount: resolution.ambiguousCount,
                                                                                               unresolvedCount: resolution.unresolvedCount)
                     self.shouldForceFullReload = true
-                    self.refreshMailboxHierarchy()
+                    self.refreshMailboxHierarchy(force: true)
                     self.refreshNow()
                 }
             } catch {
