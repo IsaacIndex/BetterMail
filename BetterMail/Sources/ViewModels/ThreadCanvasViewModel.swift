@@ -537,6 +537,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let inspectorSettings: InspectorViewSettings
     private let pinnedFolderSettings: PinnedFolderSettings
     private let mailboxFolderOrderSettings: MailboxFolderOrderSettings
+    private let mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings
     private let backfillService: BatchBackfillServicing
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
@@ -573,6 +574,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var jumpPhaseByFolderID: [String: FolderJumpPhase] = [:]
     private var pendingScrollContextByToken: [UUID: PendingFolderJumpScrollContext] = [:]
     private var pendingScrollTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+    private var mailboxThreadAutoMoveTask: Task<Void, Never>?
+    private var mailboxThreadAutoMovePassPending = false
     private var nearBottomHitCount = 0
     private var lastDayWindowExpansionTime: Date?
 
@@ -580,6 +583,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   inspectorSettings: InspectorViewSettings,
                   pinnedFolderSettings: PinnedFolderSettings? = nil,
                   mailboxFolderOrderSettings: MailboxFolderOrderSettings? = nil,
+                  mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings? = nil,
                   store: MessageStore = .shared,
                   client: MailAppleScriptClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
@@ -595,6 +599,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
         self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
         self.mailboxFolderOrderSettings = mailboxFolderOrderSettings ?? MailboxFolderOrderSettings()
+        self.mailboxThreadAutoMoveSettings = mailboxThreadAutoMoveSettings ?? MailboxThreadAutoMoveSettings()
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
@@ -636,6 +641,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         timelineTagTasks.values.forEach { $0.cancel() }
         folderJumpTasks.values.forEach { $0.cancel() }
         pendingScrollTimeoutTasks.values.forEach { $0.cancel() }
+        mailboxThreadAutoMoveTask?.cancel()
     }
 
     internal func start() {
@@ -820,12 +826,77 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
+            scheduleMailboxThreadAutoMovePass()
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
             status = String.localizedStringWithFormat(
                 NSLocalizedString("refresh.status.threading_failed", comment: "Status when threading fails"),
                 error.localizedDescription
             )
+        }
+    }
+
+    @MainActor
+    private func scheduleMailboxThreadAutoMovePass() {
+        guard mailboxThreadAutoMoveTask == nil else {
+            mailboxThreadAutoMovePassPending = true
+            return
+        }
+        mailboxThreadAutoMoveTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.mailboxThreadAutoMoveTask = nil
+                if self.mailboxThreadAutoMovePassPending {
+                    self.mailboxThreadAutoMovePassPending = false
+                    self.scheduleMailboxThreadAutoMovePass()
+                }
+            }
+            await self.runMailboxThreadAutoMovePass()
+        }
+    }
+
+    @MainActor
+    private func runMailboxThreadAutoMovePass() async {
+        let rules = mailboxThreadAutoMoveSettings.rules
+        guard !rules.isEmpty else { return }
+        var shouldForceRefresh = false
+
+        for rule in rules {
+            do {
+                let messages = try await store.fetchMessages(threadIDs: [rule.threadID])
+                guard !messages.isEmpty else { continue }
+                let candidates = mailboxMoveCandidates(from: messages,
+                                                       account: rule.account,
+                                                       destinationPath: rule.destinationPath)
+                guard !candidates.isEmpty else { continue }
+
+                let moveInput = Self.mailboxMoveInput(from: candidates)
+                guard moveInput.unresolvedCount == 0,
+                      (!moveInput.messageIDs.isEmpty || !moveInput.internalTargets.isEmpty) else {
+                    continue
+                }
+                let moveResult = try await Self.executeMailboxMove(with: moveInput,
+                                                                   destinationPath: rule.destinationPath,
+                                                                   account: rule.account)
+                let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
+                if isFullSuccess {
+                    await applyOptimisticMailboxMove(candidates: candidates,
+                                                     moveTargets: [],
+                                                     resolvedInternalIDsByNodeID: [:],
+                                                     destinationPath: rule.destinationPath,
+                                                     destinationAccount: rule.account)
+                } else {
+                    shouldForceRefresh = true
+                }
+            } catch {
+                Log.app.error("Mailbox thread auto-move pass failed: \(error.localizedDescription, privacy: .public)")
+                shouldForceRefresh = true
+            }
+        }
+
+        if shouldForceRefresh {
+            shouldForceFullReload = true
+            refreshNow()
         }
     }
 
@@ -1883,36 +1954,62 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                let sourceMailboxes = Set(selectedNodes.map { $0.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines) }).sorted()
-                Log.appleScript.debug("Mailbox move requested. destination=\(trimmedPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
-                var resolution = try await self.resolveMailboxMoveTargets(from: selectedNodes, account: account)
-                var moveResult = try await MailControl.moveMessagesByInternalID(targets: resolution.moveTargets,
-                                                                                to: trimmedPath,
-                                                                                in: account)
-                if moveResult.matchedCount == 0, moveResult.errorCount == 0 {
-                    Log.appleScript.debug("Mailbox move matched zero messages on first attempt. Retrying with forced internal-ID resolution.")
-                    let retryResolution = try await self.resolveMailboxMoveTargets(from: selectedNodes,
-                                                                                   account: account,
-                                                                                   forceResolveAll: true)
-                    if retryResolution.moveTargets != resolution.moveTargets {
-                        let retryMoveResult = try await MailControl.moveMessagesByInternalID(targets: retryResolution.moveTargets,
-                                                                                             to: trimmedPath,
-                                                                                             in: account)
-                        resolution = retryResolution
-                        moveResult = retryMoveResult
-                    }
+                let scope = try await self.mailboxMoveScopeForSelection(selectedNodes: selectedNodes,
+                                                                        account: account,
+                                                                        destinationPath: trimmedPath)
+                let sourceMailboxes = Set(scope.candidates.map { $0.mailboxPath }).sorted()
+                await MainActor.run {
+                    Log.appleScript.debug("Mailbox move requested. destination=\(trimmedPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) candidateCount=\(scope.candidates.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
                 }
-                await self.applyOptimisticMailboxMove(selectedNodes: selectedNodes,
-                                                      moveTargets: resolution.moveTargets,
-                                                      resolvedInternalIDsByNodeID: resolution.resolvedInternalIDsByNodeID,
-                                                      destinationPath: trimmedPath,
-                                                      destinationAccount: account)
+
+                if scope.candidates.isEmpty {
+                    await MainActor.run {
+                        self.isMailboxActionRunning = false
+                        self.mailboxActionProgressMessage = nil
+                        self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.move.summary.no_candidates",
+                                                                            comment: "Status when all thread messages are already in destination mailbox")
+                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
+                                                          destinationPath: trimmedPath,
+                                                          account: account)
+                    }
+                    return
+                }
+                let moveInput = Self.mailboxMoveInput(from: scope.candidates)
+                let ambiguousCount = 0
+                let unresolvedCount = moveInput.unresolvedCount
+                guard unresolvedCount == 0,
+                      (!moveInput.messageIDs.isEmpty || !moveInput.internalTargets.isEmpty) else {
+                    await MainActor.run {
+                        self.isMailboxActionRunning = false
+                        self.mailboxActionProgressMessage = nil
+                        self.mailboxActionStatusMessage = Self.mailboxMoveBlockedStatusMessage(ambiguousCount: ambiguousCount,
+                                                                                                unresolvedCount: unresolvedCount)
+                    }
+                    return
+                }
+
+                let moveResult = try await Self.executeMailboxMove(with: moveInput,
+                                                                   destinationPath: trimmedPath,
+                                                                   account: account)
+                let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
+                if isFullSuccess {
+                    await self.applyOptimisticMailboxMove(candidates: scope.candidates,
+                                                          moveTargets: [],
+                                                          resolvedInternalIDsByNodeID: [:],
+                                                          destinationPath: trimmedPath,
+                                                          destinationAccount: account)
+                }
                 await MainActor.run {
                     self.isMailboxActionRunning = false
                     self.mailboxActionProgressMessage = nil
                     self.mailboxActionStatusMessage = Self.mailboxMoveStatusMessage(moveResult: moveResult,
-                                                                                     ambiguousCount: resolution.ambiguousCount,
-                                                                                     unresolvedCount: resolution.unresolvedCount)
+                                                                                     ambiguousCount: ambiguousCount,
+                                                                                     unresolvedCount: unresolvedCount)
+                    if isFullSuccess {
+                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
+                                                          destinationPath: trimmedPath,
+                                                          account: account)
+                    }
                     self.shouldForceFullReload = true
                     self.refreshMailboxHierarchy(force: true)
                     self.refreshNow()
@@ -1960,36 +2057,65 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let destinationPath = try await MailControl.createMailbox(named: trimmedName,
                                                                           in: account,
                                                                           parentPath: parentPath)
-                let sourceMailboxes = Set(selectedNodes.map { $0.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines) }).sorted()
-                Log.appleScript.debug("Mailbox create-and-move requested. destination=\(destinationPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
-                var resolution = try await self.resolveMailboxMoveTargets(from: selectedNodes, account: account)
-                var moveResult = try await MailControl.moveMessagesByInternalID(targets: resolution.moveTargets,
-                                                                                to: destinationPath,
-                                                                                in: account)
-                if moveResult.matchedCount == 0, moveResult.errorCount == 0 {
-                    Log.appleScript.debug("Mailbox create-and-move matched zero messages on first attempt. Retrying with forced internal-ID resolution.")
-                    let retryResolution = try await self.resolveMailboxMoveTargets(from: selectedNodes,
-                                                                                   account: account,
-                                                                                   forceResolveAll: true)
-                    if retryResolution.moveTargets != resolution.moveTargets {
-                        let retryMoveResult = try await MailControl.moveMessagesByInternalID(targets: retryResolution.moveTargets,
-                                                                                             to: destinationPath,
-                                                                                             in: account)
-                        resolution = retryResolution
-                        moveResult = retryMoveResult
-                    }
+                let scope = try await self.mailboxMoveScopeForSelection(selectedNodes: selectedNodes,
+                                                                        account: account,
+                                                                        destinationPath: destinationPath)
+                let sourceMailboxes = Set(scope.candidates.map { $0.mailboxPath }).sorted()
+                await MainActor.run {
+                    Log.appleScript.debug("Mailbox create-and-move requested. destination=\(destinationPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) candidateCount=\(scope.candidates.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
                 }
-                await self.applyOptimisticMailboxMove(selectedNodes: selectedNodes,
-                                                      moveTargets: resolution.moveTargets,
-                                                      resolvedInternalIDsByNodeID: resolution.resolvedInternalIDsByNodeID,
-                                                      destinationPath: destinationPath,
-                                                      destinationAccount: account)
+
+                if scope.candidates.isEmpty {
+                    await MainActor.run {
+                        self.isMailboxActionRunning = false
+                        self.mailboxActionProgressMessage = nil
+                        self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.create_and_move.summary.no_candidates",
+                                                                            comment: "Status when folder is created and thread messages already live in destination mailbox")
+                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
+                                                          destinationPath: destinationPath,
+                                                          account: account)
+                        self.shouldForceFullReload = true
+                        self.refreshMailboxHierarchy(force: true)
+                        self.refreshNow()
+                    }
+                    return
+                }
+                let moveInput = Self.mailboxMoveInput(from: scope.candidates)
+                let ambiguousCount = 0
+                let unresolvedCount = moveInput.unresolvedCount
+                guard unresolvedCount == 0,
+                      (!moveInput.messageIDs.isEmpty || !moveInput.internalTargets.isEmpty) else {
+                    await MainActor.run {
+                        self.isMailboxActionRunning = false
+                        self.mailboxActionProgressMessage = nil
+                        self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveBlockedStatusMessage(ambiguousCount: ambiguousCount,
+                                                                                                         unresolvedCount: unresolvedCount)
+                    }
+                    return
+                }
+
+                let moveResult = try await Self.executeMailboxMove(with: moveInput,
+                                                                   destinationPath: destinationPath,
+                                                                   account: account)
+                let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
+                if isFullSuccess {
+                    await self.applyOptimisticMailboxMove(candidates: scope.candidates,
+                                                          moveTargets: [],
+                                                          resolvedInternalIDsByNodeID: [:],
+                                                          destinationPath: destinationPath,
+                                                          destinationAccount: account)
+                }
                 await MainActor.run {
                     self.isMailboxActionRunning = false
                     self.mailboxActionProgressMessage = nil
                     self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveStatusMessage(moveResult: moveResult,
-                                                                                              ambiguousCount: resolution.ambiguousCount,
-                                                                                              unresolvedCount: resolution.unresolvedCount)
+                                                                                              ambiguousCount: ambiguousCount,
+                                                                                              unresolvedCount: unresolvedCount)
+                    if isFullSuccess {
+                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
+                                                          destinationPath: destinationPath,
+                                                          account: account)
+                    }
                     self.shouldForceFullReload = true
                     self.refreshMailboxHierarchy(force: true)
                     self.refreshNow()
@@ -2772,102 +2898,37 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return accounts.first
     }
 
-    private func resolveMailboxMoveTargets(from nodes: [ThreadNode],
-                                           account: String,
-                                           forceResolveAll: Bool = false) async throws -> (internalMailIDs: [String], moveTargets: [MailControl.InternalIDMoveTarget], ambiguousCount: Int, unresolvedCount: Int, resolvedInternalIDsByNodeID: [String: String]) {
-        let candidates = mailboxMoveCandidates(from: nodes, account: account)
-        guard !candidates.isEmpty else {
-            return ([], [], 0, 0, [:])
-        }
-
-        var resolvedTargetsByID: [String: MailControl.InternalIDMoveTarget] = [:]
-        var ambiguousCount = 0
-        var unresolvedCount = 0
-        var resolvedMessagesByNodeID: [String: EmailMessage] = [:]
-        var resolvedInternalIDsByNodeID: [String: String] = [:]
-
-        for candidate in candidates {
-            if !forceResolveAll,
-               let existingInternalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !existingInternalID.isEmpty {
-                let existingTarget = MailControl.InternalIDMoveTarget(internalID: existingInternalID,
-                                                                      sourceAccount: candidate.account,
-                                                                      sourceMailboxPath: candidate.mailboxPath)
-                if resolvedTargetsByID[existingInternalID] == nil || !existingTarget.sourceMailboxPath.isEmpty {
-                    resolvedTargetsByID[existingInternalID] = existingTarget
-                }
-                resolvedInternalIDsByNodeID[candidate.nodeID] = existingInternalID
-                continue
-            }
-
-            do {
-                let resolution = try await MailControl.resolveInternalMailID(mailboxPath: candidate.mailboxPath,
-                                                                             account: candidate.account,
-                                                                             subject: candidate.message.subject,
-                                                                             sender: candidate.message.from,
-                                                                             receivedAt: candidate.message.date)
-                switch resolution {
-                case .resolved(let internalID):
-                    let trimmedID = internalID.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmedID.isEmpty else {
-                        unresolvedCount += 1
-                        continue
-                    }
-                    let resolvedTarget = MailControl.InternalIDMoveTarget(internalID: trimmedID,
-                                                                          sourceAccount: candidate.account,
-                                                                          sourceMailboxPath: candidate.mailboxPath)
-                    if resolvedTargetsByID[trimmedID] == nil || !resolvedTarget.sourceMailboxPath.isEmpty {
-                        resolvedTargetsByID[trimmedID] = resolvedTarget
-                    }
-                    resolvedMessagesByNodeID[candidate.nodeID] = candidate.message.assigning(internalMailID: trimmedID)
-                    resolvedInternalIDsByNodeID[candidate.nodeID] = trimmedID
-                case .ambiguous:
-                    ambiguousCount += 1
-                case .notFound:
-                    unresolvedCount += 1
-                }
-            } catch {
-                unresolvedCount += 1
-            }
-        }
-
-        if !resolvedMessagesByNodeID.isEmpty {
-            let updatedMessages = nodes.compactMap { node in
-                resolvedMessagesByNodeID[node.id]
-            }
-            if !updatedMessages.isEmpty {
-                try? await store.upsert(messages: updatedMessages)
-            }
-        }
-
-        let sortedTargets = resolvedTargetsByID.values.sorted { lhs, rhs in
-            lhs.internalID < rhs.internalID
-        }
-        return (sortedTargets.map(\.internalID), sortedTargets, ambiguousCount, unresolvedCount, resolvedInternalIDsByNodeID)
-    }
-
-    private func mailboxMoveCandidates(from nodes: [ThreadNode],
-                                       account: String) -> [MailboxMoveCandidate] {
+    private func mailboxMoveCandidates(from messages: [EmailMessage],
+                                       account: String,
+                                       destinationPath: String? = nil) -> [MailboxMoveCandidate] {
         let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedAccount.isEmpty else { return [] }
-        return nodes.map { node in
-            let mailboxPath = mailboxPathForMailboxMove(node: node, account: trimmedAccount)
-            return MailboxMoveCandidate(nodeID: node.id,
-                                        message: node.message,
+        let trimmedDestination = destinationPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var seenMessageIDs = Set<String>()
+        return messages.compactMap { message in
+            guard seenMessageIDs.insert(message.messageID).inserted else {
+                return nil
+            }
+            let messageAccount = message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !messageAccount.isEmpty &&
+                messageAccount.caseInsensitiveCompare(trimmedAccount) != .orderedSame {
+                return nil
+            }
+            let sourceMailboxPath = mailboxPathForMailboxMove(message: message)
+            if !trimmedDestination.isEmpty &&
+                sourceMailboxPath.caseInsensitiveCompare(trimmedDestination) == .orderedSame &&
+                (messageAccount.isEmpty || messageAccount.caseInsensitiveCompare(trimmedAccount) == .orderedSame) {
+                return nil
+            }
+            return MailboxMoveCandidate(nodeID: message.messageID,
+                                        message: message,
                                         account: trimmedAccount,
-                                        mailboxPath: mailboxPath)
+                                        mailboxPath: sourceMailboxPath)
         }
     }
 
-    private func mailboxPathForMailboxMove(node: ThreadNode, account: String) -> String {
-        if case .mailboxFolder(let scopedAccount, let scopedPath) = activeMailboxScope,
-           scopedAccount.caseInsensitiveCompare(account) == .orderedSame {
-            let trimmedScopedPath = scopedPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedScopedPath.isEmpty {
-                return trimmedScopedPath
-            }
-        }
-        let mailboxID = node.message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func mailboxPathForMailboxMove(message: EmailMessage) -> String {
+        let mailboxID = message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
         if mailboxID.isEmpty {
             return "inbox"
         }
@@ -2968,6 +3029,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return status
     }
 
+    private static func mailboxMoveBlockedStatusMessage(ambiguousCount: Int,
+                                                        unresolvedCount: Int) -> String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("mailbox.action.move.summary.blocked",
+                              comment: "Status when full-thread mailbox move is blocked due to unresolved candidates"),
+            ambiguousCount,
+            unresolvedCount
+        )
+    }
+
     private static func mailboxCreateAndMoveStatusMessage(moveResult: MailControl.MailboxMoveResult,
                                                           ambiguousCount: Int,
                                                           unresolvedCount: Int) -> String {
@@ -3022,6 +3093,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             status += " \(firstErrorDetail)"
         }
         return status
+    }
+
+    private static func mailboxCreateAndMoveBlockedStatusMessage(ambiguousCount: Int,
+                                                                 unresolvedCount: Int) -> String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("mailbox.action.create_and_move.summary.blocked",
+                              comment: "Status when created folder cannot receive full-thread move due to unresolved candidates"),
+            ambiguousCount,
+            unresolvedCount
+        )
+    }
+
+    @MainActor
+    private func upsertMailboxThreadMoveRules(threadIDs: Set<String>,
+                                              destinationPath: String,
+                                              account: String) {
+        guard !threadIDs.isEmpty else { return }
+        mailboxThreadAutoMoveSettings.upsert(threadIDs: threadIDs,
+                                             destinationPath: destinationPath,
+                                             account: account)
     }
 
     private func mailboxActionAccountName(for node: ThreadNode) -> String? {
@@ -3152,7 +3243,120 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    private func applyOptimisticMailboxMove(selectedNodes: [ThreadNode],
+    private func mailboxMoveScopeForSelection(selectedNodes: [ThreadNode],
+                                              account: String,
+                                              destinationPath: String) async throws -> (threadIDs: Set<String>, candidates: [MailboxMoveCandidate]) {
+        let effectiveThreadIDs = Set(selectedNodes.compactMap { effectiveThreadID(for: $0) })
+        let selectedMessages = selectedNodes.map(\.message)
+        var messageCandidates: [EmailMessage]
+        if effectiveThreadIDs.isEmpty {
+            messageCandidates = selectedMessages
+        } else {
+            let fetched = try await store.fetchMessages(threadIDs: effectiveThreadIDs)
+            messageCandidates = fetched.isEmpty ? selectedMessages : fetched
+        }
+
+        let candidates = mailboxMoveCandidates(from: messageCandidates,
+                                               account: account,
+                                               destinationPath: destinationPath)
+        return (effectiveThreadIDs, candidates)
+    }
+
+    nonisolated private static func mailboxMoveInput(from candidates: [MailboxMoveCandidate]) -> (messageIDs: [String], internalTargets: [MailControl.InternalIDMoveTarget], unresolvedCount: Int) {
+        var seenMessageIDs = Set<String>()
+        var messageIDs: [String] = []
+        var seenInternalIDs = Set<String>()
+        var internalTargets: [MailControl.InternalIDMoveTarget] = []
+        var unresolvedCount = 0
+        messageIDs.reserveCapacity(candidates.count)
+        internalTargets.reserveCapacity(candidates.count)
+
+        for candidate in candidates {
+            let cleanedMessageID = MailControl.cleanMessageIDPreservingCase(candidate.message.messageID)
+            let hasMessageID = !cleanedMessageID.isEmpty
+            if !cleanedMessageID.isEmpty {
+                if seenMessageIDs.insert(cleanedMessageID).inserted {
+                    messageIDs.append(cleanedMessageID)
+                }
+            }
+
+            let internalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !internalID.isEmpty {
+                if seenInternalIDs.insert(internalID).inserted {
+                    internalTargets.append(
+                        MailControl.InternalIDMoveTarget(internalID: internalID,
+                                                         sourceAccount: candidate.account,
+                                                         sourceMailboxPath: candidate.mailboxPath)
+                    )
+                }
+            } else if !hasMessageID {
+                unresolvedCount += 1
+            }
+        }
+        return (messageIDs.sorted(), internalTargets, unresolvedCount)
+    }
+
+    nonisolated private static func executeMailboxMove(with input: (messageIDs: [String], internalTargets: [MailControl.InternalIDMoveTarget], unresolvedCount: Int),
+                                                       destinationPath: String,
+                                                       account: String) async throws -> MailControl.MailboxMoveResult {
+        var combined = MailControl.MailboxMoveResult(requestedCount: 0,
+                                                     matchedCount: 0,
+                                                     movedCount: 0,
+                                                     errorCount: 0,
+                                                     firstErrorNumber: nil,
+                                                     firstErrorMessage: nil)
+
+        if !input.messageIDs.isEmpty {
+            do {
+                let byMessageID = try await MailControl.moveMessages(messageIDs: input.messageIDs,
+                                                                     to: destinationPath,
+                                                                     in: account)
+                combined = Self.combineMailboxMoveResults(lhs: combined, rhs: byMessageID)
+            } catch MailControlError.noMessagesMoved {
+                combined = Self.combineMailboxMoveResults(lhs: combined,
+                                                          rhs: MailControl.MailboxMoveResult(requestedCount: input.messageIDs.count,
+                                                                                             matchedCount: 0,
+                                                                                             movedCount: 0,
+                                                                                             errorCount: 0,
+                                                                                             firstErrorNumber: nil,
+                                                                                             firstErrorMessage: nil))
+            }
+        }
+
+        if !input.internalTargets.isEmpty {
+            do {
+                let byInternalID = try await MailControl.moveMessagesByInternalID(targets: input.internalTargets,
+                                                                                   to: destinationPath,
+                                                                                   in: account)
+                combined = Self.combineMailboxMoveResults(lhs: combined, rhs: byInternalID)
+            } catch MailControlError.noMessagesMoved {
+                combined = Self.combineMailboxMoveResults(lhs: combined,
+                                                          rhs: MailControl.MailboxMoveResult(requestedCount: input.internalTargets.count,
+                                                                                             matchedCount: 0,
+                                                                                             movedCount: 0,
+                                                                                             errorCount: 0,
+                                                                                             firstErrorNumber: nil,
+                                                                                             firstErrorMessage: nil))
+            }
+        }
+
+        if combined.movedCount <= 0 {
+            throw MailControlError.noMessagesMoved
+        }
+        return combined
+    }
+
+    nonisolated private static func combineMailboxMoveResults(lhs: MailControl.MailboxMoveResult,
+                                                              rhs: MailControl.MailboxMoveResult) -> MailControl.MailboxMoveResult {
+        MailControl.MailboxMoveResult(requestedCount: lhs.requestedCount + rhs.requestedCount,
+                                      matchedCount: lhs.matchedCount + rhs.matchedCount,
+                                      movedCount: lhs.movedCount + rhs.movedCount,
+                                      errorCount: lhs.errorCount + rhs.errorCount,
+                                      firstErrorNumber: lhs.firstErrorNumber ?? rhs.firstErrorNumber,
+                                      firstErrorMessage: lhs.firstErrorMessage ?? rhs.firstErrorMessage)
+    }
+
+    private func applyOptimisticMailboxMove(candidates: [MailboxMoveCandidate],
                                             moveTargets: [MailControl.InternalIDMoveTarget],
                                             resolvedInternalIDsByNodeID: [String: String],
                                             destinationPath: String,
@@ -3162,17 +3366,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard !destinationMailbox.isEmpty, !destinationAcct.isEmpty else { return }
         let movedInternalIDs = Set(moveTargets.map { $0.internalID.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty })
-        guard !movedInternalIDs.isEmpty else { return }
-        let optimisticUpdates = selectedNodes.compactMap { node -> EmailMessage? in
-            let resolvedInternalID = resolvedInternalIDsByNodeID[node.id]?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let messageInternalID = node.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let optimisticUpdates = candidates.compactMap { candidate -> EmailMessage? in
+            if movedInternalIDs.isEmpty {
+                return candidate.message.assigning(mailboxID: destinationMailbox, accountName: destinationAcct)
+            }
+            let resolvedInternalID = resolvedInternalIDsByNodeID[candidate.nodeID]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let messageInternalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let internalID = [resolvedInternalID, messageInternalID]
                 .compactMap({ $0 })
                 .first(where: { !$0.isEmpty }),
                   movedInternalIDs.contains(internalID) else {
                 return nil
             }
-            return node.message.assigning(mailboxID: destinationMailbox, accountName: destinationAcct)
+            return candidate.message.assigning(mailboxID: destinationMailbox, accountName: destinationAcct)
         }
         guard !optimisticUpdates.isEmpty else { return }
         do {

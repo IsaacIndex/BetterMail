@@ -298,7 +298,7 @@ internal struct MailControl {
 
     nonisolated internal static func moveMessages(messageIDs: [String],
                                                   to mailboxPath: String,
-                                                  in account: String) async throws {
+                                                  in account: String) async throws -> MailboxMoveResult {
         let cleanedIDs = Array(
             Set(
                 messageIDs
@@ -306,19 +306,36 @@ internal struct MailControl {
                     .filter { !$0.isEmpty }
             )
         ).sorted()
-        guard !cleanedIDs.isEmpty else { return }
+        guard !cleanedIDs.isEmpty else {
+            return MailboxMoveResult(requestedCount: 0,
+                                     matchedCount: 0,
+                                     movedCount: 0,
+                                     errorCount: 0,
+                                     firstErrorNumber: nil,
+                                     firstErrorMessage: nil)
+        }
         let script = buildMoveMessagesScript(messageIDs: cleanedIDs,
                                              mailboxPath: mailboxPath,
                                              account: account)
         Log.appleScript.debug("Executing mailbox move script (Message-ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(cleanedIDs.count, privacy: .public)\n\(script, privacy: .public)")
         print("Mailbox move script (Message-ID):\n\(script)")
         let result = try await runScript(script)
-        let movedCount = result.descriptorType == typeAEList
-            ? (result.atIndex(2)?.int32Value ?? 0)
-            : 0
-        if movedCount <= 0 {
+        let parsed = MailboxMoveResult(requestedCount: cleanedIDs.count,
+                                       matchedCount: result.descriptorType == typeAEList
+                                           ? Int(result.atIndex(1)?.int32Value ?? 0)
+                                           : 0,
+                                       movedCount: result.descriptorType == typeAEList
+                                           ? Int(result.atIndex(2)?.int32Value ?? 0)
+                                           : 0,
+                                       errorCount: result.descriptorType == typeAEList
+                                           ? Int(result.atIndex(3)?.int32Value ?? 0)
+                                           : 0,
+                                       firstErrorNumber: nil,
+                                       firstErrorMessage: nil)
+        if parsed.movedCount <= 0 {
             throw MailControlError.noMessagesMoved
         }
+        return parsed
     }
 
     nonisolated internal static func moveMessagesByInternalID(internalIDs: [String],
@@ -738,14 +755,14 @@ internal struct MailControl {
                 end if
               end if
 
-              if (count of _matches) is 0 then
+              if (count of _matches) is 0 and _sourceMailboxPath is "" then
               try
                 repeat with _m in (every message whose id is _idText)
                   copy _m to end of _matches
                 end repeat
               end try
               end if
-              if (count of _matches) is 0 and _idNumberKnown then
+              if (count of _matches) is 0 and _idNumberKnown and _sourceMailboxPath is "" then
                 try
                   repeat with _m in (every message whose id is _idNumber)
                     copy _m to end of _matches

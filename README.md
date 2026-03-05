@@ -205,6 +205,8 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
   - `selectionActionBar` as a bottom overlay for multi-select actions.
 - Mailbox-folder actions in the selection bar target Apple Mail folders (existing or newly created), while `Add to Thread Folder` keeps using BetterMail's internal canvas grouping feature.
 - The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable hierarchical folder selector to make destination picking clearer.
+- Mailbox-folder move actions are thread-scoped: selecting any node in a thread moves all cached messages in that thread to keep mailbox/thread state consistent.
+- Successful mailbox-thread moves register a persistent auto-follow rule so future off-destination messages in that thread are moved to the same mailbox folder on subsequent refresh passes.
 - Sidebar folder reordering is local to BetterMail and does not modify folder order inside Apple Mail.
 - Opening the mailbox-folder move sheet now triggers a hierarchy refresh when account/folder destinations are missing, and hierarchy reads automatically retry AppleEvent timeout failures before surfacing an error.
 - `All Inboxes` remains inbox-only. Messages moved out of inbox appear in `All Emails` and in their destination folder scope after refresh/rethread reconciliation. `All Folders` shows only foldered threads, hides date-rail labels, and bypasses day-window node filtering so folder members remain visible in dense rows.
