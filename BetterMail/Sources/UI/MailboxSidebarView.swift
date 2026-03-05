@@ -234,11 +234,13 @@ private struct FolderReorderDropDelegate: DropDelegate {
             return false
         }
         let placement: ThreadCanvasViewModel.MailboxFolderDropPlacement = indicator.position == .before ? .before : .after
-        viewModel.reorderMailboxFolder(sourceID: sourceID,
-                                       targetAccount: targetFolder.account,
-                                       targetPath: targetFolder.path,
-                                       targetParentPath: targetFolder.parentPath,
-                                       placement: placement)
+        withAnimation(.easeInOut(duration: 0.2)) {
+            viewModel.reorderMailboxFolder(sourceID: sourceID,
+                                           targetAccount: targetFolder.account,
+                                           targetPath: targetFolder.path,
+                                           targetParentPath: targetFolder.parentPath,
+                                           placement: placement)
+        }
         return true
     }
 
