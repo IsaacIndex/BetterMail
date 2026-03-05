@@ -45,7 +45,7 @@ ZStack draw order (back to front):
 ### 5) connectorLayer
 - Role: Renders JWZ and manual connector lanes linking related nodes within each column.
 - Key inputs: `layout.columns`, `metrics`, `zoomScale` (for visual emphasis), selection state.
-- Notes: Uses `ThreadCanvasConnectorColumn` per column; highlights if any node is selected.
+- Notes: Uses `ThreadCanvasConnectorColumn` per visible column; highlights if any node is selected. Connector segments are computed from each column’s full node list so lines remain continuous across empty day ranges and offscreen spans.
 
 ### 6) nodesLayer
 - Role: Draws every message node and wires up selection + drag gesture handling.

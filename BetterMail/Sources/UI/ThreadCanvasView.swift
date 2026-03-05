@@ -141,7 +141,6 @@ internal struct ThreadCanvasView: View {
                        metrics: context.metrics,
                        contentHeight: context.layout.contentSize.height)
         connectorLayer(columns: visibility.visibleColumns,
-                       visibleNodesByColumnID: visibility.visibleNodesByColumnID,
                        metrics: context.metrics,
                        readabilityMode: context.readabilityMode,
                        timelineTagsByNodeID: viewModel.timelineTagsByNodeID,
@@ -912,14 +911,15 @@ internal struct ThreadCanvasView: View {
 
     @ViewBuilder
     private func connectorLayer(columns: [ThreadCanvasColumn],
-                                visibleNodesByColumnID: [String: [ThreadCanvasNode]],
                                 metrics: ThreadCanvasLayoutMetrics,
                                 readabilityMode: ThreadCanvasReadabilityMode,
                                 timelineTagsByNodeID: [String: [String]],
                                 contentHeight: CGFloat) -> some View {
         ForEach(columns) { column in
             ThreadCanvasConnectorColumn(column: column,
-                                        nodes: visibleNodesByColumnID[column.id] ?? [],
+                                        // Use the full column node list so connectors remain continuous
+                                        // across empty day ranges and viewport boundaries.
+                                        nodes: column.nodes,
                                         metrics: metrics,
                                         viewMode: displaySettings.viewMode,
                                         readabilityMode: readabilityMode,

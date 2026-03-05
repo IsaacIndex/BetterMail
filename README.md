@@ -162,6 +162,7 @@ sequenceDiagram
 ### Canvas Virtualization Window
 - The virtualized render window is computed in content coordinates using the raw scroll offset, so pinned folder headers/top padding do not shift which days and nodes are considered visible.
 - In `All Folders`, folder-member nodes render regardless of day-window position so folder columns do not degrade into header-only shells; in other scopes, pinned out-of-range folders still keep header chrome visible (including ancestor context for nested pinned folders).
+- Connector lanes (JWZ + manual) are derived from each visible column’s full node list rather than only viewport-filtered nodes, so vertical continuity is preserved across empty day spans and viewport boundaries.
 
 ### Manual Grouping & Ungrouping
 **User-facing**
