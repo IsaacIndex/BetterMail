@@ -5,7 +5,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
-- Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Inboxes` as the default landing scope.
+- Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Emails` as the default landing scope.
 - Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
 - Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator, and pinned folder headers remain visible even when their messages fall outside the current day window.
 - Folder details inspector includes a non-scrollable minimap with selected-node highlight, folder-scoped viewport overlay, and date ticks/labels while preserving relative spacing for click-to-jump navigation.

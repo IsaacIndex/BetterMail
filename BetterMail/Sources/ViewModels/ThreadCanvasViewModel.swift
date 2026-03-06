@@ -461,7 +461,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var isRefreshing = false
     @Published internal private(set) var status: String = ""
     @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
-    @Published internal private(set) var activeMailboxScope: MailboxScope = .allInboxes
+    @Published internal private(set) var activeMailboxScope: MailboxScope = .allEmails
     @Published internal private(set) var isMailboxHierarchyLoading = false
     @Published internal private(set) var mailboxActionStatusMessage: String?
     @Published internal private(set) var isMailboxActionRunning = false
@@ -2009,10 +2009,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: trimmedPath,
                                                           account: account)
+                        // Optimistic mailbox updates already patched local state. Avoid
+                        // forcing a full refresh here so thread-folder membership does not
+                        // disappear due to partial re-fetch windows.
+                        self.scheduleRethread(delay: 0)
+                    } else {
+                        self.shouldForceFullReload = true
+                        self.refreshNow()
                     }
-                    self.shouldForceFullReload = true
-                    self.refreshMailboxHierarchy(force: true)
-                    self.refreshNow()
                 }
             } catch {
                 await MainActor.run {
@@ -2074,9 +2078,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: destinationPath,
                                                           account: account)
-                        self.shouldForceFullReload = true
                         self.refreshMailboxHierarchy(force: true)
-                        self.refreshNow()
+                        self.scheduleRethread(delay: 0)
                     }
                     return
                 }
@@ -2115,10 +2118,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: destinationPath,
                                                           account: account)
+                        self.refreshMailboxHierarchy(force: true)
+                        // Keep the freshly-moved thread visible in folder overlays by
+                        // rethreading from current store state instead of forcing a
+                        // full mailbox refresh immediately.
+                        self.scheduleRethread(delay: 0)
+                    } else {
+                        self.shouldForceFullReload = true
+                        self.refreshMailboxHierarchy(force: true)
+                        self.refreshNow()
                     }
-                    self.shouldForceFullReload = true
-                    self.refreshMailboxHierarchy(force: true)
-                    self.refreshNow()
                 }
             } catch {
                 await MainActor.run {

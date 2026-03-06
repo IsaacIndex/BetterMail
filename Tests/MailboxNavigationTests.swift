@@ -431,6 +431,13 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertFalse(MailboxScope.allFolders.usesAllInboxAliases)
     }
 
+    @MainActor
+    func test_threadCanvasViewModel_defaultsToAllEmailsScope() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(),
+                                              inspectorSettings: InspectorViewSettings())
+        XCTAssertEqual(viewModel.activeMailboxScope, .allEmails)
+    }
+
     func test_mailboxPathFormatter_leafName_returnsFinalPathSegment() {
         XCTAssertEqual(MailboxPathFormatter.leafName(from: "Projects/Acme/Invoices"), "Invoices")
         XCTAssertEqual(MailboxPathFormatter.leafName(from: "Inbox"), "Inbox")
