@@ -470,74 +470,139 @@ internal actor MailAppleScriptClient {
 
     private func buildMailboxHierarchyScript() -> String {
         """
-        on appendMailboxRows(_mailboxes, _accountName, _parentPath)
-          set _rows to {}
-          tell application id "com.apple.mail"
-            repeat with _mailbox in _mailboxes
-              set _name to ""
-              try
-                set _name to (name of _mailbox as string)
-              on error
-                set _name to ""
-              end try
-              if _name is "" then
-                -- skip malformed entries
-              else
-                if _parentPath is "" then
-                  set _path to _name
-                  set _parent to ""
-                else
-                  set _path to _parentPath & "/" & _name
-                  set _parent to _parentPath
-                end if
-                copy {_accountName, _path, _name, _parent} to end of _rows
+        on trimText(_value)
+          set _s to _value as string
+          set _ws to {space, tab, return, linefeed}
+          repeat while _s is not "" and character 1 of _s is in _ws
+            set _s to text 2 thru -1 of _s
+          end repeat
+          repeat while _s is not "" and character -1 of _s is in _ws
+            set _s to text 1 thru -2 of _s
+          end repeat
+          return _s
+        end trimText
 
-                set _children to {}
-                try
-                  set _children to (every mailbox of _mailbox)
-                on error
-                  set _children to {}
-                end try
-                if (count of _children) > 0 then
-                  set _rows to _rows & my appendMailboxRows(_children, _accountName, _path)
-                end if
-              end if
-            end repeat
+        on childMailboxes(_containerRef)
+          tell application id "com.apple.mail"
+            try
+              return (every mailbox of _containerRef)
+            on error
+              try
+                return (mailboxes of _containerRef)
+              on error
+                return {}
+              end try
+            end try
           end tell
-          return _rows
-        end appendMailboxRows
+        end childMailboxes
+
+        on accountDisplayName(_accountRef)
+          set _accountName to ""
+          tell application id "com.apple.mail"
+            try
+              set _accountName to my trimText(name of _accountRef as string)
+            end try
+            if _accountName is "" then
+              try
+                set _accountName to my trimText(id of _accountRef as string)
+              end try
+            end if
+          end tell
+          if _accountName is "" then set _accountName to "Unknown Account"
+          return _accountName
+        end accountDisplayName
+
+        on mailboxPathWithinAccount(_mailboxRef, _accountName)
+          set _parts to {}
+          set _current to _mailboxRef
+          repeat with _depth from 1 to 128
+            set _name to ""
+            tell application id "com.apple.mail"
+              try
+                set _name to my trimText(name of _current as string)
+              end try
+            end tell
+            if _name is "" then exit repeat
+            set beginning of _parts to _name
+
+            set _nextContainer to missing value
+            tell application id "com.apple.mail"
+              try
+                set _nextContainer to (container of _current)
+              end try
+            end tell
+            if _nextContainer is missing value then exit repeat
+
+            set _nextName to ""
+            tell application id "com.apple.mail"
+              try
+                set _nextName to my trimText(name of _nextContainer as string)
+              end try
+            end tell
+            ignoring case
+              if _nextName is _accountName then exit repeat
+            end ignoring
+
+            set _hasParentContainer to true
+            tell application id "com.apple.mail"
+              try
+                set _probe to container of _nextContainer
+              on error
+                set _hasParentContainer to false
+              end try
+            end tell
+            if _hasParentContainer is false then exit repeat
+
+            set _current to _nextContainer
+          end repeat
+
+          set _originalTIDs to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to "/"
+          set _path to (_parts as string)
+          set AppleScript's text item delimiters to _originalTIDs
+          return _path
+        end mailboxPathWithinAccount
+
+        on mailboxParentPathWithinAccount(_mailboxRef, _accountName)
+          set _containerRef to missing value
+          tell application id "com.apple.mail"
+            try
+              set _containerRef to (container of _mailboxRef)
+            end try
+          end tell
+          if _containerRef is missing value then return ""
+
+          set _isMailboxContainer to true
+          tell application id "com.apple.mail"
+            try
+              set _probe to container of _containerRef
+            on error
+              set _isMailboxContainer to false
+            end try
+          end tell
+          if _isMailboxContainer is false then return ""
+
+          return my mailboxPathWithinAccount(_containerRef, _accountName)
+        end mailboxParentPathWithinAccount
 
         set _rows to {}
         tell application id \"com.apple.mail\"
           with timeout of 60 seconds
             repeat with _account in (every account)
-              set _accountName to (name of _account as string)
-              set _allMailboxes to {}
-              try
-                set _allMailboxes to (every mailbox of _account)
-              on error
-                set _allMailboxes to {}
-              end try
-
-              set _rootMailboxes to {}
+              set _accountName to my accountDisplayName(_account)
+              set _allMailboxes to my childMailboxes(_account)
               repeat with _mailbox in _allMailboxes
-                set _isRoot to true
+                set _name to ""
                 try
-                  set _parentMailbox to mailbox of _mailbox
-                  set _isRoot to false
-                on error
-                  set _isRoot to true
+                  set _name to my trimText(name of _mailbox as string)
                 end try
-                if _isRoot then
-                  copy _mailbox to end of _rootMailboxes
+                if _name is not "" then
+                  set _path to my mailboxPathWithinAccount(_mailbox, _accountName)
+                  if _path is "" then set _path to _name
+                  set _parentPath to my mailboxParentPathWithinAccount(_mailbox, _accountName)
+                  copy {_accountName, _path, _name, _parentPath} to end of _rows
                 end if
               end repeat
-
-              if (count of _rootMailboxes) > 0 then
-                set _rows to _rows & my appendMailboxRows(_rootMailboxes, _accountName, "")
-              else
-                set _rows to _rows & my appendMailboxRows(_allMailboxes, _accountName, "")
-              end if
             end repeat
           end timeout
         end tell

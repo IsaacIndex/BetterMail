@@ -26,6 +26,11 @@ This page records all directions attempted in this session for Apple Mail mailbo
    - avoid app terms in handlers unless wrapped in `tell application id "com.apple.mail"`,
    - remove fragile class-literal checks and use container-probe logic instead.
 10. Update tests around generated AppleScript snippets for resolver behavior.
+11. Disable name-based root-folder pruning in `MailboxHierarchyBuilder` because it can hide valid mailboxes when root and child names overlap.
+12. Replace recursive hierarchy construction with conservative per-account mailbox enumeration:
+   - enumerate all mailboxes from account scope (`every mailbox` with `mailboxes` fallback),
+   - derive path/parent via container-chain walk,
+   - prioritize completeness (show all folders) over perfect provider-specific nesting.
 
 ## Temporary product decision
 - Create-and-move UI path is temporarily hidden in the mailbox move sheet.

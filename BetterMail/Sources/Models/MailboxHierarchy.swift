@@ -175,40 +175,9 @@ internal enum MailboxHierarchyBuilder {
     }
 
     private static func deduplicatedFoldersForAccount(_ folders: [MailboxFolder]) -> [MailboxFolder] {
-        let uniqueFolders = deduplicatedByPathPreservingOrder(folders)
-        guard uniqueFolders.count > 1 else { return uniqueFolders }
-
-        let knownPaths = Set(uniqueFolders.map(\.path))
-        var rootPaths: Set<String> = []
-        var rootNameKeys: Set<String> = []
-        var childrenByParent: [String: [MailboxFolder]] = [:]
-
-        for folder in uniqueFolders {
-            if let resolvedParent = resolvedParentPath(for: folder, knownPaths: knownPaths) {
-                childrenByParent[resolvedParent, default: []].append(folder)
-            } else {
-                rootPaths.insert(folder.path)
-                rootNameKeys.insert(normalizedFolderNameKey(folder.name))
-            }
-        }
-
-        guard !rootPaths.isEmpty, !childrenByParent.isEmpty else { return uniqueFolders }
-
-        var rootNameKeysToDrop: Set<String> = []
-        for children in childrenByParent.values {
-            let childNameKeys = Set(children.map { normalizedFolderNameKey($0.name) })
-            let matchedNames = childNameKeys.intersection(rootNameKeys)
-            guard !matchedNames.isEmpty else { continue }
-            rootNameKeysToDrop.formUnion(matchedNames)
-        }
-
-        guard !rootNameKeysToDrop.isEmpty else { return uniqueFolders }
-
-        return uniqueFolders.filter { folder in
-            guard rootPaths.contains(folder.path) else { return true }
-            let key = normalizedFolderNameKey(folder.name)
-            return !rootNameKeysToDrop.contains(key)
-        }
+        // Keep only exact-path deduplication. Name-based root pruning was hiding
+        // valid mailboxes for some providers/accounts (for example Outlook).
+        deduplicatedByPathPreservingOrder(folders)
     }
 
     private static func resolvedParentPath(for folder: MailboxFolder, knownPaths: Set<String>) -> String? {
