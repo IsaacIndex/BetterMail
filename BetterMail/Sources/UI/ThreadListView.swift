@@ -689,6 +689,7 @@ private struct MailboxFolderMoveSheet: View {
     @State private var selectedParentPath: String?
     @State private var newFolderName: String = ""
     @State private var folderSearchQuery: String = ""
+    private let isCreateAndMoveEnabled = false
 
     private var forcedAccount: String? {
         viewModel.mailboxActionSelectionAccount
@@ -727,6 +728,9 @@ private struct MailboxFolderMoveSheet: View {
         guard !selectedAccount.isEmpty else { return false }
         guard viewModel.mailboxActionDisabledReason == nil else { return false }
         guard !viewModel.isMailboxActionRunning else { return false }
+        if !isCreateAndMoveEnabled && mode == .create {
+            return false
+        }
         switch mode {
         case .existing:
             return selectedExistingPath != nil && !folderChoices.isEmpty
@@ -789,6 +793,9 @@ private struct MailboxFolderMoveSheet: View {
     }
 
     private func submit() {
+        if !isCreateAndMoveEnabled && mode == .create {
+            return
+        }
         switch mode {
         case .existing:
             guard let selectedExistingPath else { return }
@@ -838,19 +845,21 @@ private struct MailboxFolderMoveSheet: View {
             .controlSize(.small)
             .disabled(forcedAccount != nil || viewModel.isMailboxActionRunning)
 
-            Picker(NSLocalizedString("mailbox.sheet.mode", comment: "Mailbox move sheet mode segmented control label"),
-                   selection: $mode) {
-                Text(NSLocalizedString("mailbox.sheet.mode.existing", comment: "Mode for moving to an existing mailbox folder"))
-                    .tag(MailboxMoveMode.existing)
-                Text(NSLocalizedString("mailbox.sheet.mode.create", comment: "Mode for creating a folder and moving"))
-                    .tag(MailboxMoveMode.create)
+            if isCreateAndMoveEnabled {
+                Picker(NSLocalizedString("mailbox.sheet.mode", comment: "Mailbox move sheet mode segmented control label"),
+                       selection: $mode) {
+                    Text(NSLocalizedString("mailbox.sheet.mode.existing", comment: "Mode for moving to an existing mailbox folder"))
+                        .tag(MailboxMoveMode.existing)
+                    Text(NSLocalizedString("mailbox.sheet.mode.create", comment: "Mode for creating a folder and moving"))
+                        .tag(MailboxMoveMode.create)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .disabled(viewModel.isMailboxActionRunning)
             }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .disabled(viewModel.isMailboxActionRunning)
 
             VStack(alignment: .leading, spacing: 8) {
-                if mode == .create {
+                if isCreateAndMoveEnabled && mode == .create {
                     TextField(NSLocalizedString("mailbox.sheet.new_name", comment: "New mailbox folder name field"),
                               text: $newFolderName)
                     .textFieldStyle(.roundedBorder)
@@ -900,7 +909,7 @@ private struct MailboxFolderMoveSheet: View {
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 4) {
-                                if mode == .create {
+                                if isCreateAndMoveEnabled && mode == .create {
                                     rootFolderRow
                                 }
                                 ForEach(filteredFolderRows) { row in
@@ -921,7 +930,7 @@ private struct MailboxFolderMoveSheet: View {
                         .stroke(cardStrokeColor)
                 )
 
-                Text(mode == .existing
+                Text(mode == .existing || !isCreateAndMoveEnabled
                      ? NSLocalizedString("mailbox.sheet.helper.existing", comment: "Helper text for existing folder move mode")
                      : NSLocalizedString("mailbox.sheet.helper.create", comment: "Helper text for create-and-move mode"))
                 .font(.caption2)
@@ -961,6 +970,9 @@ private struct MailboxFolderMoveSheet: View {
         }
         .padding(14)
         .onAppear {
+            if !isCreateAndMoveEnabled {
+                mode = .existing
+            }
             setDefaultSelections()
             if viewModel.mailboxAccounts.isEmpty || folderChoices.isEmpty {
                 viewModel.refreshMailboxHierarchy()
