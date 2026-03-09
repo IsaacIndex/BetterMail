@@ -24,7 +24,7 @@ internal struct MailboxSidebarView: View {
     @State private var activeDropIndicator: DropIndicator?
     @State private var activeDraggedFolderID: String?
     @State private var rowFrameByFolderID: [String: CGRect] = [:]
-    @State private var expandedFolderIDs: Set<String> = []
+    @StateObject private var expansionSettings = MailboxSidebarExpansionSettings()
 
     internal var body: some View {
         List(selection: $selectedScope) {
@@ -95,7 +95,7 @@ internal struct MailboxSidebarView: View {
         .onPreferenceChange(FolderRowFramePreferenceKey.self) { rowFrameByFolderID = $0 }
         .onChange(of: viewModel.mailboxAccounts) { _, newAccounts in
             let validIDs = Set(MailboxHierarchyBuilder.folderIDs(in: newAccounts))
-            expandedFolderIDs.formIntersection(validIDs)
+            expansionSettings.prune(validIDs: validIDs)
         }
     }
 
@@ -106,7 +106,7 @@ internal struct MailboxSidebarView: View {
     }
 
     private func folderSidebarRow(folder: MailboxFolderNode, depth: Int) -> some View {
-        let isExpanded = expandedFolderIDs.contains(folder.id)
+        let isExpanded = expansionSettings.expandedFolderIDs.contains(folder.id)
         let hasChildren = !folder.children.isEmpty
 
         return HStack(spacing: 6) {
@@ -125,11 +125,7 @@ internal struct MailboxSidebarView: View {
             .onTapGesture {
                 guard hasChildren else { return }
                 withAnimation(.easeOut(duration: 0.18)) {
-                    if isExpanded {
-                        expandedFolderIDs.remove(folder.id)
-                    } else {
-                        expandedFolderIDs.insert(folder.id)
-                    }
+                    expansionSettings.toggle(folder.id)
                 }
             }
 
@@ -190,7 +186,7 @@ internal struct MailboxSidebarView: View {
         rows.reserveCapacity(nodes.count)
         for node in nodes {
             rows.append(VisibleFolderRow(node: node, depth: depth))
-            if expandedFolderIDs.contains(node.id) {
+            if expansionSettings.expandedFolderIDs.contains(node.id) {
                 rows.append(contentsOf: visibleFolderRows(in: node.children, depth: depth + 1))
             }
         }
