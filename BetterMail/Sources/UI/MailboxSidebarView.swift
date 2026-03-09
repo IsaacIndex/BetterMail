@@ -2,6 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 internal struct MailboxSidebarView: View {
+    fileprivate struct VisibleFolderRow: Identifiable {
+        let node: MailboxFolderNode
+        let depth: Int
+
+        var id: String { node.id }
+    }
+
     fileprivate enum DropLinePosition {
         case before
         case after
@@ -17,6 +24,7 @@ internal struct MailboxSidebarView: View {
     @State private var activeDropIndicator: DropIndicator?
     @State private var activeDraggedFolderID: String?
     @State private var rowFrameByFolderID: [String: CGRect] = [:]
+    @State private var expandedFolderIDs: Set<String> = []
 
     internal var body: some View {
         List(selection: $selectedScope) {
@@ -35,8 +43,8 @@ internal struct MailboxSidebarView: View {
 
             ForEach(viewModel.mailboxAccounts) { account in
                 Section(account.name) {
-                    OutlineGroup(account.folders, children: \.childNodes) { folder in
-                        folderSidebarRow(folder: folder)
+                    ForEach(visibleFolderRows(in: account.folders)) { row in
+                        folderSidebarRow(folder: row.node, depth: row.depth)
                     }
                 }
             }
@@ -85,6 +93,10 @@ internal struct MailboxSidebarView: View {
             return false
         }
         .onPreferenceChange(FolderRowFramePreferenceKey.self) { rowFrameByFolderID = $0 }
+        .onChange(of: viewModel.mailboxAccounts) { _, newAccounts in
+            let validIDs = Set(MailboxHierarchyBuilder.folderIDs(in: newAccounts))
+            expandedFolderIDs.formIntersection(validIDs)
+        }
     }
 
     private func sidebarRow(scope: MailboxScope, title: String, systemImage: String) -> some View {
@@ -93,10 +105,39 @@ internal struct MailboxSidebarView: View {
             .tag(scope)
     }
 
-    private func folderSidebarRow(folder: MailboxFolderNode) -> some View {
-        return sidebarRow(scope: .mailboxFolder(account: folder.account, path: folder.path),
-                          title: folder.name,
-                          systemImage: "folder")
+    private func folderSidebarRow(folder: MailboxFolderNode, depth: Int) -> some View {
+        let isExpanded = expandedFolderIDs.contains(folder.id)
+        let hasChildren = !folder.children.isEmpty
+
+        return HStack(spacing: 6) {
+            Group {
+                if hasChildren {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 10, height: 10)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard hasChildren else { return }
+                withAnimation(.easeOut(duration: 0.18)) {
+                    if isExpanded {
+                        expandedFolderIDs.remove(folder.id)
+                    } else {
+                        expandedFolderIDs.insert(folder.id)
+                    }
+                }
+            }
+
+            sidebarRow(scope: .mailboxFolder(account: folder.account, path: folder.path),
+                       title: folder.name,
+                       systemImage: "folder")
+        }
+            .padding(.leading, CGFloat(depth) * 14)
             .overlay {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(activeDropIndicator?.folderID == folder.id ? Color.accentColor.opacity(0.06) : Color.clear)
@@ -140,6 +181,20 @@ internal struct MailboxSidebarView: View {
                                                         viewModel: viewModel,
                                                         activeDropIndicator: $activeDropIndicator,
                                                         activeDraggedFolderID: $activeDraggedFolderID))
+            .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity),
+                                    removal: .opacity))
+    }
+
+    private func visibleFolderRows(in nodes: [MailboxFolderNode], depth: Int = 0) -> [VisibleFolderRow] {
+        var rows: [VisibleFolderRow] = []
+        rows.reserveCapacity(nodes.count)
+        for node in nodes {
+            rows.append(VisibleFolderRow(node: node, depth: depth))
+            if expandedFolderIDs.contains(node.id) {
+                rows.append(contentsOf: visibleFolderRows(in: node.children, depth: depth + 1))
+            }
+        }
+        return rows
     }
 
     private func folderDragPreview(title: String) -> some View {

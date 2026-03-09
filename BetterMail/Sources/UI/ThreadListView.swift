@@ -353,7 +353,10 @@ internal struct ThreadListView: View {
 
     @ViewBuilder
     private var refreshButton: some View {
-        let button = Button(action: { viewModel.refreshNow() }) {
+        let button = Button(action: {
+            viewModel.refreshMailboxHierarchy(force: true)
+            viewModel.refreshNow()
+        }) {
             Label("Refresh", systemImage: "arrow.clockwise")
         }
         .disabled(viewModel.isRefreshing)
