@@ -57,7 +57,7 @@ internal struct ThreadInspectorView: View {
     private func details(for node: ThreadNode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(subjectText(for: node))
-                .font(font(size: 20, weight: .semibold))
+                .font(font(size: 15, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
 
             if node.message.isUnread {
@@ -91,7 +91,7 @@ internal struct ThreadInspectorView: View {
                     .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Text(snippetText(for: node))
-                    .font(font(size: 16))
+                    .font(font(size: 13))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -365,10 +365,10 @@ private struct InspectorField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(font(size: 12))
+                .font(font(size: 11))
                 .foregroundStyle(labelForegroundStyle)
             Text(value)
-                .font(font(size: 16))
+                .font(font(size: 13))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

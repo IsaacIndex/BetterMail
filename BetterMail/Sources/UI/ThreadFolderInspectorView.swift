@@ -294,7 +294,7 @@ internal struct ThreadFolderInspectorView: View {
                          ? NSLocalizedString("threadcanvas.subject.placeholder",
                                              comment: "Placeholder subject when missing")
                          : draftTitle)
-                        .font(font(size: 14, weight: .semibold))
+                        .font(font(size: 13, weight: .semibold))
                         .foregroundStyle(inspectorPrimaryForegroundStyle)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
@@ -337,7 +337,7 @@ internal struct ThreadFolderInspectorView: View {
             }
             ScrollView {
                 Text(displayText)
-                    .font(font(size: 16))
+                    .font(font(size: 13))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .padding(8)

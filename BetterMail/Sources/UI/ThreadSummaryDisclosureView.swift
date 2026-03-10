@@ -66,7 +66,7 @@ internal struct ThreadSummaryDisclosureView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if !state.text.isEmpty {
                         Text(state.text)
-                            .font(font(size: 13))
+                            .font(font(size: 12))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if !state.statusMessage.isEmpty {
