@@ -50,6 +50,18 @@ internal struct ThreadCanvasView: View {
         return formatter
     }()
 
+    internal init(viewModel: ThreadCanvasViewModel,
+                  displaySettings: ThreadCanvasDisplaySettings,
+                  topInset: CGFloat) {
+        self.viewModel = viewModel
+        self.displaySettings = displaySettings
+        self.topInset = topInset
+        let initialZoom = min(max(displaySettings.currentZoom, ThreadCanvasLayoutMetrics.minZoom),
+                              ThreadCanvasLayoutMetrics.maxZoom)
+        _zoomScale = State(initialValue: initialZoom)
+        _accumulatedZoom = State(initialValue: initialZoom)
+    }
+
     private struct CanvasVisibilityState {
         let headerStackHeight: CGFloat
         let totalTopPadding: CGFloat

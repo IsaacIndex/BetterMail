@@ -29,4 +29,24 @@ final class ThreadCanvasDisplaySettingsTests: XCTestCase {
 
         XCTAssertEqual(metrics.fontScale, 1.25, accuracy: 0.0001)
     }
+
+    func test_currentZoom_whenUpdatedBelowMinimum_clampsToMinimum() {
+        let settings = ThreadCanvasDisplaySettings()
+
+        settings.updateCurrentZoom(0.001)
+
+        XCTAssertEqual(settings.currentZoom,
+                       ThreadCanvasLayoutMetrics.minZoom,
+                       accuracy: 0.0001)
+    }
+
+    func test_currentZoom_whenUpdatedAboveMaximum_clampsToMaximum() {
+        let settings = ThreadCanvasDisplaySettings()
+
+        settings.updateCurrentZoom(10)
+
+        XCTAssertEqual(settings.currentZoom,
+                       ThreadCanvasLayoutMetrics.maxZoom,
+                       accuracy: 0.0001)
+    }
 }
