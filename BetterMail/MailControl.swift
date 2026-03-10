@@ -251,6 +251,8 @@ internal struct MailControl {
     nonisolated internal static func openMessageViaFilteredFallback(_ metadata: OpenMessageMetadata) async throws -> FilteredFallbackOutcome {
         let subject = metadata.subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let senderToken = heuristicSenderToken(from: metadata.sender)
+        let mailbox = metadata.mailbox.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = metadata.account.trimmingCharacters(in: .whitespacesAndNewlines)
         let components = Calendar.current.dateComponents([.year, .month, .day], from: metadata.date)
         let year = components.year ?? 0
         let month = components.month ?? 0
@@ -258,6 +260,8 @@ internal struct MailControl {
 
         let script = filteredFallbackOpenScript(subject: subject,
                                                 sender: senderToken,
+                                                mailbox: mailbox,
+                                                account: account,
                                                 year: year,
                                                 month: month,
                                                 day: day)
@@ -545,15 +549,20 @@ internal struct MailControl {
         }
     }
 
-    private static func filteredFallbackOpenScript(subject: String,
-                                                   sender: String,
-                                                   year: Int,
-                                                   month: Int,
-                                                   day: Int) -> String {
+    internal static func filteredFallbackOpenScript(subject: String,
+                                                    sender: String,
+                                                    mailbox: String,
+                                                    account: String,
+                                                    year: Int,
+                                                    month: Int,
+                                                    day: Int) -> String {
         let safeSubject = escapedForAppleScript(subject)
         let safeSender = escapedForAppleScript(sender)
+        let safeMailbox = escapedForAppleScript(mailbox)
+        let safeAccount = escapedForAppleScript(account)
 
         return """
+        \(mailboxPathResolverHandlersScript())
         on monthEnumFromNumber(mNum)
           if mNum is 1 then return January
           if mNum is 2 then return February
@@ -579,30 +588,119 @@ internal struct MailControl {
           return dt
         end startOfDayForYMD
 
-        tell application "Mail"
-          with timeout of 30 seconds
+        using terms from application "Mail"
+          on messageMatchesTarget(_msg, _targetSubject, _targetSender)
+            set _msgValue to _msg
+            try
+              set _msgValue to contents of _msg
+            end try
+            set _subjectText to ""
+            set _senderText to ""
+            try
+              set _subjectText to (subject of _msgValue as string)
+            end try
+            try
+              set _senderText to (sender of _msgValue as string)
+            end try
+            set _include to true
+            ignoring case
+              if _targetSubject is not "" then
+                set _include to _include and (_subjectText contains _targetSubject)
+              end if
+              if _targetSender is not "" then
+                set _include to _include and (_senderText contains _targetSender)
+              end if
+            end ignoring
+            return _include
+          end messageMatchesTarget
+
+          on collectDescendantMailboxes(_container)
+            set _results to {}
+            set _directMailboxes to {}
+            try
+              set _directMailboxes to every mailbox of _container
+            on error
+              return _results
+            end try
+            repeat with _mailbox in _directMailboxes
+              set _mailboxValue to _mailbox
+              try
+                set _mailboxValue to contents of _mailbox
+              end try
+              copy _mailboxValue to end of _results
+              set _results to _results & my collectDescendantMailboxes(_mailboxValue)
+            end repeat
+            return _results
+          end collectDescendantMailboxes
+
+          on openFirstMatchingMessageInMailbox(_mailboxRef, _startDate, _endDate, _targetSubject, _targetSender)
+            set _candidateMessages to {}
+            try
+              set _candidateMessages to (messages of _mailboxRef whose date received is greater than or equal to _startDate and date received is less than _endDate)
+            on error
+              return false
+            end try
+            repeat with _candidateMessage in _candidateMessages
+              set _candidateMessageValue to _candidateMessage
+              try
+                set _candidateMessageValue to contents of _candidateMessage
+              end try
+              if my messageMatchesTarget(_candidateMessageValue, _targetSubject, _targetSender) then
+                try
+                  open _candidateMessageValue
+                on error
+                  try
+                    set _viewer to message viewer 1
+                    set selected messages of _viewer to {_candidateMessageValue}
+                  on error
+                    return false
+                  end try
+                end try
+                activate
+                return true
+              end if
+            end repeat
+            return false
+          end openFirstMatchingMessageInMailbox
+        end using terms from
+
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
             set _targetSubject to "\(safeSubject)"
             set _targetSender to "\(safeSender)"
+            set _sourceMailboxPath to "\(safeMailbox)"
+            set _sourceAccount to "\(safeAccount)"
             set _targetYear to \(year)
             set _targetMonth to \(month)
             set _targetDay to \(day)
             set _startDate to my startOfDayForYMD(_targetYear, _targetMonth, _targetDay)
             set _endDate to _startDate + (1 * days)
-            ignoring case
-              set _matches to (first message of inbox whose subject contains _targetSubject and sender contains _targetSender and date received is greater than or equal to _startDate and date received is less than _endDate)
-            end ignoring
-            if (count of _matches) is 0 then return false
-            set _match to item 1 of _matches
-            try
-              open _match
-            on error
+            set _sourceMailbox to missing value
+            if _sourceMailboxPath is not "" and _sourceAccount is not "" then
               try
-                set _viewer to message viewer 1
-                set selected messages of _viewer to {_match}
+                set _sourceMailbox to my resolveMailboxByPath(_sourceAccount, _sourceMailboxPath)
               end try
-            end try
-            activate
-            return true
+            end if
+            if _sourceMailbox is not missing value then
+              if my openFirstMatchingMessageInMailbox(_sourceMailbox, _startDate, _endDate, _targetSubject, _targetSender) then return true
+            end if
+
+            set _accounts to my matchingAccounts(_sourceAccount)
+            repeat with _accountRef in _accounts
+              set _accountValue to _accountRef
+              try
+                set _accountValue to contents of _accountRef
+              end try
+              set _candidateMailboxes to my collectDescendantMailboxes(_accountValue)
+              repeat with _candidateMailbox in _candidateMailboxes
+                set _candidateMailboxValue to _candidateMailbox
+                try
+                  set _candidateMailboxValue to contents of _candidateMailbox
+                end try
+                if my openFirstMatchingMessageInMailbox(_candidateMailboxValue, _startDate, _endDate, _targetSubject, _targetSender) then return true
+              end repeat
+            end repeat
+            return false
           end timeout
         end tell
         """

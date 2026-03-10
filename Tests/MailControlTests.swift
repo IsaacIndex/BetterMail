@@ -92,6 +92,25 @@ final class MailControlTests: XCTestCase {
         XCTAssertTrue(script.contains("name:\"Receipts\""))
     }
 
+    func test_filteredFallbackOpenScript_searchesAllMessages_notJustInbox() {
+        let script = MailControl.filteredFallbackOpenScript(subject: "Status Update",
+                                                            sender: "alice@example.com",
+                                                            mailbox: "Archive/Clients",
+                                                            account: "Work",
+                                                            year: 2026,
+                                                            month: 3,
+                                                            day: 10)
+
+        XCTAssertTrue(script.contains("set _sourceMailboxPath to \"Archive/Clients\""))
+        XCTAssertTrue(script.contains("set _sourceAccount to \"Work\""))
+        XCTAssertTrue(script.contains("set _sourceMailbox to my resolveMailboxByPath(_sourceAccount, _sourceMailboxPath)"))
+        XCTAssertTrue(script.contains("if my openFirstMatchingMessageInMailbox(_sourceMailbox, _startDate, _endDate, _targetSubject, _targetSender) then return true"))
+        XCTAssertTrue(script.contains("set _accounts to my matchingAccounts(_sourceAccount)"))
+        XCTAssertTrue(script.contains("set _candidateMailboxes to my collectDescendantMailboxes(_accountValue)"))
+        XCTAssertFalse(script.contains("first message of inbox"))
+        XCTAssertFalse(script.contains("set _matches to (every message whose subject contains _targetSubject and sender contains _targetSender"))
+    }
+
     func test_buildMoveMessagesByInternalIDScript_includesDestinationAndInternalIDs() {
         let script = MailControl.buildMoveMessagesByInternalIDScript(internalIDs: ["101", "202"],
                                                                      mailboxPath: "Projects/Acme",
