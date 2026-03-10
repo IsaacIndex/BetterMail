@@ -4,7 +4,15 @@ import SwiftUI
 
 @MainActor
 internal final class ThreadCanvasDisplaySettings: ObservableObject {
-    private static let textScaleStorageKey = "threadCanvasTextScale"
+    private enum StorageKey {
+        static let detailedThreshold = "threadCanvasZoomDetailedThreshold"
+        static let compactThreshold = "threadCanvasZoomCompactThreshold"
+        static let minimalThreshold = "threadCanvasZoomMinimalThreshold"
+        static let currentZoom = "threadCanvasCurrentZoom"
+        static let textScale = "threadCanvasTextScale"
+        static let viewMode = "threadCanvasViewMode"
+    }
+
     internal static let defaultDetailedThreshold: CGFloat = 0.65
     internal static let defaultCompactThreshold: CGFloat = 0.4
     internal static let defaultMinimalThreshold: CGFloat = 0.2
@@ -13,12 +21,6 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     internal static let minimumTextScale: CGFloat = 0.5
     internal static let maximumTextScale: CGFloat = 1.6
     internal static let defaultViewMode: ThreadCanvasViewMode = .default
-
-    @AppStorage("threadCanvasZoomDetailedThreshold") private var storedDetailedThreshold = ThreadCanvasDisplaySettings.defaultDetailedThreshold
-    @AppStorage("threadCanvasZoomCompactThreshold") private var storedCompactThreshold = ThreadCanvasDisplaySettings.defaultCompactThreshold
-    @AppStorage("threadCanvasZoomMinimalThreshold") private var storedMinimalThreshold = ThreadCanvasDisplaySettings.defaultMinimalThreshold
-    @AppStorage("threadCanvasCurrentZoom") private var storedCurrentZoom = ThreadCanvasDisplaySettings.defaultCurrentZoom
-    @AppStorage("threadCanvasViewMode") private var storedViewMode = ThreadCanvasDisplaySettings.defaultViewMode.rawValue
 
     @Published internal var detailedThreshold: CGFloat = ThreadCanvasDisplaySettings.defaultDetailedThreshold {
         didSet { normalizeSettings() }
@@ -33,7 +35,7 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
         didSet { normalizeSettings() }
     }
     @Published internal var viewMode: ThreadCanvasViewMode = ThreadCanvasDisplaySettings.defaultViewMode {
-        didSet { storedViewMode = viewMode.rawValue }
+        didSet { userDefaults.set(viewMode.rawValue, forKey: StorageKey.viewMode) }
     }
 
     @Published internal private(set) var currentZoom: CGFloat = ThreadCanvasDisplaySettings.defaultCurrentZoom
@@ -43,19 +45,24 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
 
     internal init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        detailedThreshold = storedDetailedThreshold
-        compactThreshold = storedCompactThreshold
-        minimalThreshold = storedMinimalThreshold
-        currentZoom = storedCurrentZoom
-        textScale = storedTextScale
-        viewMode = ThreadCanvasViewMode(rawValue: storedViewMode) ?? ThreadCanvasDisplaySettings.defaultViewMode
+        detailedThreshold = storedCGFloat(forKey: StorageKey.detailedThreshold,
+                                          defaultValue: Self.defaultDetailedThreshold)
+        compactThreshold = storedCGFloat(forKey: StorageKey.compactThreshold,
+                                         defaultValue: Self.defaultCompactThreshold)
+        minimalThreshold = storedCGFloat(forKey: StorageKey.minimalThreshold,
+                                         defaultValue: Self.defaultMinimalThreshold)
+        currentZoom = storedCGFloat(forKey: StorageKey.currentZoom,
+                                    defaultValue: Self.defaultCurrentZoom)
+        textScale = storedCGFloat(forKey: StorageKey.textScale,
+                                  defaultValue: Self.defaultTextScale)
+        viewMode = storedViewMode()
         normalizeSettings()
     }
 
     internal func updateCurrentZoom(_ value: CGFloat) {
         let clamped = min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
         currentZoom = clamped
-        storedCurrentZoom = clamped
+        storeCGFloat(clamped, forKey: StorageKey.currentZoom)
     }
 
     internal func toggleViewMode() {
@@ -93,24 +100,30 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
         if minimal != minimalThreshold { minimalThreshold = minimal }
         if textScale != self.textScale { self.textScale = textScale }
 
-        storedDetailedThreshold = detailed
-        storedCompactThreshold = compact
-        storedMinimalThreshold = minimal
-        storedTextScale = textScale
+        storeCGFloat(detailed, forKey: StorageKey.detailedThreshold)
+        storeCGFloat(compact, forKey: StorageKey.compactThreshold)
+        storeCGFloat(minimal, forKey: StorageKey.minimalThreshold)
+        storeCGFloat(textScale, forKey: StorageKey.textScale)
 
         isNormalizing = false
     }
 
-    private var storedTextScale: CGFloat {
-        get {
-            guard let storedValue = userDefaults.object(forKey: Self.textScaleStorageKey) as? NSNumber else {
-                return Self.defaultTextScale
-            }
-            return CGFloat(truncating: storedValue)
+    private func storedCGFloat(forKey key: String, defaultValue: CGFloat) -> CGFloat {
+        guard userDefaults.object(forKey: key) != nil else {
+            return defaultValue
         }
-        set {
-            userDefaults.set(Double(newValue), forKey: Self.textScaleStorageKey)
+        return CGFloat(userDefaults.double(forKey: key))
+    }
+
+    private func storeCGFloat(_ value: CGFloat, forKey key: String) {
+        userDefaults.set(Double(value), forKey: key)
+    }
+
+    private func storedViewMode() -> ThreadCanvasViewMode {
+        guard let storedValue = userDefaults.string(forKey: StorageKey.viewMode) else {
+            return Self.defaultViewMode
         }
+        return ThreadCanvasViewMode(rawValue: storedValue) ?? Self.defaultViewMode
     }
 }
 
