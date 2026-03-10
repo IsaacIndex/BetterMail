@@ -785,7 +785,6 @@ internal struct ThreadCanvasView: View {
     private func folderColumnBackgroundLayer(chromeData: [FolderChromeData],
                                              metrics: ThreadCanvasLayoutMetrics,
                                              headerHeight: CGFloat) -> some View {
-        let maxDepth = chromeData.map(\.depth).max() ?? 0
         let ordered = chromeData.sorted { $0.depth < $1.depth }
         ForEach(ordered) { chrome in
             let topExtension = max(headerHeight - chrome.headerTopOffset, 0)
@@ -793,16 +792,14 @@ internal struct ThreadCanvasView: View {
             // Height also grows upward to cover the space between header and first day band.
             let extendedMinY = -(topExtension)
             let extendedHeight = chrome.frame.height + chrome.frame.minY + topExtension
-            let expansion = folderHorizontalExpansion(for: chrome, maxDepth: maxDepth)
-            let backgroundWidth = max(chrome.frame.width + (expansion * 2), metrics.columnWidth * 0.6)
-            let backgroundMinX = chrome.frame.minX - expansion
+            let backgroundWidth = max(chrome.frame.width, metrics.columnWidth * 0.6)
             FolderColumnBackground(accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6)
                 .frame(width: backgroundWidth,
                        height: extendedHeight,
                        alignment: .topLeading)
-                .offset(x: backgroundMinX,
+                .offset(x: chrome.frame.minX,
                         y: extendedMinY)
         }
     }
@@ -811,12 +808,10 @@ internal struct ThreadCanvasView: View {
     private func folderDropHighlightLayer(chromeData: [FolderChromeData],
                                           metrics: ThreadCanvasLayoutMetrics,
                                           headerHeight: CGFloat) -> some View {
-        let maxDepth = chromeData.map(\.depth).max() ?? 0
         ForEach(chromeData) { chrome in
             if activeDropFolderID == chrome.id {
                 let dropFrame = folderDropFrame(for: chrome,
-                                                headerHeight: headerHeight,
-                                                maxDepth: maxDepth)
+                                                headerHeight: headerHeight)
                 RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
                     .stroke(accentColor(for: chrome.color).opacity(isDropHighlightPulsing ? 1.0 : 0.85),
                             lineWidth: isDropHighlightPulsing ? 4 : 3)
@@ -833,11 +828,8 @@ internal struct ThreadCanvasView: View {
                                          rawZoom: CGFloat,
                                          readabilityMode: ThreadCanvasReadabilityMode) -> some View {
         ZStack(alignment: .topLeading) {
-            let maxDepth = chromeData.map(\.depth).max() ?? 0
             ForEach(chromeData.sorted { $0.depth < $1.depth }) { chrome in
-                let headerFrame = folderHeaderFrame(for: chrome,
-                                                    metrics: metrics,
-                                                    maxDepth: maxDepth)
+                let headerFrame = folderHeaderFrame(for: chrome, metrics: metrics)
                 let maxPinnedY = max(headerFrame.minY, chrome.frame.maxY - chrome.headerHeight)
                 let pinnedY = min(headerFrame.minY + rawScrollOffset, maxPinnedY)
                 FolderColumnHeader(title: chrome.title,
@@ -1090,7 +1082,6 @@ internal struct ThreadCanvasView: View {
     private func folderHitTestID(at location: CGPoint,
                                  chromeData: [FolderChromeData],
                                  headerHeight: CGFloat) -> String? {
-        let maxDepth = chromeData.map(\.depth).max() ?? 0
         let ordered = chromeData.sorted { lhs, rhs in
             if lhs.depth == rhs.depth {
                 return lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
@@ -1098,9 +1089,7 @@ internal struct ThreadCanvasView: View {
             return lhs.depth > rhs.depth
         }
         for chrome in ordered {
-            let frame = folderDropFrame(for: chrome,
-                                        headerHeight: headerHeight,
-                                        maxDepth: maxDepth)
+            let frame = folderDropFrame(for: chrome, headerHeight: headerHeight)
             if frame.contains(location) {
                 return chrome.id
             }
@@ -1109,15 +1098,13 @@ internal struct ThreadCanvasView: View {
     }
 
     private func folderDropFrame(for chrome: FolderChromeData,
-                                 headerHeight: CGFloat,
-                                 maxDepth: Int) -> CGRect {
+                                 headerHeight: CGFloat) -> CGRect {
         let topExtension = max(headerHeight - chrome.headerTopOffset, 0)
         let extendedMinY = -(topExtension)
         let extendedHeight = chrome.frame.height + chrome.frame.minY + topExtension
-        let expansion = folderHorizontalExpansion(for: chrome, maxDepth: maxDepth)
-        return CGRect(x: chrome.frame.minX - expansion,
+        return CGRect(x: chrome.frame.minX,
                       y: extendedMinY,
-                      width: chrome.frame.width + (expansion * 2),
+                      width: chrome.frame.width,
                       height: extendedHeight)
     }
 
@@ -1166,11 +1153,9 @@ internal struct ThreadCanvasView: View {
     }
 
     private func folderHeaderFrame(for chrome: FolderChromeData,
-                                   metrics: ThreadCanvasLayoutMetrics,
-                                   maxDepth: Int) -> CGRect {
-        let expansion = folderHorizontalExpansion(for: chrome, maxDepth: maxDepth)
-        let width = max(chrome.frame.width + (expansion * 2), metrics.columnWidth * 0.6)
-        return CGRect(x: chrome.frame.minX - expansion,
+                                   metrics: ThreadCanvasLayoutMetrics) -> CGRect {
+        let width = max(chrome.frame.width, metrics.columnWidth * 0.6)
+        return CGRect(x: chrome.frame.minX,
                       y: chrome.headerTopOffset,
                       width: width,
                       height: chrome.headerHeight)
@@ -1230,12 +1215,6 @@ internal struct ThreadCanvasView: View {
                                 headerTopOffset: headerTopOffset,
                                 headerIndent: headerIndent,
                                 indentStep: indentStep)
-    }
-
-    private func folderHorizontalExpansion(for chrome: FolderChromeData,
-                                           maxDepth: Int) -> CGFloat {
-        let levelsAbove = max(0, maxDepth - chrome.depth)
-        return CGFloat(levelsAbove) * chrome.indentStep
     }
     @ViewBuilder
     private func floatingDateRail(layout: ThreadCanvasLayout,
