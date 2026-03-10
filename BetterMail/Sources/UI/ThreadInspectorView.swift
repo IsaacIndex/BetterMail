@@ -6,6 +6,7 @@ internal struct ThreadInspectorView: View {
     internal let summaryState: ThreadSummaryState?
     internal let summaryExpansion: Binding<Bool>?
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    internal let textScale: CGFloat
     internal let openInMailState: OpenInMailState?
     internal let canRegenerateSummary: Bool
     internal let onRegenerateSummary: (() -> Void)?
@@ -27,7 +28,7 @@ internal struct ThreadInspectorView: View {
     internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
-                .font(.headline)
+                .font(font(size: 13, weight: .semibold))
 
             Divider()
 
@@ -56,12 +57,12 @@ internal struct ThreadInspectorView: View {
     private func details(for node: ThreadNode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(subjectText(for: node))
-                .font(.title3.weight(.semibold))
+                .font(font(size: 20, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
 
             if node.message.isUnread {
                 Label(NSLocalizedString("threadcanvas.inspector.unread", comment: "Unread indicator"), systemImage: "circle.fill")
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(Color.accentColor)
             }
 
@@ -69,24 +70,28 @@ internal struct ThreadInspectorView: View {
                 ThreadSummaryDisclosureView(title: NSLocalizedString("threadcanvas.inspector.summary.title",
                                                                      comment: "Title for the thread summary disclosure in the inspector"),
                                              state: summaryState,
+                                             textScale: textScale,
                                              onRegenerate: onRegenerateSummary,
                                              isRegenerateEnabled: canRegenerateSummary,
                                              isExpanded: summaryExpansion)
             }
 
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.from", comment: "From label"),
-                           value: node.message.from)
+                           value: node.message.from,
+                           textScale: textScale)
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.to", comment: "To label"),
-                           value: node.message.to)
+                           value: node.message.to,
+                           textScale: textScale)
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.date", comment: "Date label"),
-                           value: Self.dateFormatter.string(from: node.message.date))
+                           value: Self.dateFormatter.string(from: node.message.date),
+                           textScale: textScale)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(NSLocalizedString("threadcanvas.inspector.snippet", comment: "Snippet label"))
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Text(snippetText(for: node))
-                    .font(.callout)
+                    .font(font(size: 16))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -188,7 +193,7 @@ internal struct ThreadInspectorView: View {
             hintText(for: status)
             copyControls(for: node)
         }
-        .font(.caption)
+        .font(font(size: 12))
         .foregroundStyle(inspectorSecondaryForegroundStyle)
     }
 
@@ -305,7 +310,7 @@ internal struct ThreadInspectorView: View {
     private var copyToast: some View {
         if isCopyToastVisible {
             Text(copyToastMessage)
-                .font(.caption)
+                .font(font(size: 12))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(copyToastBackground)
@@ -343,11 +348,16 @@ internal struct ThreadInspectorView: View {
         }
         return Color.white.opacity(0.95)
     }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
+    }
 }
 
 private struct InspectorField: View {
     let label: String
     let value: String
+    let textScale: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -355,10 +365,10 @@ private struct InspectorField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .font(font(size: 12))
                 .foregroundStyle(labelForegroundStyle)
             Text(value)
-                .font(.callout)
+                .font(font(size: 16))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -372,6 +382,10 @@ private struct InspectorField: View {
             return Color.white.opacity(0.75)
         }
         return Color.secondary
+    }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
     }
 }
 

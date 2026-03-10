@@ -3,6 +3,7 @@ import SwiftUI
 
 internal struct ThreadFolderInspectorView: View {
     internal let folder: ThreadFolder
+    internal let textScale: CGFloat
     internal let minimapModel: FolderMinimapModel?
     internal let minimapSelectedNodeID: String?
     internal let minimapViewportRect: CGRect?
@@ -28,6 +29,7 @@ internal struct ThreadFolderInspectorView: View {
     @State private var pendingSaveTask: Task<Void, Never>?
 
     internal init(folder: ThreadFolder,
+                  textScale: CGFloat,
                   minimapModel: FolderMinimapModel?,
                   minimapSelectedNodeID: String?,
                   minimapViewportRect: CGRect?,
@@ -40,6 +42,7 @@ internal struct ThreadFolderInspectorView: View {
                   onPreview: @escaping (String, ThreadFolderColor) -> Void,
                   onSave: @escaping (String, ThreadFolderColor) -> Void) {
         self.folder = folder
+        self.textScale = textScale
         self.minimapModel = minimapModel
         self.minimapSelectedNodeID = minimapSelectedNodeID
         self.minimapViewportRect = minimapViewportRect
@@ -65,7 +68,7 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.title",
                                    comment: "Title for the folder inspector panel"))
-                .font(.headline)
+                .font(font(size: 13, weight: .semibold))
 
             Divider()
 
@@ -104,12 +107,12 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.minimap",
                                        comment: "Folder minimap section label"))
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Spacer()
                 Button(action: onJumpToLatest) {
                     Image(systemName: "arrow.up.to.line.compact")
-                        .font(.caption)
+                        .font(font(size: 12))
                 }
                 .buttonStyle(.plain)
                 .controlSize(.mini)
@@ -120,7 +123,7 @@ internal struct ThreadFolderInspectorView: View {
                                         comment: "Help text for jump to latest folder node"))
                 Button(action: onJumpToOldest) {
                     Image(systemName: "arrow.down.to.line.compact")
-                        .font(.caption)
+                        .font(font(size: 12))
                 }
                 .buttonStyle(.plain)
                 .controlSize(.mini)
@@ -131,6 +134,7 @@ internal struct ThreadFolderInspectorView: View {
                                         comment: "Help text for jump to oldest folder node"))
             }
             FolderMinimapSurface(model: minimapModel,
+                                 textScale: textScale,
                                  selectedNodeID: minimapSelectedNodeID,
                                  viewportRect: minimapViewportRect,
                                  foreground: inspectorPrimaryForegroundStyle,
@@ -144,9 +148,10 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.name",
                                    comment: "Folder name field label"))
-                .font(.caption)
+                .font(font(size: 12))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             TextField("", text: $draftTitle)
+                .font(font(size: 13))
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: draftTitle) { _, _ in
                     updatePreviewIfNeeded()
@@ -158,7 +163,7 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.color",
                                    comment: "Folder color picker label"))
-                .font(.caption)
+                .font(font(size: 12))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             ColorPicker("", selection: $draftColor, supportsOpacity: true)
                 .labelsHidden()
@@ -172,7 +177,7 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.preview",
                                    comment: "Folder preview label"))
-                .font(.caption)
+                .font(font(size: 12))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(draftColor.opacity(0.4))
@@ -185,7 +190,7 @@ internal struct ThreadFolderInspectorView: View {
                          ? NSLocalizedString("threadcanvas.subject.placeholder",
                                              comment: "Placeholder subject when missing")
                          : draftTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(font(size: 14, weight: .semibold))
                         .foregroundStyle(inspectorPrimaryForegroundStyle)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
@@ -206,12 +211,12 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.summary",
                                        comment: "Folder summary label"))
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 if let onRegenerateSummary {
                     Button(action: onRegenerateSummary) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.caption)
+                            .font(font(size: 12))
                     }
                     .buttonStyle(.plain)
                     .controlSize(.mini)
@@ -228,7 +233,7 @@ internal struct ThreadFolderInspectorView: View {
             }
             ScrollView {
                 Text(displayText)
-                    .font(.callout)
+                    .font(font(size: 16))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .padding(8)
@@ -350,10 +355,15 @@ internal struct ThreadFolderInspectorView: View {
         baselineTitle = draftTitle
         baselineColor = color
     }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
+    }
 }
 
 internal struct FolderMinimapSurface: View {
     let model: FolderMinimapModel?
+    let textScale: CGFloat
     let selectedNodeID: String?
     let viewportRect: CGRect?
     let foreground: Color
@@ -445,7 +455,7 @@ internal struct FolderMinimapSurface: View {
                             let text = Self.timeFormatter.string(from: tick.date)
                             let resolved = context.resolve(
                                 Text(text)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: 9 * textScale, weight: .medium))
                                     .foregroundStyle(secondaryForeground)
                             )
                             context.draw(resolved,
@@ -456,7 +466,7 @@ internal struct FolderMinimapSurface: View {
                 } else {
                     Text(NSLocalizedString("threadcanvas.folder.inspector.minimap.empty",
                                            comment: "Placeholder text when minimap has no nodes"))
-                        .font(.caption)
+                        .font(.system(size: 12 * textScale))
                         .foregroundStyle(secondaryForeground)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 10)

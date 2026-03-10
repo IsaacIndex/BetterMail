@@ -148,10 +148,11 @@
 "settings.inspector.stop_words.footer" = "One phrase per line. Matching is case-insensitive.";
 "settings.canvas.title" = "Thread Canvas";
 "settings.canvas.zoom.current" = "Current zoom";
+"settings.canvas.text_size" = "Relative text size";
 "settings.canvas.zoom.detailed" = "Detailed threshold";
 "settings.canvas.zoom.compact" = "Compact threshold";
 "settings.canvas.zoom.minimal" = "Minimal threshold";
-"settings.canvas.zoom.footer" = "Adjust thresholds for detailed, compact, and minimal canvas readability.";
+"settings.canvas.zoom.footer" = "Adjust the relative text size plus the detailed, compact, and minimal canvas readability thresholds.";
 "settings.backfill.title" = "Batch Backfill";
 "settings.backfill.footer" = "Fetches historical messages for the selected range without blocking the UI.";
 "settings.backfill.start" = "Start date";

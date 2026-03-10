@@ -100,6 +100,19 @@ internal struct AutoRefreshSettingsView: View {
                         .monospacedDigit()
                 }
 
+                LabeledContent(NSLocalizedString("settings.canvas.text_size", comment: "Label for relative thread canvas text size")) {
+                    Stepper(
+                        value: textScaleBinding,
+                        in: Double(ThreadCanvasDisplaySettings.minimumTextScale)...Double(ThreadCanvasDisplaySettings.maximumTextScale),
+                        step: 0.05
+                    ) {
+                        Text(textScaleBinding.wrappedValue,
+                             format: .percent.precision(.fractionLength(0)))
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                }
+
                 LabeledContent(NSLocalizedString("settings.canvas.zoom.detailed", comment: "Label for detailed zoom threshold")) {
                     Stepper(
                         value: detailedThresholdBinding,
@@ -263,6 +276,13 @@ internal struct AutoRefreshSettingsView: View {
         Binding(
             get: { Double(displaySettings.detailedThreshold) },
             set: { displaySettings.detailedThreshold = CGFloat($0) }
+        )
+    }
+
+    private var textScaleBinding: Binding<Double> {
+        Binding(
+            get: { Double(displaySettings.textScale) },
+            set: { displaySettings.textScale = CGFloat($0) }
         )
     }
 

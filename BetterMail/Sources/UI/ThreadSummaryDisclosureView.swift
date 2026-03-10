@@ -4,6 +4,7 @@ import SwiftUI
 internal struct ThreadSummaryDisclosureView: View {
     internal let title: String
     internal let state: ThreadSummaryState
+    internal let textScale: CGFloat
     internal let onRegenerate: (() -> Void)?
     internal let isRegenerateEnabled: Bool
     @Binding internal var isExpanded: Bool
@@ -17,27 +18,27 @@ internal struct ThreadSummaryDisclosureView: View {
                 } label: {
                     HStack() {
                         Image(systemName: "sparkles")
-                            .font(.caption)
+                            .font(font(size: 12))
                         Text(title)
-                            .font(.caption.weight(.semibold))
+                            .font(font(size: 12, weight: .semibold))
                         if state.isSummarizing {
                             ProgressView().controlSize(.mini)
                         }
                         Spacer()
                         if !state.text.isEmpty {
                             Text(state.text)
-                                .font(.caption2)
+                                .font(font(size: 11))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .opacity(isExpanded ? 0 : 1)
                         } else if !state.statusMessage.isEmpty {
                             Text(state.statusMessage)
-                                .font(.caption2)
+                                .font(font(size: 11))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
                         Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
+                            .font(font(size: 11, weight: .semibold))
                             .rotationEffect(isExpanded ? .degrees(180) : .degrees(0))
                             .foregroundStyle(.secondary)
                     }
@@ -49,7 +50,7 @@ internal struct ThreadSummaryDisclosureView: View {
                 if let onRegenerate {
                     Button(action: onRegenerate) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.caption)
+                            .font(font(size: 12))
                     }
                     .buttonStyle(.plain)
                     .controlSize(.mini)
@@ -65,12 +66,12 @@ internal struct ThreadSummaryDisclosureView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if !state.text.isEmpty {
                         Text(state.text)
-                            .font(.footnote)
+                            .font(font(size: 13))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if !state.statusMessage.isEmpty {
                         Text(state.statusMessage)
-                            .font(.caption2)
+                            .font(font(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -93,5 +94,9 @@ internal struct ThreadSummaryDisclosureView: View {
                 .fill(Color.accentColor.opacity(0.08))
                 .overlay(shape.stroke(Color.accentColor.opacity(0.25)))
         }
+    }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
     }
 }

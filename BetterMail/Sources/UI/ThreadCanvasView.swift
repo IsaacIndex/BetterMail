@@ -102,7 +102,8 @@ internal struct ThreadCanvasView: View {
         let metrics = ThreadCanvasLayoutMetrics(zoom: layoutZoomScale,
                                                 dayCount: viewModel.dayWindowCount,
                                                 columnWidthAdjustment: columnWidthAdjustment,
-                                                showsDayAxis: showsDayAxis)
+                                                showsDayAxis: showsDayAxis,
+                                                textScale: displaySettings.textScale)
         let today = Date()
         let layout = viewModel.canvasLayout(metrics: metrics,
                                             viewMode: displaySettings.viewMode,

@@ -111,6 +111,7 @@ internal struct ThreadListView: View {
             if let selectedFolder = viewModel.selectedFolder {
                 let minimapModel = viewModel.folderMinimapModel(for: selectedFolder.id)
                 ThreadFolderInspectorView(folder: selectedFolder,
+                                          textScale: displaySettings.textScale,
                                           minimapModel: minimapModel,
                                           minimapSelectedNodeID: viewModel.folderMinimapSelectedNodeID(for: selectedFolder.id),
                                           minimapViewportRect: viewModel.folderMinimapViewport(for: selectedFolder.id),
@@ -156,6 +157,7 @@ internal struct ThreadListView: View {
                                     summaryState: selectedSummaryState,
                                     summaryExpansion: selectedSummaryExpansion,
                                     inspectorSettings: inspectorSettings,
+                                    textScale: displaySettings.textScale,
                                     openInMailState: viewModel.openInMailState,
                                     canRegenerateSummary: viewModel.isSummaryProviderAvailable,
                                     onRegenerateSummary: {
@@ -225,9 +227,9 @@ internal struct ThreadListView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Threads")
-                    .font(.headline)
+                    .font(font(size: 13, weight: .semibold))
                 Text(statusText)
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(navSecondaryForegroundStyle)
                 refreshTimingView
             }
@@ -241,7 +243,7 @@ internal struct ThreadListView: View {
             viewModeToggle
             HStack(spacing: 6) {
                 Text("Limit")
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(navSecondaryForegroundStyle)
                 limitField
             }
@@ -270,11 +272,15 @@ internal struct ThreadListView: View {
         )
     }
 
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * displaySettings.textScale, weight: weight)
+    }
+
     @ViewBuilder
     private var viewModeToggle: some View {
         Toggle(isOn: viewModeToggleBinding) {
             Text(viewModeLabel)
-                .font(.caption)
+                .font(font(size: 12))
         }
         .toggleStyle(.switch)
         .tint(.green)
@@ -311,12 +317,12 @@ internal struct ThreadListView: View {
         VStack(alignment: .leading, spacing: 2) {
             if let lastRefreshDate = viewModel.lastRefreshDate {
                 Text("Last updated: \(lastRefreshDate.formatted(date: .numeric, time: .shortened))")
-                    .font(.caption2)
+                    .font(font(size: 11))
                     .foregroundStyle(navSecondaryForegroundStyle)
             }
             if settings.isEnabled, let nextRefreshDate = viewModel.nextRefreshDate {
                 Text("Next refresh: \(nextRefreshDate.formatted(date: .numeric, time: .shortened))")
-                    .font(.caption2)
+                    .font(font(size: 11))
                     .foregroundStyle(navSecondaryForegroundStyle)
             }
         }
@@ -329,6 +335,7 @@ internal struct ThreadListView: View {
             let fieldStroke = colorScheme == .light ? Color.black.opacity(0.2) : Color.white.opacity(0.55)
             let fieldForeground = colorScheme == .light ? Color.black.opacity(0.9) : Color.white
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
+                .font(font(size: 13))
                 .textFieldStyle(.plain)
                 .controlSize(.small)
                 .padding(.horizontal, 8)
@@ -345,6 +352,7 @@ internal struct ThreadListView: View {
                 .frame(width: 60, height: 24)
         } else {
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
+                .font(font(size: 13))
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .frame(width: 60, height: 24)
