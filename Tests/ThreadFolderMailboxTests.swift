@@ -159,4 +159,88 @@ final class ThreadFolderMailboxTests: XCTestCase {
         XCTAssertEqual(update?.folders.first?.threadIDs, ["manual-group"])
         XCTAssertEqual(update?.membership["manual-group"], folder.id)
     }
+
+    func testAddFolderForSelection_setsMailboxDestinationWhenSelectionMatches() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let now = Date()
+        let messageA = EmailMessage(messageID: "msg-a",
+                                    mailboxID: "Projects/Acme",
+                                    accountName: "Work",
+                                    subject: "A",
+                                    from: "a@example.com",
+                                    to: "me@example.com",
+                                    date: now,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    threadID: "thread-a")
+        let messageB = EmailMessage(messageID: "msg-b",
+                                    mailboxID: "Projects/Acme",
+                                    accountName: "Work",
+                                    subject: "B",
+                                    from: "b@example.com",
+                                    to: "me@example.com",
+                                    date: now.addingTimeInterval(60),
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    threadID: "thread-b")
+
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: messageA), ThreadNode(message: messageB)])
+        viewModel.selectNode(id: messageA.messageID)
+        viewModel.selectNode(id: messageB.messageID, additive: true)
+        viewModel.addFolderForSelection()
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let folders = try await store.fetchThreadFolders()
+        XCTAssertEqual(folders.count, 1)
+        XCTAssertEqual(folders.first?.mailboxAccount, "Work")
+        XCTAssertEqual(folders.first?.mailboxPath, "Projects/Acme")
+    }
+
+    func testAddFolderForSelection_leavesMailboxDestinationUnsetWhenSelectionDiffers() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let now = Date()
+        let messageA = EmailMessage(messageID: "msg-a",
+                                    mailboxID: "Projects/Acme",
+                                    accountName: "Work",
+                                    subject: "A",
+                                    from: "a@example.com",
+                                    to: "me@example.com",
+                                    date: now,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    threadID: "thread-a")
+        let messageB = EmailMessage(messageID: "msg-b",
+                                    mailboxID: "Archive",
+                                    accountName: "Work",
+                                    subject: "B",
+                                    from: "b@example.com",
+                                    to: "me@example.com",
+                                    date: now.addingTimeInterval(60),
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    threadID: "thread-b")
+
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: messageA), ThreadNode(message: messageB)])
+        viewModel.selectNode(id: messageA.messageID)
+        viewModel.selectNode(id: messageB.messageID, additive: true)
+        viewModel.addFolderForSelection()
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let folders = try await store.fetchThreadFolders()
+        XCTAssertEqual(folders.count, 1)
+        XCTAssertNil(folders.first?.mailboxAccount)
+        XCTAssertNil(folders.first?.mailboxPath)
+    }
 }

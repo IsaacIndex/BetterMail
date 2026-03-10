@@ -208,6 +208,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
   - `navigationBarOverlay` as the top bar above the canvas.
   - `selectionActionBar` as a bottom overlay for multi-select actions.
 - Mailbox-folder actions in the selection bar target Apple Mail folders (existing or newly created), while `Add to Thread Folder` keeps using BetterMail's internal canvas grouping feature.
+- New canvas folders automatically inherit a mailbox destination when every selected node already resolves to the same account/mailbox path.
 - The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable hierarchical folder selector to make destination picking clearer.
 - Mailbox-folder move actions are thread-scoped: selecting any node in a thread moves all cached messages in that thread to keep mailbox/thread state consistent.
 - Mailbox-folder move execution now prioritizes Apple Mail internal IDs (when cached) and source-mailbox-scoped lookups to reduce move latency on long threads.

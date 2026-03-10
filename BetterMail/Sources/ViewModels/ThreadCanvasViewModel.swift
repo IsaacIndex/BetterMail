@@ -3808,6 +3808,23 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    private func inferredMailboxDestinationForSelection(_ selectedNodes: [ThreadNode]) -> (account: String, path: String)? {
+        guard !selectedNodes.isEmpty else { return nil }
+        let destinations = selectedNodes.compactMap { node in
+            Self.normalizedMailboxDestination(account: mailboxActionAccountName(for: node),
+                                              path: mailboxPathForMailboxMove(message: node.message))
+        }
+        guard destinations.count == selectedNodes.count,
+              let firstDestination = destinations.first else {
+            return nil
+        }
+        let hasDiscrepancy = destinations.contains { destination in
+            destination.account.caseInsensitiveCompare(firstDestination.account) != .orderedSame ||
+                destination.path.caseInsensitiveCompare(firstDestination.path) != .orderedSame
+        }
+        return hasDiscrepancy ? nil : firstDestination
+    }
+
     internal func addFolderForSelection() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
@@ -3817,6 +3834,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
         let selectedFolderIDs = Set(effectiveThreadIDs.compactMap { folderMembershipByThreadID[$0] })
         let parentFolderID = selectedFolderIDs.count == 1 ? selectedFolderIDs.first : nil
+        let inheritedMailboxDestination = parentFolderID.flatMap { folderID in
+            threadFolders.first(where: { $0.id == folderID })?.mailboxDestination
+        }
+        let inferredMailboxDestination = inferredMailboxDestinationForSelection(selectedNodes) ?? inheritedMailboxDestination
 
         let latestSubjectNode = selectedNodes.max(by: { $0.message.date < $1.message.date })
         let defaultTitle = latestSubjectNode.map { node in
@@ -3827,7 +3848,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                   title: defaultTitle,
                                   color: ThreadFolderColor.random(),
                                   threadIDs: effectiveThreadIDs,
-                                  parentID: parentFolderID)
+                                  parentID: parentFolderID,
+                                  mailboxAccount: inferredMailboxDestination?.account,
+                                  mailboxPath: inferredMailboxDestination?.path)
         let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
         let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
             var updatedFolder = existingFolder
