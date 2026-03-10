@@ -325,7 +325,9 @@ internal final class MessageStore {
                              title: folder.title,
                              color: colorsByFolder[folder.id] ?? ThreadFolderColor(red: 0.6, green: 0.6, blue: 0.7, alpha: 1),
                              threadIDs: threadIDsByFolder[folder.id, default: []],
-                             parentID: folder.parentID)
+                             parentID: folder.parentID,
+                             mailboxAccount: folder.mailboxAccount,
+                             mailboxPath: folder.mailboxPath)
             }
         }
     }
@@ -356,6 +358,8 @@ internal final class MessageStore {
                 entity.id = folder.id
                 entity.title = folder.title
                 entity.parentID = folder.parentID
+                entity.mailboxAccount = folder.mailboxDestination?.account
+                entity.mailboxPath = folder.mailboxDestination?.path
                 folderLookup[folder.id] = entity
 
                 let color = ThreadFolderColorEntity(context: context)
@@ -952,7 +956,23 @@ internal final class MessageStore {
         threadFolderParentIDAttr.isOptional = true
         threadFolderParentIDAttr.isIndexed = true
 
-        threadFolderEntity.properties = [threadFolderIDAttr, threadFolderTitleAttr, threadFolderParentIDAttr]
+        let threadFolderMailboxAccountAttr = NSAttributeDescription()
+        threadFolderMailboxAccountAttr.name = "mailboxAccount"
+        threadFolderMailboxAccountAttr.attributeType = .stringAttributeType
+        threadFolderMailboxAccountAttr.isOptional = true
+
+        let threadFolderMailboxPathAttr = NSAttributeDescription()
+        threadFolderMailboxPathAttr.name = "mailboxPath"
+        threadFolderMailboxPathAttr.attributeType = .stringAttributeType
+        threadFolderMailboxPathAttr.isOptional = true
+
+        threadFolderEntity.properties = [
+            threadFolderIDAttr,
+            threadFolderTitleAttr,
+            threadFolderParentIDAttr,
+            threadFolderMailboxAccountAttr,
+            threadFolderMailboxPathAttr
+        ]
 
         let threadFolderColorEntity = NSEntityDescription()
         threadFolderColorEntity.name = "ThreadFolderColorEntity"
@@ -1359,6 +1379,8 @@ internal final class ThreadFolderEntity: NSManagedObject {
     @NSManaged var id: String
     @NSManaged var title: String
     @NSManaged var parentID: String?
+    @NSManaged var mailboxAccount: String?
+    @NSManaged var mailboxPath: String?
 }
 
 internal extension ThreadFolderEntity {

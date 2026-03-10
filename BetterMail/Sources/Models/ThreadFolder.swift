@@ -41,4 +41,13 @@ internal struct ThreadFolder: Identifiable, Hashable {
     internal var color: ThreadFolderColor
     internal var threadIDs: Set<String>
     internal var parentID: String?
+    internal var mailboxAccount: String? = nil
+    internal var mailboxPath: String? = nil
+
+    internal var mailboxDestination: (account: String, path: String)? {
+        let trimmedAccount = mailboxAccount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedPath = mailboxPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedAccount.isEmpty, !trimmedPath.isEmpty else { return nil }
+        return (trimmedAccount, trimmedPath)
+    }
 }

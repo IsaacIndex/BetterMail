@@ -111,6 +111,10 @@ internal struct ThreadListView: View {
             if let selectedFolder = viewModel.selectedFolder {
                 let minimapModel = viewModel.folderMinimapModel(for: selectedFolder.id)
                 ThreadFolderInspectorView(folder: selectedFolder,
+                                          mailboxAccounts: viewModel.mailboxAccounts,
+                                          isMailboxHierarchyLoading: viewModel.isMailboxHierarchyLoading,
+                                          mailboxEditingDisabledReason: viewModel.folderMailboxEditingDisabledReason(for: selectedFolder.id),
+                                          preferredMailboxAccount: viewModel.preferredMailboxAccountForFolder(selectedFolder.id),
                                           textScale: displaySettings.textScale,
                                           minimapModel: minimapModel,
                                           minimapSelectedNodeID: viewModel.folderMinimapSelectedNodeID(for: selectedFolder.id),
@@ -130,15 +134,22 @@ internal struct ThreadListView: View {
                                           onJumpToOldest: {
                                               viewModel.jumpToFirstNode(in: selectedFolder.id)
                                           },
-                                          onPreview: { title, color in
+                                          onRefreshMailboxHierarchy: {
+                                              viewModel.refreshMailboxHierarchy(force: true)
+                                          },
+                                          onPreview: { title, color, mailboxAccount, mailboxPath in
                                               viewModel.previewFolderEdits(id: selectedFolder.id,
                                                                            title: title,
-                                                                           color: color)
+                                                                           color: color,
+                                                                           mailboxAccount: mailboxAccount,
+                                                                           mailboxPath: mailboxPath)
                                           },
-                                          onSave: { title, color in
+                                          onSave: { title, color, mailboxAccount, mailboxPath in
                                               viewModel.saveFolderEdits(id: selectedFolder.id,
                                                                         title: title,
-                                                                        color: color)
+                                                                        color: color,
+                                                                        mailboxAccount: mailboxAccount,
+                                                                        mailboxPath: mailboxPath)
                                           })
                     .id(selectedFolder.id)
                     .frame(width: inspectorWidth)

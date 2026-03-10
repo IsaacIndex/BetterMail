@@ -1503,10 +1503,10 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         let projected = ThreadCanvasViewModel.projectFolderMinimapViewport(overlayFrame: overlay,
                                                                             viewportRect: viewport)
 
-        XCTAssertEqual(projected?.minX, 0, accuracy: 0.0001)
-        XCTAssertEqual(projected?.minY, 0.25, accuracy: 0.0001)
-        XCTAssertEqual(projected?.width, 0.5, accuracy: 0.0001)
-        XCTAssertEqual(projected?.height, 0.625, accuracy: 0.0001)
+        XCTAssertEqual(Double(projected?.minX ?? .zero), 0, accuracy: 0.0001)
+        XCTAssertEqual(Double(projected?.minY ?? .zero), 0.25, accuracy: 0.0001)
+        XCTAssertEqual(Double(projected?.width ?? .zero), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(Double(projected?.height ?? .zero), 0.625, accuracy: 0.0001)
     }
 
     func test_makeFolderMinimapViewportSnapshot_usesNodeVerticalBounds() {
@@ -1550,8 +1550,8 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                                                                       scrollOffsetY: 205,
                                                                                       viewportWidth: 60,
                                                                                       viewportHeight: 10)
-        XCTAssertEqual(onNodeSnapshot.normalizedRectByFolderID["folder-1"]?.minY, 0.25, accuracy: 0.0001)
-        XCTAssertEqual(onNodeSnapshot.normalizedRectByFolderID["folder-1"]?.height, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(Double(onNodeSnapshot.normalizedRectByFolderID["folder-1"]?.minY ?? .zero), 0.25, accuracy: 0.0001)
+        XCTAssertEqual(Double(onNodeSnapshot.normalizedRectByFolderID["folder-1"]?.height ?? .zero), 0.5, accuracy: 0.0001)
     }
 
     func test_makeFolderMinimapTimeTicks_ordersNewestToOldest_usingNodeDates() {
@@ -1564,8 +1564,8 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                                                       tickCount: 5)
 
         XCTAssertEqual(ticks.count, 5)
-        XCTAssertEqual(ticks.first?.normalizedY, 0, accuracy: 0.0001)
-        XCTAssertEqual(ticks.last?.normalizedY, 1, accuracy: 0.0001)
+        XCTAssertEqual(Double(ticks.first?.normalizedY ?? .zero), 0, accuracy: 0.0001)
+        XCTAssertEqual(Double(ticks.last?.normalizedY ?? .zero), 1, accuracy: 0.0001)
         XCTAssertEqual(ticks.first?.date, newest)
         XCTAssertEqual(ticks.last?.date, dates.last)
         let nodeDateSet = Set(dates)
@@ -1623,7 +1623,7 @@ final class ThreadCanvasLayoutTests: XCTestCase {
             if viewModel.timelineTags(for: node.id) == ["Urgent"] {
                 break
             }
-            await Task.sleep(nanoseconds: 20_000_000)
+            try? await Task.sleep(nanoseconds: 20_000_000)
         }
 
         XCTAssertEqual(provider.callCount, 1)

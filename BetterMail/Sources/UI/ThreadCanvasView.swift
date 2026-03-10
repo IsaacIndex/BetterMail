@@ -829,6 +829,7 @@ internal struct ThreadCanvasView: View {
                 let pinnedY = min(headerFrame.minY + rawScrollOffset, maxPinnedY)
                 FolderColumnHeader(title: chrome.title,
                                    unreadCount: chrome.unreadCount,
+                                   mailboxLabel: chrome.mailboxLabel,
                                    updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
                                    summaryState: viewModel.folderSummaryState(for: chrome.id),
                                    accentColor: accentColor(for: chrome.color),
@@ -1176,6 +1177,7 @@ internal struct ThreadCanvasView: View {
                                 color: overlay.color,
                                 frame: overlay.frame,
                                 columns: columns,
+                                mailboxLabel: viewModel.folderMailboxLeafName(for: overlay.id),
                                 depth: overlay.depth,
                                 headerHeight: headerMetrics.height,
                                 headerTopOffset: headerTopOffset,
@@ -1189,6 +1191,7 @@ internal struct ThreadCanvasView: View {
                               color: ThreadFolderColor,
                               frame: CGRect,
                               columns: [ThreadCanvasColumn],
+                              mailboxLabel: String?,
                               depth: Int,
                               headerHeight: CGFloat,
                               headerTopOffset: CGFloat,
@@ -1205,6 +1208,7 @@ internal struct ThreadCanvasView: View {
                                 columnIDs: columns.map(\.id),
                                 depth: depth,
                                 unreadCount: unread,
+                                mailboxLabel: mailboxLabel,
                                 updated: latest,
                                 headerHeight: headerHeight,
                                 headerTopOffset: headerTopOffset,
@@ -1532,6 +1536,7 @@ private struct FolderHeaderLayout {
 private struct FolderColumnHeader: View {
     let title: String
     let unreadCount: Int
+    let mailboxLabel: String?
     let updatedText: String?
     let summaryState: ThreadSummaryState?
     let accentColor: Color
@@ -1644,7 +1649,7 @@ private struct FolderColumnHeader: View {
                                                    tooltipKey: "threadcanvas.folder.jump.first.tooltip",
                                                    action: onJumpFirst)
                             }
-                            badge(unread: unreadCount)
+                            badge(unread: unreadCount, mailboxLabel: mailboxLabel)
                         }
                         .padding(.top, summaryFooterSpacing)
                     } else {
@@ -1758,7 +1763,7 @@ private struct FolderColumnHeader: View {
     }
 
     @ViewBuilder
-    private func badge(unread: Int) -> some View {
+    private func badge(unread: Int, mailboxLabel: String?) -> some View {
         switch textVisibility() {
         case .hidden:
             EmptyView()
@@ -1771,7 +1776,7 @@ private struct FolderColumnHeader: View {
                 .foregroundStyle(Color.white.opacity(0.95))
                 .contentShape(Capsule())
         case .normal:
-            Text("Unread \(unread)")
+            Text(mailboxLabel ?? "Unread \(unread)")
                 .font(.system(size: FolderHeaderLayout.footerBaseSize * sizeScale, weight: .semibold))
                 .padding(.horizontal, 10 * sizeScale)
                 .padding(.vertical, FolderHeaderLayout.badgeVerticalPadding * sizeScale)
@@ -2672,6 +2677,7 @@ private struct FolderChromeData: Identifiable {
     let columnIDs: [String]
     let depth: Int
     let unreadCount: Int
+    let mailboxLabel: String?
     let updated: Date?
     let headerHeight: CGFloat
     let headerTopOffset: CGFloat

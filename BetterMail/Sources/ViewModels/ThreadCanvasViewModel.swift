@@ -120,6 +120,8 @@ private struct MailboxMoveCandidate {
 private struct ThreadFolderEdit: Hashable {
     let title: String
     let color: ThreadFolderColor
+    let mailboxAccount: String?
+    let mailboxPath: String?
 }
 
 private enum FolderJumpPhase: String {
@@ -133,6 +135,12 @@ private struct PendingFolderJumpScrollContext {
     let folderID: String
     let boundary: MessageStore.ThreadMessageBoundary
     let targetNodeID: String
+}
+
+private struct PendingManualAttachmentMailboxMove {
+    let targetMessageKey: String
+    let destinationAccount: String
+    let destinationPath: String
 }
 
 private enum MailboxFolderActionError: LocalizedError {
@@ -576,6 +584,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var pendingScrollTimeoutTasks: [UUID: Task<Void, Never>] = [:]
     private var mailboxThreadAutoMoveTask: Task<Void, Never>?
     private var mailboxThreadAutoMovePassPending = false
+    private var pendingManualAttachmentMailboxMove: PendingManualAttachmentMailboxMove?
     private var nearBottomHitCount = 0
     private var lastDayWindowExpansionTime: Date?
 
@@ -826,6 +835,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
+            await runPendingManualAttachmentMailboxMoveIfNeeded()
             scheduleMailboxThreadAutoMovePass()
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
@@ -906,6 +916,35 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func folderSummaryState(for folderID: String) -> ThreadSummaryState? {
         folderSummaries[folderID]
+    }
+
+    internal func folderMailboxLeafName(for folderID: String) -> String? {
+        let folders = effectiveThreadFolders
+        guard let folder = folders.first(where: { $0.id == folderID }),
+              let destination = folder.mailboxDestination else {
+            return nil
+        }
+        return MailboxPathFormatter.leafName(from: destination.path)
+    }
+
+    internal func folderMailboxEditingDisabledReason(for folderID: String) -> String? {
+        guard let folder = effectiveThreadFolders.first(where: { $0.id == folderID }) else { return nil }
+        let accountNames = folderAccountNamesInVisibleRoots(folder)
+        if accountNames.count > 1 {
+            return NSLocalizedString("threadcanvas.folder.mailbox.mixed_accounts",
+                                     comment: "Reason a folder mailbox destination cannot be set for mixed-account folders")
+        }
+        return nil
+    }
+
+    internal func preferredMailboxAccountForFolder(_ folderID: String) -> String? {
+        guard let folder = effectiveThreadFolders.first(where: { $0.id == folderID }) else { return nil }
+        if let destination = folder.mailboxDestination {
+            return destination.account
+        }
+        let accountNames = folderAccountNamesInVisibleRoots(folder)
+        guard accountNames.count == 1 else { return nil }
+        return accountNames.first
     }
 
     internal var isSummaryProviderAvailable: Bool {
@@ -1963,6 +2002,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
 
                 if scope.candidates.isEmpty {
+                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
+                                                                           destinationPath: trimmedPath,
+                                                                           account: account)
                     await MainActor.run {
                         self.isMailboxActionRunning = false
                         self.mailboxActionProgressMessage = nil
@@ -2018,6 +2060,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.refreshNow()
                     }
                 }
+                if isFullSuccess {
+                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
+                                                                           destinationPath: trimmedPath,
+                                                                           account: account)
+                }
             } catch {
                 await MainActor.run {
                     self.isMailboxActionRunning = false
@@ -2070,6 +2117,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
 
                 if scope.candidates.isEmpty {
+                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
+                                                                           destinationPath: destinationPath,
+                                                                           account: account)
                     await MainActor.run {
                         self.isMailboxActionRunning = false
                         self.mailboxActionProgressMessage = nil
@@ -2128,6 +2178,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.refreshMailboxHierarchy(force: true)
                         self.refreshNow()
                     }
+                }
+                if isFullSuccess {
+                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
+                                                                           destinationPath: destinationPath,
+                                                                           account: account)
                 }
             } catch {
                 await MainActor.run {
@@ -2235,23 +2290,44 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    internal func previewFolderEdits(id: String, title: String, color: ThreadFolderColor) {
-        folderEditsByID[id] = ThreadFolderEdit(title: title, color: color)
+    internal func previewFolderEdits(id: String,
+                                     title: String,
+                                     color: ThreadFolderColor,
+                                     mailboxAccount: String?,
+                                     mailboxPath: String?) {
+        let normalized = Self.normalizedMailboxDestination(account: mailboxAccount, path: mailboxPath)
+        folderEditsByID[id] = ThreadFolderEdit(title: title,
+                                               color: color,
+                                               mailboxAccount: normalized?.account,
+                                               mailboxPath: normalized?.path)
     }
 
     internal func clearFolderEdits(id: String) {
         folderEditsByID.removeValue(forKey: id)
     }
 
-    internal func saveFolderEdits(id: String, title: String, color: ThreadFolderColor) {
+    internal func saveFolderEdits(id: String,
+                                  title: String,
+                                  color: ThreadFolderColor,
+                                  mailboxAccount: String?,
+                                  mailboxPath: String?) {
         guard let index = threadFolders.firstIndex(where: { $0.id == id }) else { return }
         var updated = threadFolders
         updated[index].title = title
         updated[index].color = color
+        let normalizedDestination = Self.normalizedMailboxDestination(account: mailboxAccount, path: mailboxPath)
+        updated[index].mailboxAccount = normalizedDestination?.account
+        updated[index].mailboxPath = normalizedDestination?.path
 
         Task { [weak self] in
             guard let self else { return }
             do {
+                if let validationError = try await self.invalidFolderMailboxAssignment(for: updated[index]) {
+                    await MainActor.run {
+                        self.mailboxActionStatusMessage = validationError
+                    }
+                    return
+                }
                 try await store.upsertThreadFolders(updated)
                 await MainActor.run {
                     self.threadFolders = updated
@@ -2347,6 +2423,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.threadFolders = updated.folders
                     self.folderMembershipByThreadID = updated.membership
                     self.refreshFolderSummaries(for: self.roots, folders: updated.folders)
+                }
+                if let targetFolder = updated.folders.first(where: { $0.id == folderID }),
+                   targetFolder.mailboxDestination != nil {
+                    let statusMessage = await self.moveThreadToAssignedFolderMailbox(threadID: threadID,
+                                                                                     folder: targetFolder)
+                    if let statusMessage {
+                        await MainActor.run {
+                            self.mailboxActionStatusMessage = statusMessage
+                        }
+                    }
                 }
             } catch {
                 Log.app.error("Failed to move thread into folder: \(error.localizedDescription, privacy: .public)")
@@ -2771,6 +2857,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
               let targetNode = Self.node(matching: targetID, in: roots) else { return }
         let targetKey = targetNode.message.threadKey
         let targetJWZID = jwzThreadMap[targetKey] ?? targetNode.message.threadID ?? targetNode.id
+        let targetFolderMailboxMove = pendingFolderMailboxMoveForManualAttachment(targetNode: targetNode,
+                                                                                  targetThreadID: effectiveThreadID(for: targetNode),
+                                                                                  targetMessageKey: targetKey)
 
         var jwzThreadCounts: [String: Int] = [:]
         for detail in selectionDetails {
@@ -2801,7 +2890,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 guard let self else { return }
                 do {
                     try await store.upsertManualThreadGroups([newGroup])
-                    await MainActor.run { self.scheduleRethread() }
+                    await MainActor.run {
+                        if !manualAttachmentKeys.isEmpty {
+                            self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
+                        }
+                        self.scheduleRethread()
+                    }
                 } catch {
                     Log.app.error("Failed to save manual thread group: \(error.localizedDescription, privacy: .public)")
                 }
@@ -2818,7 +2912,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 guard let self else { return }
                 do {
                     try await store.upsertManualThreadGroups([group])
-                    await MainActor.run { self.scheduleRethread() }
+                    await MainActor.run {
+                        if !manualAttachmentKeys.isEmpty {
+                            self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
+                        }
+                        self.scheduleRethread()
+                    }
                 } catch {
                     Log.app.error("Failed to update manual thread group: \(error.localizedDescription, privacy: .public)")
                 }
@@ -2846,7 +2945,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 for groupID in manualGroupIDs {
                     try await store.deleteManualThreadGroup(id: groupID)
                 }
-                await MainActor.run { self.scheduleRethread() }
+                await MainActor.run {
+                    if !manualAttachmentKeys.isEmpty {
+                        self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
+                    }
+                    self.scheduleRethread()
+                }
             } catch {
                 Log.app.error("Failed to merge manual thread groups: \(error.localizedDescription, privacy: .public)")
             }
@@ -2897,6 +3001,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return Self.nodes(matching: selectedNodeIDs, in: roots)
     }
 
+    private func pendingFolderMailboxMoveForManualAttachment(targetNode: ThreadNode,
+                                                             targetThreadID: String?,
+                                                             targetMessageKey: String) -> PendingManualAttachmentMailboxMove? {
+        if let targetThreadID,
+           let folderID = folderMembershipByThreadID[targetThreadID],
+           let folder = threadFolders.first(where: { $0.id == folderID }),
+           let destination = folder.mailboxDestination {
+            return PendingManualAttachmentMailboxMove(targetMessageKey: targetMessageKey,
+                                                      destinationAccount: destination.account,
+                                                      destinationPath: destination.path)
+        }
+
+        let account = mailboxActionAccountName(for: targetNode)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let mailboxPath = mailboxPathForMailboxMove(message: targetNode.message).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !account.isEmpty, !mailboxPath.isEmpty else { return nil }
+        return PendingManualAttachmentMailboxMove(targetMessageKey: targetMessageKey,
+                                                  destinationAccount: account,
+                                                  destinationPath: mailboxPath)
+    }
+
     private func mailboxActionAccountSet() -> Set<String> {
         Set(selectedNodes(in: roots).compactMap(mailboxActionAccountName(for:)))
     }
@@ -2945,6 +3069,160 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return ""
         }
         return mailboxID
+    }
+
+    private static func normalizedMailboxDestination(account: String?,
+                                                     path: String?) -> (account: String, path: String)? {
+        let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedPath = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedAccount.isEmpty, !trimmedPath.isEmpty else { return nil }
+        return (trimmedAccount, trimmedPath)
+    }
+
+    private func folderAccountNamesInVisibleRoots(_ folder: ThreadFolder) -> Set<String> {
+        let nodesByThreadID = Dictionary(grouping: Self.flatten(nodes: roots)) { node in
+            effectiveThreadID(for: node)
+        }
+
+        return folder.threadIDs.reduce(into: Set<String>()) { result, threadID in
+            let nodes = nodesByThreadID[threadID] ?? []
+            for node in nodes {
+                let account = mailboxActionAccountName(for: node)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !account.isEmpty {
+                    result.insert(account)
+                }
+            }
+        }
+    }
+
+    private func invalidFolderMailboxAssignment(for folder: ThreadFolder) async throws -> String? {
+        guard let destination = folder.mailboxDestination else { return nil }
+        let messages = try await store.fetchMessages(threadIDs: folder.threadIDs)
+        let accountNames = Set(messages.compactMap { message in
+            let trimmed = message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        })
+        if accountNames.count > 1 {
+            return NSLocalizedString("threadcanvas.folder.mailbox.mixed_accounts",
+                                     comment: "Reason a folder mailbox destination cannot be set for mixed-account folders")
+        }
+        if let resolvedAccount = accountNames.first,
+           resolvedAccount.caseInsensitiveCompare(destination.account) != .orderedSame {
+            return NSLocalizedString("threadcanvas.folder.mailbox.account_mismatch",
+                                     comment: "Reason a folder mailbox destination account does not match the folder threads")
+        }
+        return nil
+    }
+
+    private func persistSingleThreadFolderMailboxDestinations(threadIDs: Set<String>,
+                                                              destinationPath: String,
+                                                              account: String) async {
+        let normalizedDestination = Self.normalizedMailboxDestination(account: account, path: destinationPath)
+        guard let normalizedDestination else { return }
+
+        let candidateFolders = threadFolders.filter { folder in
+            folder.threadIDs.count == 1 && !folder.threadIDs.intersection(threadIDs).isEmpty
+        }
+        guard !candidateFolders.isEmpty else { return }
+
+        var updatedFolders = threadFolders
+        var didChange = false
+        for folder in candidateFolders {
+            guard let index = updatedFolders.firstIndex(where: { $0.id == folder.id }) else { continue }
+            if updatedFolders[index].mailboxAccount == normalizedDestination.account &&
+                updatedFolders[index].mailboxPath == normalizedDestination.path {
+                continue
+            }
+            updatedFolders[index].mailboxAccount = normalizedDestination.account
+            updatedFolders[index].mailboxPath = normalizedDestination.path
+            didChange = true
+        }
+        guard didChange else { return }
+
+        do {
+            try await store.upsertThreadFolders(updatedFolders)
+            await MainActor.run {
+                self.threadFolders = updatedFolders
+            }
+        } catch {
+            Log.app.error("Failed to persist inferred folder mailbox destination: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func moveThreadToAssignedFolderMailbox(threadID: String,
+                                                   folder: ThreadFolder) async -> String? {
+        guard let destination = folder.mailboxDestination else { return nil }
+        do {
+            let messages = try await store.fetchMessages(threadIDs: [threadID])
+            let candidates = mailboxMoveCandidates(from: messages,
+                                                   account: destination.account,
+                                                   destinationPath: destination.path)
+            if candidates.isEmpty {
+                await MainActor.run {
+                    self.upsertMailboxThreadMoveRules(threadIDs: [threadID],
+                                                      destinationPath: destination.path,
+                                                      account: destination.account)
+                }
+                return NSLocalizedString("mailbox.action.move.summary.no_candidates",
+                                         comment: "Status when all thread messages are already in destination mailbox")
+            }
+
+            let moveInput = Self.mailboxMoveInput(from: candidates)
+            guard moveInput.unresolvedCount == 0,
+                  (!moveInput.messageIDs.isEmpty || !moveInput.internalTargets.isEmpty) else {
+                return Self.mailboxMoveBlockedStatusMessage(ambiguousCount: 0,
+                                                            unresolvedCount: moveInput.unresolvedCount)
+            }
+
+            let moveResult = try await Self.executeMailboxMove(with: moveInput,
+                                                               destinationPath: destination.path,
+                                                               account: destination.account)
+            let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
+            if isFullSuccess {
+                await applyOptimisticMailboxMove(candidates: candidates,
+                                                 moveTargets: [],
+                                                 resolvedInternalIDsByNodeID: [:],
+                                                 destinationPath: destination.path,
+                                                 destinationAccount: destination.account)
+                await MainActor.run {
+                    self.upsertMailboxThreadMoveRules(threadIDs: [threadID],
+                                                      destinationPath: destination.path,
+                                                      account: destination.account)
+                }
+                return Self.mailboxMoveStatusMessage(moveResult: moveResult,
+                                                     ambiguousCount: 0,
+                                                     unresolvedCount: moveInput.unresolvedCount)
+            }
+
+            return Self.mailboxMoveStatusMessage(moveResult: moveResult,
+                                                 ambiguousCount: 0,
+                                                 unresolvedCount: moveInput.unresolvedCount)
+        } catch {
+            return Self.mailboxMoveFailureMessage(for: error)
+        }
+    }
+
+    @MainActor
+    private func runPendingManualAttachmentMailboxMoveIfNeeded() async {
+        guard let pending = pendingManualAttachmentMailboxMove else { return }
+        pendingManualAttachmentMailboxMove = nil
+
+        guard let targetNode = Self.flatten(nodes: roots).first(where: { $0.message.threadKey == pending.targetMessageKey }),
+              let threadID = effectiveThreadID(for: targetNode) else {
+            return
+        }
+
+        let folder = ThreadFolder(id: "pending-manual-attachment-folder",
+                                  title: "",
+                                  color: ThreadFolderColor(red: 0, green: 0, blue: 0, alpha: 0),
+                                  threadIDs: [threadID],
+                                  parentID: nil,
+                                  mailboxAccount: pending.destinationAccount,
+                                  mailboxPath: pending.destinationPath)
+        let statusMessage = await moveThreadToAssignedFolderMailbox(threadID: threadID, folder: folder)
+        if let statusMessage {
+            mailboxActionStatusMessage = statusMessage
+        }
     }
 
     private static func mailboxMoveFailureMessage(for error: Error) -> String {
@@ -3176,6 +3454,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 var updated = folder
                 updated.title = edit.title
                 updated.color = edit.color
+                updated.mailboxAccount = edit.mailboxAccount
+                updated.mailboxPath = edit.mailboxPath
                 return updated
             }
         }
