@@ -3271,24 +3271,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return (effectiveThreadIDs, candidates)
     }
 
-    nonisolated private static func mailboxMoveInput(from candidates: [MailboxMoveCandidate]) -> (messageIDs: [String], internalTargets: [MailControl.InternalIDMoveTarget], unresolvedCount: Int) {
+    nonisolated private static func mailboxMoveInput(from candidates: [MailboxMoveCandidate]) -> (messageIDs: [String], internalTargets: [MailControl.InternalIDMoveTarget], fallbackMessageIDs: [String], unresolvedCount: Int) {
         var seenMessageIDs = Set<String>()
         var messageIDs: [String] = []
         var seenInternalIDs = Set<String>()
         var internalTargets: [MailControl.InternalIDMoveTarget] = []
+        var seenFallbackMessageIDs = Set<String>()
+        var fallbackMessageIDs: [String] = []
         var unresolvedCount = 0
         messageIDs.reserveCapacity(candidates.count)
         internalTargets.reserveCapacity(candidates.count)
+        fallbackMessageIDs.reserveCapacity(candidates.count)
 
         for candidate in candidates {
             let cleanedMessageID = MailControl.cleanMessageIDPreservingCase(candidate.message.messageID)
-            let hasMessageID = !cleanedMessageID.isEmpty
-            if !cleanedMessageID.isEmpty {
-                if seenMessageIDs.insert(cleanedMessageID).inserted {
-                    messageIDs.append(cleanedMessageID)
-                }
-            }
-
             let internalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !internalID.isEmpty {
                 if seenInternalIDs.insert(internalID).inserted {
@@ -3298,14 +3294,22 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                          sourceMailboxPath: candidate.mailboxPath)
                     )
                 }
-            } else if !hasMessageID {
+                if !cleanedMessageID.isEmpty,
+                   seenFallbackMessageIDs.insert(cleanedMessageID).inserted {
+                    fallbackMessageIDs.append(cleanedMessageID)
+                }
+            } else if !cleanedMessageID.isEmpty {
+                if seenMessageIDs.insert(cleanedMessageID).inserted {
+                    messageIDs.append(cleanedMessageID)
+                }
+            } else {
                 unresolvedCount += 1
             }
         }
-        return (messageIDs.sorted(), internalTargets, unresolvedCount)
+        return (messageIDs.sorted(), internalTargets, fallbackMessageIDs.sorted(), unresolvedCount)
     }
 
-    nonisolated private static func executeMailboxMove(with input: (messageIDs: [String], internalTargets: [MailControl.InternalIDMoveTarget], unresolvedCount: Int),
+    nonisolated private static func executeMailboxMove(with input: (messageIDs: [String], internalTargets: [MailControl.InternalIDMoveTarget], fallbackMessageIDs: [String], unresolvedCount: Int),
                                                        destinationPath: String,
                                                        account: String) async throws -> MailControl.MailboxMoveResult {
         var combined = MailControl.MailboxMoveResult(requestedCount: 0,
@@ -3314,6 +3318,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                      errorCount: 0,
                                                      firstErrorNumber: nil,
                                                      firstErrorMessage: nil)
+        var internalMoveMovedMessages = false
 
         if !input.messageIDs.isEmpty {
             do {
@@ -3337,10 +3342,28 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let byInternalID = try await MailControl.moveMessagesByInternalID(targets: input.internalTargets,
                                                                                    to: destinationPath,
                                                                                    in: account)
+                internalMoveMovedMessages = byInternalID.movedCount > 0
                 combined = Self.combineMailboxMoveResults(lhs: combined, rhs: byInternalID)
             } catch MailControlError.noMessagesMoved {
                 combined = Self.combineMailboxMoveResults(lhs: combined,
                                                           rhs: MailControl.MailboxMoveResult(requestedCount: input.internalTargets.count,
+                                                                                             matchedCount: 0,
+                                                                                             movedCount: 0,
+                                                                                             errorCount: 0,
+                                                                                             firstErrorNumber: nil,
+                                                                                             firstErrorMessage: nil))
+            }
+        }
+
+        if !internalMoveMovedMessages && !input.fallbackMessageIDs.isEmpty {
+            do {
+                let byFallbackMessageID = try await MailControl.moveMessages(messageIDs: input.fallbackMessageIDs,
+                                                                             to: destinationPath,
+                                                                             in: account)
+                combined = Self.combineMailboxMoveResults(lhs: combined, rhs: byFallbackMessageID)
+            } catch MailControlError.noMessagesMoved {
+                combined = Self.combineMailboxMoveResults(lhs: combined,
+                                                          rhs: MailControl.MailboxMoveResult(requestedCount: input.fallbackMessageIDs.count,
                                                                                              matchedCount: 0,
                                                                                              movedCount: 0,
                                                                                              errorCount: 0,

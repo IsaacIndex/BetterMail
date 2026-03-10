@@ -103,6 +103,13 @@ final class MailControlTests: XCTestCase {
         XCTAssertTrue(script.contains("set _destinationAccount to \"Work\""))
         XCTAssertTrue(script.contains("set _destinationPath to \"Projects/Acme\""))
         XCTAssertTrue(script.contains("set _destMailbox to my resolveMailboxByPath(_destinationAccount, _destinationPath)"))
+        XCTAssertTrue(script.contains("set _sourceCacheKeys to {}"))
+        XCTAssertTrue(script.contains("set _sourceCacheMailboxes to {}"))
+        XCTAssertTrue(script.contains("on appendResolvedMessages(_queryResults, _matches)"))
+        XCTAssertTrue(script.contains("messages of _sourceMailbox whose id is _idNumber"))
+        XCTAssertTrue(script.contains("messages of _sourceMailbox whose id is _idText"))
+        XCTAssertTrue(script.contains("set _resolvedMessage to contents of _m"))
+        XCTAssertTrue(script.contains("move _resolvedMatch to _destMailbox"))
         XCTAssertTrue(script.contains("if _sourceMailboxPath is not \"\" then"))
         XCTAssertTrue(script.contains("every message whose id is _idText"))
     }

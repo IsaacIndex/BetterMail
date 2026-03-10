@@ -274,7 +274,7 @@ internal struct MailControl {
         return normalized
     }
 
-    internal static func cleanMessageIDPreservingCase(_ raw: String) -> String {
+    nonisolated internal static func cleanMessageIDPreservingCase(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         if trimmed.hasPrefix("<") && trimmed.hasSuffix(">") {
@@ -317,8 +317,7 @@ internal struct MailControl {
         let script = buildMoveMessagesScript(messageIDs: cleanedIDs,
                                              mailboxPath: mailboxPath,
                                              account: account)
-        Log.appleScript.debug("Executing mailbox move script (Message-ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(cleanedIDs.count, privacy: .public)\n\(script, privacy: .public)")
-        print("Mailbox move script (Message-ID):\n\(script)")
+        Log.appleScript.debug("Executing mailbox move script (Message-ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(cleanedIDs.count, privacy: .public) scriptLength=\(script.count, privacy: .public)")
         let result = try await runScript(script)
         let parsed = MailboxMoveResult(requestedCount: cleanedIDs.count,
                                        matchedCount: result.descriptorType == typeAEList
@@ -393,8 +392,7 @@ internal struct MailControl {
         let script = buildMoveMessagesByInternalIDScript(targets: dedupedTargets,
                                                          mailboxPath: mailboxPath,
                                                          account: account)
-        Log.appleScript.debug("Executing mailbox move script (internal ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(dedupedTargets.count, privacy: .public)\n\(script, privacy: .public)")
-        print("Mailbox move script (internal ID):\n\(script)")
+        Log.appleScript.debug("Executing mailbox move script (internal ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(dedupedTargets.count, privacy: .public) scriptLength=\(script.count, privacy: .public)")
         let result = try await runScript(script)
         guard result.descriptorType == typeAEList else {
             return MailboxMoveResult(requestedCount: dedupedTargets.count,
@@ -413,7 +411,6 @@ internal struct MailControl {
                                        firstErrorNumber: firstErrorNumberRaw == 0 ? nil : firstErrorNumberRaw,
                                        firstErrorMessage: firstErrorMessageRaw.isEmpty ? nil : firstErrorMessageRaw)
         Log.appleScript.debug("Mailbox move result account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) requested=\(parsed.requestedCount, privacy: .public) matched=\(parsed.matchedCount, privacy: .public) moved=\(parsed.movedCount, privacy: .public) errors=\(parsed.errorCount, privacy: .public) firstErrorNumber=\(parsed.firstErrorNumber ?? 0, privacy: .public) firstErrorMessage=\(parsed.firstErrorMessage ?? "", privacy: .public)")
-        print("Mailbox move result: requested=\(parsed.requestedCount) matched=\(parsed.matchedCount) moved=\(parsed.movedCount) errors=\(parsed.errorCount) firstErrorNumber=\(parsed.firstErrorNumber.map(String.init) ?? "nil") firstErrorMessage=\(parsed.firstErrorMessage ?? "nil")")
         return parsed
     }
 
@@ -442,8 +439,7 @@ internal struct MailControl {
                                                       receivedAt: receivedAt,
                                                       toleranceSeconds: toleranceSeconds,
                                                       allowAccountWideFallback: allowAccountWideFallback)
-        Log.appleScript.debug("Executing internal-ID resolver script for account=\(trimmedAccount, privacy: .public) mailboxPath=\(trimmedMailboxPath, privacy: .public)\n\(script, privacy: .public)")
-        print("Internal-ID resolver script:\n\(script)")
+        Log.appleScript.debug("Executing internal-ID resolver script for account=\(trimmedAccount, privacy: .public) mailboxPath=\(trimmedMailboxPath, privacy: .public) scriptLength=\(script.count, privacy: .public)")
         let result = try await runScript(script)
         guard result.descriptorType == typeAEList else { return .notFound }
         let matchCount = Int(result.atIndex(1)?.int32Value ?? 0)
@@ -452,7 +448,6 @@ internal struct MailControl {
         let fallbackMailboxCount = Int(result.atIndex(4)?.int32Value ?? 0)
         let fallbackMessageCount = Int(result.atIndex(5)?.int32Value ?? 0)
         Log.appleScript.debug("Internal-ID resolver result account=\(trimmedAccount, privacy: .public) mailboxPath=\(trimmedMailboxPath, privacy: .public) matchCount=\(matchCount, privacy: .public) resolvedID=\(resolvedID, privacy: .public) usedAccountWideFallback=\(usedAccountWideFallback, privacy: .public) fallbackMailboxCount=\(fallbackMailboxCount, privacy: .public) fallbackMessageCount=\(fallbackMessageCount, privacy: .public)")
-        print("Internal-ID resolver result: matchCount=\(matchCount), resolvedID=\(resolvedID), usedAccountWideFallback=\(usedAccountWideFallback), fallbackMailboxCount=\(fallbackMailboxCount), fallbackMessageCount=\(fallbackMessageCount)")
         if matchCount == 1, !resolvedID.isEmpty {
             return .resolved(resolvedID)
         }
@@ -686,6 +681,24 @@ internal struct MailControl {
         let safeMailboxPath = escapedForAppleScript(mailboxPath)
         return """
         \(mailboxPathResolverHandlersScript())
+        on indexOfText(_values, _needle)
+          repeat with _i from 1 to (count of _values)
+            if (item _i of _values as string) is _needle then return _i
+          end repeat
+          return 0
+        end indexOfText
+
+        on appendResolvedMessages(_queryResults, _matches)
+          repeat with _m in _queryResults
+            set _resolvedMessage to _m
+            try
+              set _resolvedMessage to contents of _m
+            end try
+            copy _resolvedMessage to end of _matches
+          end repeat
+          return _matches
+        end appendResolvedMessages
+
         set _internalIDs to {\(escapedIDs)}
         set _sourceAccounts to {\(escapedSourceAccounts)}
         set _sourceMailboxPaths to {\(escapedSourceMailboxPaths)}
@@ -702,6 +715,8 @@ internal struct MailControl {
             if _destMailbox is missing value then
               error "Destination mailbox not found for path: " & _destinationPath & " account: " & _destinationAccount number -1728
             end if
+            set _sourceCacheKeys to {}
+            set _sourceCacheMailboxes to {}
             repeat with _index from 1 to (count of _internalIDs)
               set _idText to (item _index of _internalIDs as string)
               set _sourceAccount to ""
@@ -722,57 +737,51 @@ internal struct MailControl {
 
               if _sourceMailboxPath is not "" then
                 set _sourceMailbox to missing value
-                try
-                  set _sourceMailbox to my resolveMailboxByPath(_sourceAccount, _sourceMailboxPath)
-                end try
-                if _sourceMailbox is not missing value then
-                  set _sourceMessages to {}
+                set _sourceCacheKey to _sourceAccount & "||" & _sourceMailboxPath
+                set _sourceCacheIndex to my indexOfText(_sourceCacheKeys, _sourceCacheKey)
+                if _sourceCacheIndex is greater than 0 then
+                  set _sourceMailbox to item _sourceCacheIndex of _sourceCacheMailboxes
+                else
                   try
-                    set _sourceMessages to messages of _sourceMailbox
+                    set _sourceMailbox to my resolveMailboxByPath(_sourceAccount, _sourceMailboxPath)
+                  on error
+                    set _sourceMailbox to missing value
                   end try
-                  repeat with _sourceMessage in _sourceMessages
-                    set _sourceMessageValue to _sourceMessage
+                  copy _sourceCacheKey to end of _sourceCacheKeys
+                  copy _sourceMailbox to end of _sourceCacheMailboxes
+                end if
+                if _sourceMailbox is not missing value then
+                  if _idNumberKnown then
                     try
-                      set _sourceMessageValue to contents of _sourceMessage
+                      set _matches to my appendResolvedMessages((messages of _sourceMailbox whose id is _idNumber), _matches)
                     end try
-                    set _sourceMatched to false
+                  end if
+                  if (count of _matches) is 0 then
                     try
-                      if (id of _sourceMessageValue as string) is _idText then
-                        set _sourceMatched to true
-                      end if
+                      set _matches to my appendResolvedMessages((messages of _sourceMailbox whose id is _idText), _matches)
                     end try
-                    if (not _sourceMatched) and _idNumberKnown then
-                      try
-                        if (id of _sourceMessageValue as integer) is _idNumber then
-                          set _sourceMatched to true
-                        end if
-                      end try
-                    end if
-                    if _sourceMatched then
-                      copy _sourceMessageValue to end of _matches
-                    end if
-                  end repeat
+                  end if
                 end if
               end if
 
               if (count of _matches) is 0 and _sourceMailboxPath is "" then
-              try
-                repeat with _m in (every message whose id is _idText)
-                  copy _m to end of _matches
-                end repeat
-              end try
+                  try
+                    set _matches to my appendResolvedMessages((every message whose id is _idText), _matches)
+                  end try
               end if
               if (count of _matches) is 0 and _idNumberKnown and _sourceMailboxPath is "" then
                 try
-                  repeat with _m in (every message whose id is _idNumber)
-                    copy _m to end of _matches
-                  end repeat
+                  set _matches to my appendResolvedMessages((every message whose id is _idNumber), _matches)
                 end try
               end if
               set _matchedCount to _matchedCount + (count of _matches)
               repeat with _match in _matches
                 try
-                  move _match to _destMailbox
+                  set _resolvedMatch to _match
+                  try
+                    set _resolvedMatch to contents of _match
+                  end try
+                  move _resolvedMatch to _destMailbox
                   set _movedCount to _movedCount + 1
                 on error _errMsg number _errNum
                   set _errorCount to _errorCount + 1
