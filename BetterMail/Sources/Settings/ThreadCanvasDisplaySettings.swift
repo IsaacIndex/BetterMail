@@ -8,7 +8,7 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     internal static let defaultCompactThreshold: CGFloat = 0.4
     internal static let defaultMinimalThreshold: CGFloat = 0.2
     internal static let defaultTextScale: CGFloat = 1.0
-    internal static let minimumTextScale: CGFloat = 0.8
+    internal static let minimumTextScale: CGFloat = 0.5
     internal static let maximumTextScale: CGFloat = 1.6
     internal static let defaultViewMode: ThreadCanvasViewMode = .default
 
