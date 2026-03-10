@@ -76,6 +76,14 @@ final class ThreadCanvasDisplaySettingsTests: XCTestCase {
         XCTAssertEqual(reloadedSettings.textScale, 0.73, accuracy: 0.0001)
     }
 
+    func test_textScale_whenAssigned_persistsImmediatelyToUserDefaults() {
+        let settings = ThreadCanvasDisplaySettings(userDefaults: userDefaults)
+
+        settings.textScale = 1.15
+
+        XCTAssertEqual(userDefaults.double(forKey: "threadCanvasTextScale"), 1.15, accuracy: 0.0001)
+    }
+
     func test_textScale_restoresWhenPersistedInUserDefaults() {
         userDefaults.set(1.25, forKey: "threadCanvasTextScale")
 

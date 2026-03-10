@@ -32,7 +32,7 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
         didSet { normalizeSettings() }
     }
     @Published internal var textScale: CGFloat = ThreadCanvasDisplaySettings.defaultTextScale {
-        didSet { normalizeSettings() }
+        didSet { normalizeTextScale() }
     }
     @Published internal var viewMode: ThreadCanvasViewMode = ThreadCanvasDisplaySettings.defaultViewMode {
         didSet { userDefaults.set(viewMode.rawValue, forKey: StorageKey.viewMode) }
@@ -93,19 +93,25 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
         detailed = max(detailed, compact)
         compact = min(max(compact, minimal), detailed)
         minimal = min(minimal, compact)
-        let textScale = min(max(self.textScale, Self.minimumTextScale), Self.maximumTextScale)
 
         if detailed != detailedThreshold { detailedThreshold = detailed }
         if compact != compactThreshold { compactThreshold = compact }
         if minimal != minimalThreshold { minimalThreshold = minimal }
-        if textScale != self.textScale { self.textScale = textScale }
 
         storeCGFloat(detailed, forKey: StorageKey.detailedThreshold)
         storeCGFloat(compact, forKey: StorageKey.compactThreshold)
         storeCGFloat(minimal, forKey: StorageKey.minimalThreshold)
-        storeCGFloat(textScale, forKey: StorageKey.textScale)
 
         isNormalizing = false
+    }
+
+    private func normalizeTextScale() {
+        let clamped = min(max(textScale, Self.minimumTextScale), Self.maximumTextScale)
+        if clamped != textScale {
+            textScale = clamped
+            return
+        }
+        storeCGFloat(clamped, forKey: StorageKey.textScale)
     }
 
     private func storedCGFloat(forKey key: String, defaultValue: CGFloat) -> CGFloat {
