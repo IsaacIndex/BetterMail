@@ -508,6 +508,7 @@ internal struct ThreadListView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .shadow(color: Color.black.opacity(isGlassNavEnabled ? 0.3 : 0.2), radius: 12, y: 6)
                 .padding(.bottom, 16)
+                .offset(x: selectionActionBarHorizontalOffset)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -517,6 +518,14 @@ internal struct ThreadListView: View {
 
     private var shouldShowBackfillAction: Bool {
         !viewModel.visibleEmptyDayIntervals.isEmpty
+    }
+
+    private var selectionActionBarInspectorReservation: CGFloat {
+        isInspectorVisible ? inspectorWidth + navHorizontalPadding : 0
+    }
+
+    private var selectionActionBarHorizontalOffset: CGFloat {
+        -selectionActionBarInspectorReservation / 2
     }
 
     private var shouldShowActionBar: Bool {
