@@ -176,6 +176,7 @@ sequenceDiagram
 **Technical**
 - Manual grouping is stored in `ManualThreadGroup` records with two sets: `jwzThreadIDs` (grouped JWZ threads) and `manualMessageKeys` (manual attachments).
 - `JWZThreader.applyManualGroups` overlays these manual groups onto the JWZ thread map so the UI renders combined groups.
+- When grouping changes the effective thread identity, BetterMail remaps canvas-folder membership and mailbox auto-follow rules so foldered threads keep their canvas/mailbox destination.
 - Ungrouping updates the owning `ManualThreadGroup` by removing selected `jwzThreadIDs` or `manualMessageKeys`; empty groups are deleted from `MessageStore`.
 
 ### JWZ Threading Algorithm

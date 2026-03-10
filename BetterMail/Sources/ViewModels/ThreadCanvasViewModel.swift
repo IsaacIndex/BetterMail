@@ -357,7 +357,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
             let updatedResult = applied.result
             try await store.updateThreadMembership(updatedResult.messageThreadMap, threads: updatedResult.threads)
-            let folders = try await store.fetchThreadFolders()
+            let storedFolders = try await store.fetchThreadFolders()
+            let folders: [ThreadFolder]
+            let reconciledFolders = await MainActor.run {
+                ThreadCanvasViewModel.reconcileFolderThreadIdentities(folders: storedFolders,
+                                                                      roots: updatedResult.roots,
+                                                                      jwzThreadMap: updatedResult.jwzThreadMap)
+            }
+            if let reconciled = reconciledFolders {
+                try await store.upsertThreadFolders(reconciled.folders)
+                folders = reconciled.folders
+            } else {
+                folders = storedFolders
+            }
             let unread = updatedResult.threads.reduce(0) { $0 + $1.unreadCount }
             let groupsByID = Dictionary(uniqueKeysWithValues: effectiveGroups.map { ($0.id, $0) })
             return RethreadOutcome(roots: updatedResult.roots,
@@ -2851,12 +2863,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return
         }
 
-        let selectionDetails = selectedNodes.map { node -> (messageKey: String, jwzThreadID: String, manualGroupID: String?, isJWZThreaded: Bool) in
+        let selectionDetails = selectedNodes.map { node -> (messageKey: String, currentThreadID: String, jwzThreadID: String, manualGroupID: String?, isJWZThreaded: Bool) in
             let messageKey = node.message.threadKey
             let jwzThreadID = jwzThreadMap[messageKey] ?? node.message.threadID ?? node.id
             let isJWZThreaded = jwzThreadMap[messageKey] != nil
-            return (messageKey, jwzThreadID, manualGroupByMessageKey[messageKey], isJWZThreaded)
+            let currentThreadID = manualGroupByMessageKey[messageKey] ?? jwzThreadID
+            return (messageKey, currentThreadID, jwzThreadID, manualGroupByMessageKey[messageKey], isJWZThreaded)
         }
+        let sourceThreadIDs = Set(selectionDetails.map { $0.currentThreadID })
 
         let manualGroupIDs = Set(selectionDetails.compactMap(\.manualGroupID))
 
@@ -2864,8 +2878,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
               let targetNode = Self.node(matching: targetID, in: roots) else { return }
         let targetKey = targetNode.message.threadKey
         let targetJWZID = jwzThreadMap[targetKey] ?? targetNode.message.threadID ?? targetNode.id
+        let targetThreadID = effectiveThreadID(for: targetNode)
         let targetFolderMailboxMove = pendingFolderMailboxMoveForManualAttachment(targetNode: targetNode,
-                                                                                  targetThreadID: effectiveThreadID(for: targetNode),
+                                                                                  targetThreadID: targetThreadID,
                                                                                   targetMessageKey: targetKey)
 
         var jwzThreadCounts: [String: Int] = [:]
@@ -2897,6 +2912,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 guard let self else { return }
                 do {
                     try await store.upsertManualThreadGroups([newGroup])
+                    try await reconcileThreadIdentityRemap(sourceThreadIDs: sourceThreadIDs,
+                                                          replacementThreadID: newGroup.id,
+                                                          preferredSourceThreadID: targetThreadID)
                     await MainActor.run {
                         if !manualAttachmentKeys.isEmpty {
                             self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
@@ -2919,6 +2937,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 guard let self else { return }
                 do {
                     try await store.upsertManualThreadGroups([group])
+                    try await reconcileThreadIdentityRemap(sourceThreadIDs: sourceThreadIDs,
+                                                          replacementThreadID: groupID,
+                                                          preferredSourceThreadID: targetThreadID)
                     await MainActor.run {
                         if !manualAttachmentKeys.isEmpty {
                             self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
@@ -2952,6 +2973,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 for groupID in manualGroupIDs {
                     try await store.deleteManualThreadGroup(id: groupID)
                 }
+                try await reconcileThreadIdentityRemap(sourceThreadIDs: sourceThreadIDs,
+                                                      replacementThreadID: mergedGroup.id,
+                                                      preferredSourceThreadID: targetThreadID)
                 await MainActor.run {
                     if !manualAttachmentKeys.isEmpty {
                         self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
@@ -3006,6 +3030,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private func selectedNodes(in roots: [ThreadNode]) -> [ThreadNode] {
         guard !selectedNodeIDs.isEmpty else { return [] }
         return Self.nodes(matching: selectedNodeIDs, in: roots)
+    }
+
+    private func reconcileThreadIdentityRemap(sourceThreadIDs: Set<String>,
+                                              replacementThreadID: String,
+                                              preferredSourceThreadID: String?) async throws {
+        if let update = Self.remapThreadIDsInFolders(sourceThreadIDs,
+                                                     to: replacementThreadID,
+                                                     preferredSourceThreadID: preferredSourceThreadID,
+                                                     folders: threadFolders) {
+            try await store.upsertThreadFolders(update.folders)
+            if !update.deletedFolderIDs.isEmpty {
+                try await store.deleteThreadFolders(ids: Array(update.deletedFolderIDs))
+            }
+            threadFolders = update.folders
+            folderMembershipByThreadID = update.membership
+            refreshFolderSummaries(for: roots, folders: update.folders)
+        }
+        mailboxThreadAutoMoveSettings.remap(threadIDs: sourceThreadIDs,
+                                            to: replacementThreadID,
+                                            preferredSourceThreadID: preferredSourceThreadID)
     }
 
     private func pendingFolderMailboxMoveForManualAttachment(targetNode: ThreadNode,
@@ -5279,6 +5323,38 @@ extension ThreadCanvasViewModel {
         }
     }
 
+    internal static func reconcileFolderThreadIdentities(folders: [ThreadFolder],
+                                                         roots: [ThreadNode],
+                                                         jwzThreadMap: [String: String]) -> FolderMoveUpdate? {
+        guard !folders.isEmpty, !roots.isEmpty else { return nil }
+
+        var aliasesByThreadID: [String: String] = [:]
+        for node in flatten(nodes: roots) {
+            let currentThreadID = node.message.threadID ?? node.id
+            let messageKey = node.message.threadKey
+            aliasesByThreadID[currentThreadID] = currentThreadID
+            if let jwzThreadID = jwzThreadMap[messageKey], jwzThreadID != currentThreadID {
+                aliasesByThreadID[jwzThreadID] = currentThreadID
+            }
+        }
+
+        var didChange = false
+        let reconciledFolders = folders.map { folder -> ThreadFolder in
+            let reconciledThreadIDs = Set(folder.threadIDs.map { aliasesByThreadID[$0] ?? $0 })
+            if reconciledThreadIDs != folder.threadIDs {
+                didChange = true
+            }
+            var updated = folder
+            updated.threadIDs = reconciledThreadIDs
+            return updated
+        }
+
+        guard didChange else { return nil }
+        return FolderMoveUpdate(folders: reconciledFolders,
+                                deletedFolderIDs: [],
+                                membership: folderMembershipMap(for: reconciledFolders))
+    }
+
     internal struct FolderMoveUpdate {
         internal let folders: [ThreadFolder]
         internal let deletedFolderIDs: Set<String>
@@ -5317,6 +5393,52 @@ extension ThreadCanvasViewModel {
         guard let targetIndex = updatedFolders.firstIndex(where: { $0.id == folderID }) else { return nil }
         updatedFolders[targetIndex].threadIDs.insert(threadID)
         let membership = folderMembershipMap(for: updatedFolders)
+        return FolderMoveUpdate(folders: updatedFolders,
+                                deletedFolderIDs: deletedFolderIDs,
+                                membership: membership)
+    }
+
+    internal static func remapThreadIDsInFolders(_ sourceThreadIDs: Set<String>,
+                                                 to replacementThreadID: String,
+                                                 preferredSourceThreadID: String?,
+                                                 folders: [ThreadFolder]) -> FolderMoveUpdate? {
+        guard !sourceThreadIDs.isEmpty,
+              !replacementThreadID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !folders.isEmpty else {
+            return nil
+        }
+
+        var updatedFolders = folders
+        var sourceFolderIDs: Set<String> = []
+        for index in updatedFolders.indices {
+            let removed = updatedFolders[index].threadIDs.intersection(sourceThreadIDs)
+            guard !removed.isEmpty else { continue }
+            sourceFolderIDs.insert(updatedFolders[index].id)
+            updatedFolders[index].threadIDs.subtract(sourceThreadIDs)
+        }
+
+        guard !sourceFolderIDs.isEmpty else { return nil }
+
+        let preferredFolderID = preferredSourceThreadID.flatMap { threadID in
+            folders.first(where: { $0.threadIDs.contains(threadID) })?.id
+        }
+        let destinationFolderID = preferredFolderID ?? (sourceFolderIDs.count == 1 ? sourceFolderIDs.first : nil)
+        if let destinationFolderID,
+           let destinationIndex = updatedFolders.firstIndex(where: { $0.id == destinationFolderID }) {
+            updatedFolders[destinationIndex].threadIDs.insert(replacementThreadID)
+        }
+
+        let childIDsByParent = childFolderIDsByParent(folders: updatedFolders)
+        var deletedFolderIDs: Set<String> = []
+        updatedFolders.removeAll { folder in
+            guard folder.threadIDs.isEmpty else { return false }
+            guard (childIDsByParent[folder.id]?.isEmpty ?? true) else { return false }
+            deletedFolderIDs.insert(folder.id)
+            return true
+        }
+
+        let membership = folderMembershipMap(for: updatedFolders)
+        guard updatedFolders != folders else { return nil }
         return FolderMoveUpdate(folders: updatedFolders,
                                 deletedFolderIDs: deletedFolderIDs,
                                 membership: membership)

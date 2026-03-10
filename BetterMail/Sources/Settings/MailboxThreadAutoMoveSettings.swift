@@ -49,6 +49,57 @@ internal final class MailboxThreadAutoMoveSettings: ObservableObject {
         }
     }
 
+    internal func remap(threadIDs sourceThreadIDs: Set<String>,
+                        to replacementThreadID: String,
+                        preferredSourceThreadID: String? = nil) {
+        let trimmedReplacement = replacementThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedReplacement.isEmpty else { return }
+
+        let normalizedSourceIDs = Set(sourceThreadIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
+        guard !normalizedSourceIDs.isEmpty else { return }
+
+        let matchingRules = rules.filter { normalizedSourceIDs.contains($0.threadID) }
+        guard !matchingRules.isEmpty else { return }
+
+        let normalizedPreferredID = preferredSourceThreadID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var updatedByCompositeID = Dictionary(uniqueKeysWithValues: rules.map { rule in
+            ("\(rule.account.lowercased())|\(rule.threadID)", rule)
+        })
+
+        for sourceThreadID in normalizedSourceIDs {
+            updatedByCompositeID.keys
+                .filter { $0.hasSuffix("|\(sourceThreadID)") }
+                .forEach { updatedByCompositeID.removeValue(forKey: $0) }
+        }
+
+        let rulesByAccount = Dictionary(grouping: matchingRules, by: \.account)
+        for (account, accountRules) in rulesByAccount {
+            let preferredRule = accountRules.first { rule in
+                guard let normalizedPreferredID else { return false }
+                return rule.threadID == normalizedPreferredID
+            }
+            let chosenRule = preferredRule ?? accountRules.sorted {
+                if $0.destinationPath == $1.destinationPath {
+                    return $0.threadID < $1.threadID
+                }
+                return $0.destinationPath < $1.destinationPath
+            }.first
+            guard let chosenRule else { continue }
+
+            updatedByCompositeID["\(account.lowercased())|\(trimmedReplacement)"] = MailboxThreadMoveRule(account: account,
+                                                                                                          threadID: trimmedReplacement,
+                                                                                                          destinationPath: chosenRule.destinationPath)
+        }
+
+        rules = updatedByCompositeID.values.sorted { lhs, rhs in
+            if lhs.account == rhs.account {
+                return lhs.threadID < rhs.threadID
+            }
+            return lhs.account < rhs.account
+        }
+    }
+
     private static func encode(_ rules: [MailboxThreadMoveRule]) -> String {
         guard !rules.isEmpty else { return "" }
         if let data = try? JSONEncoder().encode(rules),

@@ -49,4 +49,27 @@ final class MailboxThreadAutoMoveSettingsTests: XCTestCase {
             $0.account == "Personal" && $0.threadID == "thread-1" && $0.destinationPath == "Archive"
         }))
     }
+
+    func test_remap_replacesSourceThreadIDsWithGroupedThreadID() {
+        let settings = MailboxThreadAutoMoveSettings()
+
+        settings.upsert(threadIDs: ["thread-a"],
+                        destinationPath: "Projects/Acme",
+                        account: "Work")
+        settings.upsert(threadIDs: ["thread-b"],
+                        destinationPath: "Archive",
+                        account: "Personal")
+
+        settings.remap(threadIDs: ["thread-a", "thread-b"],
+                       to: "manual-group",
+                       preferredSourceThreadID: "thread-a")
+
+        XCTAssertFalse(settings.rules.contains(where: { $0.threadID == "thread-a" || $0.threadID == "thread-b" }))
+        XCTAssertTrue(settings.rules.contains(where: {
+            $0.account == "Work" && $0.threadID == "manual-group" && $0.destinationPath == "Projects/Acme"
+        }))
+        XCTAssertTrue(settings.rules.contains(where: {
+            $0.account == "Personal" && $0.threadID == "manual-group" && $0.destinationPath == "Archive"
+        }))
+    }
 }

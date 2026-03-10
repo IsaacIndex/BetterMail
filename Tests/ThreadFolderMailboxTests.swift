@@ -90,4 +90,73 @@ final class ThreadFolderMailboxTests: XCTestCase {
                        NSLocalizedString("threadcanvas.folder.mailbox.mixed_accounts",
                                          comment: "Reason a folder mailbox destination cannot be set for mixed-account folders"))
     }
+
+    func testReconcileFolderThreadIdentities_mapsJWZFolderMembershipToManualGroupID() {
+        let older = Date(timeIntervalSince1970: 100)
+        let newer = Date(timeIntervalSince1970: 200)
+        let messageA = EmailMessage(messageID: "msg-a",
+                                    mailboxID: "Inbox",
+                                    accountName: "Work",
+                                    subject: "A",
+                                    from: "a@example.com",
+                                    to: "me@example.com",
+                                    date: older,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+        let messageB = EmailMessage(messageID: "msg-b",
+                                    mailboxID: "Inbox",
+                                    accountName: "Work",
+                                    subject: "B",
+                                    from: "b@example.com",
+                                    to: "me@example.com",
+                                    date: newer,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+
+        let threader = JWZThreader()
+        let baseResult = threader.buildThreads(from: [messageA, messageB])
+        let threadAID = baseResult.jwzThreadMap[messageA.threadKey]!
+        let threadBID = baseResult.jwzThreadMap[messageB.threadKey]!
+        let manualGroup = ManualThreadGroup(id: "manual-group",
+                                            jwzThreadIDs: [threadAID, threadBID],
+                                            manualMessageKeys: [])
+        let applied = threader.applyManualGroups([manualGroup], to: baseResult)
+
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Projects",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1),
+                                  threadIDs: [threadAID, threadBID],
+                                  parentID: nil,
+                                  mailboxAccount: "Work",
+                                  mailboxPath: "Projects/Acme")
+
+        let update = ThreadCanvasViewModel.reconcileFolderThreadIdentities(folders: [folder],
+                                                                           roots: applied.result.roots,
+                                                                           jwzThreadMap: applied.result.jwzThreadMap)
+
+        XCTAssertEqual(update?.folders.first?.threadIDs, [manualGroup.id])
+        XCTAssertEqual(update?.membership[manualGroup.id], folder.id)
+    }
+
+    func testRemapThreadIDsInFolders_reusesTargetFolderForGroupedThread() {
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Projects",
+                                  color: ThreadFolderColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1),
+                                  threadIDs: ["thread-a", "thread-b"],
+                                  parentID: nil,
+                                  mailboxAccount: "Work",
+                                  mailboxPath: "Projects/Acme")
+
+        let update = ThreadCanvasViewModel.remapThreadIDsInFolders(["thread-a", "thread-b"],
+                                                                   to: "manual-group",
+                                                                   preferredSourceThreadID: "thread-a",
+                                                                   folders: [folder])
+
+        XCTAssertEqual(update?.folders.first?.threadIDs, ["manual-group"])
+        XCTAssertEqual(update?.membership["manual-group"], folder.id)
+    }
 }
