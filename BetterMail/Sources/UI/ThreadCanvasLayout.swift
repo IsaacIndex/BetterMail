@@ -117,6 +117,14 @@ internal struct ThreadTimelineLayoutConstants {
         10 * fontScale
     }
 
+    internal static func tagChipFontSize(fontScale: CGFloat) -> CGFloat {
+        max(7 * fontScale, 6.5)
+    }
+
+    internal static func mailboxChipFontSize(fontScale: CGFloat) -> CGFloat {
+        max(timeFontSize(fontScale: fontScale) - (2 * fontScale), 8 * fontScale)
+    }
+
     internal static func tagVerticalPadding(fontScale: CGFloat) -> CGFloat {
         3 * fontScale
     }

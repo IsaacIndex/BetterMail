@@ -2092,11 +2092,12 @@ private struct ThreadCanvasConnectorColumn: View {
     private func timelineDotCenterY(for node: ThreadCanvasNode) -> CGFloat {
         let tags = timelineTagsByNodeID[node.id] ?? []
         let verticalPadding = ThreadTimelineLayoutConstants.rowVerticalPadding(fontScale: metrics.fontScale)
-        let topLineHeight = timelineTopLineHeight(tags: tags)
+        let topLineHeight = timelineTopLineHeight(tags: tags,
+                                                  mailboxLabel: MailboxPathFormatter.leafName(from: node.message.mailboxID))
         return node.frame.minY + verticalPadding + (topLineHeight / 2)
     }
 
-    private func timelineTopLineHeight(tags: [String]) -> CGFloat {
+    private func timelineTopLineHeight(tags: [String], mailboxLabel: String?) -> CGFloat {
         let fontScale = metrics.fontScale
         let textVisibility = timelineTextVisibility(readabilityMode: readabilityMode)
         let dotSize = ThreadTimelineLayoutConstants.dotSize(fontScale: fontScale)
@@ -2107,16 +2108,21 @@ private struct ThreadCanvasConnectorColumn: View {
 
         let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
                                          weight: .semibold)
-        let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
+        let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagChipFontSize(fontScale: fontScale),
                                         weight: .semibold)
+        let mailboxFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.mailboxChipFontSize(fontScale: fontScale),
+                                            weight: .semibold)
         let timeHeight = ceil(timeFont.ascender - timeFont.descender)
         let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
         let visibleTags = tags.prefix(3)
         let tagHeight = visibleTags.isEmpty
             ? 0
             : ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
+        let mailboxHeight = mailboxLabel == nil
+            ? 0
+            : ceil((mailboxFont.ascender - mailboxFont.descender) + (tagVerticalPadding * 2))
 
-        return max(dotSize, timeHeight, tagHeight)
+        return max(dotSize, timeHeight, tagHeight, mailboxHeight)
     }
 
     private var connectorDotOverlap: CGFloat {
@@ -2317,10 +2323,11 @@ private struct ThreadTimelineCanvasNodeView: View {
     private func mailboxFolderChip(label: String) -> some View {
         Label(label, systemImage: "folder")
             .labelStyle(.titleAndIcon)
-            .font(.system(size: max(timeFontSize - scaled(1), scaled(9)), weight: .semibold))
+            .font(.system(size: mailboxChipFontSize, weight: .semibold))
             .foregroundStyle(mailboxChipForeground)
             .lineLimit(1)
             .truncationMode(.head)
+            .minimumScaleFactor(0.72)
             .padding(.vertical, scaled(3))
             .padding(.horizontal, scaled(8))
             .background(
@@ -2371,6 +2378,10 @@ private struct ThreadTimelineCanvasNodeView: View {
     private func scaled(_ value: CGFloat) -> CGFloat {
         value * fontScale
     }
+
+    private var mailboxChipFontSize: CGFloat {
+        ThreadTimelineLayoutConstants.mailboxChipFontSize(fontScale: fontScale)
+    }
 }
 
 internal func timelineTextVisibility(readabilityMode: ThreadCanvasReadabilityMode) -> TextVisibility {
@@ -2388,14 +2399,18 @@ private struct ThreadTimelineTagChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 8 * fontScale, weight: .semibold))
+            .font(.system(size: chipFontSize, weight: .semibold))
             .lineLimit(1)
-            .clipped()
+            .minimumScaleFactor(0.72)
             .padding(.vertical, 3 * fontScale)
             .padding(.horizontal, 6 * fontScale)
             .background(Capsule().fill(Color.accentColor.opacity(0.16)))
             .overlay(Capsule().stroke(Color.accentColor.opacity(0.28), lineWidth: 0.6 * fontScale))
             .foregroundStyle(Color.accentColor)
+    }
+
+    private var chipFontSize: CGFloat {
+        ThreadTimelineLayoutConstants.tagChipFontSize(fontScale: fontScale)
     }
 }
 

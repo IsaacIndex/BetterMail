@@ -4,6 +4,7 @@ import SwiftUI
 
 @MainActor
 internal final class ThreadCanvasDisplaySettings: ObservableObject {
+    private static let textScaleStorageKey = "threadCanvasTextScale"
     internal static let defaultDetailedThreshold: CGFloat = 0.65
     internal static let defaultCompactThreshold: CGFloat = 0.4
     internal static let defaultMinimalThreshold: CGFloat = 0.2
@@ -17,7 +18,6 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     @AppStorage("threadCanvasZoomCompactThreshold") private var storedCompactThreshold = ThreadCanvasDisplaySettings.defaultCompactThreshold
     @AppStorage("threadCanvasZoomMinimalThreshold") private var storedMinimalThreshold = ThreadCanvasDisplaySettings.defaultMinimalThreshold
     @AppStorage("threadCanvasCurrentZoom") private var storedCurrentZoom = ThreadCanvasDisplaySettings.defaultCurrentZoom
-    @AppStorage("threadCanvasTextScale") private var storedTextScale = ThreadCanvasDisplaySettings.defaultTextScale
     @AppStorage("threadCanvasViewMode") private var storedViewMode = ThreadCanvasDisplaySettings.defaultViewMode.rawValue
 
     @Published internal var detailedThreshold: CGFloat = ThreadCanvasDisplaySettings.defaultDetailedThreshold {
@@ -39,8 +39,10 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     @Published internal private(set) var currentZoom: CGFloat = ThreadCanvasDisplaySettings.defaultCurrentZoom
 
     private var isNormalizing = false
+    private let userDefaults: UserDefaults
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
         detailedThreshold = storedDetailedThreshold
         compactThreshold = storedCompactThreshold
         minimalThreshold = storedMinimalThreshold
@@ -97,6 +99,18 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
         storedTextScale = textScale
 
         isNormalizing = false
+    }
+
+    private var storedTextScale: CGFloat {
+        get {
+            guard let storedValue = userDefaults.object(forKey: Self.textScaleStorageKey) as? NSNumber else {
+                return Self.defaultTextScale
+            }
+            return CGFloat(truncating: storedValue)
+        }
+        set {
+            userDefaults.set(Double(newValue), forKey: Self.textScaleStorageKey)
+        }
     }
 }
 

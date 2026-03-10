@@ -207,9 +207,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let summaryFont: NSFont
             let timeFont: NSFont
             let tagFont: NSFont
+            let mailboxFont: NSFont
             let paragraph: NSParagraphStyle
             let timeHeight: CGFloat
             let tagHeight: CGFloat
+            let mailboxHeight: CGFloat
         }
 
         private(set) var assetsByKey: [FontKey: Assets] = [:]
@@ -226,19 +228,24 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                 weight: isUnread ? .semibold : .regular)
             let timeFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.timeFontSize(fontScale: fontScale),
                                              weight: .semibold)
-            let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagFontSize(fontScale: fontScale),
+            let tagFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.tagChipFontSize(fontScale: fontScale),
                                             weight: .semibold)
+            let mailboxFont = NSFont.systemFont(ofSize: ThreadTimelineLayoutConstants.mailboxChipFontSize(fontScale: fontScale),
+                                                weight: .semibold)
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byWordWrapping
             let timeHeight = ceil(timeFont.ascender - timeFont.descender)
             let tagVerticalPadding = ThreadTimelineLayoutConstants.tagVerticalPadding(fontScale: fontScale)
             let tagHeight = ceil((tagFont.ascender - tagFont.descender) + (tagVerticalPadding * 2))
+            let mailboxHeight = ceil((mailboxFont.ascender - mailboxFont.descender) + (tagVerticalPadding * 2))
             let assets = Assets(summaryFont: summaryFont,
                                 timeFont: timeFont,
                                 tagFont: tagFont,
+                                mailboxFont: mailboxFont,
                                 paragraph: paragraph,
                                 timeHeight: timeHeight,
-                                tagHeight: tagHeight)
+                                tagHeight: tagHeight,
+                                mailboxHeight: mailboxHeight)
             assetsByKey[key] = assets
             return assets
         }
@@ -5091,7 +5098,8 @@ extension ThreadCanvasViewModel {
                                                            isUnread: isUnread,
                                                            availableWidth: availableWidth)
         let tagHeight = visibleTags.isEmpty ? 0 : assets.tagHeight
-        let topLineHeight = max(assets.timeHeight, tagHeight, dotSize)
+        let mailboxHeight = MailboxPathFormatter.leafName(from: node.message.mailboxID) == nil ? 0 : assets.mailboxHeight
+        let topLineHeight = max(assets.timeHeight, tagHeight, mailboxHeight, dotSize)
         let contentHeight = topLineHeight + summarySpacing + summaryHeight
 
         return contentHeight + (verticalPadding * 2)
