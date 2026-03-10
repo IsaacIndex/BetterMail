@@ -143,6 +143,11 @@ private struct PendingManualAttachmentMailboxMove {
     let destinationPath: String
 }
 
+private struct BottomBarMailboxActionStatus {
+    let message: String
+    let expiresAt: Date
+}
+
 private enum MailboxFolderActionError: LocalizedError {
     case noSelection
     case mixedAccounts
@@ -483,7 +488,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     @Published internal private(set) var roots: [ThreadNode] = [] {
-        didSet { invalidateLayoutCache() }
+        didSet {
+            invalidateLayoutCache()
+            refreshBottomBarMailboxActionStatusMessage()
+        }
     }
     @Published internal private(set) var isRefreshing = false
     @Published internal private(set) var status: String = ""
@@ -491,6 +499,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var activeMailboxScope: MailboxScope = .allEmails
     @Published internal private(set) var isMailboxHierarchyLoading = false
     @Published internal private(set) var mailboxActionStatusMessage: String?
+    @Published internal private(set) var bottomBarMailboxActionStatusMessage: String?
     @Published internal private(set) var isMailboxActionRunning = false
     @Published internal private(set) var mailboxActionProgressMessage: String?
     @Published internal private(set) var unreadTotal: Int = 0
@@ -501,9 +510,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
     @Published internal private(set) var expandedSummaryIDs: Set<String> = []
-    @Published internal var selectedNodeID: String?
+    @Published internal var selectedNodeID: String? {
+        didSet { refreshBottomBarMailboxActionStatusMessage() }
+    }
     @Published internal var selectedFolderID: String?
-    @Published internal private(set) var selectedNodeIDs: Set<String> = []
+    @Published internal private(set) var selectedNodeIDs: Set<String> = [] {
+        didSet { refreshBottomBarMailboxActionStatusMessage() }
+    }
     @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
     @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = [] {
         didSet { invalidateLayoutCache() }
@@ -604,6 +617,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var mailboxThreadAutoMoveTask: Task<Void, Never>?
     private var mailboxThreadAutoMovePassPending = false
     private var pendingManualAttachmentMailboxMove: PendingManualAttachmentMailboxMove?
+    private let bottomBarMailboxActionStatusLifetime: TimeInterval = 300
+    private var bottomBarMailboxActionStatusByThreadID: [String: BottomBarMailboxActionStatus] = [:]
+    private var bottomBarMailboxActionStatusExpiryTask: Task<Void, Never>?
     private var nearBottomHitCount = 0
     private var lastDayWindowExpansionTime: Date?
 
@@ -670,6 +686,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         folderJumpTasks.values.forEach { $0.cancel() }
         pendingScrollTimeoutTasks.values.forEach { $0.cancel() }
         mailboxThreadAutoMoveTask?.cancel()
+        bottomBarMailboxActionStatusExpiryTask?.cancel()
     }
 
     internal func start() {
@@ -1743,7 +1760,84 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard activeMailboxScope != scope else { return }
         activeMailboxScope = scope
         mailboxActionStatusMessage = nil
+        bottomBarMailboxActionStatusMessage = nil
         scheduleRethread(delay: 0)
+    }
+
+    private func setBottomBarMailboxActionStatus(_ message: String?,
+                                                 forThreadID threadID: String?) {
+        guard let threadID else {
+            refreshBottomBarMailboxActionStatusMessage()
+            return
+        }
+
+        if let message {
+            bottomBarMailboxActionStatusByThreadID[threadID] = BottomBarMailboxActionStatus(
+                message: message,
+                expiresAt: Date().addingTimeInterval(bottomBarMailboxActionStatusLifetime)
+            )
+        } else {
+            bottomBarMailboxActionStatusByThreadID.removeValue(forKey: threadID)
+        }
+
+        refreshBottomBarMailboxActionStatusMessage()
+        scheduleBottomBarMailboxActionStatusExpiryIfNeeded()
+    }
+
+    private func refreshBottomBarMailboxActionStatusMessage(referenceDate: Date = Date()) {
+        pruneExpiredBottomBarMailboxActionStatuses(referenceDate: referenceDate)
+        guard let threadID = selectedThreadIDForBottomBarMailboxActionStatus(),
+              let status = bottomBarMailboxActionStatusByThreadID[threadID] else {
+            bottomBarMailboxActionStatusMessage = nil
+            return
+        }
+        bottomBarMailboxActionStatusMessage = status.message
+    }
+
+    private func selectedThreadIDForBottomBarMailboxActionStatus() -> String? {
+        guard let selectedNode else { return nil }
+        return effectiveThreadID(for: selectedNode)
+    }
+
+    private func pruneExpiredBottomBarMailboxActionStatuses(referenceDate: Date = Date()) {
+        bottomBarMailboxActionStatusByThreadID = bottomBarMailboxActionStatusByThreadID.filter {
+            $0.value.expiresAt > referenceDate
+        }
+    }
+
+    private func scheduleBottomBarMailboxActionStatusExpiryIfNeeded() {
+        bottomBarMailboxActionStatusExpiryTask?.cancel()
+        guard let nextExpiration = bottomBarMailboxActionStatusByThreadID.values.map(\.expiresAt).min() else {
+            return
+        }
+
+        let delay = max(nextExpiration.timeIntervalSinceNow, 0)
+        bottomBarMailboxActionStatusExpiryTask = Task { [weak self] in
+            let duration = UInt64(delay * 1_000_000_000)
+            if duration > 0 {
+                try? await Task.sleep(nanoseconds: duration)
+            }
+            self?.handleBottomBarMailboxActionStatusExpiry()
+        }
+    }
+
+    private func handleBottomBarMailboxActionStatusExpiry() {
+        refreshBottomBarMailboxActionStatusMessage()
+        scheduleBottomBarMailboxActionStatusExpiryIfNeeded()
+    }
+
+    internal func setBottomBarMailboxActionStatusForTesting(_ message: String,
+                                                            threadID: String,
+                                                            expiresAt: Date) {
+        bottomBarMailboxActionStatusByThreadID[threadID] = BottomBarMailboxActionStatus(message: message,
+                                                                                        expiresAt: expiresAt)
+        refreshBottomBarMailboxActionStatusMessage(referenceDate: expiresAt.addingTimeInterval(-1))
+        scheduleBottomBarMailboxActionStatusExpiryIfNeeded()
+    }
+
+    internal func expireBottomBarMailboxActionStatusesForTesting(referenceDate: Date) {
+        refreshBottomBarMailboxActionStatusMessage(referenceDate: referenceDate)
+        scheduleBottomBarMailboxActionStatusExpiryIfNeeded()
     }
 
     internal func refreshMailboxHierarchy(force: Bool = false) {
@@ -1990,23 +2084,28 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal func moveSelectionToMailboxFolder(path: String, in account: String) {
         let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
+        let bottomBarThreadID = selectedThreadIDForBottomBarMailboxActionStatus()
         let selectedAccounts = mailboxActionAccountSet()
         if selectedAccounts.count > 1 {
             mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
         if let selectedAccount = selectedAccounts.first, selectedAccount != account {
             mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else {
             mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
 
         isMailboxActionRunning = true
         mailboxActionStatusMessage = nil
+        setBottomBarMailboxActionStatus(nil, forThreadID: bottomBarThreadID)
         mailboxActionProgressMessage = NSLocalizedString("mailbox.action.progress.move",
                                                          comment: "Status while moving messages to mailbox folder")
         Task.detached { [weak self] in
@@ -2029,6 +2128,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.mailboxActionProgressMessage = nil
                         self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.move.summary.no_candidates",
                                                                             comment: "Status when all thread messages are already in destination mailbox")
+                        self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                             forThreadID: bottomBarThreadID)
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: trimmedPath,
                                                           account: account)
@@ -2045,6 +2146,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.mailboxActionProgressMessage = nil
                         self.mailboxActionStatusMessage = Self.mailboxMoveBlockedStatusMessage(ambiguousCount: ambiguousCount,
                                                                                                 unresolvedCount: unresolvedCount)
+                        self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                             forThreadID: bottomBarThreadID)
                     }
                     return
                 }
@@ -2066,6 +2169,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.mailboxActionStatusMessage = Self.mailboxMoveStatusMessage(moveResult: moveResult,
                                                                                      ambiguousCount: ambiguousCount,
                                                                                      unresolvedCount: unresolvedCount)
+                    self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                         forThreadID: bottomBarThreadID)
                     if isFullSuccess {
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: trimmedPath,
@@ -2089,6 +2194,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.isMailboxActionRunning = false
                     self.mailboxActionProgressMessage = nil
                     self.mailboxActionStatusMessage = Self.mailboxMoveFailureMessage(for: error)
+                    self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                         forThreadID: bottomBarThreadID)
                 }
             }
         }
@@ -2098,27 +2205,33 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                       in account: String,
                                                       parentPath: String?) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bottomBarThreadID = selectedThreadIDForBottomBarMailboxActionStatus()
         guard !trimmedName.isEmpty else {
             mailboxActionStatusMessage = MailboxFolderActionError.missingFolderName.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
         let selectedAccounts = mailboxActionAccountSet()
         if selectedAccounts.count > 1 {
             mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
         if let selectedAccount = selectedAccounts.first, selectedAccount != account {
             mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else {
             mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
             return
         }
 
         isMailboxActionRunning = true
         mailboxActionStatusMessage = nil
+        setBottomBarMailboxActionStatus(nil, forThreadID: bottomBarThreadID)
         mailboxActionProgressMessage = NSLocalizedString("mailbox.action.progress.create_and_move",
                                                          comment: "Status while creating mailbox and moving messages")
         Task.detached { [weak self] in
@@ -2144,6 +2257,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.mailboxActionProgressMessage = nil
                         self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.create_and_move.summary.no_candidates",
                                                                             comment: "Status when folder is created and thread messages already live in destination mailbox")
+                        self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                             forThreadID: bottomBarThreadID)
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: destinationPath,
                                                           account: account)
@@ -2162,6 +2277,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.mailboxActionProgressMessage = nil
                         self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveBlockedStatusMessage(ambiguousCount: ambiguousCount,
                                                                                                          unresolvedCount: unresolvedCount)
+                        self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                             forThreadID: bottomBarThreadID)
                     }
                     return
                 }
@@ -2183,6 +2300,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveStatusMessage(moveResult: moveResult,
                                                                                               ambiguousCount: ambiguousCount,
                                                                                               unresolvedCount: unresolvedCount)
+                    self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                         forThreadID: bottomBarThreadID)
                     if isFullSuccess {
                         self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
                                                           destinationPath: destinationPath,
@@ -2208,6 +2327,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.isMailboxActionRunning = false
                     self.mailboxActionProgressMessage = nil
                     self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveFailureMessage(for: error)
+                    self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
+                                                         forThreadID: bottomBarThreadID)
                 }
             }
         }
@@ -2359,6 +2480,53 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    internal func recalibratedColor(for folderID: String) -> ThreadFolderColor? {
+        let sourceFolders = effectiveThreadFolders
+        guard let selectedFolderIndex = sourceFolders.firstIndex(where: { $0.id == folderID }) else { return nil }
+
+        var workingFolders = sourceFolders
+        let selectedColor = ThreadFolderColor.recalibrated(for: workingFolders[selectedFolderIndex],
+                                                           among: workingFolders)
+        workingFolders[selectedFolderIndex].color = selectedColor
+
+        let descendantIDs = Self.descendantFolderIDs(of: folderID,
+                                                     childrenByParent: Self.childFolderIDsByParent(folders: sourceFolders))
+        guard !descendantIDs.isEmpty else {
+            return selectedColor
+        }
+
+        for descendantID in descendantIDs {
+            guard let descendantIndex = workingFolders.firstIndex(where: { $0.id == descendantID }) else { continue }
+            workingFolders[descendantIndex].color = ThreadFolderColor.recalibrated(for: workingFolders[descendantIndex],
+                                                                                   among: workingFolders)
+        }
+
+        let descendantColorByID = Dictionary(uniqueKeysWithValues: descendantIDs.compactMap { descendantID in
+            workingFolders.first(where: { $0.id == descendantID }).map { (descendantID, $0.color) }
+        })
+        let updatedFolders = threadFolders.map { folder in
+            guard let updatedColor = descendantColorByID[folder.id] else { return folder }
+            var updatedFolder = folder
+            updatedFolder.color = updatedColor
+            return updatedFolder
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await store.upsertThreadFolders(updatedFolders)
+                await MainActor.run {
+                    self.threadFolders = updatedFolders
+                    self.refreshFolderSummaries(for: self.roots, folders: updatedFolders)
+                }
+            } catch {
+                Log.app.error("Failed to save recalibrated descendant folder colors: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        return selectedColor
+    }
+
     internal func openMessageInMail(_ node: ThreadNode) {
         let messageID = node.message.messageID
         let attemptID = UUID()
@@ -2450,6 +2618,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     if let statusMessage {
                         await MainActor.run {
                             self.mailboxActionStatusMessage = statusMessage
+                            self.setBottomBarMailboxActionStatus(statusMessage, forThreadID: threadID)
                         }
                     }
                 }
@@ -3273,6 +3442,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let statusMessage = await moveThreadToAssignedFolderMailbox(threadID: threadID, folder: folder)
         if let statusMessage {
             mailboxActionStatusMessage = statusMessage
+            setBottomBarMailboxActionStatus(statusMessage, forThreadID: threadID)
         }
     }
 
@@ -3846,7 +4016,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
         let folder = ThreadFolder(id: "folder-\(UUID().uuidString.lowercased())",
                                   title: defaultTitle,
-                                  color: ThreadFolderColor.random(),
+                                  color: ThreadFolderColor.defaultNewFolder,
                                   threadIDs: effectiveThreadIDs,
                                   parentID: parentFolderID,
                                   mailboxAccount: inferredMailboxDestination?.account,
@@ -5244,6 +5414,22 @@ extension ThreadCanvasViewModel {
 
     internal static func childFolderIDsByParent(folders: [ThreadFolder]) -> [String: [String]] {
         folderHierarchy(for: folders).childrenByParentID
+    }
+
+    private static func descendantFolderIDs(of folderID: String,
+                                            childrenByParent: [String: [String]]) -> [String] {
+        var orderedDescendantIDs: [String] = []
+        var pendingIDs = childrenByParent[folderID] ?? []
+        var nextIndex = 0
+
+        while nextIndex < pendingIDs.count {
+            let currentID = pendingIDs[nextIndex]
+            nextIndex += 1
+            orderedDescendantIDs.append(currentID)
+            pendingIDs.append(contentsOf: childrenByParent[currentID] ?? [])
+        }
+
+        return orderedDescendantIDs
     }
 
     private static func folderOverlaysForLayout(columns: [ThreadCanvasColumn],

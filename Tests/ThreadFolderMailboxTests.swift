@@ -243,4 +243,74 @@ final class ThreadFolderMailboxTests: XCTestCase {
         XCTAssertNil(folders.first?.mailboxAccount)
         XCTAssertNil(folders.first?.mailboxPath)
     }
+
+    func testBottomBarMailboxStatus_isScopedToSelectedThread() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings())
+        let now = Date()
+        let first = EmailMessage(messageID: "msg-1",
+                                 mailboxID: "Inbox",
+                                 accountName: "Work",
+                                 subject: "First",
+                                 from: "a@example.com",
+                                 to: "me@example.com",
+                                 date: now,
+                                 snippet: "",
+                                 isUnread: false,
+                                 inReplyTo: nil,
+                                 references: [],
+                                 threadID: "thread-1")
+        let second = EmailMessage(messageID: "msg-2",
+                                  mailboxID: "Inbox",
+                                  accountName: "Work",
+                                  subject: "Second",
+                                  from: "b@example.com",
+                                  to: "me@example.com",
+                                  date: now.addingTimeInterval(60),
+                                  snippet: "",
+                                  isUnread: false,
+                                  inReplyTo: nil,
+                                  references: [],
+                                  threadID: "thread-2")
+
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: first), ThreadNode(message: second)])
+        viewModel.selectNode(id: first.messageID)
+        viewModel.setBottomBarMailboxActionStatusForTesting("Moved first thread.",
+                                                            threadID: "thread-1",
+                                                            expiresAt: now.addingTimeInterval(300))
+
+        XCTAssertEqual(viewModel.bottomBarMailboxActionStatusMessage, "Moved first thread.")
+
+        viewModel.selectNode(id: second.messageID)
+
+        XCTAssertNil(viewModel.bottomBarMailboxActionStatusMessage)
+    }
+
+    func testBottomBarMailboxStatus_expiresAfterFiveMinutes() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings())
+        let now = Date()
+        let first = EmailMessage(messageID: "msg-1",
+                                 mailboxID: "Inbox",
+                                 accountName: "Work",
+                                 subject: "First",
+                                 from: "a@example.com",
+                                 to: "me@example.com",
+                                 date: now,
+                                 snippet: "",
+                                 isUnread: false,
+                                 inReplyTo: nil,
+                                 references: [],
+                                 threadID: "thread-1")
+
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: first)])
+        viewModel.selectNode(id: first.messageID)
+        viewModel.setBottomBarMailboxActionStatusForTesting("Moved first thread.",
+                                                            threadID: "thread-1",
+                                                            expiresAt: now.addingTimeInterval(300))
+
+        XCTAssertEqual(viewModel.bottomBarMailboxActionStatusMessage, "Moved first thread.")
+
+        viewModel.expireBottomBarMailboxActionStatusesForTesting(referenceDate: now.addingTimeInterval(301))
+
+        XCTAssertNil(viewModel.bottomBarMailboxActionStatusMessage)
+    }
 }

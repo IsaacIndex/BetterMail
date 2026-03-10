@@ -9,7 +9,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 - Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
 - Mailbox sidebar folder expand/collapse state is persisted across launches and pruned against the latest Mail hierarchy so folders removed/moved in Mail are not retained as stale expansion entries.
 - Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator, and pinned folder headers remain visible even when their messages fall outside the current day window.
-- Canvas folders can optionally carry a mailbox-folder destination; the folder inspector can assign or clear it, folder headers show the assigned mailbox leaf name, and adding a thread to that folder triggers an immediate mailbox move attempt for the thread.
+- Canvas folders can optionally carry a mailbox-folder destination; the folder inspector can assign or clear it, re-calibrate folder colors into a muted palette that holds up better under white labels, folder headers show the assigned mailbox leaf name, and new thread folders now default to that same muted family before any manual adjustments.
 - Folder details inspector includes a non-scrollable minimap with selected-node highlight, folder-scoped viewport overlay, and date ticks/labels while preserving relative spacing for click-to-jump navigation.
 - Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
 - Settings expose one relative text-size control for thread canvas, timeline, and inspector typography while preserving the existing size hierarchy between labels, summaries, and metadata.
@@ -211,6 +211,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 - New canvas folders automatically inherit a mailbox destination when every selected node already resolves to the same account/mailbox path.
 - The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable hierarchical folder selector to make destination picking clearer.
 - Mailbox-folder move actions are thread-scoped: selecting any node in a thread moves all cached messages in that thread to keep mailbox/thread state consistent.
+- The selection bar's mailbox status line is also thread-scoped: it only appears while that thread remains selected and auto-clears after 5 minutes.
 - Mailbox-folder move execution now prioritizes Apple Mail internal IDs (when cached) and source-mailbox-scoped lookups to reduce move latency on long threads.
 - Successful mailbox-thread moves register a persistent auto-follow rule so future off-destination messages in that thread are moved to the same mailbox folder on subsequent refresh passes.
 - When a canvas folder contains exactly one thread, a successful mailbox move of that thread updates the folder's mailbox destination to match.

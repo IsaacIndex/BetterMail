@@ -83,11 +83,16 @@ The system SHALL expose nodes as accessibility elements and day bands as accessi
 - **THEN** users can navigate day headers and hear each node's sender, subject, and time
 
 ### Requirement: Manual Thread Grouping Controls
-The system SHALL support multi-select with Cmd+click and SHALL present a bottom action bar when one or more nodes are selected, offering actions to group into a target thread, add to folder, or ungroup manual overrides.
+The system SHALL support multi-select with Cmd+click and SHALL present a bottom action bar when one or more nodes are selected, offering actions to group into a target thread, add to folder, or ungroup manual overrides. Mailbox-action status text in that bar SHALL be scoped to the selected thread and SHALL auto-clear after 5 minutes.
 
 #### Scenario: Multi-select action bar
 - **WHEN** the user Cmd+clicks to select one or more nodes
 - **THEN** a bottom action bar appears with "Group", "Add to Folder", and "Ungroup" actions, and the last clicked node is treated as the target thread
+
+#### Scenario: Mailbox status follows selected thread
+- **WHEN** the user performs a mailbox-folder action for one thread and then selects a different thread
+- **THEN** the bottom action bar hides the prior status instead of carrying it into the new thread context
+- **AND** the original thread status expires after 5 minutes even if the user stays on that thread
 
 ### Requirement: Thread Source Visualization
 The system SHALL distinguish JWZ-derived thread connectors from manual override connectors using distinct colors, with JWZ connectors rendered as solid lines and manual override connectors rendered as dotted lines.

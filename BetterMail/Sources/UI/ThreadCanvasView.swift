@@ -460,6 +460,7 @@ internal struct ThreadCanvasView: View {
                                        readabilityMode: ThreadCanvasReadabilityMode,
                                        proxySize: CGSize) -> CanvasVisibilityState {
         let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
+                                                                  textScale: displaySettings.textScale,
                                                                   readabilityMode: readabilityMode)
         let headerStackHeight = chromeData.isEmpty
             ? 0
@@ -847,6 +848,7 @@ internal struct ThreadCanvasView: View {
                                    accentColor: accentColor(for: chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
+                                   textScale: displaySettings.textScale,
                                    readabilityMode: readabilityMode,
                                    cornerRadius: metrics.nodeCornerRadius * 1.6,
                                    isPinned: viewModel.isFolderPinned(id: chrome.id),
@@ -1153,8 +1155,10 @@ internal struct ThreadCanvasView: View {
     private func folderHeaderMetrics(metrics: ThreadCanvasLayoutMetrics,
                                      rawZoom: CGFloat,
                                      readabilityMode: ThreadCanvasReadabilityMode) -> FolderHeaderMetrics {
-        let sizeScale = FolderHeaderLayout.sizeScale(rawZoom: rawZoom)
+        let sizeScale = FolderHeaderLayout.sizeScale(rawZoom: rawZoom,
+                                                     textScale: displaySettings.textScale)
         let height = FolderHeaderLayout.headerHeight(rawZoom: rawZoom,
+                                                     textScale: displaySettings.textScale,
                                                      readabilityMode: readabilityMode)
         let indent = max(16 * metrics.fontScale, metrics.nodeHorizontalInset)
         let spacing = headerSpacing * sizeScale
@@ -1462,13 +1466,15 @@ private struct FolderHeaderLayout {
     static let badgeVerticalPadding: CGFloat = 6
     static let badgeVerticalPaddingEllipsis: CGFloat = 5
 
-    static func sizeScale(rawZoom: CGFloat) -> CGFloat {
-        rawZoom.clamped(to: 0.6...1.25)
+    static func sizeScale(rawZoom: CGFloat,
+                          textScale: CGFloat) -> CGFloat {
+        max(rawZoom.clamped(to: 0.6...1.25) * textScale, 0.5)
     }
 
     static func headerHeight(rawZoom: CGFloat,
+                             textScale: CGFloat,
                              readabilityMode: ThreadCanvasReadabilityMode) -> CGFloat {
-        let scale = sizeScale(rawZoom: rawZoom)
+        let scale = sizeScale(rawZoom: rawZoom, textScale: textScale)
         let titleHeight = titleSectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
         let summaryHeight = summarySectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
         let footerHeight = footerSectionHeight(sizeScale: scale, readabilityMode: readabilityMode)
@@ -1554,6 +1560,7 @@ private struct FolderColumnHeader: View {
     let accentColor: Color
     let reduceTransparency: Bool
     let rawZoom: CGFloat
+    let textScale: CGFloat
     let readabilityMode: ThreadCanvasReadabilityMode
     let cornerRadius: CGFloat
     let isPinned: Bool
@@ -1566,7 +1573,7 @@ private struct FolderColumnHeader: View {
 
     private var sizeScale: CGFloat {
         // Track zoom more closely than the clamped fontScale to keep the header proportional.
-        FolderHeaderLayout.sizeScale(rawZoom: rawZoom)
+        FolderHeaderLayout.sizeScale(rawZoom: rawZoom, textScale: textScale)
     }
 
     private var headerBackground: some View {
@@ -1674,6 +1681,7 @@ private struct FolderColumnHeader: View {
         .padding(.horizontal, 12 * sizeScale)
         .padding(.vertical, FolderHeaderLayout.verticalPadding * sizeScale)
         .frame(height: FolderHeaderLayout.headerHeight(rawZoom: rawZoom,
+                                                       textScale: textScale,
                                                        readabilityMode: readabilityMode),
                alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -18,6 +18,7 @@ internal struct ThreadFolderInspectorView: View {
     internal let onJumpToLatest: () -> Void
     internal let onJumpToOldest: () -> Void
     internal let onRefreshMailboxHierarchy: () -> Void
+    internal let onRecalibrateColor: () -> ThreadFolderColor?
     internal let onPreview: (String, ThreadFolderColor, String?, String?) -> Void
     internal let onSave: (String, ThreadFolderColor, String?, String?) -> Void
 
@@ -53,6 +54,7 @@ internal struct ThreadFolderInspectorView: View {
                   onJumpToLatest: @escaping () -> Void,
                   onJumpToOldest: @escaping () -> Void,
                   onRefreshMailboxHierarchy: @escaping () -> Void,
+                  onRecalibrateColor: @escaping () -> ThreadFolderColor?,
                   onPreview: @escaping (String, ThreadFolderColor, String?, String?) -> Void,
                   onSave: @escaping (String, ThreadFolderColor, String?, String?) -> Void) {
         self.folder = folder
@@ -71,6 +73,7 @@ internal struct ThreadFolderInspectorView: View {
         self.onJumpToLatest = onJumpToLatest
         self.onJumpToOldest = onJumpToOldest
         self.onRefreshMailboxHierarchy = onRefreshMailboxHierarchy
+        self.onRecalibrateColor = onRecalibrateColor
         self.onPreview = onPreview
         self.onSave = onSave
         let initialColor = Color(red: folder.color.red,
@@ -197,10 +200,21 @@ internal struct ThreadFolderInspectorView: View {
 
     private var folderColorPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(NSLocalizedString("threadcanvas.folder.inspector.color",
-                                   comment: "Folder color picker label"))
-                .font(font(size: 12))
-                .foregroundStyle(inspectorSecondaryForegroundStyle)
+            HStack(spacing: 8) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.color",
+                                       comment: "Folder color picker label"))
+                    .font(font(size: 12))
+                    .foregroundStyle(inspectorSecondaryForegroundStyle)
+                Spacer()
+                Button(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate",
+                                         comment: "Button to recalibrate a folder color to match the current palette")) {
+                    applyRecalibratedColor()
+                }
+                .buttonStyle(.link)
+                .font(font(size: 11))
+                .help(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate.help",
+                                        comment: "Help text for recalibrating a folder color"))
+            }
             ColorPicker("", selection: $draftColor, supportsOpacity: true)
                 .labelsHidden()
                 .onChange(of: draftColor) { _, _ in
@@ -443,6 +457,14 @@ internal struct ThreadFolderInspectorView: View {
                              color: color,
                              mailboxAccount: effectiveMailboxDestination?.account,
                              mailboxPath: effectiveMailboxDestination?.path)
+    }
+
+    private func applyRecalibratedColor() {
+        guard let recalibratedColor = onRecalibrateColor() else { return }
+        draftColor = Color(red: recalibratedColor.red,
+                           green: recalibratedColor.green,
+                           blue: recalibratedColor.blue,
+                           opacity: recalibratedColor.alpha)
     }
 
     private func resetDraft(with folder: ThreadFolder) {

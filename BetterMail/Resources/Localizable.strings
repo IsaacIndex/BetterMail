@@ -45,6 +45,8 @@
 "threadcanvas.folder.inspector.title" = "Folder";
 "threadcanvas.folder.inspector.name" = "Name";
 "threadcanvas.folder.inspector.color" = "Color";
+"threadcanvas.folder.inspector.color.recalibrate" = "Recalibrate";
+"threadcanvas.folder.inspector.color.recalibrate.help" = "Pick a muted tone that keeps the folder labels readable in white.";
 "threadcanvas.folder.inspector.mailbox" = "Mailbox Folder";
 "threadcanvas.folder.inspector.mailbox.account" = "Mailbox account";
 "threadcanvas.folder.inspector.mailbox.folder" = "Mailbox folder";

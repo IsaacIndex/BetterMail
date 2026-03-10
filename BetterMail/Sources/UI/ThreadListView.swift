@@ -137,6 +137,9 @@ internal struct ThreadListView: View {
                                           onRefreshMailboxHierarchy: {
                                               viewModel.refreshMailboxHierarchy(force: true)
                                           },
+                                          onRecalibrateColor: {
+                                              viewModel.recalibratedColor(for: selectedFolder.id)
+                                          },
                                           onPreview: { title, color, mailboxAccount, mailboxPath in
                                               viewModel.previewFolderEdits(id: selectedFolder.id,
                                                                            title: title,
@@ -508,7 +511,7 @@ internal struct ThreadListView: View {
                             }
                         }
 
-                        if let mailboxActionStatus = viewModel.mailboxActionStatusMessage {
+                        if let mailboxActionStatus = viewModel.bottomBarMailboxActionStatusMessage {
                             Text(mailboxActionStatus)
                                 .font(.caption2)
                                 .foregroundStyle(navSecondaryForegroundStyle)
