@@ -207,18 +207,10 @@ internal struct ThreadInspectorView: View {
         switch status {
         case .idle:
             EmptyView()
-        case .searchingMessageID:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching",
-                                    comment: "Open in Mail fallback search status"),
-                  systemImage: "magnifyingglass")
         case .searchingFilteredFallback:
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching_filtered",
                                     comment: "Open in Mail filtered fallback search status"),
                   systemImage: "magnifyingglass")
-        case .opened(.messageID):
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_message_id",
-                                    comment: "Open in Mail success status using Message-ID"),
-                  systemImage: "checkmark.circle")
         case .opened(.filteredFallback):
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_filtered",
                                     comment: "Open in Mail success status using filtered fallback"),

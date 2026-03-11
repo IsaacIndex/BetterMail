@@ -29,10 +29,10 @@
 "threadcanvas.inspector.snippet" = "Snippet";
 "threadcanvas.inspector.snippet.empty" = "No preview available.";
 "threadcanvas.inspector.open_in_mail" = "Open in Mail";
-"threadcanvas.inspector.open_in_mail.status.searching" = "Searching Mail by Message-ID...";
-"threadcanvas.inspector.open_in_mail.status.searching_filtered" = "Searching Mail with filters...";
-"threadcanvas.inspector.open_in_mail.status.opened_message_id" = "Opened via Message-ID.";
-"threadcanvas.inspector.open_in_mail.status.opened_filtered" = "Opened via filtered match.";
+"threadcanvas.inspector.open_in_mail.status.searching" = "Searching Mail...";
+"threadcanvas.inspector.open_in_mail.status.searching_filtered" = "Searching Mail...";
+"threadcanvas.inspector.open_in_mail.status.opened_message_id" = "Opened in Mail.";
+"threadcanvas.inspector.open_in_mail.status.opened_filtered" = "Opened in Mail.";
 "threadcanvas.inspector.open_in_mail.status.no_match" = "No matches found in Mail.";
 "threadcanvas.inspector.open_in_mail.status.failed" = "Mail couldn't open this message.";
 "threadcanvas.inspector.open_in_mail.status.manual_hint" = "Use Mail search with the Message-ID, subject, or mailbox/account.";

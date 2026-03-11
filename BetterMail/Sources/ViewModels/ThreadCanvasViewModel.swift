@@ -12,13 +12,11 @@ internal struct ThreadSummaryState {
 }
 
 internal enum OpenInMailTargetingPath: Equatable {
-    case messageID
     case filteredFallback
 }
 
 internal enum OpenInMailStatus: Equatable {
     case idle
-    case searchingMessageID
     case searchingFilteredFallback
     case opened(OpenInMailTargetingPath)
     case notFound
@@ -2531,7 +2529,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let messageID = node.message.messageID
         let attemptID = UUID()
         openInMailAttemptID = attemptID
-        setOpenInMailState(.searchingMessageID, messageID: messageID, attemptID: attemptID)
+        setOpenInMailState(.searchingFilteredFallback, messageID: messageID, attemptID: attemptID)
         let metadata = MailControl.OpenMessageMetadata(subject: node.message.subject,
                                                        sender: node.message.from,
                                                        date: node.message.date,
@@ -2540,25 +2538,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                let resolution = try await MailControl.resolveTargetingPath(messageID: messageID,
-                                                                            metadata: metadata,
-                                                                            onMessageIDFailure: { [weak self] in
-                                                                          Task { @MainActor in
-                                                                              guard let self else { return }
-                                                                              self.setOpenInMailState(.searchingFilteredFallback,
-                                                                                                      messageID: messageID,
-                                                                                                      attemptID: attemptID)
-                                                                          }
-                                                                      })
+                let resolution = try await MailControl.openMessageViaFilteredFallback(metadata)
                 switch resolution {
-                case .openedMessageID:
-                    Log.appleScript.info("Open in Mail succeeded by Message-ID. messageID=\(messageID, privacy: .public)")
-                    await MainActor.run {
-                        self.setOpenInMailState(.opened(.messageID),
-                                                messageID: messageID,
-                                                attemptID: attemptID)
-                    }
-                case .openedFilteredFallback:
+                case .opened:
                     Log.appleScript.info("Open in Mail succeeded by filtered fallback. messageID=\(messageID, privacy: .public)")
                     await MainActor.run {
                         self.setOpenInMailState(.opened(.filteredFallback),

@@ -15,7 +15,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 - Settings expose one relative text-size control for thread canvas, timeline, and inspector typography while preserving the existing size hierarchy between labels, summaries, and metadata.
 - Appearance preferences support System, Light, and Dark modes from BetterMail Settings while keeping the glassmorphism styling consistent.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/create mailbox-folder, flag, and search actions against Apple Mail.
-- Inspector "Open in Mail" uses AppleScript targeting (Message-ID plus a global filtered fallback search across Mail mailboxes) without `message://` URLs.
+- Inspector "Open in Mail" uses AppleScript heuristic targeting (mailbox/account hints plus subject, sender, and received-day matching) without `message://` URLs.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
 - Optional Apple Intelligence digests powered by `FoundationModelsEmailSummaryProvider` (Foundation Models on macOS 15.2+) that surface summaries in the inspector for the selected thread.

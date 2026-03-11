@@ -9,15 +9,12 @@ import Foundation
 import OSLog
 
 internal enum MailControlError: LocalizedError {
-    case invalidMessageID
     case filteredFallbackFailed
     case invalidMailboxName
     case noMessagesMoved
 
     var errorDescription: String? {
         switch self {
-        case .invalidMessageID:
-            return "Invalid Message-ID."
         case .filteredFallbackFailed:
             return "Failed to search Mail for the message."
         case .invalidMailboxName:
@@ -60,12 +57,6 @@ internal struct MailControl {
 
     internal enum FilteredFallbackOutcome: Equatable {
         case opened
-        case notFound
-    }
-
-    internal enum TargetingResolution: Equatable {
-        case openedMessageID
-        case openedFilteredFallback
         case notFound
     }
 
@@ -216,38 +207,6 @@ internal struct MailControl {
         return accountSuffix(reference)
     }
 
-    nonisolated internal static func openMessageViaAppleScript(messageID: String) async throws -> Bool {
-        let normalized = try normalizedMessageID(messageID)
-        let bracketed = "<\(normalized)>"
-        let script = buildMessageOpenScript(normalized: normalized, bracketed: bracketed)
-        let result = try await runScript(script)
-        if result.descriptorType == typeBoolean {
-            return result.booleanValue
-        }
-        return false
-    }
-
-    nonisolated internal static func resolveTargetingPath(messageID: String,
-                                                          metadata: OpenMessageMetadata,
-                                                          openViaAppleScript: (String) async throws -> Bool = openMessageViaAppleScript,
-                                                          openViaFilteredFallback: (OpenMessageMetadata) async throws -> FilteredFallbackOutcome = openMessageViaFilteredFallback,
-                                                          onMessageIDFailure: (() -> Void)? = nil) async throws -> TargetingResolution {
-        let openedByMessageID = try await openViaAppleScript(messageID)
-        if openedByMessageID {
-            return .openedMessageID
-        }
-
-        onMessageIDFailure?()
-
-        let filteredOutcome = try await openViaFilteredFallback(metadata)
-        switch filteredOutcome {
-        case .opened:
-            return .openedFilteredFallback
-        case .notFound:
-            return .notFound
-        }
-    }
-
     nonisolated internal static func openMessageViaFilteredFallback(_ metadata: OpenMessageMetadata) async throws -> FilteredFallbackOutcome {
         let subject = metadata.subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let senderToken = heuristicSenderToken(from: metadata.sender)
@@ -270,12 +229,6 @@ internal struct MailControl {
             return result.booleanValue ? .opened : .notFound
         }
         throw MailControlError.filteredFallbackFailed
-    }
-
-    internal static func normalizedMessageID(_ messageID: String) throws -> String {
-        let normalized = JWZThreader.normalizeIdentifier(messageID)
-        guard !normalized.isEmpty else { throw MailControlError.invalidMessageID }
-        return normalized
     }
 
     nonisolated internal static func cleanMessageIDPreservingCase(_ raw: String) -> String {
@@ -1069,47 +1022,6 @@ internal struct MailControl {
             set _container to \(containerReference)
             set _newMailbox to make new mailbox at _container with properties {name:"\(safeName)"}
             return (name of _newMailbox as string)
-          end timeout
-        end tell
-        """
-    }
-
-    private static func buildMessageOpenScript(normalized: String,
-                                               bracketed: String) -> String {
-        let safeNormalized = escapedForAppleScript(normalized)
-        let safeBracketed = escapedForAppleScript(bracketed)
-        return """
-        tell application "Mail"
-          with timeout of 30 seconds
-            set _matches to {}
-            set _id1 to "\(safeBracketed)"
-            set _id2 to "\(safeNormalized)"
-            ignoring case
-              try
-                repeat with m in (every message whose message id is _id1)
-                  copy m to end of _matches
-                end repeat
-              end try
-              if _id2 is not equal to _id1 then
-                try
-                  repeat with m in (every message whose message id is _id2)
-                    copy m to end of _matches
-                  end repeat
-                end try
-              end if
-            end ignoring
-            if (count of _matches) is 0 then return false
-            set _msg to item 1 of _matches
-            try
-              open _msg
-            on error
-              try
-                set _viewer to message viewer 1
-                set selected messages of _viewer to {_msg}
-              end try
-            end try
-            activate
-            return true
           end timeout
         end tell
         """
