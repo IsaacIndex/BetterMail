@@ -193,6 +193,21 @@ internal struct AutoRefreshSettingsView: View {
                     .disabled(backfillViewModel.isRunning)
                     .accessibilityHint(Text(NSLocalizedString("settings.regenai.accessibility.hint",
                                                               comment: "Accessibility hint for starting Re-GenAI")))
+
+                    if backfillViewModel.isRunning {
+                        Button(role: .destructive) {
+                            backfillViewModel.cancelCurrentRun()
+                        } label: {
+                            if backfillViewModel.isStopping {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(NSLocalizedString("settings.backfill.stop", comment: "Button label to stop the current batch operation"))
+                        }
+                        .disabled(backfillViewModel.isStopping)
+                        .accessibilityHint(Text(NSLocalizedString("settings.backfill.stop.hint",
+                                                                  comment: "Accessibility hint for stopping the current batch operation")))
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -207,6 +222,11 @@ internal struct AutoRefreshSettingsView: View {
                         ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    }
+                    if let estimatedTimeRemainingText = backfillViewModel.estimatedTimeRemainingText {
+                        Text(estimatedTimeRemainingText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     if let error = backfillViewModel.errorMessage {
                         Text(error)

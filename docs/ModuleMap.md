@@ -6,7 +6,7 @@ This map lists the main modules and their responsibilities.
 - `MailAppleScriptClient`: AppleScript ingestion of messages and counts.
 
 ## Services
-- `BatchBackfillService`: backfill ranges and progress reporting.
+- `BatchBackfillService`: backfill ranges via exhaustive time-sliced fetches, forcing each AppleScript fetch below 5 messages and splitting intervals when needed, plus progress reporting.
 - `EmailSummaryProvider`: optional Apple Intelligence summaries.
 - `EmailTagProvider`: optional Apple Intelligence message tags.
 - `SummaryRegenerationService`: regenerates cached email and folder summaries.
@@ -24,7 +24,7 @@ This map lists the main modules and their responsibilities.
 - `ThreadListView`: canvas container and chrome.
 - `ThreadCanvasView`: main timeline canvas.
 - `ThreadInspectorView` / `ThreadFolderInspectorView`: right-side inspector panels.
-- `AutoRefreshSettingsView`: settings UI for refresh, inspector, and backfill.
+- `AutoRefreshSettingsView`: settings UI for refresh, inspector, and backfill, including stop controls and slice-aware status text.
 
 ## Support
 - `Log`: OSLog categories.

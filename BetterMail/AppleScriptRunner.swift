@@ -36,12 +36,15 @@ internal actor NSAppleScriptRunner {
     }
 
     internal func run(_ source: String) throws -> NSAppleEventDescriptor {
+        try Task.checkCancellation()
         try ensureMailRunning()
+        try Task.checkCancellation()
 
         guard let script = NSAppleScript(source: source) else { throw ScriptError.compileFailed }
 
         var err: NSDictionary?
         let result = script.executeAndReturnError(&err)
+        try Task.checkCancellation()
         if let err { throw ScriptError.executionFailed(err) }
         return result
     }

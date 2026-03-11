@@ -44,11 +44,13 @@ internal actor MailAppleScriptClient {
                                 mailbox: String = "inbox",
                                 account: String? = nil,
                                 snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+        try Task.checkCancellation()
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
         Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
         let script = buildScript(mailbox: mailbox, account: account, limit: limit, since: date)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
+        try Task.checkCancellation()
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
@@ -57,6 +59,7 @@ internal actor MailAppleScriptClient {
                                 mailbox: String = "inbox",
                                 account: String? = nil,
                                 snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+        try Task.checkCancellation()
         let now = Date()
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
@@ -69,10 +72,12 @@ internal actor MailAppleScriptClient {
                                  endWindow: endWindow)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
+        try Task.checkCancellation()
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
 
     internal func countMessages(in range: DateInterval, mailbox: String = "inbox", account: String? = nil) async throws -> Int {
+        try Task.checkCancellation()
         let now = Date()
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
@@ -84,6 +89,7 @@ internal actor MailAppleScriptClient {
                                       endWindow: endWindow)
         Log.appleScript.debug("Generated count AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
+        try Task.checkCancellation()
         if descriptor.descriptorType != typeSInt32 && descriptor.descriptorType != typeSInt16 {
             Log.appleScript.error("countMessages failed to decode count; descriptorType=\(descriptor.descriptorType, privacy: .public)")
             throw MailAppleScriptClientError.malformedDescriptor
