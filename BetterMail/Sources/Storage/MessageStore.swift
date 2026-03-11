@@ -462,21 +462,38 @@ internal final class MessageStore {
         return try await container.performBackgroundTask { context in
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             request.predicate = NSPredicate(format: "scope == %@ AND scopeID IN %@", scope.rawValue, ids)
-            return try context.fetch(request).map { $0.toModel() }
+            let entities = try context.fetch(request)
+            return Self.deduplicatedSummaryEntries(from: entities.map { $0.toModel() })
         }
     }
 
     internal func upsertSummaries(_ summaries: [SummaryCacheEntry]) async throws {
         guard !summaries.isEmpty else { return }
         try await container.performBackgroundTask { context in
-            let ids = summaries.map(\.scopeID)
-            let scopes = Set(summaries.map(\.scope))
+            let dedupedSummaries = Self.deduplicatedSummaryEntries(from: summaries)
+            let ids = dedupedSummaries.map(\.scopeID)
+            let scopes = Set(dedupedSummaries.map(\.scope))
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             request.predicate = NSPredicate(format: "scope IN %@ AND scopeID IN %@", scopes.map(\.rawValue), ids)
             let existing = try context.fetch(request)
-            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ("\($0.scope)|\($0.scopeID)", $0) })
+            var lookup: [String: SummaryCacheEntity] = [:]
 
-            for summary in summaries {
+            for entity in existing {
+                let key = "\(entity.scope)|\(entity.scopeID)"
+                if let prior = lookup[key] {
+                    let shouldKeepEntity = prior.generatedAt >= entity.generatedAt
+                    if shouldKeepEntity {
+                        context.delete(entity)
+                    } else {
+                        context.delete(prior)
+                        lookup[key] = entity
+                    }
+                } else {
+                    lookup[key] = entity
+                }
+            }
+
+            for summary in dedupedSummaries {
                 let key = "\(summary.scope.rawValue)|\(summary.scopeID)"
                 let entity = lookup[key] ?? SummaryCacheEntity(context: context)
                 entity.scope = summary.scope.rawValue
@@ -703,6 +720,21 @@ internal final class MessageStore {
         }
 
         return NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
+    }
+
+    private static func deduplicatedSummaryEntries(from entries: [SummaryCacheEntry]) -> [SummaryCacheEntry] {
+        var deduped: [String: SummaryCacheEntry] = [:]
+        deduped.reserveCapacity(entries.count)
+
+        for entry in entries {
+            let key = "\(entry.scope.rawValue)|\(entry.scopeID)"
+            if let prior = deduped[key], prior.generatedAt >= entry.generatedAt {
+                continue
+            }
+            deduped[key] = entry
+        }
+
+        return Array(deduped.values)
     }
 
     private static func makeModel() -> NSManagedObjectModel {
