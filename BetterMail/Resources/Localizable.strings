@@ -164,6 +164,8 @@
 "settings.backfill.footer" = "Fetches historical messages for the selected range without blocking the UI.";
 "settings.backfill.start" = "Start date";
 "settings.backfill.end" = "End date";
+"settings.backfill.batch_size" = "Preferred max batch size";
+"settings.backfill.batch_size.value" = "%d";
 "settings.backfill.button" = "Start backfill";
 "settings.backfill.stop" = "Stop";
 "settings.backfill.stop.hint" = "Stop the current backfill or Re-GenAI run.";

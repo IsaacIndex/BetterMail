@@ -24,7 +24,7 @@ This map lists the main modules and their responsibilities.
 - `ThreadListView`: canvas container and chrome.
 - `ThreadCanvasView`: main timeline canvas.
 - `ThreadInspectorView` / `ThreadFolderInspectorView`: right-side inspector panels.
-- `AutoRefreshSettingsView`: settings UI for refresh, inspector, and backfill, including stop controls and slice-aware status text.
+- `AutoRefreshSettingsView`: settings UI for refresh, inspector, and backfill, including the persisted preferred max batch-size control, stop controls, and slice-aware status text.
 
 ## Support
 - `Log`: OSLog categories.
@@ -34,7 +34,7 @@ This map lists the main modules and their responsibilities.
 - `AppleScriptRunner`: AppleScript execution helpers.
 
 ## Settings
-- `AutoRefreshSettings`, `InspectorViewSettings`, `ThreadCanvasDisplaySettings`, `BatchBackfillSettingsViewModel`.
+- `AutoRefreshSettings`, `InspectorViewSettings`, `ThreadCanvasDisplaySettings`, `BatchBackfillSettingsViewModel` (persists the preferred max batch size used by Batch Backfill and Re-GenAI runs).
 
 ## MailHelperExtension
 - `MailExtension` plus `ContentBlocker`, `MessageActionHandler`, `ComposeSessionHandler`, `MessageSecurityHandler`.

@@ -164,6 +164,21 @@ internal struct AutoRefreshSettingsView: View {
                 DatePicker(NSLocalizedString("settings.backfill.end", comment: "Label for backfill end date"),
                            selection: $backfillViewModel.endDate,
                            displayedComponents: .date)
+                LabeledContent(NSLocalizedString("settings.backfill.batch_size", comment: "Label for preferred batch size setting")) {
+                    Stepper(
+                        value: $backfillViewModel.preferredBatchSize,
+                        in: BatchBackfillSettingsViewModel.minimumPreferredBatchSize...BatchBackfillSettingsViewModel.maximumPreferredBatchSize,
+                        step: 1
+                    ) {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("settings.backfill.batch_size.value", comment: "Value label for preferred batch size setting"),
+                            backfillViewModel.preferredBatchSize
+                        ))
+                        .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                    .disabled(backfillViewModel.isRunning)
+                }
 
                 HStack(spacing: 12) {
                     Button {

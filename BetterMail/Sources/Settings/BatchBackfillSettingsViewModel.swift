@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import OSLog
+import SwiftUI
 
 @MainActor
 internal final class BatchBackfillSettingsViewModel: ObservableObject {
@@ -9,8 +10,25 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         case regeneration
     }
 
+    internal static let minimumPreferredBatchSize = 1
+    internal static let maximumPreferredBatchSize = 100
+    internal static let defaultPreferredBatchSize = 5
+
+    @AppStorage("batchBackfillPreferredBatchSize")
+    private var storedPreferredBatchSize = BatchBackfillSettingsViewModel.defaultPreferredBatchSize
+
     @Published internal var startDate: Date
     @Published internal var endDate: Date
+    @Published internal var preferredBatchSize = BatchBackfillSettingsViewModel.defaultPreferredBatchSize {
+        didSet {
+            let clamped = Self.clampPreferredBatchSize(preferredBatchSize)
+            if clamped != preferredBatchSize {
+                preferredBatchSize = clamped
+                return
+            }
+            storedPreferredBatchSize = clamped
+        }
+    }
     @Published internal private(set) var statusText: String = ""
     @Published internal private(set) var isRunning = false
     @Published internal private(set) var progressValue: Double?
@@ -28,7 +46,6 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     private let stopPhrasesProvider: () -> [String]
     private let backfillMailbox: String = "inbox"
     private let regenerationMailbox: String? = nil
-    private let defaultBatchSize = 5
     private var runTask: Task<Void, Never>?
     private var lastProgressDate: Date?
     private var lastCompletedCount: Int?
@@ -59,8 +76,11 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         self.stopPhrasesProvider = stopPhrasesProvider
         let now = Date()
         let startOfYear = calendar.date(from: DateComponents(year: calendar.component(.year, from: now), month: 1, day: 1)) ?? now
+        let normalizedBatchSize = Self.clampPreferredBatchSize(_storedPreferredBatchSize.wrappedValue)
+        storedPreferredBatchSize = normalizedBatchSize
         self.startDate = startOfYear
         self.endDate = now
+        self.preferredBatchSize = normalizedBatchSize
     }
 
     deinit {
@@ -101,7 +121,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                 let result = try await service.runBackfill(range: orderedRange,
                                                            mailbox: backfillMailbox,
                                                            account: backfillAccount,
-                                                           preferredBatchSize: defaultBatchSize,
+                                                           preferredBatchSize: preferredBatchSize,
                                                            totalExpected: total,
                                                            snippetLineLimit: snippetLimit) { [weak self] progress in
                     Task { @MainActor [weak self] in
@@ -175,7 +195,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
 
                 let result = try await regenerationService.runRegeneration(range: orderedRange,
                                                                            mailbox: regenerationMailbox,
-                                                                           preferredBatchSize: defaultBatchSize,
+                                                                           preferredBatchSize: preferredBatchSize,
                                                                            totalExpected: total,
                                                                            snippetLineLimit: snippetLimit,
                                                                            stopPhrases: stopPhrases) { [weak self] progress in
@@ -327,7 +347,9 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         progressValue = nil
         estimatedTimeRemainingText = nil
         isStopping = false
-        currentBatchSize = action == .backfill ? BatchBackfillService.maximumFetchCount : defaultBatchSize
+        currentBatchSize = action == .backfill
+            ? min(preferredBatchSize, BatchBackfillService.maximumFetchCount)
+            : preferredBatchSize
         lastProgressDate = nil
         lastCompletedCount = nil
         secondsPerMessageSamples.removeAll(keepingCapacity: true)
@@ -448,5 +470,9 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
             NSLocalizedString("settings.batch.eta", comment: "Estimated time remaining label for batch operations"),
             formatted
         )
+    }
+
+    private static func clampPreferredBatchSize(_ value: Int) -> Int {
+        min(max(value, minimumPreferredBatchSize), maximumPreferredBatchSize)
     }
 }
