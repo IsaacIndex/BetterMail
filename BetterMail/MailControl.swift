@@ -264,47 +264,6 @@ internal struct MailControl {
         _ = try await runScript(script)
     }
 
-    nonisolated internal static func moveMessages(messageIDs: [String],
-                                                  to mailboxPath: String,
-                                                  in account: String) async throws -> MailboxMoveResult {
-        let cleanedIDs = Array(
-            Set(
-                messageIDs
-                    .map(cleanMessageIDPreservingCase)
-                    .filter { !$0.isEmpty }
-            )
-        ).sorted()
-        guard !cleanedIDs.isEmpty else {
-            return MailboxMoveResult(requestedCount: 0,
-                                     matchedCount: 0,
-                                     movedCount: 0,
-                                     errorCount: 0,
-                                     firstErrorNumber: nil,
-                                     firstErrorMessage: nil)
-        }
-        let script = buildMoveMessagesScript(messageIDs: cleanedIDs,
-                                             mailboxPath: mailboxPath,
-                                             account: account)
-        Log.appleScript.debug("Executing mailbox move script (Message-ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(cleanedIDs.count, privacy: .public) scriptLength=\(script.count, privacy: .public)")
-        let result = try await runScript(script)
-        let parsed = MailboxMoveResult(requestedCount: cleanedIDs.count,
-                                       matchedCount: result.descriptorType == typeAEList
-                                           ? Int(result.atIndex(1)?.int32Value ?? 0)
-                                           : 0,
-                                       movedCount: result.descriptorType == typeAEList
-                                           ? Int(result.atIndex(2)?.int32Value ?? 0)
-                                           : 0,
-                                       errorCount: result.descriptorType == typeAEList
-                                           ? Int(result.atIndex(3)?.int32Value ?? 0)
-                                           : 0,
-                                       firstErrorNumber: nil,
-                                       firstErrorMessage: nil)
-        if parsed.movedCount <= 0 {
-            throw MailControlError.noMessagesMoved
-        }
-        return parsed
-    }
-
     nonisolated internal static func moveMessagesByInternalID(internalIDs: [String],
                                                               to mailboxPath: String,
                                                               in account: String) async throws -> MailboxMoveResult {
@@ -667,60 +626,6 @@ internal struct MailControl {
             return false
           end timeout
         end tell
-        """
-    }
-
-    internal static func buildMoveMessagesScript(messageIDs: [String],
-                                                 mailboxPath: String,
-                                                 account: String) -> String {
-        let escapedIDs = messageIDs.map { "\"\(escapedForAppleScript($0))\"" }.joined(separator: ", ")
-        let destinationReference = mailboxReference(path: mailboxPath, account: account)
-        return """
-        set _messageIDs to {\(escapedIDs)}
-        set _matchedCount to 0
-        set _movedCount to 0
-        set _errorCount to 0
-        tell application id "com.apple.mail"
-          with timeout of 60 seconds
-            set _destMailbox to \(destinationReference)
-            repeat with _targetID in _messageIDs
-              set _normalizedID to (contents of _targetID)
-              set _bracketedID to "<" & _normalizedID & ">"
-              set _matches to {}
-              ignoring case
-                try
-                  repeat with _m in (every message whose message id is _normalizedID)
-                    copy _m to end of _matches
-                    set _matchedCount to _matchedCount + 1
-                  end repeat
-                end try
-                try
-                  repeat with _m in (every message whose message id is _bracketedID)
-                    copy _m to end of _matches
-                    set _matchedCount to _matchedCount + 1
-                  end repeat
-                end try
-                if (count of _matches) is 0 then
-                  try
-                    repeat with _m in (every message whose message id contains _normalizedID)
-                      copy _m to end of _matches
-                      set _matchedCount to _matchedCount + 1
-                    end repeat
-                  end try
-                end if
-              end ignoring
-              repeat with _match in _matches
-                try
-                  move _match to _destMailbox
-                  set _movedCount to _movedCount + 1
-                on error
-                  set _errorCount to _errorCount + 1
-                end try
-              end repeat
-            end repeat
-          end timeout
-        end tell
-        return {_matchedCount, _movedCount, _errorCount}
         """
     }
 

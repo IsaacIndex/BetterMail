@@ -3,21 +3,21 @@ import XCTest
 
 final class ThreadInspectorViewTests: XCTestCase {
     func test_openInMailStatus_whenStateIsNil_returnsIdle() {
-        let status = ThreadInspectorView.openInMailStatus(for: nil, messageID: "message-id")
+        let status = ThreadInspectorView.openInMailStatus(for: nil, messageKey: "message-key")
         XCTAssertEqual(status, .idle)
     }
 
-    func test_openInMailStatus_whenMessageIDDoesNotMatch_returnsIdle() {
-        let state = OpenInMailState(messageID: "message-id",
+    func test_openInMailStatus_whenMessageKeyDoesNotMatch_returnsIdle() {
+        let state = OpenInMailState(messageKey: "message-key",
                                     status: .searchingFilteredFallback)
-        let status = ThreadInspectorView.openInMailStatus(for: state, messageID: "other-id")
+        let status = ThreadInspectorView.openInMailStatus(for: state, messageKey: "other-key")
         XCTAssertEqual(status, .idle)
     }
 
-    func test_openInMailStatus_whenMessageIDMatches_returnsStateStatus() {
-        let state = OpenInMailState(messageID: "message-id",
+    func test_openInMailStatus_whenMessageKeyMatches_returnsStateStatus() {
+        let state = OpenInMailState(messageKey: "message-key",
                                     status: .opened(.filteredFallback))
-        let status = ThreadInspectorView.openInMailStatus(for: state, messageID: "message-id")
+        let status = ThreadInspectorView.openInMailStatus(for: state, messageKey: "message-key")
         XCTAssertEqual(status, .opened(.filteredFallback))
     }
 

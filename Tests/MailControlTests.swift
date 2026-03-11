@@ -23,15 +23,6 @@ final class MailControlTests: XCTestCase {
         XCTAssertEqual(cleaned, "CaseSensitive@Host.COM")
     }
 
-    func test_buildMoveMessagesScript_includesDestinationAndMessageIDs() {
-        let script = MailControl.buildMoveMessagesScript(messageIDs: ["abc@example.com", "def@example.com"],
-                                                         mailboxPath: "Projects/Acme",
-                                                         account: "Work")
-
-        XCTAssertTrue(script.contains("set _messageIDs to {\"abc@example.com\", \"def@example.com\"}"))
-        XCTAssertTrue(script.contains("mailbox \"Acme\" of mailbox \"Projects\" of account \"Work\""))
-    }
-
     func test_buildCreateMailboxScript_withParent_usesParentMailboxReference() {
         let script = MailControl.buildCreateMailboxScript(folderName: "Follow Up",
                                                           account: "Work",

@@ -15,7 +15,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 - Settings expose one relative text-size control for thread canvas, timeline, and inspector typography while preserving the existing size hierarchy between labels, summaries, and metadata.
 - Appearance preferences support System, Light, and Dark modes from BetterMail Settings while keeping the glassmorphism styling consistent.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/create mailbox-folder, flag, and search actions against Apple Mail.
-- Inspector "Open in Mail" uses AppleScript heuristic targeting (mailbox/account hints plus subject, sender, and received-day matching) without `message://` URLs, and now treats AppleScript boolean return values correctly so a successful open does not leave a false failure status behind.
+- Inspector "Open in Mail" uses AppleScript heuristic targeting only (mailbox/account hints plus subject, sender, and received-day matching) without `message://` URLs, and now treats AppleScript boolean return values correctly so a successful open does not leave a false failure status behind.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
 - Optional Apple Intelligence digests powered by `FoundationModelsEmailSummaryProvider` (Foundation Models on macOS 15.2+) that surface summaries in the inspector for the selected thread.
@@ -212,7 +212,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 - The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable hierarchical folder selector to make destination picking clearer.
 - Mailbox-folder move actions are thread-scoped: selecting any node in a thread moves all cached messages in that thread to keep mailbox/thread state consistent.
 - The selection bar's mailbox status line is also thread-scoped: it only appears while that thread remains selected and auto-clears after 5 minutes.
-- Mailbox-folder move execution now prioritizes Apple Mail internal IDs (when cached) and source-mailbox-scoped lookups to reduce move latency on long threads.
+- Mailbox-folder move execution now requires cached Apple Mail internal IDs and uses source-mailbox-scoped lookups to reduce move latency on long threads.
 - Successful mailbox-thread moves register a persistent auto-follow rule so future off-destination messages in that thread are moved to the same mailbox folder on subsequent refresh passes.
 - When a canvas folder contains exactly one thread, a successful mailbox move of that thread updates the folder's mailbox destination to match.
 - Sidebar folder reordering is local to BetterMail and does not modify folder order inside Apple Mail.

@@ -187,7 +187,7 @@ internal struct ThreadInspectorView: View {
 
     @ViewBuilder
     private func openInMailStatus(for node: ThreadNode) -> some View {
-        let status = Self.openInMailStatus(for: openInMailState, messageID: node.message.messageID)
+        let status = Self.openInMailStatus(for: openInMailState, messageKey: node.message.id.uuidString)
         VStack(alignment: .leading, spacing: 8) {
             statusLine(for: status)
             hintText(for: status)
@@ -197,8 +197,8 @@ internal struct ThreadInspectorView: View {
         .foregroundStyle(inspectorSecondaryForegroundStyle)
     }
 
-    internal static func openInMailStatus(for state: OpenInMailState?, messageID: String) -> OpenInMailStatus {
-        guard let state, state.messageID == messageID else { return .idle }
+    internal static func openInMailStatus(for state: OpenInMailState?, messageKey: String) -> OpenInMailStatus {
+        guard let state, state.messageKey == messageKey else { return .idle }
         return state.status
     }
 
@@ -236,15 +236,9 @@ internal struct ThreadInspectorView: View {
     }
 
     private func copyControls(for node: ThreadNode) -> some View {
-        let messageID = node.message.messageID
         let subject = node.message.subject
         let mailboxValue = mailboxCopyValue(for: node)
         return HStack(spacing: 8) {
-            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
-                                     comment: "Copy Message-ID action"),
-                   action: { handleCopyAction(messageID) })
-                .controlSize(.mini)
-                .disabled(messageID.isEmpty)
             Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
                                      comment: "Copy subject action"),
                    action: { handleCopyAction(subject) })

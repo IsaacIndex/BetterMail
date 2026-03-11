@@ -30,7 +30,7 @@ The system SHALL default the canvas to the most recent 7 days, SHALL order threa
 - **THEN** GeometryReader content-frame updates drive the scroll position used for paging
 
 ### Requirement: Node Content and Selection
-The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. The inspector panel SHALL present a body preview trimmed to 10 lines with an ellipsis when the message body exceeds 10 lines, and SHALL provide an "Open in Mail" button to view the full message in Apple Mail. The "Open in Mail" control SHALL normalize the Message-ID before launching Mail and SHALL surface an inline failure state (e.g., when Mail returns `MCMailErrorDomain` error 1030) that offers a fallback search to locate the message.
+The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. The inspector panel SHALL present a body preview trimmed to 10 lines with an ellipsis when the message body exceeds 10 lines, and SHALL provide an "Open in Mail" button to view the full message in Apple Mail. The "Open in Mail" control SHALL use cached mailbox/account hints plus subject, sender, and received-day metadata to locate the message in Mail, and SHALL surface an inline failure state when no match is found.
 
 #### Scenario: Selecting a node
 - **WHEN** the user clicks a node
@@ -212,50 +212,37 @@ The system SHALL provide a navigation bar toggle to switch between Default View 
 - **THEN** manual thread group connectors, JWZ thread columns, and folder backgrounds/adjacency remain present as in Default View, with only timeline-specific overlays changing
 
 ### Requirement: Heuristic Mail Targeting
-When direct Message-ID lookup fails, the system SHALL attempt AppleScript-based heuristics recommended in Apple Support thread 253933858: constrain search using cached mailbox and account hints when available, and otherwise search by subject + sender + received-date within Mail. The inspector SHALL surface which heuristic succeeded (Message-ID match vs. metadata heuristic) or that no match was found.
+The system SHALL attempt AppleScript-based heuristics recommended in Apple Support thread 253933858: constrain search using cached mailbox and account hints when available, and otherwise search by subject + sender + received-date within Mail. The inspector SHALL surface whether the heuristic found a match or that no match was found.
 
 #### Scenario: Mailbox-scoped heuristic
-- **WHEN** Message-ID lookup fails but mailbox or account hints exist for the selected message
+- **WHEN** mailbox or account hints exist for the selected message
 - **THEN** the system searches that mailbox/account for a message matching the cached subject + sender + received date and opens the first match in Mail
 
 #### Scenario: Global heuristic without mailbox hint
-- **WHEN** Message-ID lookup fails and no mailbox hint is available
+- **WHEN** no mailbox hint is available
 - **THEN** the system searches across Mail for the first message whose subject, sender, and received date match the cached metadata and opens it in Mail
 
 #### Scenario: Status reflects heuristic outcome
 - **WHEN** a heuristic succeeds or fails
-- **THEN** the inspector status text indicates the path used (Message-ID match, heuristic match, or no match) and keeps copy actions available for manual search
-
-### Requirement: Open in Mail Fallback Search
-When direct Mail open fails, the system SHALL search Apple Mail for the selected message's Message-ID via AppleScript and SHALL present the best match (subject, sender, and received date) in the inspector with actions to open that message in Mail without relying on `message://`, copy the Message-ID, and copy the message URL. The search SHALL run asynchronously and expose a loading and completion state.
-
-#### Scenario: Fallback search success shows result
-- **WHEN** direct open fails and the fallback search finds a message with the same Message-ID
-- **THEN** the inspector shows its subject, sender, and received date with an action to open that message in Mail
-- **AND** copy actions for the Message-ID and message URL remain available
-
-#### Scenario: Fallback search no match guidance
-- **WHEN** the fallback search completes without a match
-- **THEN** the inspector shows that no match was found
-- **AND** the user can copy the Message-ID and message URL to search manually in Mail
+- **THEN** the inspector status text indicates heuristic success or no match and keeps copy actions available for manual search
 
 ### Requirement: Open in Mail Filtered Fallback
-The system SHALL attempt to open the selected message in Apple Mail by normalized Message-ID first. If that attempt fails, the system SHALL run a single global filtered search using Apple Mail’s AppleScript query pattern `(every message whose subject contains <subject> and sender contains <sender> and date received is within the target day>)` modeled after `OpenInMail (with filter).scpt`, where the date window spans from the start of the message’s calendar day to the start of the next day. When a match is found, the system SHALL open it (or select it in the first message viewer) and activate Mail; when no match is found, it SHALL surface an inline failure state.
+The system SHALL attempt to open the selected message in Apple Mail using heuristic mailbox/account targeting first. If those hints do not resolve a message, the system SHALL widen the search to the account’s mailbox tree and match by subject substring, sender token substring, and received-date within the target day. When a match is found, the system SHALL open it (or select it in the first message viewer) and activate Mail; when no match is found, it SHALL surface an inline failure state.
 
 #### Scenario: Filtered fallback opens match
-- **WHEN** the Message-ID open attempt fails and the filtered fallback runs
-- **THEN** the system filters all messages (global scope) by subject substring, sender token substring, and received-date within the target day, opens the first match (or selects it in the viewer), and activates Mail
+- **WHEN** the heuristic search runs
+- **THEN** the system searches the hinted mailbox first, then the account mailbox tree, using subject substring, sender token substring, and received-date within the target day, opens the first match (or selects it in the viewer), and activates Mail
 
 #### Scenario: Filtered fallback finds no match
 - **WHEN** the filtered fallback runs and no message matches the subject, sender token, and day range
 - **THEN** the inspector shows an inline failure status while leaving manual copy helpers available for the user to try opening in Mail manually
 
 ### Requirement: Open in Mail Copy Helpers Persistent
-The system SHALL render copy controls for Message-ID, subject, and mailbox/account alongside the Open in Mail status, and these controls SHALL remain visible regardless of success, searching, or failure states so users can quickly copy targeting metadata.
+The system SHALL render copy controls for subject and mailbox/account alongside the Open in Mail status, and these controls SHALL remain visible regardless of success, searching, or failure states so users can quickly copy targeting metadata.
 
 #### Scenario: Copy helpers always available
 - **WHEN** the Open in Mail flow is idle, searching, succeeds, or fails
-- **THEN** the inspector still presents copy buttons for the selected message’s Message-ID, subject, and mailbox/account values
+- **THEN** the inspector still presents copy buttons for the selected message’s subject and mailbox/account values
 
 ### Requirement: Folder Header Jump Actions
 The system SHALL provide two icon-only action buttons in the footer row of each folder header block on the thread canvas: one to jump to the latest email node in that folder and one to jump to the first email node in that folder. Each button SHALL expose tooltip text on hover and SHALL be keyboard-focusable with accessible labels.
