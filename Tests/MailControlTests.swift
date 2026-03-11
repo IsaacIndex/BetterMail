@@ -2,6 +2,22 @@ import XCTest
 @testable import BetterMail
 
 final class MailControlTests: XCTestCase {
+    func test_filteredFallbackOutcome_acceptsTrueDescriptor() {
+        let descriptor = NSAppleEventDescriptor(boolean: true)
+
+        let outcome = MailControl.filteredFallbackOutcome(from: descriptor)
+
+        XCTAssertEqual(outcome, .opened)
+    }
+
+    func test_filteredFallbackOutcome_acceptsFalseDescriptor() {
+        let descriptor = NSAppleEventDescriptor(boolean: false)
+
+        let outcome = MailControl.filteredFallbackOutcome(from: descriptor)
+
+        XCTAssertEqual(outcome, .notFound)
+    }
+
     func test_cleanMessageIDPreservingCase_stripsBracketsAndWhitespace() {
         let cleaned = MailControl.cleanMessageIDPreservingCase("  <CaseSensitive@Host.COM> ")
         XCTAssertEqual(cleaned, "CaseSensitive@Host.COM")

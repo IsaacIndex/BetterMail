@@ -225,10 +225,21 @@ internal struct MailControl {
                                                 month: month,
                                                 day: day)
         let result = try await runScript(script)
-        if result.descriptorType == typeBoolean {
-            return result.booleanValue ? .opened : .notFound
+        if let outcome = filteredFallbackOutcome(from: result) {
+            return outcome
         }
         throw MailControlError.filteredFallbackFailed
+    }
+
+    nonisolated internal static func filteredFallbackOutcome(from result: NSAppleEventDescriptor) -> FilteredFallbackOutcome? {
+        switch result.descriptorType {
+        case typeBoolean, typeTrue:
+            return result.booleanValue ? .opened : .notFound
+        case typeFalse:
+            return .notFound
+        default:
+            return nil
+        }
     }
 
     nonisolated internal static func cleanMessageIDPreservingCase(_ raw: String) -> String {
