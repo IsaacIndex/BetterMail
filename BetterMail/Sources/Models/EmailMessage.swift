@@ -126,3 +126,46 @@ internal extension EmailMessage {
                                           inReplyTo: nil,
                                           references: [])
 }
+
+internal enum MailboxRefreshSubjectNormalizer {
+    private static let replyPrefixes = ["re:", "fw:", "fwd:", "aw:", "sv:", "wg:"]
+
+    internal static func normalize(_ subject: String) -> String {
+        var normalized = collapseWhitespace(subject)
+        guard !normalized.isEmpty else { return "" }
+
+        for _ in 0..<12 {
+            let previous = normalized
+            normalized = stripLeadingBracketToken(normalized)
+
+            let lowered = normalized.lowercased()
+            if let prefix = replyPrefixes.first(where: { lowered.hasPrefix($0) }) {
+                normalized = String(normalized.dropFirst(prefix.count))
+            }
+
+            normalized = collapseWhitespace(normalized)
+            if normalized == previous {
+                break
+            }
+        }
+
+        return normalized.lowercased()
+    }
+
+    private static func stripLeadingBracketToken(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("["),
+              let closing = trimmed.firstIndex(of: "]") else {
+            return trimmed
+        }
+        let suffix = trimmed[trimmed.index(after: closing)...]
+        return String(suffix).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func collapseWhitespace(_ value: String) -> String {
+        value
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

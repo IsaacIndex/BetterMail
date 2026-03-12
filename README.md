@@ -218,6 +218,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 - Sidebar folder reordering is local to BetterMail and does not modify folder order inside Apple Mail.
 - Opening the mailbox-folder move sheet now triggers a hierarchy refresh when account/folder destinations are missing, and hierarchy reads automatically retry AppleEvent timeout failures before surfacing an error.
 - `All Inboxes` remains inbox-only. Messages moved out of inbox appear in `All Emails` and in their destination folder scope after refresh/rethread reconciliation. `All Folders` shows only foldered threads, hides date-rail labels, and bypasses day-window node filtering so folder members remain visible in dense rows.
+- The global Refresh button keeps the same mailbox-scoped behavior in every view. Folder-specific refresh is exposed separately in the folder inspector via `Refresh Threads`, which refreshes the selected folder's threads plus any nested sub-folder threads by scanning the relevant mailboxes for matching normalized subjects without altering manual-group attachments.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:

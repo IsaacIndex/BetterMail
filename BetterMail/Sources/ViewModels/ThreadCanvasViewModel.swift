@@ -141,6 +141,17 @@ private struct PendingManualAttachmentMailboxMove {
     let destinationPath: String
 }
 
+private struct FolderRefreshTarget: Hashable {
+    let mailbox: String
+    let account: String?
+}
+
+private struct FolderRefreshSubjectPlanItem {
+    let target: FolderRefreshTarget
+    let normalizedSubjects: [String]
+    let seedMessages: [EmailMessage]
+}
+
 private struct BottomBarMailboxActionStatus {
     let message: String
     let expiresAt: Date
@@ -492,6 +503,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
     @Published internal private(set) var isRefreshing = false
+    @Published internal private(set) var refreshingFolderThreadIDs: Set<String> = []
     @Published internal private(set) var status: String = ""
     @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
     @Published internal private(set) var activeMailboxScope: MailboxScope = .allEmails
@@ -698,7 +710,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func refreshNow(limit: Int? = nil) {
-        guard !isRefreshing else {
+        guard !isAnyRefreshRunning else {
             Log.refresh.debug("Refresh skipped because another refresh is in progress.")
             return
         }
@@ -759,6 +771,61 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
             await MainActor.run { self.isRefreshing = false }
+        }
+    }
+
+    internal var isAnyRefreshRunning: Bool {
+        isRefreshing || !refreshingFolderThreadIDs.isEmpty
+    }
+
+    internal func isRefreshingFolderThreads(for folderID: String) -> Bool {
+        refreshingFolderThreadIDs.contains(folderID)
+    }
+
+    internal func refreshFolderThreads(for folderID: String, limit: Int? = nil) {
+        guard !isAnyRefreshRunning else {
+            Log.refresh.debug("Folder refresh skipped because another refresh is in progress. folderID=\(folderID, privacy: .public)")
+            return
+        }
+
+        refreshingFolderThreadIDs.insert(folderID)
+        status = NSLocalizedString("threadcanvas.folder.inspector.refresh_threads.status.running",
+                                   comment: "Status when refreshing the selected folder threads begins")
+
+        let effectiveLimit = max(1, limit ?? fetchLimit)
+        let snippetLineLimit = inspectorSettings.snippetLineLimit
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let fetchedCount = try await refreshFolderCoverage(folderID: folderID,
+                                                                   preferredBatchSize: effectiveLimit,
+                                                                   snippetLineLimit: snippetLineLimit)
+                let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+                await MainActor.run {
+                    self.refreshingFolderThreadIDs.remove(folderID)
+                    if fetchedCount > 0 {
+                        self.scheduleRethread(delay: 0)
+                    }
+                    self.lastRefreshDate = Date()
+                    self.status = String.localizedStringWithFormat(
+                        NSLocalizedString("refresh.status.updated", comment: "Status after refresh completes"),
+                        timestamp
+                    )
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.refreshingFolderThreadIDs.remove(folderID)
+                }
+            } catch {
+                Log.refresh.error("Folder refresh failed. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    self.refreshingFolderThreadIDs.remove(folderID)
+                    self.status = String.localizedStringWithFormat(
+                        NSLocalizedString("refresh.status.failed", comment: "Status when refresh fails"),
+                        error.localizedDescription
+                    )
+                }
+            }
         }
     }
 
@@ -3734,6 +3801,144 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return (mailbox: path, account: account, includeAllInboxesAliases: false)
         }
     }
+
+    private func refreshFolderCoverage(folderID: String,
+                                       preferredBatchSize: Int,
+                                       snippetLineLimit: Int,
+                                       referenceDate: Date = Date()) async throws -> Int {
+        let folderNodes = Self.folderNodesByID(roots: roots,
+                                               folders: threadFolders,
+                                               manualGroupByMessageKey: manualGroupByMessageKey,
+                                               jwzThreadMap: jwzThreadMap)[folderID] ?? []
+        guard !folderNodes.isEmpty else { return 0 }
+
+        let threadIDs = Set(folderNodes.compactMap { node -> String? in
+            let trimmed = node.message.threadID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        })
+        let storedMessages = try await store.fetchMessages(threadIDs: threadIDs)
+        let seedMessages = storedMessages.isEmpty ? folderNodes.map(\.message) : storedMessages
+        let plan = Self.folderRefreshSubjectPlan(messages: seedMessages)
+        guard !plan.isEmpty else { return 0 }
+
+        Log.refresh.info("Starting folder coverage refresh. folderID=\(folderID, privacy: .public) targets=\(plan.count, privacy: .public)")
+        var fetchedCount = 0
+        var seenMessageIDs = Set<String>()
+        for item in plan {
+            let total = try await backfillService.countMessages(matchingNormalizedSubjects: item.normalizedSubjects,
+                                                                mailbox: item.target.mailbox,
+                                                                account: item.target.account)
+            guard total > 0 else { continue }
+            let fetched = try await backfillService.fetchMessages(matchingNormalizedSubjects: item.normalizedSubjects,
+                                                                  mailbox: item.target.mailbox,
+                                                                  account: item.target.account,
+                                                                  limit: max(total, preferredBatchSize),
+                                                                  snippetLineLimit: snippetLineLimit)
+            let filtered = Self.filterFolderRefreshMessages(fetched,
+                                                            seedMessages: item.seedMessages,
+                                                            normalizedSubjects: Set(item.normalizedSubjects),
+                                                            referenceDate: referenceDate)
+                .filter { seenMessageIDs.insert($0.messageID).inserted }
+            guard !filtered.isEmpty else { continue }
+            try await store.upsert(messages: filtered)
+            fetchedCount += filtered.count
+        }
+        return fetchedCount
+    }
+
+    private static func folderRefreshSubjectPlan(messages: [EmailMessage]) -> [FolderRefreshSubjectPlanItem] {
+        var messagesByTarget: [FolderRefreshTarget: [EmailMessage]] = [:]
+        for message in messages {
+            guard let target = folderRefreshTarget(for: message) else {
+                continue
+            }
+            messagesByTarget[target, default: []].append(message)
+        }
+
+        return messagesByTarget
+            .compactMap { target, targetMessages in
+                let subjects = Array(Set(targetMessages.compactMap { message -> String? in
+                    let normalized = MailboxRefreshSubjectNormalizer.normalize(message.subject)
+                    return normalized.isEmpty ? nil : normalized
+                })).sorted()
+                guard !subjects.isEmpty else { return nil }
+                return FolderRefreshSubjectPlanItem(target: target,
+                                                    normalizedSubjects: subjects,
+                                                    seedMessages: targetMessages)
+            }
+            .sorted {
+                if $0.target.mailbox == $1.target.mailbox {
+                    return $0.normalizedSubjects.joined(separator: "|") < $1.normalizedSubjects.joined(separator: "|")
+                }
+                return $0.target.mailbox < $1.target.mailbox
+            }
+    }
+
+    private static func folderRefreshTarget(for message: EmailMessage) -> FolderRefreshTarget? {
+        let mailbox = message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if mailbox.isEmpty ||
+            mailbox.compare("all inboxes", options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
+            return FolderRefreshTarget(mailbox: "inbox", account: nil)
+        }
+
+        return FolderRefreshTarget(mailbox: mailbox,
+                                   account: account.isEmpty ? nil : account)
+    }
+
+    private static func filterFolderRefreshMessages(_ fetched: [EmailMessage],
+                                                    seedMessages: [EmailMessage],
+                                                    normalizedSubjects: Set<String>,
+                                                    referenceDate: Date) -> [EmailMessage] {
+        let seedMessageIDs = Set(seedMessages.map { JWZThreader.normalizeIdentifier($0.messageID) }.filter { !$0.isEmpty })
+        let seedRelatedIDs = seedMessages.reduce(into: seedMessageIDs) { result, message in
+            if let inReplyTo = message.inReplyTo, !inReplyTo.isEmpty {
+                result.insert(inReplyTo)
+            }
+            result.formUnion(message.references.filter { !$0.isEmpty })
+        }
+
+        return fetched.filter { message in
+            let normalizedSubject = MailboxRefreshSubjectNormalizer.normalize(message.subject)
+            guard normalizedSubjects.contains(normalizedSubject) else {
+                return false
+            }
+
+            let candidateID = JWZThreader.normalizeIdentifier(message.messageID)
+            if !candidateID.isEmpty && seedRelatedIDs.contains(candidateID) {
+                return true
+            }
+
+            if let inReplyTo = message.inReplyTo, seedRelatedIDs.contains(inReplyTo) {
+                return true
+            }
+
+            if !Set(message.references).isDisjoint(with: seedRelatedIDs) {
+                return true
+            }
+
+            let account = message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mailbox = message.mailboxID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let uniqueSubjects = Set(seedMessages.map { MailboxRefreshSubjectNormalizer.normalize($0.subject) }).filter { !$0.isEmpty }
+            if uniqueSubjects.count == 1,
+               !mailbox.isEmpty,
+               !account.isEmpty,
+               message.date <= referenceDate {
+                return true
+            }
+
+            return false
+        }
+    }
+
+#if DEBUG
+    internal static func folderRefreshPlanForTesting(messages: [EmailMessage]) -> [(mailbox: String, account: String?, normalizedSubjects: [String])] {
+        folderRefreshSubjectPlan(messages: messages).map { item in
+            (mailbox: item.target.mailbox, account: item.target.account, normalizedSubjects: item.normalizedSubjects)
+        }
+    }
+#endif
 
     private func mailboxMoveScopeForSelection(selectedNodes: [ThreadNode],
                                               account: String,

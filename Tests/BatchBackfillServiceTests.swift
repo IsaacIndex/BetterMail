@@ -235,6 +235,8 @@ private actor StubMailMessageClient: MailMessageFetching {
     private let counts: [RangeKey: Int]
     private let fetchOutcomes: [RangeKey: FetchOutcome]
     private(set) var fetchRequests: [FetchRequest] = []
+    private(set) var subjectCountRequests: [(mailbox: String, account: String?, subjects: [String])] = []
+    private(set) var subjectFetchRequests: [(mailbox: String, account: String?, subjects: [String], limit: Int)] = []
 
     init(counts: [RangeKey: Int], fetchOutcomes: [RangeKey: FetchOutcome]) {
         self.counts = counts
@@ -258,6 +260,25 @@ private actor StubMailMessageClient: MailMessageFetching {
         case let .failure(error):
             throw error
         }
+    }
+
+    func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       mailbox: String,
+                       account: String?) async throws -> Int {
+        subjectCountRequests.append((mailbox: mailbox, account: account, subjects: normalizedSubjects))
+        return 0
+    }
+
+    func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       limit: Int,
+                       mailbox: String,
+                       account: String?,
+                       snippetLineLimit: Int) async throws -> [EmailMessage] {
+        subjectFetchRequests.append((mailbox: mailbox,
+                                     account: account,
+                                     subjects: normalizedSubjects,
+                                     limit: limit))
+        return []
     }
 
     func fetchRequestsSnapshot() -> [FetchRequest] {

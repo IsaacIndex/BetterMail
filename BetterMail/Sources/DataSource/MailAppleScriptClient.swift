@@ -11,6 +11,8 @@ internal actor MailAppleScriptClient {
     private enum LogPrefix {
         static let backfillCount = "[BACKFILL][COUNT]"
         static let backfillFetch = "[BACKFILL][FETCH]"
+        static let subjectCount = "[SUBJECT][COUNT]"
+        static let subjectFetch = "[SUBJECT][FETCH]"
     }
 
     private let scriptRunner: NSAppleScriptRunner
@@ -101,6 +103,51 @@ internal actor MailAppleScriptClient {
         }
         let countValue = descriptor.int32Value
         Log.appleScript.info("\(LogPrefix.backfillCount, privacy: .public) countMessages result=\(countValue, privacy: .public)")
+        return Int(countValue)
+    }
+
+    internal func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                                limit: Int = 10,
+                                mailbox: String = "inbox",
+                                account: String? = nil,
+                                snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+        let filteredSubjects = normalizedSubjects
+            .map { MailboxRefreshSubjectNormalizer.normalize($0) }
+            .filter { !$0.isEmpty }
+        guard !filteredSubjects.isEmpty else { return [] }
+        try Task.checkCancellation()
+        Log.appleScript.info("\(LogPrefix.subjectFetch, privacy: .public) fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) subjectCount=\(filteredSubjects.count, privacy: .public)")
+        let script = buildSubjectScopedScript(mailbox: mailbox,
+                                              account: account,
+                                              normalizedSubjects: filteredSubjects,
+                                              limit: limit)
+        Log.appleScript.debug("\(LogPrefix.subjectFetch, privacy: .public) Generated subject AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script, logPrefix: LogPrefix.subjectFetch)
+        try Task.checkCancellation()
+        return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
+    }
+
+    internal func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                                mailbox: String = "inbox",
+                                account: String? = nil) async throws -> Int {
+        let filteredSubjects = normalizedSubjects
+            .map { MailboxRefreshSubjectNormalizer.normalize($0) }
+            .filter { !$0.isEmpty }
+        guard !filteredSubjects.isEmpty else { return 0 }
+        try Task.checkCancellation()
+        Log.appleScript.info("\(LogPrefix.subjectCount, privacy: .public) countMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) subjectCount=\(filteredSubjects.count, privacy: .public)")
+        let script = buildSubjectScopedCountScript(mailbox: mailbox,
+                                                   account: account,
+                                                   normalizedSubjects: filteredSubjects)
+        Log.appleScript.debug("\(LogPrefix.subjectCount, privacy: .public) Generated subject count AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script, logPrefix: LogPrefix.subjectCount)
+        try Task.checkCancellation()
+        if descriptor.descriptorType != typeSInt32 && descriptor.descriptorType != typeSInt16 {
+            Log.appleScript.error("\(LogPrefix.subjectCount, privacy: .public) countMessages failed to decode count; descriptorType=\(descriptor.descriptorType, privacy: .public)")
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+        let countValue = descriptor.int32Value
+        Log.appleScript.info("\(LogPrefix.subjectCount, privacy: .public) countMessages result=\(countValue, privacy: .public)")
         return Int(countValue)
     }
 
@@ -440,6 +487,177 @@ internal actor MailAppleScriptClient {
           end timeout
         end tell
         return _rows
+        """
+    }
+
+    private func appleScriptStringList(_ values: [String]) -> String {
+        let escapedValues = values.map { "\"\(escapedForAppleScript($0))\"" }
+        return "{\(escapedValues.joined(separator: ", "))}"
+    }
+
+    private func normalizedSubjectHelpersScript(normalizedSubjects: [String]) -> String {
+        let subjectList = appleScriptStringList(normalizedSubjects)
+        return """
+        global _normalizedSubjects
+        set _normalizedSubjects to \(subjectList)
+
+        on collapseWhitespace(_value)
+          set _trimmed to my trimText(_value)
+          if _trimmed is "" then return ""
+          set _originalTIDs to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to {space, tab, return, linefeed}
+          set _parts to text items of _trimmed
+          set AppleScript's text item delimiters to _originalTIDs
+          set _cleanParts to {}
+          repeat with _part in _parts
+            set _piece to my trimText(contents of _part as string)
+            if _piece is not "" then copy _piece to end of _cleanParts
+          end repeat
+          set AppleScript's text item delimiters to space
+          set _collapsed to _cleanParts as string
+          set AppleScript's text item delimiters to _originalTIDs
+          return _collapsed
+        end collapseWhitespace
+
+        on stripLeadingBracketToken(_value)
+          set _trimmed to my trimText(_value)
+          if _trimmed begins with "[" then
+            set _closeOffset to offset of "]" in _trimmed
+            if _closeOffset is greater than 0 and _closeOffset < (length of _trimmed) then
+              return my trimText(text (_closeOffset + 1) thru -1 of _trimmed)
+            else if _closeOffset is greater than 0 then
+              return ""
+            end if
+          end if
+          return _trimmed
+        end stripLeadingBracketToken
+
+        on normalizedMailboxRefreshSubject(_value)
+          set _normalized to my collapseWhitespace(_value)
+          if _normalized is "" then return ""
+          repeat with _guard from 1 to 12
+            set _previous to _normalized
+            set _normalized to my stripLeadingBracketToken(_normalized)
+            set _changedPrefix to false
+            ignoring case
+              repeat with _prefix in {"re:", "fw:", "fwd:", "aw:", "sv:", "wg:"}
+                if _normalized begins with (contents of _prefix as string) then
+                  if (length of _normalized) is greater than (length of (contents of _prefix as string)) then
+                    set _normalized to text ((length of (contents of _prefix as string)) + 1) thru -1 of _normalized
+                  else
+                    set _normalized to ""
+                  end if
+                  set _normalized to my trimText(_normalized)
+                  set _changedPrefix to true
+                  exit repeat
+                end if
+              end repeat
+            end ignoring
+            set _normalized to my collapseWhitespace(_normalized)
+            if _normalized is _previous and _changedPrefix is false then exit repeat
+          end repeat
+          return my collapseWhitespace(_normalized)
+        end normalizedMailboxRefreshSubject
+
+        on normalizedSubjectSetContains(_subjectValue)
+          global _normalizedSubjects
+          set _candidate to my normalizedMailboxRefreshSubject(_subjectValue)
+          if _candidate is "" then return false
+          ignoring case
+            repeat with _subject in _normalizedSubjects
+              if _candidate is (contents of _subject as string) then return true
+            end repeat
+          end ignoring
+          return false
+        end normalizedSubjectSetContains
+        """
+    }
+
+    private func buildSubjectScopedScript(mailbox: String,
+                                          account: String?,
+                                          normalizedSubjects: [String],
+                                          limit: Int) -> String {
+        return """
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
+        \(normalizedSubjectHelpersScript(normalizedSubjects: normalizedSubjects))
+        set _rows to {}
+        set _limit to \(limit)
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
+            set _mailboxName to (name of _mbx as string)
+            set _accountName to ""
+            try
+              set _accountName to (name of account of _mbx as string)
+            on error
+              set _accountName to ""
+            end try
+            set _msgs to messages of _mbx
+            set _count to 0
+            repeat with m in _msgs
+              set _subject to ""
+              try
+                set _subject to (subject of m as string)
+              end try
+              if my normalizedSubjectSetContains(_subject) then
+                set _src to ""
+                set _body to ""
+                set _msgMailboxPath to _mailboxName
+                set _msgAccountName to _accountName
+                try
+                  set _msgMailbox to (mailbox of m)
+                  set _msgMailboxPath to my mailboxPathForMailbox(_msgMailbox)
+                  try
+                    set _msgAccountName to (name of account of _msgMailbox as string)
+                  on error
+                    set _msgAccountName to _accountName
+                  end try
+                on error
+                  set _msgMailboxPath to _mailboxName
+                  set _msgAccountName to _accountName
+                end try
+                try
+                  set _src to (source of m as string)
+                on error
+                  set _src to ""
+                end try
+                try
+                  set _body to (content of m as string)
+                on error
+                  set _body to ""
+                end try
+                copy {(id of m as string), (message id of m as string), _subject, _msgMailboxPath, _msgAccountName, (date received of m), (read status of m), _src, _body} to end of _rows
+                set _count to _count + 1
+                if _count is greater than or equal to _limit then exit repeat
+              end if
+            end repeat
+          end timeout
+        end tell
+        return _rows
+        """
+    }
+
+    private func buildSubjectScopedCountScript(mailbox: String,
+                                               account: String?,
+                                               normalizedSubjects: [String]) -> String {
+        return """
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
+        \(normalizedSubjectHelpersScript(normalizedSubjects: normalizedSubjects))
+        set _count to 0
+        tell application id "com.apple.mail"
+          with timeout of 60 seconds
+            set _msgs to messages of _mbx
+            repeat with m in _msgs
+              set _subject to ""
+              try
+                set _subject to (subject of m as string)
+              end try
+              if my normalizedSubjectSetContains(_subject) then
+                set _count to _count + 1
+              end if
+            end repeat
+          end timeout
+        end tell
+        return _count
         """
     }
 

@@ -121,6 +121,7 @@ internal struct ThreadListView: View {
                                           minimapViewportRect: viewModel.folderMinimapViewport(for: selectedFolder.id),
                                           summaryState: viewModel.folderSummaryState(for: selectedFolder.id),
                                           canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                                          isRefreshingFolderThreads: viewModel.isRefreshingFolderThreads(for: selectedFolder.id),
                                           onRegenerateSummary: {
                                               viewModel.regenerateFolderSummary(for: selectedFolder.id)
                                           },
@@ -133,6 +134,9 @@ internal struct ThreadListView: View {
                                           },
                                           onJumpToOldest: {
                                               viewModel.jumpToFirstNode(in: selectedFolder.id)
+                                          },
+                                          onRefreshFolderThreads: {
+                                              viewModel.refreshFolderThreads(for: selectedFolder.id)
                                           },
                                           onRefreshMailboxHierarchy: {
                                               viewModel.refreshMailboxHierarchy(force: true)
@@ -381,7 +385,7 @@ internal struct ThreadListView: View {
         }) {
             Label("Refresh", systemImage: "arrow.clockwise")
         }
-        .disabled(viewModel.isRefreshing)
+        .disabled(viewModel.isAnyRefreshRunning)
 
         if #available(macOS 26, *) {
             button.buttonStyle(.glass)

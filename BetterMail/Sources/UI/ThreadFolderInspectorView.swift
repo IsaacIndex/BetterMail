@@ -13,10 +13,12 @@ internal struct ThreadFolderInspectorView: View {
     internal let minimapViewportRect: CGRect?
     internal let summaryState: ThreadSummaryState?
     internal let canRegenerateSummary: Bool
+    internal let isRefreshingFolderThreads: Bool
     internal let onRegenerateSummary: (() -> Void)?
     internal let onMinimapJump: (CGPoint) -> Void
     internal let onJumpToLatest: () -> Void
     internal let onJumpToOldest: () -> Void
+    internal let onRefreshFolderThreads: () -> Void
     internal let onRefreshMailboxHierarchy: () -> Void
     internal let onRecalibrateColor: () -> ThreadFolderColor?
     internal let onPreview: (String, ThreadFolderColor, String?, String?) -> Void
@@ -49,10 +51,12 @@ internal struct ThreadFolderInspectorView: View {
                   minimapViewportRect: CGRect?,
                   summaryState: ThreadSummaryState?,
                   canRegenerateSummary: Bool,
+                  isRefreshingFolderThreads: Bool,
                   onRegenerateSummary: (() -> Void)?,
                   onMinimapJump: @escaping (CGPoint) -> Void,
                   onJumpToLatest: @escaping () -> Void,
                   onJumpToOldest: @escaping () -> Void,
+                  onRefreshFolderThreads: @escaping () -> Void,
                   onRefreshMailboxHierarchy: @escaping () -> Void,
                   onRecalibrateColor: @escaping () -> ThreadFolderColor?,
                   onPreview: @escaping (String, ThreadFolderColor, String?, String?) -> Void,
@@ -68,10 +72,12 @@ internal struct ThreadFolderInspectorView: View {
         self.minimapViewportRect = minimapViewportRect
         self.summaryState = summaryState
         self.canRegenerateSummary = canRegenerateSummary
+        self.isRefreshingFolderThreads = isRefreshingFolderThreads
         self.onRegenerateSummary = onRegenerateSummary
         self.onMinimapJump = onMinimapJump
         self.onJumpToLatest = onJumpToLatest
         self.onJumpToOldest = onJumpToOldest
+        self.onRefreshFolderThreads = onRefreshFolderThreads
         self.onRefreshMailboxHierarchy = onRefreshMailboxHierarchy
         self.onRecalibrateColor = onRecalibrateColor
         self.onPreview = onPreview
@@ -94,9 +100,26 @@ internal struct ThreadFolderInspectorView: View {
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("threadcanvas.folder.inspector.title",
-                                   comment: "Title for the folder inspector panel"))
-                .font(font(size: 13, weight: .semibold))
+            HStack(alignment: .center, spacing: 8) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.title",
+                                       comment: "Title for the folder inspector panel"))
+                    .font(font(size: 13, weight: .semibold))
+                Spacer()
+                Button(action: onRefreshFolderThreads) {
+                    Label(NSLocalizedString("threadcanvas.folder.inspector.refresh_threads",
+                                            comment: "Button label for refreshing the selected folder threads"),
+                          systemImage: "arrow.clockwise")
+                        .labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .disabled(isRefreshingFolderThreads)
+                .help(NSLocalizedString("threadcanvas.folder.inspector.refresh_threads.help",
+                                        comment: "Help text for refreshing the selected folder threads"))
+                if isRefreshingFolderThreads {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
 
             Divider()
 

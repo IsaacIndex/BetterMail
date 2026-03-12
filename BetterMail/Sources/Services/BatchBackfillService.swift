@@ -7,6 +7,14 @@ internal protocol MailMessageFetching {
                        mailbox: String,
                        account: String?,
                        snippetLineLimit: Int) async throws -> [EmailMessage]
+    func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       mailbox: String,
+                       account: String?) async throws -> Int
+    func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       limit: Int,
+                       mailbox: String,
+                       account: String?,
+                       snippetLineLimit: Int) async throws -> [EmailMessage]
 }
 
 extension MailAppleScriptClient: MailMessageFetching {}
@@ -22,6 +30,14 @@ internal protocol BatchBackfillServicing {
                      totalExpected: Int,
                      snippetLineLimit: Int,
                      progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult
+    func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       mailbox: String,
+                       account: String?) async throws -> Int
+    func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       mailbox: String,
+                       account: String?,
+                       limit: Int,
+                       snippetLineLimit: Int) async throws -> [EmailMessage]
 }
 
 internal struct BatchBackfillProgress {
@@ -203,6 +219,36 @@ internal actor BatchBackfillService: BatchBackfillServicing {
                                               state: .finished,
                                               errorMessage: nil))
         return BatchBackfillResult(total: totalExpected, fetched: completed)
+    }
+
+    internal func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                                mailbox: String = "inbox",
+                                account: String? = nil) async throws -> Int {
+        let filteredSubjects = normalizedSubjects
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !filteredSubjects.isEmpty else { return 0 }
+        try Task.checkCancellation()
+        return try await client.countMessages(matchingNormalizedSubjects: filteredSubjects,
+                                              mailbox: mailbox,
+                                              account: account)
+    }
+
+    internal func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                                mailbox: String = "inbox",
+                                account: String? = nil,
+                                limit: Int,
+                                snippetLineLimit: Int) async throws -> [EmailMessage] {
+        let filteredSubjects = normalizedSubjects
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !filteredSubjects.isEmpty, limit > 0 else { return [] }
+        try Task.checkCancellation()
+        return try await client.fetchMessages(matchingNormalizedSubjects: filteredSubjects,
+                                              limit: limit,
+                                              mailbox: mailbox,
+                                              account: account,
+                                              snippetLineLimit: snippetLineLimit)
     }
 
     private func splitAndRetry(range: DateInterval,

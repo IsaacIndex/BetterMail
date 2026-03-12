@@ -50,6 +50,9 @@
 "threadcanvas.folder.inspector.mailbox.none" = "None";
 "threadcanvas.folder.inspector.mailbox.clear" = "Clear";
 "threadcanvas.folder.inspector.mailbox.refresh" = "Refresh mailbox folders";
+"threadcanvas.folder.inspector.refresh_threads" = "Refresh Threads";
+"threadcanvas.folder.inspector.refresh_threads.help" = "Refresh the selected folder's threads, including sub-folders.";
+"threadcanvas.folder.inspector.refresh_threads.status.running" = "Refreshing folder threads…";
 "threadcanvas.folder.mailbox.mixed_accounts" = "Folder mailbox assignment is only available when all folder threads belong to one account.";
 "threadcanvas.folder.mailbox.account_mismatch" = "The selected mailbox account does not match this folder's thread account.";
 "threadcanvas.folder.inspector.summary" = "Summary";
