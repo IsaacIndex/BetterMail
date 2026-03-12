@@ -100,6 +100,41 @@ internal final class MailboxThreadAutoMoveSettings: ObservableObject {
         }
     }
 
+    internal func updateDestination(threadIDs: Set<String>,
+                                    destinationPath: String,
+                                    account: String) {
+        let trimmedDestination = destinationPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDestination.isEmpty, !trimmedAccount.isEmpty else { return }
+
+        let normalizedThreadIDs = Set(threadIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
+        guard !normalizedThreadIDs.isEmpty else { return }
+
+        var updatedRules = rules
+        var didChange = false
+        for index in updatedRules.indices {
+            let rule = updatedRules[index]
+            guard rule.account.caseInsensitiveCompare(trimmedAccount) == .orderedSame,
+                  normalizedThreadIDs.contains(rule.threadID),
+                  rule.destinationPath.caseInsensitiveCompare(trimmedDestination) != .orderedSame else {
+                continue
+            }
+            updatedRules[index] = MailboxThreadMoveRule(account: rule.account,
+                                                        threadID: rule.threadID,
+                                                        destinationPath: trimmedDestination)
+            didChange = true
+        }
+
+        guard didChange else { return }
+        rules = updatedRules.sorted { lhs, rhs in
+            if lhs.account == rhs.account {
+                return lhs.threadID < rhs.threadID
+            }
+            return lhs.account < rhs.account
+        }
+    }
+
     private static func encode(_ rules: [MailboxThreadMoveRule]) -> String {
         guard !rules.isEmpty else { return "" }
         if let data = try? JSONEncoder().encode(rules),

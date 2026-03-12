@@ -96,6 +96,22 @@ internal struct MailboxFolderChoice: Identifiable, Hashable {
     }
 }
 
+internal enum MailboxPathResolution: Equatable {
+    case exact(MailboxFolderChoice)
+    case heuristic(MailboxFolderChoice)
+    case missing
+    case ambiguous
+
+    internal var resolvedChoice: MailboxFolderChoice? {
+        switch self {
+        case .exact(let choice), .heuristic(let choice):
+            return choice
+        case .missing, .ambiguous:
+            return nil
+        }
+    }
+}
+
 internal enum MailboxHierarchyBuilder {
     internal static func buildAccounts(from folders: [MailboxFolder]) -> [MailboxAccount] {
         var accountOrder: [String] = []
@@ -142,6 +158,77 @@ internal enum MailboxHierarchyBuilder {
 
     internal static func folderIDs(in accounts: [MailboxAccount]) -> [String] {
         accounts.flatMap { flattenIDs($0.folders) }
+    }
+
+    internal static func resolveMailboxPath(account: String,
+                                            path: String,
+                                            in accounts: [MailboxAccount],
+                                            currentMailboxPath: String? = nil,
+                                            currentMailboxAccount: String? = nil) -> MailboxPathResolution {
+        let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAccount.isEmpty, !trimmedPath.isEmpty else { return .missing }
+
+        guard let mailboxAccount = accounts.first(where: {
+            $0.name.caseInsensitiveCompare(trimmedAccount) == .orderedSame
+        }) else {
+            return .missing
+        }
+
+        let choices = folderChoices(for: mailboxAccount)
+        guard !choices.isEmpty else { return .missing }
+
+        if let exact = choices.first(where: {
+            $0.path.caseInsensitiveCompare(trimmedPath) == .orderedSame
+        }) {
+            return .exact(exact)
+        }
+
+        let normalizedCurrentPath = currentMailboxPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedCurrentAccount = currentMailboxAccount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let expectedLeaf = MailboxPathFormatter.leafName(from: trimmedPath)?.lowercased() ?? ""
+        let expectedParentPath = inferredParentPathForResolution(from: trimmedPath) ?? ""
+        let expectedParentLeaf = MailboxPathFormatter.leafName(from: expectedParentPath)?.lowercased() ?? ""
+
+        let scoredChoices = choices.compactMap { choice -> (choice: MailboxFolderChoice, score: Int)? in
+            let candidateLeaf = MailboxPathFormatter.leafName(from: choice.path)?.lowercased() ?? ""
+            let candidateParentPath = inferredParentPathForResolution(from: choice.path) ?? ""
+            let candidateParentLeaf = MailboxPathFormatter.leafName(from: candidateParentPath)?.lowercased() ?? ""
+
+            var score = 0
+            if !normalizedCurrentPath.isEmpty &&
+                !normalizedCurrentAccount.isEmpty &&
+                normalizedCurrentAccount.caseInsensitiveCompare(trimmedAccount) == .orderedSame &&
+                choice.path.caseInsensitiveCompare(normalizedCurrentPath) == .orderedSame {
+                score += 1_000
+            }
+            if !expectedLeaf.isEmpty && candidateLeaf == expectedLeaf {
+                score += 100
+            }
+            if !expectedParentPath.isEmpty &&
+                candidateParentPath.caseInsensitiveCompare(expectedParentPath) == .orderedSame {
+                score += 25
+            } else if !expectedParentLeaf.isEmpty && candidateParentLeaf == expectedParentLeaf {
+                score += 10
+            }
+
+            guard score > 0 else { return nil }
+            return (choice, score)
+        }
+
+        guard let highestScore = scoredChoices.map(\.score).max() else {
+            return .missing
+        }
+
+        let strongestChoices = scoredChoices
+            .filter { $0.score == highestScore }
+            .map(\.choice)
+
+        guard strongestChoices.count == 1, let strongest = strongestChoices.first else {
+            return .ambiguous
+        }
+
+        return .heuristic(strongest)
     }
 
     private static func buildTree(from folders: [MailboxFolder]) -> [MailboxFolderNode] {
@@ -236,6 +323,21 @@ internal enum MailboxHierarchyBuilder {
             guard let index = trimmed.lastIndex(of: Character(delimiter)) else { continue }
             let candidate = String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
             if knownPaths.contains(candidate) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private static func inferredParentPathForResolution(from path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        for delimiter in ["/", ".", ":"] {
+            guard let index = trimmed.lastIndex(of: Character(delimiter)) else { continue }
+            let candidate = String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !candidate.isEmpty {
                 return candidate
             }
         }

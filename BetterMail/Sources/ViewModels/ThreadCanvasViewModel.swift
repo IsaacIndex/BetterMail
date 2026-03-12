@@ -141,6 +141,24 @@ private struct PendingManualAttachmentMailboxMove {
     let destinationPath: String
 }
 
+private struct MailboxRecoveryContext {
+    let account: String
+    let path: String
+    let currentMailboxPath: String?
+    let currentMailboxAccount: String?
+}
+
+private struct RecoveredMailboxDestination {
+    let account: String
+    let path: String
+    let resolution: MailboxPathResolution
+}
+
+private enum FolderDestinationRecoveryResult {
+    case success(RecoveredMailboxDestination)
+    case failure(String)
+}
+
 private struct FolderRefreshTarget: Hashable {
     let mailbox: String
     let account: String?
@@ -976,9 +994,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             do {
                 let messages = try await store.fetchMessages(threadIDs: [rule.threadID])
                 guard !messages.isEmpty else { continue }
+                guard let recoveredDestination = await recoverMailboxDestination(account: rule.account,
+                                                                                path: rule.destinationPath,
+                                                                                messages: messages) else {
+                    shouldForceRefresh = true
+                    continue
+                }
+                if case .heuristic = recoveredDestination.resolution {
+                    mailboxThreadAutoMoveSettings.updateDestination(threadIDs: [rule.threadID],
+                                                                    destinationPath: recoveredDestination.path,
+                                                                    account: recoveredDestination.account)
+                }
                 let candidates = mailboxMoveCandidates(from: messages,
-                                                       account: rule.account,
-                                                       destinationPath: rule.destinationPath)
+                                                       account: recoveredDestination.account,
+                                                       destinationPath: recoveredDestination.path)
                 guard !candidates.isEmpty else { continue }
 
                 let moveInput = Self.mailboxMoveInput(from: candidates)
@@ -987,15 +1016,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     continue
                 }
                 let moveResult = try await Self.executeMailboxMove(with: moveInput,
-                                                                   destinationPath: rule.destinationPath,
-                                                                   account: rule.account)
+                                                                   destinationPath: recoveredDestination.path,
+                                                                   account: recoveredDestination.account)
                 let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
                 if isFullSuccess {
                     await applyOptimisticMailboxMove(candidates: candidates,
                                                      moveTargets: moveInput.internalTargets,
                                                      resolvedInternalIDsByNodeID: [:],
-                                                     destinationPath: rule.destinationPath,
-                                                     destinationAccount: rule.account)
+                                                     destinationPath: recoveredDestination.path,
+                                                     destinationAccount: recoveredDestination.account)
                 } else {
                     shouldForceRefresh = true
                 }
@@ -1923,28 +1952,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let accounts = MailboxHierarchyBuilder.buildAccounts(from: folders)
                 Self.logMailboxHierarchyDebug(folders: folders, accounts: accounts)
                 await MainActor.run {
-                    let validFolderIDs = Set(MailboxHierarchyBuilder.folderIDs(in: accounts))
-                    self.mailboxFolderOrderSettings.prune(validIDs: validFolderIDs)
-                    self.mailboxAccounts = MailboxHierarchyBuilder.applyFolderOrder(self.mailboxFolderOrderSettings.orderedFolderIDs,
-                                                                                    to: accounts)
-                    if case .mailboxFolder(let account, let path) = self.activeMailboxScope {
-                        let exists = self.mailboxAccounts.contains { mailboxAccount in
-                            mailboxAccount.name == account &&
-                                MailboxHierarchyBuilder.folderChoices(for: mailboxAccount).contains(where: { $0.path == path })
-                        }
-                        if !exists {
-                            self.mailboxActionStatusMessage = String.localizedStringWithFormat(
-                                NSLocalizedString("mailbox.hierarchy.selected_scope_missing",
-                                                  comment: "Error when selected mailbox scope no longer exists in hierarchy"),
-                                account,
-                                path
-                            )
-                        } else {
-                            self.mailboxActionStatusMessage = nil
-                        }
-                    } else {
-                        self.mailboxActionStatusMessage = nil
-                    }
+                    self.applyMailboxHierarchy(accounts)
                 }
             } catch {
                 Log.appleScript.error("Failed to fetch mailbox hierarchy: \(error.localizedDescription, privacy: .public)")
@@ -1957,6 +1965,50 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
         }
     }
+
+    @MainActor
+    private func applyMailboxHierarchy(_ accounts: [MailboxAccount]) {
+        let validFolderIDs = Set(MailboxHierarchyBuilder.folderIDs(in: accounts))
+        mailboxFolderOrderSettings.prune(validIDs: validFolderIDs)
+        let orderedAccounts = MailboxHierarchyBuilder.applyFolderOrder(mailboxFolderOrderSettings.orderedFolderIDs,
+                                                                       to: accounts)
+        mailboxAccounts = orderedAccounts
+
+        guard case .mailboxFolder(let account, let path) = activeMailboxScope else {
+            mailboxActionStatusMessage = nil
+            return
+        }
+
+        switch MailboxHierarchyBuilder.resolveMailboxPath(account: account, path: path, in: orderedAccounts) {
+        case .exact:
+            mailboxActionStatusMessage = nil
+        case .heuristic(let choice):
+            activeMailboxScope = .mailboxFolder(account: choice.account, path: choice.path)
+            mailboxActionStatusMessage = String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.hierarchy.selected_scope_remapped",
+                                  comment: "Status when selected mailbox scope was remapped after rename"),
+                account,
+                path,
+                choice.path
+            )
+            scheduleRethread(delay: 0)
+        case .missing, .ambiguous:
+            activeMailboxScope = .allEmails
+            mailboxActionStatusMessage = String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.hierarchy.selected_scope_fallback_all_emails",
+                                  comment: "Status when selected mailbox scope is missing and app falls back to All Emails"),
+                account,
+                path
+            )
+            scheduleRethread(delay: 0)
+        }
+    }
+
+#if DEBUG
+    internal func applyMailboxHierarchyForTesting(_ accounts: [MailboxAccount]) {
+        applyMailboxHierarchy(accounts)
+    }
+#endif
 
     private func fetchMailboxHierarchyWithRetry(maxAttempts: Int = 3) async throws -> [MailboxFolder] {
         precondition(maxAttempts > 0)
@@ -3383,6 +3435,143 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return nil
     }
 
+    private func mailboxRecoveryContext(account: String,
+                                        path: String,
+                                        messages: [EmailMessage]) -> MailboxRecoveryContext {
+        let normalizedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidateByKey: [String: (account: String, path: String)] = [:]
+        for message in messages {
+            let messageAccount = message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mailboxPath = mailboxPathForMailboxMove(message: message).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !messageAccount.isEmpty,
+                  !mailboxPath.isEmpty,
+                  messageAccount.caseInsensitiveCompare(normalizedAccount) == .orderedSame else {
+                continue
+            }
+            candidateByKey["\(messageAccount.lowercased())||\(mailboxPath.lowercased())"] = (messageAccount, mailboxPath)
+        }
+
+        if candidateByKey.count == 1,
+           let candidate = candidateByKey.values.first {
+            return MailboxRecoveryContext(account: normalizedAccount,
+                                          path: normalizedPath,
+                                          currentMailboxPath: candidate.path,
+                                          currentMailboxAccount: candidate.account)
+        }
+
+        return MailboxRecoveryContext(account: normalizedAccount,
+                                      path: normalizedPath,
+                                      currentMailboxPath: nil,
+                                      currentMailboxAccount: nil)
+    }
+
+    private func recoverMailboxDestination(account: String,
+                                           path: String,
+                                           messages: [EmailMessage]) async -> RecoveredMailboxDestination? {
+        let context = mailboxRecoveryContext(account: account, path: path, messages: messages)
+        return await MainActor.run {
+            let resolution = MailboxHierarchyBuilder.resolveMailboxPath(account: context.account,
+                                                                       path: context.path,
+                                                                       in: self.mailboxAccounts,
+                                                                       currentMailboxPath: context.currentMailboxPath,
+                                                                       currentMailboxAccount: context.currentMailboxAccount)
+            guard let choice = resolution.resolvedChoice else { return nil }
+            return RecoveredMailboxDestination(account: choice.account,
+                                               path: choice.path,
+                                               resolution: resolution)
+        }
+    }
+
+    private func recoverFolderDestinationIfNeeded(folder: ThreadFolder,
+                                                  messages: [EmailMessage]) async -> FolderDestinationRecoveryResult {
+        guard let destination = folder.mailboxDestination else {
+            return .failure(NSLocalizedString("mailbox.action.folder_destination.missing",
+                                              comment: "Status when assigned folder mailbox destination is missing"))
+        }
+
+        guard let recoveredDestination = await recoverMailboxDestination(account: destination.account,
+                                                                        path: destination.path,
+                                                                        messages: messages) else {
+            let resolution = await MainActor.run {
+                let context = self.mailboxRecoveryContext(account: destination.account,
+                                                          path: destination.path,
+                                                          messages: messages)
+                return MailboxHierarchyBuilder.resolveMailboxPath(account: context.account,
+                                                                 path: context.path,
+                                                                 in: self.mailboxAccounts,
+                                                                 currentMailboxPath: context.currentMailboxPath,
+                                                                 currentMailboxAccount: context.currentMailboxAccount)
+            }
+            switch resolution {
+            case .ambiguous:
+                return .failure(String.localizedStringWithFormat(
+                    NSLocalizedString("mailbox.action.folder_destination.ambiguous",
+                                      comment: "Status when assigned folder mailbox destination remap is ambiguous"),
+                    destination.account,
+                    destination.path
+                ))
+            case .missing, .exact, .heuristic:
+                return .failure(String.localizedStringWithFormat(
+                    NSLocalizedString("mailbox.action.folder_destination.reassign",
+                                      comment: "Status when assigned folder mailbox destination must be reassigned"),
+                    destination.account,
+                    destination.path
+                ))
+            }
+        }
+
+        guard case .heuristic = recoveredDestination.resolution else {
+            return .success(recoveredDestination)
+        }
+
+        var updatedFolders = threadFolders
+        guard let index = updatedFolders.firstIndex(where: { $0.id == folder.id }) else {
+            return .success(recoveredDestination)
+        }
+        updatedFolders[index].mailboxAccount = recoveredDestination.account
+        updatedFolders[index].mailboxPath = recoveredDestination.path
+
+        do {
+            try await store.upsertThreadFolders(updatedFolders)
+            await MainActor.run {
+                self.threadFolders = updatedFolders
+                self.folderEditsByID.removeValue(forKey: folder.id)
+            }
+            return .success(recoveredDestination)
+        } catch {
+            Log.app.error("Failed to persist recovered folder mailbox destination: \(error.localizedDescription, privacy: .public)")
+            return .failure(String.localizedStringWithFormat(
+                NSLocalizedString("mailbox.action.folder_destination.reassign",
+                                  comment: "Status when assigned folder mailbox destination must be reassigned"),
+                destination.account,
+                destination.path
+            ))
+        }
+    }
+
+#if DEBUG
+    internal func recoverFolderDestinationForTesting(folderID: String) async -> MailboxPathResolution? {
+        guard let folder = threadFolders.first(where: { $0.id == folderID }),
+              let destination = folder.mailboxDestination else {
+            return nil
+        }
+        let messages = (try? await store.fetchMessages(threadIDs: folder.threadIDs)) ?? []
+        let context = mailboxRecoveryContext(account: destination.account,
+                                             path: destination.path,
+                                             messages: messages)
+        let resolution = await MainActor.run {
+            MailboxHierarchyBuilder.resolveMailboxPath(account: context.account,
+                                                      path: context.path,
+                                                      in: self.mailboxAccounts,
+                                                      currentMailboxPath: context.currentMailboxPath,
+                                                      currentMailboxAccount: context.currentMailboxAccount)
+        }
+        _ = await recoverFolderDestinationIfNeeded(folder: folder, messages: messages)
+        return resolution
+    }
+#endif
+
     private func persistSingleThreadFolderMailboxDestinations(threadIDs: Set<String>,
                                                               destinationPath: String,
                                                               account: String) async {
@@ -3423,17 +3612,34 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard let destination = folder.mailboxDestination else { return nil }
         do {
             let messages = try await store.fetchMessages(threadIDs: [threadID])
+            let recoveredDestination: RecoveredMailboxDestination
+            switch await recoverFolderDestinationIfNeeded(folder: folder, messages: messages) {
+            case .success(let resolved):
+                recoveredDestination = resolved
+            case .failure(let statusMessage):
+                return statusMessage
+            }
             let candidates = mailboxMoveCandidates(from: messages,
-                                                   account: destination.account,
-                                                   destinationPath: destination.path)
+                                                   account: recoveredDestination.account,
+                                                   destinationPath: recoveredDestination.path)
             if candidates.isEmpty {
                 await MainActor.run {
                     self.upsertMailboxThreadMoveRules(threadIDs: [threadID],
-                                                      destinationPath: destination.path,
-                                                      account: destination.account)
+                                                      destinationPath: recoveredDestination.path,
+                                                      account: recoveredDestination.account)
                 }
-                return NSLocalizedString("mailbox.action.move.summary.no_candidates",
-                                         comment: "Status when all thread messages are already in destination mailbox")
+                let baseStatus = NSLocalizedString("mailbox.action.move.summary.no_candidates",
+                                                   comment: "Status when all thread messages are already in destination mailbox")
+                if case .heuristic = recoveredDestination.resolution {
+                    return String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.action.folder_destination.remapped_with_detail",
+                                          comment: "Status when assigned folder mailbox destination was remapped and move found no candidates"),
+                        destination.path,
+                        recoveredDestination.path,
+                        baseStatus
+                    )
+                }
+                return baseStatus
             }
 
             let moveInput = Self.mailboxMoveInput(from: candidates)
@@ -3444,28 +3650,36 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
 
             let moveResult = try await Self.executeMailboxMove(with: moveInput,
-                                                               destinationPath: destination.path,
-                                                               account: destination.account)
+                                                               destinationPath: recoveredDestination.path,
+                                                               account: recoveredDestination.account)
             let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
+            let baseStatus = Self.mailboxMoveStatusMessage(moveResult: moveResult,
+                                                           ambiguousCount: 0,
+                                                           unresolvedCount: moveInput.unresolvedCount)
             if isFullSuccess {
                 await applyOptimisticMailboxMove(candidates: candidates,
                                                  moveTargets: moveInput.internalTargets,
                                                  resolvedInternalIDsByNodeID: [:],
-                                                 destinationPath: destination.path,
-                                                 destinationAccount: destination.account)
+                                                 destinationPath: recoveredDestination.path,
+                                                 destinationAccount: recoveredDestination.account)
                 await MainActor.run {
                     self.upsertMailboxThreadMoveRules(threadIDs: [threadID],
-                                                      destinationPath: destination.path,
-                                                      account: destination.account)
+                                                      destinationPath: recoveredDestination.path,
+                                                      account: recoveredDestination.account)
                 }
-                return Self.mailboxMoveStatusMessage(moveResult: moveResult,
-                                                     ambiguousCount: 0,
-                                                     unresolvedCount: moveInput.unresolvedCount)
             }
 
-            return Self.mailboxMoveStatusMessage(moveResult: moveResult,
-                                                 ambiguousCount: 0,
-                                                 unresolvedCount: moveInput.unresolvedCount)
+            if case .heuristic = recoveredDestination.resolution {
+                return String.localizedStringWithFormat(
+                    NSLocalizedString("mailbox.action.folder_destination.remapped_with_detail",
+                                      comment: "Status when assigned folder mailbox destination was remapped before move"),
+                    destination.path,
+                    recoveredDestination.path,
+                    baseStatus
+                )
+            }
+
+            return baseStatus
         } catch {
             return Self.mailboxMoveFailureMessage(for: error)
         }

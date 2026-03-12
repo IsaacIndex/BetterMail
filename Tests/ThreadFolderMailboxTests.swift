@@ -244,6 +244,215 @@ final class ThreadFolderMailboxTests: XCTestCase {
         XCTAssertNil(folders.first?.mailboxPath)
     }
 
+    func testRecoverFolderDestinationForTesting_keepsExactMatchUnchanged() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let message = EmailMessage(messageID: "msg-a",
+                                   mailboxID: "Projects/Acme",
+                                   accountName: "Work",
+                                   subject: "A",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: Date(),
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-a")
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Projects",
+                                  color: ThreadFolderColor.defaultNewFolder,
+                                  threadIDs: ["thread-a"],
+                                  parentID: nil,
+                                  mailboxAccount: "Work",
+                                  mailboxPath: "Projects/Acme")
+        try await store.upsert(messages: [message])
+        try await store.upsertThreadFolders([folder])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: message)], folders: [folder])
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Projects",
+                                              name: "Projects",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Projects/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Projects",
+                                                                  children: [])
+                                              ])
+                           ])
+        ])
+
+        let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
+        let restored = try await store.fetchThreadFolders()
+
+        XCTAssertEqual(resolution, .exact(MailboxFolderChoice(account: "Work",
+                                                              path: "Projects/Acme",
+                                                              displayPath: "Projects/Acme")))
+        XCTAssertEqual(restored.first?.mailboxPath, "Projects/Acme")
+    }
+
+    func testRecoverFolderDestinationForTesting_persistsHeuristicRemap_whenCurrentMessagesAgree() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let message = EmailMessage(messageID: "msg-a",
+                                   mailboxID: "Projects/Phoenix",
+                                   accountName: "Work",
+                                   subject: "A",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: Date(),
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-a")
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Projects",
+                                  color: ThreadFolderColor.defaultNewFolder,
+                                  threadIDs: ["thread-a"],
+                                  parentID: nil,
+                                  mailboxAccount: "Work",
+                                  mailboxPath: "Projects/Acme")
+        try await store.upsert(messages: [message])
+        try await store.upsertThreadFolders([folder])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: message)], folders: [folder])
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Projects",
+                                              name: "Projects",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Projects/Phoenix",
+                                                                  name: "Phoenix",
+                                                                  parentPath: "Projects",
+                                                                  children: [])
+                                              ])
+                           ])
+        ])
+
+        let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
+        let restored = try await store.fetchThreadFolders()
+
+        XCTAssertEqual(resolution, .heuristic(MailboxFolderChoice(account: "Work",
+                                                                  path: "Projects/Phoenix",
+                                                                  displayPath: "Projects/Phoenix")))
+        XCTAssertEqual(restored.first?.mailboxPath, "Projects/Phoenix")
+    }
+
+    func testRecoverFolderDestinationForTesting_leavesDestinationUnchanged_whenNoMatchExists() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let message = EmailMessage(messageID: "msg-a",
+                                   mailboxID: "Archive",
+                                   accountName: "Work",
+                                   subject: "A",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: Date(),
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-a")
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Projects",
+                                  color: ThreadFolderColor.defaultNewFolder,
+                                  threadIDs: ["thread-a"],
+                                  parentID: nil,
+                                  mailboxAccount: "Work",
+                                  mailboxPath: "Projects/Acme")
+        try await store.upsert(messages: [message])
+        try await store.upsertThreadFolders([folder])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: message)], folders: [folder])
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [])
+                           ])
+        ])
+
+        let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
+        let restored = try await store.fetchThreadFolders()
+
+        XCTAssertEqual(resolution, .missing)
+        XCTAssertEqual(restored.first?.mailboxPath, "Projects/Acme")
+    }
+
+    func testRecoverFolderDestinationForTesting_leavesDestinationUnchanged_whenMatchIsAmbiguous() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let message = EmailMessage(messageID: "msg-a",
+                                   mailboxID: "Inbox",
+                                   accountName: "Work",
+                                   subject: "A",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: Date(),
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-a")
+        let folder = ThreadFolder(id: "folder-1",
+                                  title: "Projects",
+                                  color: ThreadFolderColor.defaultNewFolder,
+                                  threadIDs: ["thread-a"],
+                                  parentID: nil,
+                                  mailboxAccount: "Work",
+                                  mailboxPath: "Projects/Acme")
+        try await store.upsert(messages: [message])
+        try await store.upsertThreadFolders([folder])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: message)], folders: [folder])
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Archive/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Archive",
+                                                                  children: [])
+                                              ]),
+                            MailboxFolderNode(account: "Work",
+                                              path: "Clients",
+                                              name: "Clients",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Clients/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Clients",
+                                                                  children: [])
+                                              ])
+                           ])
+        ])
+
+        let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
+        let restored = try await store.fetchThreadFolders()
+
+        XCTAssertEqual(resolution, .ambiguous)
+        XCTAssertEqual(restored.first?.mailboxPath, "Projects/Acme")
+    }
+
     func testBottomBarMailboxStatus_isScopedToSelectedThread() {
         let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings())
         let now = Date()

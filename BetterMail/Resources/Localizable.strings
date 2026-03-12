@@ -97,6 +97,8 @@
 "mailbox.sidebar.reorder.hint" = "Drag folders and release at the blue line to reorder (same level).";
 "mailbox.hierarchy.error" = "Mailbox hierarchy unavailable: %@";
 "mailbox.hierarchy.selected_scope_missing" = "Selected mailbox scope is no longer available: %@ / %@. Reopen the mailbox sidebar and select a folder again.";
+"mailbox.hierarchy.selected_scope_remapped" = "Selected mailbox scope moved from %@ / %@ to %@.";
+"mailbox.hierarchy.selected_scope_fallback_all_emails" = "Selected mailbox scope is no longer available: %@ / %@. Switched to All Emails.";
 "mailbox.action.error.no_selection" = "Select at least one message to move.";
 "mailbox.action.error.mixed_accounts" = "Select messages from a single account to move them.";
 "mailbox.action.error.missing_account" = "Selected messages must include a valid account.";
@@ -112,6 +114,10 @@
 "mailbox.action.move.summary.none_generic" = "No messages moved.";
 "mailbox.action.move.summary.no_candidates" = "Thread already in destination folder. Auto-move is now tracking new messages in this thread.";
 "mailbox.action.move.summary.blocked" = "Move cancelled. Full thread move requires every message to resolve. Ambiguous: %1$d, unresolved: %2$d.";
+"mailbox.action.folder_destination.missing" = "Assigned mailbox destination is unavailable.";
+"mailbox.action.folder_destination.reassign" = "Assigned mailbox destination is no longer available: %@ / %@. Reassign the folder mailbox destination and retry.";
+"mailbox.action.folder_destination.ambiguous" = "Assigned mailbox destination could not be recovered uniquely: %@ / %@. Reassign the folder mailbox destination and retry.";
+"mailbox.action.folder_destination.remapped_with_detail" = "Assigned mailbox destination moved from %@ to %@. %@";
 "mailbox.action.create_and_move.summary" = "Mailbox folder created. Moved %d messages.";
 "mailbox.action.create_and_move.summary.partial" = "Mailbox folder created. Moved %1$d messages. Skipped %2$d ambiguous, %3$d unresolved.";
 "mailbox.action.create_and_move.summary.none" = "Mailbox folder created, but no messages moved. Skipped %1$d ambiguous, %2$d unresolved. Refresh mailbox and retry to populate internal message IDs.";

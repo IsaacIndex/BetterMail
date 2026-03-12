@@ -443,6 +443,201 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(MailboxPathFormatter.leafName(from: "Inbox"), "Inbox")
         XCTAssertNil(MailboxPathFormatter.leafName(from: "   "))
     }
+
+    func test_resolveMailboxPath_returnsExactMatch_whenPathExists() {
+        let accounts = [
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Projects",
+                                              name: "Projects",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Projects/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Projects",
+                                                                  children: [])
+                                              ])
+                           ])
+        ]
+
+        let resolution = MailboxHierarchyBuilder.resolveMailboxPath(account: "Work",
+                                                                   path: "Projects/Acme",
+                                                                   in: accounts)
+
+        XCTAssertEqual(resolution, .exact(MailboxFolderChoice(account: "Work",
+                                                              path: "Projects/Acme",
+                                                              displayPath: "Projects/Acme")))
+    }
+
+    func test_resolveMailboxPath_returnsHeuristicMatch_whenUniqueLeafExists() {
+        let accounts = [
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Archive/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Archive",
+                                                                  children: [])
+                                              ])
+                           ])
+        ]
+
+        let resolution = MailboxHierarchyBuilder.resolveMailboxPath(account: "Work",
+                                                                   path: "Projects/Acme",
+                                                                   in: accounts)
+
+        XCTAssertEqual(resolution, .heuristic(MailboxFolderChoice(account: "Work",
+                                                                  path: "Archive/Acme",
+                                                                  displayPath: "Archive/Acme")))
+    }
+
+    func test_resolveMailboxPath_returnsAmbiguous_whenMultipleLeafMatchesExist() {
+        let accounts = [
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Archive/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Archive",
+                                                                  children: [])
+                                              ]),
+                            MailboxFolderNode(account: "Work",
+                                              path: "Clients",
+                                              name: "Clients",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Clients/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Clients",
+                                                                  children: [])
+                                              ])
+                           ])
+        ]
+
+        let resolution = MailboxHierarchyBuilder.resolveMailboxPath(account: "Work",
+                                                                   path: "Projects/Acme",
+                                                                   in: accounts)
+
+        XCTAssertEqual(resolution, .ambiguous)
+    }
+
+    @MainActor
+    func test_applyMailboxHierarchyForTesting_remapsActiveScope_whenUniqueMatchExists() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(),
+                                              inspectorSettings: InspectorViewSettings())
+        viewModel.selectMailboxScope(.mailboxFolder(account: "Work", path: "Projects/Acme"))
+
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Archive/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Archive",
+                                                                  children: [])
+                                              ])
+                           ])
+        ])
+
+        XCTAssertEqual(viewModel.activeMailboxScope, .mailboxFolder(account: "Work", path: "Archive/Acme"))
+        XCTAssertEqual(viewModel.mailboxActionStatusMessage,
+                       String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.hierarchy.selected_scope_remapped",
+                                          comment: "Status when selected mailbox scope was remapped after rename"),
+                        "Work",
+                        "Projects/Acme",
+                        "Archive/Acme"
+                       ))
+    }
+
+    @MainActor
+    func test_applyMailboxHierarchyForTesting_fallsBackToAllEmails_whenScopeMissing() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(),
+                                              inspectorSettings: InspectorViewSettings())
+        viewModel.selectMailboxScope(.mailboxFolder(account: "Work", path: "Projects/Acme"))
+
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [])
+                           ])
+        ])
+
+        XCTAssertEqual(viewModel.activeMailboxScope, .allEmails)
+        XCTAssertEqual(viewModel.mailboxActionStatusMessage,
+                       String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.hierarchy.selected_scope_fallback_all_emails",
+                                          comment: "Status when selected mailbox scope is missing and app falls back to All Emails"),
+                        "Work",
+                        "Projects/Acme"
+                       ))
+    }
+
+    @MainActor
+    func test_applyMailboxHierarchyForTesting_fallsBackToAllEmails_whenScopeMatchIsAmbiguous() {
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(),
+                                              inspectorSettings: InspectorViewSettings())
+        viewModel.selectMailboxScope(.mailboxFolder(account: "Work", path: "Projects/Acme"))
+
+        viewModel.applyMailboxHierarchyForTesting([
+            MailboxAccount(name: "Work",
+                           folders: [
+                            MailboxFolderNode(account: "Work",
+                                              path: "Archive",
+                                              name: "Archive",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Archive/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Archive",
+                                                                  children: [])
+                                              ]),
+                            MailboxFolderNode(account: "Work",
+                                              path: "Clients",
+                                              name: "Clients",
+                                              parentPath: nil,
+                                              children: [
+                                                MailboxFolderNode(account: "Work",
+                                                                  path: "Clients/Acme",
+                                                                  name: "Acme",
+                                                                  parentPath: "Clients",
+                                                                  children: [])
+                                              ])
+                           ])
+        ])
+
+        XCTAssertEqual(viewModel.activeMailboxScope, .allEmails)
+        XCTAssertEqual(viewModel.mailboxActionStatusMessage,
+                       String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.hierarchy.selected_scope_fallback_all_emails",
+                                          comment: "Status when selected mailbox scope is missing and app falls back to All Emails"),
+                        "Work",
+                        "Projects/Acme"
+                       ))
+    }
 }
 
 private extension MailboxNavigationTests {
