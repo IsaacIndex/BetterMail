@@ -40,6 +40,15 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     @Published internal private(set) var errorMessage: String?
     @Published internal private(set) var currentAction: Action?
 
+    private struct ETASnapshot {
+        let deltaCompleted: Int?
+        let deltaSeconds: TimeInterval?
+        let sampleCount: Int
+        let averageSecondsPerMessage: TimeInterval?
+        let remainingSeconds: TimeInterval?
+        let formattedETA: String?
+    }
+
     private let service: any BatchBackfillServicing
     private let regenerationService: SummaryRegenerationServicing
     private let snippetLineLimitProvider: () -> Int
@@ -47,6 +56,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     private let backfillMailbox: String = "inbox"
     private let regenerationMailbox: String? = nil
     private var runTask: Task<Void, Never>?
+    private var runStartDate: Date?
     private var lastProgressDate: Date?
     private var lastCompletedCount: Int?
     private var secondsPerMessageSamples: [TimeInterval] = []
@@ -255,7 +265,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         completedCount = progress.completed
         currentBatchSize = progress.currentBatchSize
         progressValue = progress.total > 0 ? Double(progress.completed) / Double(progress.total) : nil
-        updateEstimatedTimeRemaining(completed: progress.completed, total: progress.total)
+        let etaSnapshot = updateEstimatedTimeRemaining(completed: progress.completed, total: progress.total)
 
         switch progress.state {
         case .running:
@@ -284,6 +294,8 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         case .finished:
             break
         }
+
+        logBackfillProgress(progress, eta: etaSnapshot)
     }
 
     private func handle(regeneration progress: SummaryRegenerationProgress) {
@@ -293,7 +305,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         completedCount = progress.completed
         currentBatchSize = progress.currentBatchSize
         progressValue = progress.total > 0 ? Double(progress.completed) / Double(progress.total) : nil
-        updateEstimatedTimeRemaining(completed: progress.completed, total: progress.total)
+        _ = updateEstimatedTimeRemaining(completed: progress.completed, total: progress.total)
 
         switch progress.state {
         case .running:
@@ -350,6 +362,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         currentBatchSize = action == .backfill
             ? min(preferredBatchSize, BatchBackfillService.maximumFetchCount)
             : preferredBatchSize
+        runStartDate = Date()
         lastProgressDate = nil
         lastCompletedCount = nil
         secondsPerMessageSamples.removeAll(keepingCapacity: true)
@@ -429,12 +442,17 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         }
     }
 
-    private func updateEstimatedTimeRemaining(completed: Int, total: Int) {
+    private func updateEstimatedTimeRemaining(completed: Int, total: Int) -> ETASnapshot {
         if completed <= 0 || completed >= total {
             estimatedTimeRemainingText = nil
             lastProgressDate = Date()
             lastCompletedCount = completed
-            return
+            return ETASnapshot(deltaCompleted: nil,
+                               deltaSeconds: nil,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: nil,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
         }
 
         let now = Date()
@@ -445,12 +463,24 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
 
         guard let lastProgressDate, let lastCompletedCount else {
             estimatedTimeRemainingText = nil
-            return
+            return ETASnapshot(deltaCompleted: nil,
+                               deltaSeconds: nil,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: nil,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
         }
 
         let deltaCompleted = completed - lastCompletedCount
         let deltaSeconds = now.timeIntervalSince(lastProgressDate)
-        guard deltaCompleted > 0, deltaSeconds > 0 else { return }
+        guard deltaCompleted > 0, deltaSeconds > 0 else {
+            return ETASnapshot(deltaCompleted: deltaCompleted,
+                               deltaSeconds: deltaSeconds,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: nil,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
+        }
 
         secondsPerMessageSamples.append(deltaSeconds / Double(deltaCompleted))
         if secondsPerMessageSamples.count > 5 {
@@ -463,13 +493,61 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
               remainingSeconds > 0,
               let formatted = Self.etaFormatter.string(from: remainingSeconds) else {
             estimatedTimeRemainingText = nil
-            return
+            return ETASnapshot(deltaCompleted: deltaCompleted,
+                               deltaSeconds: deltaSeconds,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: averageSecondsPerMessage,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
         }
 
         estimatedTimeRemainingText = String.localizedStringWithFormat(
             NSLocalizedString("settings.batch.eta", comment: "Estimated time remaining label for batch operations"),
             formatted
         )
+        return ETASnapshot(deltaCompleted: deltaCompleted,
+                           deltaSeconds: deltaSeconds,
+                           sampleCount: secondsPerMessageSamples.count,
+                           averageSecondsPerMessage: averageSecondsPerMessage,
+                           remainingSeconds: remainingSeconds,
+                           formattedETA: formatted)
+    }
+
+    private func logBackfillProgress(_ progress: BatchBackfillProgress, eta: ETASnapshot) {
+        let range = rangeDescription(progress.currentRange)
+        let state = backfillLogState(progress.state)
+        let rangeMessageCount = progress.rangeMessageCount ?? 0
+        let deltaCompleted = eta.deltaCompleted ?? 0
+        let deltaSeconds = eta.deltaSeconds ?? 0
+        let sampleCount = eta.sampleCount
+        let rollingAverage = eta.averageSecondsPerMessage ?? 0
+        let remainingSeconds = eta.remainingSeconds ?? 0
+        let etaLabel = eta.formattedETA ?? "n/a"
+        let elapsedSeconds = runStartDate.map { Date().timeIntervalSince($0) } ?? 0
+        let overallAverage = progress.completed > 0 ? elapsedSeconds / Double(progress.completed) : 0
+        let progressPercent = progress.total > 0
+            ? String(format: "%.1f%%", (Double(progress.completed) / Double(progress.total)) * 100)
+            : "0.0%"
+        let errorMessage = progress.errorMessage ?? "none"
+
+        logger.info(
+            """
+            [BACKFILL][ETA] state=\(state, privacy: .public) completed=\(progress.completed, privacy: .public)/\(progress.total, privacy: .public) progress=\(progressPercent, privacy: .public) batchSize=\(progress.currentBatchSize, privacy: .public) rangeCount=\(rangeMessageCount, privacy: .public) range=\(range, privacy: .public) deltaCompleted=\(deltaCompleted, privacy: .public) deltaSeconds=\(deltaSeconds, format: .fixed(precision: 2)) rollingSamples=\(sampleCount, privacy: .public) rollingSecondsPerMessage=\(rollingAverage, format: .fixed(precision: 2)) overallSecondsPerMessage=\(overallAverage, format: .fixed(precision: 2)) remainingSeconds=\(remainingSeconds, format: .fixed(precision: 2)) eta=\(etaLabel, privacy: .public) error=\(errorMessage, privacy: .public)
+            """
+        )
+    }
+
+    private func backfillLogState(_ state: BatchBackfillProgress.State) -> String {
+        switch state {
+        case .running:
+            return "running"
+        case .splitting:
+            return "splitting"
+        case .retrying:
+            return "retrying"
+        case .finished:
+            return "finished"
+        }
     }
 
     private static func clampPreferredBatchSize(_ value: Int) -> Int {

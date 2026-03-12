@@ -35,9 +35,9 @@ internal actor NSAppleScriptRunner {
         }
     }
 
-    internal func run(_ source: String) throws -> NSAppleEventDescriptor {
+    internal func run(_ source: String, logPrefix: String? = nil) throws -> NSAppleEventDescriptor {
         try Task.checkCancellation()
-        try ensureMailRunning()
+        try ensureMailRunning(logPrefix: logPrefix)
         try Task.checkCancellation()
 
         guard let script = NSAppleScript(source: source) else { throw ScriptError.compileFailed }
@@ -50,16 +50,16 @@ internal actor NSAppleScriptRunner {
     }
 }
 
-private func ensureMailRunning(timeout: TimeInterval = 10) throws {
+private func ensureMailRunning(timeout: TimeInterval = 10, logPrefix: String? = nil) throws {
     let bundleID = "com.apple.mail"
 
     // If Mail is already running, return
     if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleID }) {
-        Log.appleScript.debug("Mail already running; no launch needed.")
+        Log.appleScript.debug("\(prefixedLogMessage(logPrefix, "Mail already running; no launch needed."), privacy: .public)")
         return
     }
 
-    Log.appleScript.info("Mail is not running. Launching Mail.app")
+    Log.appleScript.info("\(prefixedLogMessage(logPrefix, "Mail is not running. Launching Mail.app"), privacy: .public)")
     // Explicitly launch Mail
     let url = URL(fileURLWithPath: "/System/Applications/Mail.app")
     let config = NSWorkspace.OpenConfiguration()
@@ -70,14 +70,19 @@ private func ensureMailRunning(timeout: TimeInterval = 10) throws {
     while Date().timeIntervalSince(start) < timeout {
         if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleID }) {
             let elapsed = Date().timeIntervalSince(start)
-            Log.appleScript.info("Mail launch confirmed after \(elapsed, privacy: .public)s")
+            Log.appleScript.info("\(prefixedLogMessage(logPrefix, "Mail launch confirmed after \(elapsed)s"), privacy: .public)")
             return
         }
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
     }
 
-    Log.appleScript.error("Timed out waiting for Mail to launch after \(timeout, privacy: .public)s")
+    Log.appleScript.error("\(prefixedLogMessage(logPrefix, "Timed out waiting for Mail to launch after \(timeout)s"), privacy: .public)")
     throw AppleScriptError.executionFailed("Timed out waiting for Mail to launch")
+}
+
+private func prefixedLogMessage(_ prefix: String?, _ message: String) -> String {
+    guard let prefix, !prefix.isEmpty else { return message }
+    return "\(prefix) \(message)"
 }
 
 

@@ -8,6 +8,11 @@ private enum MailAppleScriptClientError: Error {
 }
 
 internal actor MailAppleScriptClient {
+    private enum LogPrefix {
+        static let backfillCount = "[BACKFILL][COUNT]"
+        static let backfillFetch = "[BACKFILL][FETCH]"
+    }
+
     private let scriptRunner: NSAppleScriptRunner
 
     internal init(scriptRunner: NSAppleScriptRunner = NSAppleScriptRunner()) {
@@ -64,14 +69,14 @@ internal actor MailAppleScriptClient {
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
         let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
-        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.backfillFetch, privacy: .public) fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
         let script = buildScript(mailbox: mailbox,
                                  account: account,
                                  limit: limit,
                                  startWindow: startWindow,
                                  endWindow: endWindow)
-        Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
-        let descriptor = try await scriptRunner.run(script)
+        Log.appleScript.debug("\(LogPrefix.backfillFetch, privacy: .public) Generated AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script, logPrefix: LogPrefix.backfillFetch)
         try Task.checkCancellation()
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
     }
@@ -82,20 +87,20 @@ internal actor MailAppleScriptClient {
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
         let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
-        Log.appleScript.info("countMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.backfillCount, privacy: .public) countMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
         let script = buildCountScript(mailbox: mailbox,
                                       account: account,
                                       startWindow: startWindow,
                                       endWindow: endWindow)
-        Log.appleScript.debug("Generated count AppleScript of \(script.count, privacy: .public) characters.")
-        let descriptor = try await scriptRunner.run(script)
+        Log.appleScript.debug("\(LogPrefix.backfillCount, privacy: .public) Generated count AppleScript of \(script.count, privacy: .public) characters.")
+        let descriptor = try await scriptRunner.run(script, logPrefix: LogPrefix.backfillCount)
         try Task.checkCancellation()
         if descriptor.descriptorType != typeSInt32 && descriptor.descriptorType != typeSInt16 {
-            Log.appleScript.error("countMessages failed to decode count; descriptorType=\(descriptor.descriptorType, privacy: .public)")
+            Log.appleScript.error("\(LogPrefix.backfillCount, privacy: .public) countMessages failed to decode count; descriptorType=\(descriptor.descriptorType, privacy: .public)")
             throw MailAppleScriptClientError.malformedDescriptor
         }
         let countValue = descriptor.int32Value
-        Log.appleScript.info("countMessages result=\(countValue, privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.backfillCount, privacy: .public) countMessages result=\(countValue, privacy: .public)")
         return Int(countValue)
     }
 
