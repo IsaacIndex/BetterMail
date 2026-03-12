@@ -443,9 +443,10 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     }
 
     private func updateEstimatedTimeRemaining(completed: Int, total: Int) -> ETASnapshot {
+        let now = Date()
         if completed <= 0 || completed >= total {
             estimatedTimeRemainingText = nil
-            lastProgressDate = Date()
+            lastProgressDate = now
             lastCompletedCount = completed
             return ETASnapshot(deltaCompleted: nil,
                                deltaSeconds: nil,
@@ -453,27 +454,48 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                                averageSecondsPerMessage: nil,
                                remainingSeconds: nil,
                                formattedETA: nil)
-        }
-
-        let now = Date()
-        defer {
-            lastProgressDate = now
-            lastCompletedCount = completed
         }
 
         guard let lastProgressDate, let lastCompletedCount else {
-            estimatedTimeRemainingText = nil
-            return ETASnapshot(deltaCompleted: nil,
-                               deltaSeconds: nil,
-                               sampleCount: secondsPerMessageSamples.count,
-                               averageSecondsPerMessage: nil,
-                               remainingSeconds: nil,
-                               formattedETA: nil)
+            self.lastProgressDate = now
+            self.lastCompletedCount = completed
+            return estimateUsingCurrentSamples(completed: completed,
+                                               total: total,
+                                               deltaCompleted: nil,
+                                               deltaSeconds: nil)
         }
 
         let deltaCompleted = completed - lastCompletedCount
         let deltaSeconds = now.timeIntervalSince(lastProgressDate)
         guard deltaCompleted > 0, deltaSeconds > 0 else {
+            return estimateUsingCurrentSamples(completed: completed,
+                                               total: total,
+                                               deltaCompleted: deltaCompleted,
+                                               deltaSeconds: deltaSeconds)
+        }
+
+        secondsPerMessageSamples.append(deltaSeconds / Double(deltaCompleted))
+        if secondsPerMessageSamples.count > 5 {
+            secondsPerMessageSamples.removeFirst(secondsPerMessageSamples.count - 5)
+        }
+        self.lastProgressDate = now
+        self.lastCompletedCount = completed
+        return estimateUsingCurrentSamples(completed: completed,
+                                           total: total,
+                                           deltaCompleted: deltaCompleted,
+                                           deltaSeconds: deltaSeconds)
+    }
+
+    private func estimateUsingCurrentSamples(completed: Int,
+                                             total: Int,
+                                             deltaCompleted: Int?,
+                                             deltaSeconds: TimeInterval?) -> ETASnapshot {
+        let rollingAverage = secondsPerMessageSamples.isEmpty
+            ? nil
+            : secondsPerMessageSamples.reduce(0, +) / Double(secondsPerMessageSamples.count)
+        let overallAverage = runStartDate.map { Date().timeIntervalSince($0) / Double(completed) }
+        let averageSecondsPerMessage = max(rollingAverage ?? 0, overallAverage ?? 0)
+        guard averageSecondsPerMessage.isFinite, averageSecondsPerMessage > 0 else {
             return ETASnapshot(deltaCompleted: deltaCompleted,
                                deltaSeconds: deltaSeconds,
                                sampleCount: secondsPerMessageSamples.count,
@@ -482,17 +504,10 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                                formattedETA: nil)
         }
 
-        secondsPerMessageSamples.append(deltaSeconds / Double(deltaCompleted))
-        if secondsPerMessageSamples.count > 5 {
-            secondsPerMessageSamples.removeFirst(secondsPerMessageSamples.count - 5)
-        }
-
-        let averageSecondsPerMessage = secondsPerMessageSamples.reduce(0, +) / Double(secondsPerMessageSamples.count)
         let remainingSeconds = averageSecondsPerMessage * Double(total - completed)
         guard remainingSeconds.isFinite,
               remainingSeconds > 0,
               let formatted = Self.etaFormatter.string(from: remainingSeconds) else {
-            estimatedTimeRemainingText = nil
             return ETASnapshot(deltaCompleted: deltaCompleted,
                                deltaSeconds: deltaSeconds,
                                sampleCount: secondsPerMessageSamples.count,
