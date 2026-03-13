@@ -36,15 +36,12 @@ internal struct ThreadCanvasView: View {
     @State private var trackedDocumentViewID: ObjectIdentifier?
     @State private var trackedDocumentSize: CGSize = .zero
     private let headerSpacing: CGFloat = 0
-    private let visualScrollQuantizationStep: CGFloat = 1
-    private let logicalScrollQuantizationStep: CGFloat = 1
-    private let horizontalScrollQuantizationStep: CGFloat = 1
     private let layoutZoomQuantizationStep: CGFloat = 0.025
     private let scrollTraceMinimumDelta: CGFloat = 2
     private let scrollTraceInterval: TimeInterval = 0.12
     private let tagFetchResumeDebounce: TimeInterval = 0.2
     private let scrollStateUpdateTolerance: CGFloat = 1
-    private let visibilityHysteresisPadding: CGFloat = 12
+    private let visibilityHysteresisPadding: CGFloat = 24
     private let minimapSyncInterval: TimeInterval = 1.0 / 30.0
     private let magnificationActivationThreshold: CGFloat = 0.02
     private let nodeDragMinimumDistance: CGFloat = 14
@@ -55,6 +52,18 @@ internal struct ThreadCanvasView: View {
         formatter.dateFormat = "MMM d, yyyy HH:mm"
         return formatter
     }()
+
+    private var visualScrollQuantizationStep: CGFloat {
+        viewModel.activeMailboxScope == .allFolders ? 12 : 6
+    }
+
+    private var logicalScrollQuantizationStep: CGFloat {
+        viewModel.activeMailboxScope == .allFolders ? 12 : 6
+    }
+
+    private var horizontalScrollQuantizationStep: CGFloat {
+        viewModel.activeMailboxScope == .allFolders ? 16 : 8
+    }
 
     internal init(viewModel: ThreadCanvasViewModel,
                   displaySettings: ThreadCanvasDisplaySettings,
