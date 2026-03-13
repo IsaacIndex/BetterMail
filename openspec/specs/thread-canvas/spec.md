@@ -11,7 +11,7 @@ The system SHALL render emails on a canvas where the vertical axis represents da
 - **THEN** each email node is positioned in the day bucket matching its message date and in the column for its thread
 
 ### Requirement: Default Range and Column Order
-The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward. Scroll detection SHALL be driven by GeometryReader updates of the canvas content frame so two-axis scrolling can still trigger paging. When threads belong to a folder, the system SHALL order the folder as a unit by the folder's most recent activity and SHALL keep member threads adjacent horizontally.
+The system SHALL default the canvas to the most recent 7 days, SHALL order thread columns by most recent activity, and SHALL allow the day range to expand in 7-day increments using cache-only paging when the user scrolls downward. Scroll detection SHALL be driven by native `NSScrollView` bounds observation so two-axis scrolling can still trigger paging without routing per-tick scroll offsets through the parent SwiftUI view state. When threads belong to a folder, the system SHALL order the folder as a unit by the folder's most recent activity and SHALL keep member threads adjacent horizontally.
 
 #### Scenario: Default range and ordering
 - **WHEN** the canvas loads
@@ -27,7 +27,7 @@ The system SHALL default the canvas to the most recent 7 days, SHALL order threa
 
 #### Scenario: Two-axis scroll detection
 - **WHEN** the user scrolls the canvas vertically or diagonally
-- **THEN** GeometryReader content-frame updates drive the scroll position used for paging
+- **THEN** native scroll-host bounds updates drive the scroll position used for paging
 
 ### Requirement: Node Content and Selection
 The system SHALL render each node with sender, subject, and time, and SHALL update the inspector panel when a node is selected. The inspector panel SHALL present a body preview trimmed to 10 lines with an ellipsis when the message body exceeds 10 lines, and SHALL provide an "Open in Mail" button to view the full message in Apple Mail. The "Open in Mail" control SHALL use cached mailbox/account hints plus subject, sender, and received-day metadata to locate the message in Mail, and SHALL surface an inline failure state when no match is found.

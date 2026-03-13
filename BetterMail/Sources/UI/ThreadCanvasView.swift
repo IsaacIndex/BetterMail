@@ -13,37 +13,16 @@ internal struct ThreadCanvasView: View {
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
     @State private var isMagnificationGestureActive = false
-    @State private var scrollOffset: CGFloat = 0
-    @State private var rawScrollOffset: CGFloat = 0
-    @State private var rawScrollOffsetX: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-    @State private var canvasScrollView: NSScrollView?
     @State private var activeDropFolderID: String?
     @State private var dropHighlightPulseToken: Int = 0
     @State private var isDropHighlightPulsing: Bool = false
     @State private var dragState: ThreadCanvasDragState?
     @State private var dragPreviewOpacity: Double = 0
     @State private var dragPreviewScale: CGFloat = 0.94
-    @State private var pendingScrollConsumeTask: Task<Void, Never>?
-    @State private var tagFetchResumeTask: Task<Void, Never>?
-    @State private var preservedJumpScrollXByToken: [UUID: CGFloat] = [:]
-    @State private var suppressPendingScrollCancellation = false
     @State private var suspendTimelineTagFetch = false
-    @State private var lastMinimapSyncTimestamp: TimeInterval = 0
-    @State private var lastScrollTraceDirection: Int = 0
-    @State private var lastScrollTraceTimestamp: TimeInterval = 0
-    @State private var trackedScrollViewID: ObjectIdentifier?
-    @State private var trackedDocumentViewID: ObjectIdentifier?
-    @State private var trackedDocumentSize: CGSize = .zero
     private let headerSpacing: CGFloat = 0
     private let layoutZoomQuantizationStep: CGFloat = 0.025
-    private let scrollTraceMinimumDelta: CGFloat = 2
-    private let scrollTraceInterval: TimeInterval = 0.12
-    private let tagFetchResumeDebounce: TimeInterval = 0.2
-    private let scrollStateUpdateTolerance: CGFloat = 1
     private let visibilityHysteresisPadding: CGFloat = 24
-    private let minimapSyncInterval: TimeInterval = 1.0 / 30.0
-    private let magnificationActivationThreshold: CGFloat = 0.02
     private let nodeDragMinimumDistance: CGFloat = 14
 
     private let calendar = Calendar.current
@@ -52,18 +31,6 @@ internal struct ThreadCanvasView: View {
         formatter.dateFormat = "MMM d, yyyy HH:mm"
         return formatter
     }()
-
-    private var visualScrollQuantizationStep: CGFloat {
-        viewModel.activeMailboxScope == .allFolders ? 12 : 6
-    }
-
-    private var logicalScrollQuantizationStep: CGFloat {
-        viewModel.activeMailboxScope == .allFolders ? 12 : 6
-    }
-
-    private var horizontalScrollQuantizationStep: CGFloat {
-        viewModel.activeMailboxScope == .allFolders ? 16 : 8
-    }
 
     internal init(viewModel: ThreadCanvasViewModel,
                   displaySettings: ThreadCanvasDisplaySettings,
@@ -77,7 +44,7 @@ internal struct ThreadCanvasView: View {
         _accumulatedZoom = State(initialValue: initialZoom)
     }
 
-    private struct CanvasVisibilityState {
+    fileprivate struct CanvasVisibilityState {
         let headerStackHeight: CGFloat
         let totalTopPadding: CGFloat
         let visibleYStart: CGFloat
@@ -157,7 +124,7 @@ internal struct ThreadCanvasView: View {
     private static let folderChromeCacheBox = FolderChromeCacheBox()
     private static let folderHeaderRenderCacheBox = FolderHeaderRenderCacheBox()
 
-    private struct CanvasRenderContext {
+    fileprivate struct CanvasRenderContext {
         let metrics: ThreadCanvasLayoutMetrics
         let showsDayAxis: Bool
         let today: Date
@@ -167,6 +134,27 @@ internal struct ThreadCanvasView: View {
         let readabilityMode: ThreadCanvasReadabilityMode
         let visibility: CanvasVisibilityState
         let totalTopPadding: CGFloat
+        let viewportState: CanvasViewportState
+    }
+
+    fileprivate struct CanvasStaticContext {
+        let metrics: ThreadCanvasLayoutMetrics
+        let showsDayAxis: Bool
+        let today: Date
+        let layout: ThreadCanvasLayout
+        let jumpAnchorVersion: Int
+        let chromeData: [FolderChromeData]
+        let readabilityMode: ThreadCanvasReadabilityMode
+        let headerStackHeight: CGFloat
+        let totalTopPadding: CGFloat
+    }
+
+    fileprivate struct CanvasViewportState: Equatable {
+        let rawScrollOffset: CGFloat
+        let rawScrollOffsetX: CGFloat
+        let scrollOffset: CGFloat
+        let viewportWidth: CGFloat
+        let viewportHeight: CGFloat
     }
 
     internal var body: some View {
@@ -182,13 +170,39 @@ internal struct ThreadCanvasView: View {
 
     @ViewBuilder
     private func canvasContent(proxy: GeometryProxy) -> some View {
-        let context = makeCanvasRenderContext(proxy: proxy)
-        ScrollViewReader { _ in
-            configuredScrollView(proxy: proxy, context: context)
-        }
+        let staticContext = makeCanvasStaticContext(proxy: proxy)
+        Self.ScrollViewportHost(
+            viewModel: viewModel,
+            displaySettings: displaySettings,
+            staticContext: staticContext,
+            proxySize: proxy.size,
+            zoomScale: $zoomScale,
+            accumulatedZoom: $accumulatedZoom,
+            isMagnificationGestureActive: $isMagnificationGestureActive,
+            activeDropFolderID: $activeDropFolderID,
+            suspendTimelineTagFetch: $suspendTimelineTagFetch,
+            canvasBackground: AnyView(canvasBackground),
+            buildRenderContext: { viewportState in
+                makeCanvasRenderContext(staticContext: staticContext,
+                                        viewportState: viewportState,
+                                        proxySize: proxy.size)
+            },
+            renderContent: { context in
+                AnyView(canvasLayers(context: context))
+            },
+            renderOverlay: { context in
+                AnyView(canvasOverlay(context: context, proxySize: proxy.size))
+            },
+            onStartDropHighlightPulse: {
+                startDropHighlightPulse()
+            },
+            onCancelDrag: {
+                cancelDrag()
+            }
+        )
     }
 
-    private func makeCanvasRenderContext(proxy: GeometryProxy) -> CanvasRenderContext {
+    private func makeCanvasStaticContext(proxy: GeometryProxy) -> CanvasStaticContext {
         let signpostID = OSSignpostID(log: Log.performance)
         os_signpost(.begin, log: Log.performance, name: "CanvasRenderContext", signpostID: signpostID)
         defer {
@@ -212,14 +226,32 @@ internal struct ThreadCanvasView: View {
         let jumpAnchorVersion = jumpAnchorVersion(for: layout)
         let chromeData = folderChromeData(layout: layout, metrics: metrics, rawZoom: zoomScale)
         let readabilityMode = displaySettings.readabilityMode(for: zoomScale)
-        let visibility = canvasVisibilityState(layout: layout,
-                                               metrics: metrics,
-                                               chromeData: chromeData,
-                                               readabilityMode: readabilityMode,
-                                               proxySize: proxy.size)
-        let totalTopPadding = visibility.totalTopPadding
+        let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
+                                                                  textScale: displaySettings.textScale,
+                                                                  readabilityMode: readabilityMode)
+        let headerStackHeight = chromeData.isEmpty
+            ? 0
+            : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
+        let totalTopPadding = topInset + headerStackHeight + headerSpacing
+        return CanvasStaticContext(metrics: metrics,
+                                   showsDayAxis: showsDayAxis,
+                                   today: today,
+                                   layout: layout,
+                                   jumpAnchorVersion: jumpAnchorVersion,
+                                   chromeData: chromeData,
+                                   readabilityMode: readabilityMode,
+                                   headerStackHeight: headerStackHeight,
+                                   totalTopPadding: totalTopPadding)
+    }
+
+    private func makeCanvasRenderContext(staticContext: CanvasStaticContext,
+                                         viewportState: CanvasViewportState,
+                                         proxySize: CGSize) -> CanvasRenderContext {
+        let visibility = canvasVisibilityState(staticContext: staticContext,
+                                               viewportState: viewportState,
+                                               proxySize: proxySize)
         let profilingSnapshot = viewModel.layoutProfilingSnapshot()
-        let totalNodeCount = layout.columns.reduce(into: 0) { partial, column in
+        let totalNodeCount = staticContext.layout.columns.reduce(into: 0) { partial, column in
             partial += column.nodes.count
         }
         os_signpost(.event,
@@ -227,24 +259,25 @@ internal struct ThreadCanvasView: View {
                     name: "CanvasRenderContextStats",
                     "scopeAllFolders=%{public}d columns=%{public}d totalNodes=%{public}d visibleColumns=%{public}d visibleNodes=%{public}d folderOverlays=%{public}d totalInvalidations=%{public}d sessionInvalidations=%{public}d scrollActive=%{public}d deferredInvalidation=%{public}d",
                     viewModel.activeMailboxScope == .allFolders ? 1 : 0,
-                    layout.columns.count,
+                    staticContext.layout.columns.count,
                     totalNodeCount,
                     visibility.visibleColumns.count,
                     visibility.visibleNodesByColumnID.values.reduce(0) { $0 + $1.count },
-                    layout.folderOverlays.count,
+                    staticContext.layout.folderOverlays.count,
                     profilingSnapshot.totalInvalidationCount,
                     profilingSnapshot.scrollSessionInvalidationCount,
                     profilingSnapshot.isAllFoldersScrollActive ? 1 : 0,
                     profilingSnapshot.hasDeferredEnrichmentInvalidation ? 1 : 0)
-        return CanvasRenderContext(metrics: metrics,
-                                   showsDayAxis: showsDayAxis,
-                                   today: today,
-                                   layout: layout,
-                                   jumpAnchorVersion: jumpAnchorVersion,
-                                   chromeData: chromeData,
-                                   readabilityMode: readabilityMode,
+        return CanvasRenderContext(metrics: staticContext.metrics,
+                                   showsDayAxis: staticContext.showsDayAxis,
+                                   today: staticContext.today,
+                                   layout: staticContext.layout,
+                                   jumpAnchorVersion: staticContext.jumpAnchorVersion,
+                                   chromeData: staticContext.chromeData,
+                                   readabilityMode: staticContext.readabilityMode,
                                    visibility: visibility,
-                                   totalTopPadding: totalTopPadding)
+                                   totalTopPadding: staticContext.totalTopPadding,
+                                   viewportState: viewportState)
     }
 
     @ViewBuilder
@@ -276,351 +309,50 @@ internal struct ThreadCanvasView: View {
         dragPreviewLayer()
         folderColumnHeaderLayer(chromeData: visibility.visibleHeaderChromeData,
                                 metrics: context.metrics,
-                                rawScrollOffset: rawScrollOffset,
+                                rawScrollOffset: context.viewportState.rawScrollOffset,
                                 rawZoom: zoomScale,
                                 readabilityMode: context.readabilityMode)
             .offset(y: -(visibility.headerStackHeight + headerSpacing))
     }
 
-    private func configuredScrollView(proxy: GeometryProxy,
-                                      context: CanvasRenderContext) -> some View {
-        ScrollView([.horizontal, .vertical]) {
-            ZStack(alignment: .topLeading) {
-                canvasLayers(context: context)
-            }
-            .frame(width: context.layout.contentSize.width,
-                   height: context.layout.contentSize.height,
-                   alignment: .topLeading)
-            .coordinateSpace(name: "ThreadCanvasContent")
-            .padding(.top, context.totalTopPadding)
-            .background(
-                ScrollViewResolver(
-                    onResolve: { scrollView in
-                        configureScrollViewBehavior(scrollView)
-                        if canvasScrollView !== scrollView {
-                            canvasScrollView = scrollView
-                            Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
-                        }
-                        trackScrollHostState(scrollView,
-                                             expectedContentSize: context.layout.contentSize,
-                                             totalTopPadding: context.totalTopPadding)
-                    },
-                    onBoundsChange: { scrollView, origin in
-                        trackScrollHostState(scrollView,
-                                             expectedContentSize: context.layout.contentSize,
-                                             totalTopPadding: context.totalTopPadding)
-                        handleScrollBoundsChange(origin,
-                                                 totalTopPadding: context.totalTopPadding,
-                                                 proxySize: proxy.size,
-                                                 layout: context.layout,
-                                                 metrics: context.metrics,
-                                                 today: context.today)
-                    }
-                )
-            )
-        }
-        .scrollIndicators(.visible)
-        .background(canvasBackground)
-        .overlay(alignment: .topLeading) {
-            if context.showsDayAxis {
-                floatingDateRail(layout: context.layout,
-                                 metrics: context.metrics,
-                                 readabilityMode: context.readabilityMode,
-                                 totalTopPadding: context.totalTopPadding,
-                                 rawScrollOffset: rawScrollOffset,
-                                 viewportHeight: proxy.size.height,
-                                 visibleYStart: context.visibility.visibleYStart,
-                                 visibleYEnd: context.visibility.visibleYEnd)
-            }
-        }
-        .simultaneousGesture(magnificationGesture)
-        .background(
-            GeometryReader { sizeProxy in
-                Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
-                                       value: sizeProxy.size.height)
-            }
-        )
-        .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
-            handleViewportHeightPreferenceChange(height,
-                                                 proxyWidth: proxy.size.width,
-                                                 proxyHeight: proxy.size.height,
-                                                 totalTopPadding: context.totalTopPadding,
-                                                 layout: context.layout,
-                                                 metrics: context.metrics,
-                                                 today: context.today)
-        }
-        .onChange(of: context.layout.contentSize.height) { _ in
-            handleLayoutContentHeightChange(proxyHeight: proxy.size.height,
-                                            proxyWidth: proxy.size.width,
-                                            totalTopPadding: context.totalTopPadding,
-                                            layout: context.layout,
-                                            metrics: context.metrics,
-                                            today: context.today)
-        }
-        .onChange(of: viewModel.pendingScrollRequest) { oldRequest, request in
-            if let oldRequest {
-                preservedJumpScrollXByToken.removeValue(forKey: oldRequest.token)
-            }
-            guard let request else { return }
-            scrollToPendingRequestIfAvailable(request,
-                                             layout: context.layout,
-                                             viewportHeight: effectiveViewportHeight(proxyHeight: proxy.size.height,
-                                                                                    totalTopPadding: context.totalTopPadding),
-                                             totalTopPadding: context.totalTopPadding)
-        }
-        .onChange(of: context.jumpAnchorVersion) { _, _ in
-            guard let request = viewModel.pendingScrollRequest else { return }
-            scrollToPendingRequestIfAvailable(request,
-                                             layout: context.layout,
-                                             viewportHeight: effectiveViewportHeight(proxyHeight: proxy.size.height,
-                                                                                    totalTopPadding: context.totalTopPadding),
-                                             totalTopPadding: context.totalTopPadding)
-        }
-        .onChange(of: activeDropFolderID) { oldValue, newValue in
-            guard newValue != nil else {
-                isDropHighlightPulsing = false
-                return
-            }
-            if newValue != oldValue {
-                startDropHighlightPulse()
-            }
-        }
-        .onAppear {
-            accumulatedZoom = zoomScale
-            displaySettings.updateCurrentZoom(zoomScale)
-            viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
-                                                    viewportHeight: effectiveViewportHeight(proxyHeight: proxy.size.height,
-                                                                                           totalTopPadding: context.totalTopPadding),
-                                                    layout: context.layout,
-                                                    metrics: context.metrics,
-                                                    today: context.today,
-                                                    calendar: calendar,
-                                                    immediate: true)
-            syncFolderMinimapViewportSnapshot(layout: context.layout,
-                                              proxySize: proxy.size,
-                                              totalTopPadding: context.totalTopPadding)
-        }
-        .onChange(of: zoomScale) { _, newValue in
-            displaySettings.updateCurrentZoom(newValue)
-        }
-        .onHover { isInside in
-            if !isInside {
-                cancelDrag()
-            }
-        }
-        .onExitCommand {
-            cancelDrag()
+    @ViewBuilder
+    private func canvasOverlay(context: CanvasRenderContext,
+                               proxySize: CGSize) -> some View {
+        if context.showsDayAxis {
+            floatingDateRail(layout: context.layout,
+                             metrics: context.metrics,
+                             readabilityMode: context.readabilityMode,
+                             totalTopPadding: context.totalTopPadding,
+                             rawScrollOffset: context.viewportState.rawScrollOffset,
+                             viewportHeight: proxySize.height,
+                             visibleYStart: context.visibility.visibleYStart,
+                             visibleYEnd: context.visibility.visibleYEnd)
         }
     }
 
-    private func effectiveViewportHeight(proxyHeight: CGFloat,
-                                         totalTopPadding: CGFloat) -> CGFloat {
-        max(max(viewportHeight, proxyHeight) - totalTopPadding, 1)
-    }
-
-    private func handleScrollBoundsChange(_ origin: CGPoint,
-                                          totalTopPadding: CGFloat,
-                                          proxySize: CGSize,
-                                          layout: ThreadCanvasLayout,
-                                          metrics: ThreadCanvasLayoutMetrics,
-                                          today: Date) {
-        markScrollingActivityForTimelineTagFetch()
-        let rawOffsetY = max(0, origin.y)
-        let rawOffsetX = max(0, origin.x)
-        viewModel.noteCanvasScrollActivity(rawOffset: rawOffsetY)
-        if viewModel.activeMailboxScope == .allFolders {
-            viewModel.noteAllFoldersScrollActivity(rawOffset: rawOffsetY)
-        }
-        let signpostID = OSSignpostID(log: Log.performance)
-        os_signpost(.begin, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
-        defer {
-            os_signpost(.end, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
-        }
-        let snappedRawYOffset = snappedScrollOffset(rawOffsetY, step: visualScrollQuantizationStep)
-        let snappedRawXOffset = snappedScrollOffset(rawOffsetX, step: horizontalScrollQuantizationStep)
-        let adjustedOffset = max(0, rawOffsetY + totalTopPadding)
-        let snappedAdjustedOffset = snappedScrollOffset(adjustedOffset, step: logicalScrollQuantizationStep)
-        let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height, totalTopPadding: totalTopPadding)
-        let signedRawDelta = snappedRawYOffset - rawScrollOffset
-        traceScrollSample(rawOffset: snappedRawYOffset,
-                          signedDelta: signedRawDelta,
-                          pendingRequestToken: viewModel.pendingScrollRequest?.token)
-        let scrollDelta = abs(snappedRawYOffset - rawScrollOffset)
-        if !suppressPendingScrollCancellation,
-           scrollDelta >= 2,
-           viewModel.pendingScrollRequest != nil {
-            viewModel.cancelPendingScrollRequest(reason: "manual_scroll")
-        }
-        withNoAnimation {
-            if abs(rawScrollOffset - snappedRawYOffset) >= scrollStateUpdateTolerance {
-                rawScrollOffset = snappedRawYOffset
-            }
-            if abs(rawScrollOffsetX - snappedRawXOffset) >= scrollStateUpdateTolerance {
-                rawScrollOffsetX = snappedRawXOffset
-            }
-        }
-        syncFolderMinimapViewportSnapshot(layout: layout,
-                                          proxySize: proxySize,
-                                          totalTopPadding: totalTopPadding)
-        guard abs(scrollOffset - snappedAdjustedOffset) >= scrollStateUpdateTolerance else { return }
-        withNoAnimation {
-            scrollOffset = snappedAdjustedOffset
-        }
-        viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: snappedAdjustedOffset,
-                                                viewportHeight: effectiveHeight,
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar)
-    }
-
-    private func trackScrollHostState(_ scrollView: NSScrollView,
-                                      expectedContentSize: CGSize,
-                                      totalTopPadding: CGFloat) {
-        let profilingSnapshot = viewModel.layoutProfilingSnapshot()
-        let scrollViewID = ObjectIdentifier(scrollView)
-        let documentViewID = scrollView.documentView.map(ObjectIdentifier.init)
-        let documentSize = scrollView.documentView?.bounds.size ?? .zero
-        let expectedDocumentSize = CGSize(width: expectedContentSize.width,
-                                          height: expectedContentSize.height + totalTopPadding)
-
-        if trackedScrollViewID != scrollViewID {
-            trackedScrollViewID = scrollViewID
-            os_signpost(.event,
-                        log: Log.performance,
-                        name: "CanvasScrollHostChanged",
-                        "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f",
-                        viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
-                        profilingSnapshot.isCanvasScrollActive ? 1 : 0,
-                        documentSize.width,
-                        documentSize.height)
-        }
-
-        if trackedDocumentViewID != documentViewID {
-            trackedDocumentViewID = documentViewID
-            os_signpost(.event,
-                        log: Log.performance,
-                        name: "CanvasDocumentViewChanged",
-                        "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f",
-                        viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
-                        profilingSnapshot.isCanvasScrollActive ? 1 : 0,
-                        documentSize.width,
-                        documentSize.height)
-        }
-
-        if trackedDocumentSize != documentSize {
-            trackedDocumentSize = documentSize
-            os_signpost(.event,
-                        log: Log.performance,
-                        name: "CanvasDocumentSizeChanged",
-                        "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f expectedWidth=%.1f expectedHeight=%.1f",
-                        viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
-                        profilingSnapshot.isCanvasScrollActive ? 1 : 0,
-                        documentSize.width,
-                        documentSize.height,
-                        expectedDocumentSize.width,
-                        expectedDocumentSize.height)
-        }
-    }
-
-    private func markScrollingActivityForTimelineTagFetch() {
-        guard viewModel.activeMailboxScope == .allFolders, displaySettings.viewMode == .timeline else {
-            tagFetchResumeTask?.cancel()
-            tagFetchResumeTask = nil
-            if suspendTimelineTagFetch {
-                suspendTimelineTagFetch = false
-            }
-            return
-        }
-        if !suspendTimelineTagFetch {
-            suspendTimelineTagFetch = true
-        }
-        tagFetchResumeTask?.cancel()
-        tagFetchResumeTask = Task { [tagFetchResumeDebounce] in
-            try? await Task.sleep(nanoseconds: UInt64(tagFetchResumeDebounce * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                suspendTimelineTagFetch = false
-                tagFetchResumeTask = nil
-            }
-        }
-    }
-
-    private func handleViewportHeightPreferenceChange(_ height: CGFloat,
-                                                      proxyWidth: CGFloat,
-                                                      proxyHeight: CGFloat,
-                                                      totalTopPadding: CGFloat,
-                                                      layout: ThreadCanvasLayout,
-                                                      metrics: ThreadCanvasLayoutMetrics,
-                                                      today: Date) {
-        let effectiveHeight = max(height, proxyHeight) - totalTopPadding
-        let clampedHeight = max(effectiveHeight, 1)
-        guard abs(viewportHeight - effectiveHeight) >= scrollStateUpdateTolerance else { return }
-        viewportHeight = effectiveHeight
-        syncFolderMinimapViewportSnapshot(layout: layout,
-                                          proxySize: CGSize(width: proxyWidth, height: proxyHeight),
-                                          totalTopPadding: totalTopPadding)
-        viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
-                                                viewportHeight: clampedHeight,
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar,
-                                                immediate: true)
-    }
-
-    private func handleLayoutContentHeightChange(proxyHeight: CGFloat,
-                                                 proxyWidth: CGFloat,
-                                                 totalTopPadding: CGFloat,
-                                                 layout: ThreadCanvasLayout,
-                                                 metrics: ThreadCanvasLayoutMetrics,
-                                                 today: Date) {
-        let viewportHeight = effectiveViewportHeight(proxyHeight: proxyHeight, totalTopPadding: totalTopPadding)
-        syncFolderMinimapViewportSnapshot(layout: layout,
-                                          proxySize: CGSize(width: proxyWidth, height: proxyHeight),
-                                          totalTopPadding: totalTopPadding)
-        viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
-                                                viewportHeight: viewportHeight,
-                                                layout: layout,
-                                                metrics: metrics,
-                                                today: today,
-                                                calendar: calendar,
-                                                immediate: true)
-        if let request = viewModel.pendingScrollRequest {
-            scrollToPendingRequestIfAvailable(request,
-                                             layout: layout,
-                                             viewportHeight: viewportHeight,
-                                             totalTopPadding: totalTopPadding)
-        }
-    }
-
-    private func canvasVisibilityState(layout: ThreadCanvasLayout,
-                                       metrics: ThreadCanvasLayoutMetrics,
-                                       chromeData: [FolderChromeData],
-                                       readabilityMode: ThreadCanvasReadabilityMode,
+    private func canvasVisibilityState(staticContext: CanvasStaticContext,
+                                       viewportState: CanvasViewportState,
                                        proxySize: CGSize) -> CanvasVisibilityState {
         let signpostID = OSSignpostID(log: Log.performance)
         os_signpost(.begin, log: Log.performance, name: "CanvasVisibilityState", signpostID: signpostID)
         defer {
             os_signpost(.end, log: Log.performance, name: "CanvasVisibilityState", signpostID: signpostID)
         }
-        let defaultHeaderHeight = FolderHeaderLayout.headerHeight(rawZoom: zoomScale,
-                                                                  textScale: displaySettings.textScale,
-                                                                  readabilityMode: readabilityMode)
-        let headerStackHeight = chromeData.isEmpty
-            ? 0
-            : (chromeData.map { $0.headerTopOffset + $0.headerHeight }.max() ?? defaultHeaderHeight)
-        let totalTopPadding = topInset + headerStackHeight + headerSpacing
-        let effectiveViewportHeight = max(max(viewportHeight, proxySize.height) - totalTopPadding, 1)
-        let effectiveViewportWidth = max(proxySize.width, 1)
+        let layout = staticContext.layout
+        let metrics = staticContext.metrics
+        let chromeData = staticContext.chromeData
+        let headerStackHeight = staticContext.headerStackHeight
+        let totalTopPadding = staticContext.totalTopPadding
+        let effectiveViewportHeight = max(max(viewportState.viewportHeight, proxySize.height) - totalTopPadding, 1)
+        let effectiveViewportWidth = max(max(viewportState.viewportWidth, proxySize.width), 1)
         let visibleDayBuffer: CGFloat = 1
         let visibleColumnBuffer: CGFloat = 1
-        let visibleYStart = max(0, rawScrollOffset - (metrics.dayHeight * visibleDayBuffer))
-        let visibleYEnd = rawScrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
+        let visibleYStart = max(0, viewportState.rawScrollOffset - (metrics.dayHeight * visibleDayBuffer))
+        let visibleYEnd = viewportState.rawScrollOffset + effectiveViewportHeight + (metrics.dayHeight * visibleDayBuffer)
         let stableVisibleYStart = max(0, visibleYStart - visibilityHysteresisPadding)
         let stableVisibleYEnd = visibleYEnd + visibilityHysteresisPadding
-        let visibleXStart = max(0, rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
-        let visibleXEnd = rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
+        let visibleXStart = max(0, viewportState.rawScrollOffsetX - (metrics.columnWidth * visibleColumnBuffer))
+        let visibleXEnd = viewportState.rawScrollOffsetX + effectiveViewportWidth + (metrics.columnWidth * visibleColumnBuffer)
         let pinnedFolderIDs = viewModel.pinnedFolderIDs
         let shouldShowAllNodesInColumn = viewModel.activeMailboxScope == .allFolders
         let visibleDays = layout.days.filter { day in
@@ -812,27 +544,6 @@ internal struct ThreadCanvasView: View {
         return lowerBound
     }
 
-    private func syncFolderMinimapViewportSnapshot(layout: ThreadCanvasLayout,
-                                                   proxySize: CGSize,
-                                                   totalTopPadding: CGFloat,
-                                                   force: Bool = false) {
-        guard viewModel.selectedFolderID != nil else { return }
-        let now = Date().timeIntervalSinceReferenceDate
-        if !force, now - lastMinimapSyncTimestamp < minimapSyncInterval {
-            return
-        }
-        lastMinimapSyncTimestamp = now
-        let effectiveWidth = max(proxySize.width, 1)
-        let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
-                                                      totalTopPadding: totalTopPadding)
-        let logicalScrollOffsetY = max(0, rawScrollOffset + totalTopPadding)
-        viewModel.updateFolderMinimapViewportSnapshot(layout: layout,
-                                                      scrollOffsetX: rawScrollOffsetX,
-                                                      scrollOffsetY: logicalScrollOffsetY,
-                                                      viewportWidth: effectiveWidth,
-                                                      viewportHeight: effectiveHeight)
-    }
-
     private var canvasBackground: some View {
         if reduceTransparency {
             return Color(nsColor: NSColor.windowBackgroundColor).opacity(0.75)
@@ -840,80 +551,9 @@ internal struct ThreadCanvasView: View {
         return Color.clear
     }
 
-    private var magnificationGesture: some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                let deltaMagnitude = abs(value - 1)
-                guard isMagnificationGestureActive || deltaMagnitude >= magnificationActivationThreshold else {
-                    return
-                }
-                if !isMagnificationGestureActive {
-                    isMagnificationGestureActive = true
-                }
-                zoomScale = clampedZoom(accumulatedZoom * value)
-            }
-            .onEnded { value in
-                defer { isMagnificationGestureActive = false }
-                guard isMagnificationGestureActive else { return }
-                let clamped = clampedZoom(accumulatedZoom * value)
-                zoomScale = clamped
-                accumulatedZoom = clamped
-//                Log.app.info("Zoom ended at: \(accumulatedZoom, format: .fixed(precision: 3))")
-            }
-    }
-
-    private func clampedZoom(_ value: CGFloat) -> CGFloat {
-        min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
-    }
-
     private func quantized(_ value: CGFloat, step: CGFloat) -> CGFloat {
         guard step > 0 else { return value }
         return (value / step).rounded() * step
-    }
-
-    private func snappedScrollOffset(_ value: CGFloat, step: CGFloat) -> CGFloat {
-        guard step > 0 else { return value }
-        let scaled = value / step
-        let floored = floor(scaled + 1e-6)
-        return floored * step
-    }
-
-    private func withNoAnimation(_ updates: () -> Void) {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction, updates)
-    }
-
-    private func configureScrollViewBehavior(_ scrollView: NSScrollView) {
-        if scrollView.verticalScrollElasticity != .none {
-            scrollView.verticalScrollElasticity = .none
-            Log.app.debug("Canvas vertical elasticity disabled. marker=scroll-elasticity-config axis=vertical")
-        }
-        if scrollView.horizontalScrollElasticity != .none {
-            scrollView.horizontalScrollElasticity = .none
-            Log.app.debug("Canvas horizontal elasticity disabled. marker=scroll-elasticity-config axis=horizontal")
-        }
-    }
-
-    private func traceScrollSample(rawOffset: CGFloat,
-                                   signedDelta: CGFloat,
-                                   pendingRequestToken: UUID?) {
-#if DEBUG
-        let magnitude = abs(signedDelta)
-        guard magnitude >= scrollTraceMinimumDelta else { return }
-        let direction = signedDelta > 0 ? 1 : -1
-        let now = Date().timeIntervalSinceReferenceDate
-        let directionFlipped = lastScrollTraceDirection != 0 && direction != lastScrollTraceDirection
-        let intervalElapsed = now - lastScrollTraceTimestamp >= scrollTraceInterval
-        guard directionFlipped || intervalElapsed else { return }
-
-//        Log.app.debug("Scroll sample. marker=scroll-sample rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) direction=\(direction, privacy: .public) flipped=\(directionFlipped, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
-        if directionFlipped {
-//            Log.app.info("Scroll direction flipped. marker=scroll-direction-flip rawOffset=\(rawOffset, privacy: .public) delta=\(signedDelta, privacy: .public) pendingToken=\(String(describing: pendingRequestToken), privacy: .public) suppressCancel=\(suppressPendingScrollCancellation, privacy: .public)")
-        }
-        lastScrollTraceDirection = direction
-        lastScrollTraceTimestamp = now
-#endif
     }
 
     private func jumpAnchorVersion(for layout: ThreadCanvasLayout) -> Int {
@@ -925,109 +565,6 @@ internal struct ThreadCanvasView: View {
             hasher.combine(Int(column.latestDate.timeIntervalSinceReferenceDate))
         }
         return hasher.finalize()
-    }
-
-    private func scrollToPendingRequestIfAvailable(_ request: ThreadCanvasScrollRequest,
-                                                   layout: ThreadCanvasLayout,
-                                                   viewportHeight: CGFloat,
-                                                   totalTopPadding: CGFloat,
-                                                   retryCount: Int = 0) {
-        let matchingNodes = layout.columns
-            .flatMap(\.nodes)
-            .filter { $0.id == request.nodeID }
-        guard let targetNode = matchingNodes.first else {
-            Log.app.debug("Folder jump scroll deferred. marker=scroll-anchor-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public)")
-            return
-        }
-        Log.app.debug("Folder jump scroll dispatch. marker=scroll-dispatch folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) x=\(targetNode.frame.midX, privacy: .public) y=\(targetNode.frame.midY, privacy: .public) matchCount=\(matchingNodes.count, privacy: .public) targetType=appkit-vertical-only currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
-        let requestToken = request.token
-        func isRequestActive() -> Bool {
-            viewModel.pendingScrollRequest?.token == requestToken && viewModel.isJumpInProgress(for: request.folderID)
-        }
-        guard isRequestActive() else { return }
-        guard let scrollView = canvasScrollView,
-              let documentView = scrollView.documentView else {
-            let nextRetry = retryCount + 1
-            Log.app.debug("Folder jump scroll host missing. marker=scroll-host-missing folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
-            if nextRetry <= 45 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard isRequestActive() else { return }
-                    scrollToPendingRequestIfAvailable(request,
-                                                     layout: layout,
-                                                     viewportHeight: viewportHeight,
-                                                     totalTopPadding: totalTopPadding,
-                                                     retryCount: nextRetry)
-                }
-                return
-            }
-            Log.app.debug("Folder jump scroll host unavailable after retries. marker=scroll-host-fallback folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) retry=\(nextRetry, privacy: .public)")
-            return
-        }
-        let clipView = scrollView.contentView
-        let preservedX = ThreadCanvasViewModel.resolvedPreservedJumpX(existingPreservedX: preservedJumpScrollXByToken[requestToken],
-                                                                       currentX: clipView.bounds.origin.x)
-        preservedJumpScrollXByToken[requestToken] = preservedX
-        let effectiveViewportHeight = max(viewportHeight, clipView.bounds.height)
-        let targetMinYInScrollContent = targetNode.frame.minY + totalTopPadding
-        let targetMidYInScrollContent = targetNode.frame.midY + totalTopPadding
-        let resolution = ThreadCanvasViewModel.resolveVerticalJump(boundary: request.boundary,
-                                                                   targetMinYInScrollContent: targetMinYInScrollContent,
-                                                                   targetMidYInScrollContent: targetMidYInScrollContent,
-                                                                   totalTopPadding: totalTopPadding,
-                                                                   viewportHeight: effectiveViewportHeight,
-                                                                   documentHeight: documentView.bounds.height,
-                                                                   clipHeight: clipView.bounds.height)
-
-        func applyVerticalOnlyScroll(targetY: CGFloat, preservedX: CGFloat) {
-            guard isRequestActive() else { return }
-            suppressPendingScrollCancellation = true
-            let currentY = clipView.bounds.origin.y
-            Log.app.debug("Programmatic vertical scroll apply. marker=scroll-programmatic-apply token=\(requestToken, privacy: .public) currentY=\(currentY, privacy: .public) targetY=\(targetY, privacy: .public) preservedX=\(preservedX, privacy: .public)")
-            let next = CGPoint(x: preservedX, y: targetY)
-            clipView.setBoundsOrigin(next)
-            scrollView.reflectScrolledClipView(clipView)
-            DispatchQueue.main.async {
-                suppressPendingScrollCancellation = false
-            }
-        }
-        applyVerticalOnlyScroll(targetY: resolution.clampedY, preservedX: preservedX)
-        DispatchQueue.main.async {
-            guard isRequestActive() else { return }
-            let finalOrigin = clipView.bounds.origin
-            let didConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: finalOrigin.y,
-                                                                             targetY: resolution.clampedY,
-                                                                             didClampToBottom: resolution.didClampToBottom)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                Log.app.debug("Folder jump scroll postflight. marker=scroll-postflight folderID=\(request.folderID, privacy: .public) boundary=\(String(describing: request.boundary), privacy: .public) nodeID=\(request.nodeID, privacy: .public) targetType=appkit-vertical-only targetScrollY=\(resolution.clampedY, privacy: .public) desiredY=\(resolution.desiredY, privacy: .public) maxY=\(resolution.maxY, privacy: .public) preservedX=\(preservedX, privacy: .public) finalX=\(finalOrigin.x, privacy: .public) didConsume=\(didConsume, privacy: .public) currentScrollX=\(rawScrollOffsetX, privacy: .public) currentScrollY=\(rawScrollOffset, privacy: .public)")
-            }
-            if didConsume {
-                schedulePendingScrollConsumption(request)
-            } else {
-                let nextRetry = retryCount + 1
-                guard nextRetry <= 8 else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard isRequestActive() else { return }
-                    scrollToPendingRequestIfAvailable(request,
-                                                     layout: layout,
-                                                     viewportHeight: viewportHeight,
-                                                     totalTopPadding: totalTopPadding,
-                                                     retryCount: nextRetry)
-                }
-            }
-        }
-    }
-
-    private func schedulePendingScrollConsumption(_ request: ThreadCanvasScrollRequest) {
-        pendingScrollConsumeTask?.cancel()
-        let requestToken = request.token
-        pendingScrollConsumeTask = Task {
-            try? await Task.sleep(nanoseconds: 220_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard viewModel.pendingScrollRequest?.token == requestToken else { return }
-                viewModel.consumeScrollRequest(request)
-            }
-        }
     }
 
     @ViewBuilder
@@ -1762,6 +1299,500 @@ internal struct ThreadCanvasView: View {
         }
         flushGroup()
         return items
+    }
+
+    private struct ScrollViewportHost: View {
+        @ObservedObject var viewModel: ThreadCanvasViewModel
+        @ObservedObject var displaySettings: ThreadCanvasDisplaySettings
+        let staticContext: ThreadCanvasView.CanvasStaticContext
+        let proxySize: CGSize
+        @Binding var zoomScale: CGFloat
+        @Binding var accumulatedZoom: CGFloat
+        @Binding var isMagnificationGestureActive: Bool
+        @Binding var activeDropFolderID: String?
+        @Binding var suspendTimelineTagFetch: Bool
+        let canvasBackground: AnyView
+        let buildRenderContext: (ThreadCanvasView.CanvasViewportState) -> ThreadCanvasView.CanvasRenderContext
+        let renderContent: (ThreadCanvasView.CanvasRenderContext) -> AnyView
+        let renderOverlay: (ThreadCanvasView.CanvasRenderContext) -> AnyView
+        let onStartDropHighlightPulse: () -> Void
+        let onCancelDrag: () -> Void
+
+        @State private var scrollOffset: CGFloat = 0
+        @State private var rawScrollOffset: CGFloat = 0
+        @State private var rawScrollOffsetX: CGFloat = 0
+        @State private var viewportWidth: CGFloat = 0
+        @State private var viewportHeight: CGFloat = 0
+        @State private var canvasScrollView: NSScrollView?
+        @State private var pendingScrollConsumeTask: Task<Void, Never>?
+        @State private var tagFetchResumeTask: Task<Void, Never>?
+        @State private var preservedJumpScrollXByToken: [UUID: CGFloat] = [:]
+        @State private var suppressPendingScrollCancellation = false
+        @State private var lastMinimapSyncTimestamp: TimeInterval = 0
+        @State private var lastScrollTraceDirection: Int = 0
+        @State private var lastScrollTraceTimestamp: TimeInterval = 0
+        @State private var trackedScrollViewID: ObjectIdentifier?
+        @State private var trackedDocumentViewID: ObjectIdentifier?
+        @State private var trackedDocumentSize: CGSize = .zero
+
+        private let calendar = Calendar.current
+        private let scrollTraceMinimumDelta: CGFloat = 2
+        private let scrollTraceInterval: TimeInterval = 0.12
+        private let tagFetchResumeDebounce: TimeInterval = 0.2
+        private let scrollStateUpdateTolerance: CGFloat = 1
+        private let minimapSyncInterval: TimeInterval = 1.0 / 30.0
+        private let magnificationActivationThreshold: CGFloat = 0.02
+
+        private var visualScrollQuantizationStep: CGFloat {
+            viewModel.activeMailboxScope == .allFolders ? 12 : 6
+        }
+
+        private var logicalScrollQuantizationStep: CGFloat {
+            viewModel.activeMailboxScope == .allFolders ? 12 : 6
+        }
+
+        private var horizontalScrollQuantizationStep: CGFloat {
+            viewModel.activeMailboxScope == .allFolders ? 16 : 8
+        }
+
+        private var viewportState: ThreadCanvasView.CanvasViewportState {
+            ThreadCanvasView.CanvasViewportState(rawScrollOffset: rawScrollOffset,
+                                                 rawScrollOffsetX: rawScrollOffsetX,
+                                                 scrollOffset: scrollOffset,
+                                                 viewportWidth: viewportWidth,
+                                                 viewportHeight: viewportHeight)
+        }
+
+        var body: some View {
+            let renderContext = buildRenderContext(viewportState)
+            ScrollViewReader { _ in
+                configuredScrollView(renderContext: renderContext)
+            }
+        }
+
+        private func configuredScrollView(renderContext: ThreadCanvasView.CanvasRenderContext) -> some View {
+            ScrollView([.horizontal, .vertical]) {
+                ZStack(alignment: .topLeading) {
+                    renderContent(renderContext)
+                }
+                .frame(width: staticContext.layout.contentSize.width,
+                       height: staticContext.layout.contentSize.height,
+                       alignment: .topLeading)
+                .coordinateSpace(name: "ThreadCanvasContent")
+                .padding(.top, staticContext.totalTopPadding)
+                .background(
+                    ScrollViewResolver(
+                        onResolve: { scrollView in
+                            configureScrollViewBehavior(scrollView)
+                            updateViewportSize(scrollView.contentView.bounds.size)
+                            if canvasScrollView !== scrollView {
+                                canvasScrollView = scrollView
+                                Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
+                            }
+                            trackScrollHostState(scrollView,
+                                                 expectedContentSize: staticContext.layout.contentSize,
+                                                 totalTopPadding: staticContext.totalTopPadding)
+                        },
+                        onBoundsChange: { scrollView, origin in
+                            updateViewportSize(scrollView.contentView.bounds.size)
+                            trackScrollHostState(scrollView,
+                                                 expectedContentSize: staticContext.layout.contentSize,
+                                                 totalTopPadding: staticContext.totalTopPadding)
+                            handleScrollBoundsChange(origin)
+                        }
+                    )
+                )
+            }
+            .scrollIndicators(.visible)
+            .background(canvasBackground)
+            .overlay(alignment: .topLeading) {
+                renderOverlay(renderContext)
+            }
+            .simultaneousGesture(magnificationGesture)
+            .background(
+                GeometryReader { sizeProxy in
+                    Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
+                                           value: sizeProxy.size.height)
+                }
+            )
+            .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
+                handleViewportHeightPreferenceChange(height)
+            }
+            .onChange(of: staticContext.layout.contentSize.height) { _ in
+                handleLayoutContentHeightChange()
+            }
+            .onChange(of: viewModel.pendingScrollRequest) { oldRequest, request in
+                if let oldRequest {
+                    preservedJumpScrollXByToken.removeValue(forKey: oldRequest.token)
+                }
+                guard let request else { return }
+                scrollToPendingRequestIfAvailable(request)
+            }
+            .onChange(of: staticContext.jumpAnchorVersion) { _, _ in
+                guard viewModel.pendingScrollRequest != nil else { return }
+                if let request = viewModel.pendingScrollRequest {
+                    scrollToPendingRequestIfAvailable(request)
+                }
+            }
+            .onChange(of: activeDropFolderID) { oldValue, newValue in
+                guard newValue != nil else { return }
+                if newValue != oldValue {
+                    onStartDropHighlightPulse()
+                }
+            }
+            .onAppear {
+                accumulatedZoom = zoomScale
+                displaySettings.updateCurrentZoom(zoomScale)
+                viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                        viewportHeight: effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                                                               totalTopPadding: staticContext.totalTopPadding),
+                                                        layout: staticContext.layout,
+                                                        metrics: staticContext.metrics,
+                                                        today: staticContext.today,
+                                                        calendar: calendar,
+                                                        immediate: true)
+                syncFolderMinimapViewportSnapshot()
+            }
+            .onChange(of: zoomScale) { _, newValue in
+                displaySettings.updateCurrentZoom(newValue)
+            }
+            .onHover { isInside in
+                if !isInside {
+                    onCancelDrag()
+                }
+            }
+            .onExitCommand {
+                onCancelDrag()
+            }
+        }
+
+        private func effectiveViewportHeight(proxyHeight: CGFloat,
+                                             totalTopPadding: CGFloat) -> CGFloat {
+            max(max(viewportHeight, proxyHeight) - totalTopPadding, 1)
+        }
+
+        private var magnificationGesture: some Gesture {
+            MagnificationGesture()
+                .onChanged { value in
+                    let deltaMagnitude = abs(value - 1)
+                    guard isMagnificationGestureActive || deltaMagnitude >= magnificationActivationThreshold else {
+                        return
+                    }
+                    if !isMagnificationGestureActive {
+                        isMagnificationGestureActive = true
+                    }
+                    zoomScale = clampedZoom(value)
+                }
+                .onEnded { value in
+                    defer { isMagnificationGestureActive = false }
+                    guard isMagnificationGestureActive else { return }
+                    let clamped = clampedZoom(value)
+                    zoomScale = clamped
+                    accumulatedZoom = clamped
+                }
+        }
+
+        private func clampedZoom(_ gestureValue: CGFloat) -> CGFloat {
+            let proposed = accumulatedZoom * gestureValue
+            return min(max(proposed, ThreadCanvasLayoutMetrics.minZoom),
+                       ThreadCanvasLayoutMetrics.maxZoom)
+        }
+
+        private func configureScrollViewBehavior(_ scrollView: NSScrollView) {
+            if scrollView.verticalScrollElasticity != .none {
+                scrollView.verticalScrollElasticity = .none
+            }
+            if scrollView.horizontalScrollElasticity != .none {
+                scrollView.horizontalScrollElasticity = .none
+            }
+        }
+
+        private func handleScrollBoundsChange(_ origin: CGPoint) {
+            markScrollingActivityForTimelineTagFetch()
+            let rawOffsetY = max(0, origin.y)
+            let rawOffsetX = max(0, origin.x)
+            viewModel.noteCanvasScrollActivity(rawOffset: rawOffsetY)
+            if viewModel.activeMailboxScope == .allFolders {
+                viewModel.noteAllFoldersScrollActivity(rawOffset: rawOffsetY)
+            }
+            let signpostID = OSSignpostID(log: Log.performance)
+            os_signpost(.begin, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
+            defer {
+                os_signpost(.end, log: Log.performance, name: "ScrollOffsetUpdate", signpostID: signpostID)
+            }
+            let snappedRawYOffset = snappedScrollOffset(rawOffsetY, step: visualScrollQuantizationStep)
+            let snappedRawXOffset = snappedScrollOffset(rawOffsetX, step: horizontalScrollQuantizationStep)
+            let adjustedOffset = max(0, rawOffsetY + staticContext.totalTopPadding)
+            let snappedAdjustedOffset = snappedScrollOffset(adjustedOffset, step: logicalScrollQuantizationStep)
+            let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                          totalTopPadding: staticContext.totalTopPadding)
+            let signedRawDelta = snappedRawYOffset - rawScrollOffset
+            traceScrollSample(rawOffset: snappedRawYOffset,
+                              signedDelta: signedRawDelta,
+                              pendingRequestToken: viewModel.pendingScrollRequest?.token)
+            let scrollDelta = abs(snappedRawYOffset - rawScrollOffset)
+            if !suppressPendingScrollCancellation,
+               scrollDelta >= 2,
+               viewModel.pendingScrollRequest != nil {
+                viewModel.cancelPendingScrollRequest(reason: "manual_scroll")
+            }
+            withNoAnimation {
+                if abs(rawScrollOffset - snappedRawYOffset) >= scrollStateUpdateTolerance {
+                    rawScrollOffset = snappedRawYOffset
+                }
+                if abs(rawScrollOffsetX - snappedRawXOffset) >= scrollStateUpdateTolerance {
+                    rawScrollOffsetX = snappedRawXOffset
+                }
+            }
+            syncFolderMinimapViewportSnapshot()
+            guard abs(scrollOffset - snappedAdjustedOffset) >= scrollStateUpdateTolerance else { return }
+            withNoAnimation {
+                scrollOffset = snappedAdjustedOffset
+            }
+            viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: snappedAdjustedOffset,
+                                                    viewportHeight: effectiveHeight,
+                                                    layout: staticContext.layout,
+                                                    metrics: staticContext.metrics,
+                                                    today: staticContext.today,
+                                                    calendar: calendar)
+        }
+
+        private func snappedScrollOffset(_ value: CGFloat, step: CGFloat) -> CGFloat {
+            guard step > 0 else { return value }
+            let scaled = value / step
+            let floored = floor(scaled + 1e-6)
+            return floored * step
+        }
+
+        private func withNoAnimation(_ updates: () -> Void) {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction, updates)
+        }
+
+        private func traceScrollSample(rawOffset: CGFloat,
+                                       signedDelta: CGFloat,
+                                       pendingRequestToken: UUID?) {
+#if DEBUG
+            let magnitude = abs(signedDelta)
+            guard magnitude >= scrollTraceMinimumDelta else { return }
+            let direction = signedDelta > 0 ? 1 : -1
+            let now = Date().timeIntervalSinceReferenceDate
+            let directionFlipped = lastScrollTraceDirection != 0 && direction != lastScrollTraceDirection
+            let intervalElapsed = now - lastScrollTraceTimestamp >= scrollTraceInterval
+            guard directionFlipped || intervalElapsed else { return }
+            lastScrollTraceDirection = direction
+            lastScrollTraceTimestamp = now
+#endif
+        }
+
+        private func markScrollingActivityForTimelineTagFetch() {
+            guard viewModel.activeMailboxScope == .allFolders, displaySettings.viewMode == .timeline else {
+                tagFetchResumeTask?.cancel()
+                tagFetchResumeTask = nil
+                if suspendTimelineTagFetch {
+                    suspendTimelineTagFetch = false
+                }
+                return
+            }
+            if !suspendTimelineTagFetch {
+                suspendTimelineTagFetch = true
+            }
+            tagFetchResumeTask?.cancel()
+            tagFetchResumeTask = Task { [tagFetchResumeDebounce] in
+                try? await Task.sleep(nanoseconds: UInt64(tagFetchResumeDebounce * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    suspendTimelineTagFetch = false
+                    tagFetchResumeTask = nil
+                }
+            }
+        }
+
+        private func handleViewportHeightPreferenceChange(_ height: CGFloat) {
+            updateViewportSize(CGSize(width: max(viewportWidth, proxySize.width),
+                                      height: max(height, proxySize.height)))
+            let clampedHeight = max(effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                            totalTopPadding: staticContext.totalTopPadding),
+                                    1)
+            syncFolderMinimapViewportSnapshot()
+            viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                    viewportHeight: clampedHeight,
+                                                    layout: staticContext.layout,
+                                                    metrics: staticContext.metrics,
+                                                    today: staticContext.today,
+                                                    calendar: calendar,
+                                                    immediate: true)
+        }
+
+        private func handleLayoutContentHeightChange() {
+            let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                          totalTopPadding: staticContext.totalTopPadding)
+            syncFolderMinimapViewportSnapshot()
+            viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
+                                                    viewportHeight: effectiveHeight,
+                                                    layout: staticContext.layout,
+                                                    metrics: staticContext.metrics,
+                                                    today: staticContext.today,
+                                                    calendar: calendar,
+                                                    immediate: true)
+            if let request = viewModel.pendingScrollRequest {
+                scrollToPendingRequestIfAvailable(request)
+            }
+        }
+
+        private func updateViewportSize(_ size: CGSize) {
+            let nextWidth = max(size.width, 1)
+            let nextHeight = max(size.height, 1)
+            if abs(viewportWidth - nextWidth) >= scrollStateUpdateTolerance {
+                viewportWidth = nextWidth
+            }
+            if abs(viewportHeight - nextHeight) >= scrollStateUpdateTolerance {
+                viewportHeight = nextHeight
+            }
+        }
+
+        private func syncFolderMinimapViewportSnapshot(force: Bool = false) {
+            guard viewModel.selectedFolderID != nil else { return }
+            let now = Date().timeIntervalSinceReferenceDate
+            if !force, now - lastMinimapSyncTimestamp < minimapSyncInterval {
+                return
+            }
+            lastMinimapSyncTimestamp = now
+            let effectiveWidth = max(proxySize.width, 1)
+            let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                          totalTopPadding: staticContext.totalTopPadding)
+            let logicalScrollOffsetY = max(0, rawScrollOffset + staticContext.totalTopPadding)
+            viewModel.updateFolderMinimapViewportSnapshot(layout: staticContext.layout,
+                                                          scrollOffsetX: rawScrollOffsetX,
+                                                          scrollOffsetY: logicalScrollOffsetY,
+                                                          viewportWidth: effectiveWidth,
+                                                          viewportHeight: effectiveHeight)
+        }
+
+        private func trackScrollHostState(_ scrollView: NSScrollView,
+                                          expectedContentSize: CGSize,
+                                          totalTopPadding: CGFloat) {
+            let profilingSnapshot = viewModel.layoutProfilingSnapshot()
+            let scrollViewID = ObjectIdentifier(scrollView)
+            let documentViewID = scrollView.documentView.map(ObjectIdentifier.init)
+            let documentSize = scrollView.documentView?.bounds.size ?? .zero
+            let expectedDocumentSize = CGSize(width: expectedContentSize.width,
+                                              height: expectedContentSize.height + totalTopPadding)
+
+            if trackedScrollViewID != scrollViewID {
+                trackedScrollViewID = scrollViewID
+                os_signpost(.event,
+                            log: Log.performance,
+                            name: "CanvasScrollHostChanged",
+                            "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f",
+                            viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
+                            profilingSnapshot.isCanvasScrollActive ? 1 : 0,
+                            documentSize.width,
+                            documentSize.height)
+            }
+
+            if trackedDocumentViewID != documentViewID {
+                trackedDocumentViewID = documentViewID
+                os_signpost(.event,
+                            log: Log.performance,
+                            name: "CanvasDocumentViewChanged",
+                            "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f",
+                            viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
+                            profilingSnapshot.isCanvasScrollActive ? 1 : 0,
+                            documentSize.width,
+                            documentSize.height)
+            }
+
+            if trackedDocumentSize != documentSize {
+                trackedDocumentSize = documentSize
+                os_signpost(.event,
+                            log: Log.performance,
+                            name: "CanvasDocumentSizeChanged",
+                            "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f expectedWidth=%.1f expectedHeight=%.1f",
+                            viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
+                            profilingSnapshot.isCanvasScrollActive ? 1 : 0,
+                            documentSize.width,
+                            documentSize.height,
+                            expectedDocumentSize.width,
+                            expectedDocumentSize.height)
+            }
+        }
+
+        private func scrollToPendingRequestIfAvailable(_ request: ThreadCanvasScrollRequest,
+                                                       retryCount: Int = 0) {
+            let matchingNodes = staticContext.layout.columns
+                .flatMap(\.nodes)
+                .filter { $0.id == request.nodeID }
+            guard let targetNode = matchingNodes.first else { return }
+            let requestToken = request.token
+            func isRequestActive() -> Bool {
+                viewModel.pendingScrollRequest?.token == requestToken && viewModel.isJumpInProgress(for: request.folderID)
+            }
+            guard isRequestActive() else { return }
+            guard let scrollView = canvasScrollView,
+                  let documentView = scrollView.documentView else {
+                let nextRetry = retryCount + 1
+                guard nextRetry <= 45 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard isRequestActive() else { return }
+                    scrollToPendingRequestIfAvailable(request, retryCount: nextRetry)
+                }
+                return
+            }
+            let clipView = scrollView.contentView
+            let preservedX = ThreadCanvasViewModel.resolvedPreservedJumpX(existingPreservedX: preservedJumpScrollXByToken[requestToken],
+                                                                          currentX: clipView.bounds.origin.x)
+            preservedJumpScrollXByToken[requestToken] = preservedX
+            let effectiveHeight = max(effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                              totalTopPadding: staticContext.totalTopPadding),
+                                      clipView.bounds.height)
+            let targetMinYInScrollContent = targetNode.frame.minY + staticContext.totalTopPadding
+            let targetMidYInScrollContent = targetNode.frame.midY + staticContext.totalTopPadding
+            let resolution = ThreadCanvasViewModel.resolveVerticalJump(boundary: request.boundary,
+                                                                       targetMinYInScrollContent: targetMinYInScrollContent,
+                                                                       targetMidYInScrollContent: targetMidYInScrollContent,
+                                                                       totalTopPadding: staticContext.totalTopPadding,
+                                                                       viewportHeight: effectiveHeight,
+                                                                       documentHeight: documentView.bounds.height,
+                                                                       clipHeight: clipView.bounds.height)
+            suppressPendingScrollCancellation = true
+            clipView.setBoundsOrigin(CGPoint(x: preservedX, y: resolution.clampedY))
+            scrollView.reflectScrolledClipView(clipView)
+            DispatchQueue.main.async {
+                suppressPendingScrollCancellation = false
+            }
+            DispatchQueue.main.async {
+                guard isRequestActive() else { return }
+                let finalOrigin = clipView.bounds.origin
+                let didConsume = ThreadCanvasViewModel.shouldConsumeVerticalJump(finalY: finalOrigin.y,
+                                                                                 targetY: resolution.clampedY,
+                                                                                 didClampToBottom: resolution.didClampToBottom)
+                if didConsume {
+                    schedulePendingScrollConsumption(request)
+                } else {
+                    let nextRetry = retryCount + 1
+                    guard nextRetry <= 8 else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        guard isRequestActive() else { return }
+                        scrollToPendingRequestIfAvailable(request, retryCount: nextRetry)
+                    }
+                }
+            }
+        }
+
+        private func schedulePendingScrollConsumption(_ request: ThreadCanvasScrollRequest) {
+            pendingScrollConsumeTask?.cancel()
+            let requestToken = request.token
+            pendingScrollConsumeTask = Task {
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard viewModel.pendingScrollRequest?.token == requestToken else { return }
+                    viewModel.consumeScrollRequest(request)
+                }
+            }
+        }
     }
 }
 
@@ -2550,6 +2581,7 @@ private struct ThreadCanvasConnectorColumn: View {
         let scaled = 0.8 * metrics.fontScale
         return min(max(scaled, 0.5), 1.2)
     }
+
 }
 
 private struct ThreadCanvasViewportHeightPreferenceKey: PreferenceKey {

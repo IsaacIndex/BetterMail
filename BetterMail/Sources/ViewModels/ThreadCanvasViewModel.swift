@@ -3291,6 +3291,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let hasMessages = range.map { range in
             range.contains { populatedDays.contains($0) }
         } ?? false
+        if activeMailboxScope != .allFolders {
+            let forceExpansion = shouldForceDayWindowExpansion(scrollOffset: scrollOffset,
+                                                               viewportHeight: viewportHeight,
+                                                               contentHeight: layout.contentSize.height,
+                                                               threshold: metrics.dayHeight * 2)
+            expandDayWindowIfNeeded(visibleRange: range, forceIncrement: forceExpansion)
+        }
         if shouldDeferScrollDerivedPublication {
             deferCanvasScrollPublication(visibleDayRange: range,
                                          visibleEmptyDayIntervals: emptyIntervals,
@@ -3306,14 +3313,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         if visibleRangeHasMessages != hasMessages {
             visibleRangeHasMessages = hasMessages
         }
-        guard activeMailboxScope != .allFolders else {
-            return
-        }
-        let forceExpansion = shouldForceDayWindowExpansion(scrollOffset: scrollOffset,
-                                                           viewportHeight: viewportHeight,
-                                                           contentHeight: layout.contentSize.height,
-                                                           threshold: metrics.dayHeight * 2)
-        expandDayWindowIfNeeded(visibleRange: range, forceIncrement: forceExpansion)
     }
 
     private func invalidateLayoutCache(structural: Bool = true,

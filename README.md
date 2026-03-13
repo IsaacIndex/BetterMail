@@ -156,7 +156,7 @@ sequenceDiagram
 
 ### Infinite Canvas Paging
 - The thread canvas expands in 7-day blocks when you scroll near the bottom of the current range.
-- Scroll detection for paging is driven by `GeometryReader` content-frame updates so two-axis scrolling (horizontal + vertical) still triggers expansion.
+- Scroll detection for paging is driven by the native `NSScrollView` bounds observer (`ScrollViewResolver`) so two-axis scrolling (horizontal + vertical) still triggers expansion without pushing per-tick scroll offsets through the parent SwiftUI view state.
 - Scroll offsets are quantized before updating visible-range state, and paging expansion now uses a short near-bottom hysteresis/cooldown to avoid thrashing while scrubbing in and out near the threshold.
 - Timeline layout cache keys use coarse zoom buckets so pinch gestures reuse layout work instead of rebuilding on tiny zoom deltas.
 - Folder headers include icon-only jump actions (with hover tooltips) to move directly to the latest or first email node in that folder.
