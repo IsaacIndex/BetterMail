@@ -8,6 +8,7 @@ Use these pages as the canonical technical reference for onboarding and maintena
 - [Module Map](ModuleMap.md)
 - [Data Flow and Concurrency](DataFlow.md)
 - [MailKit Helper Summary](MailKitHelper.md)
+- [Developer ID and DMG Release Guide](DeveloperID-DMG-Release.md)
 - [Thread Canvas Layering](thread-canvas-zstack-components.md)
 - [Refactor Audit](RefactorAudit.md)
 - [Migration Log](MigrationLog.md)

@@ -12,6 +12,7 @@ internal struct ThreadCanvasView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var zoomScale: CGFloat = 1.0
     @State private var accumulatedZoom: CGFloat = 1.0
+    @State private var isMagnificationGestureActive = false
     @State private var scrollOffset: CGFloat = 0
     @State private var rawScrollOffset: CGFloat = 0
     @State private var rawScrollOffsetX: CGFloat = 0
@@ -42,6 +43,8 @@ internal struct ThreadCanvasView: View {
     private let scrollStateUpdateTolerance: CGFloat = 1
     private let visibilityHysteresisPadding: CGFloat = 12
     private let minimapSyncInterval: TimeInterval = 1.0 / 30.0
+    private let magnificationActivationThreshold: CGFloat = 0.02
+    private let nodeDragMinimumDistance: CGFloat = 14
 
     private let calendar = Calendar.current
     private static let headerTimeFormatter: DateFormatter = {
@@ -283,7 +286,7 @@ internal struct ThreadCanvasView: View {
                                  visibleYEnd: context.visibility.visibleYEnd)
             }
         }
-        .gesture(magnificationGesture)
+        .simultaneousGesture(magnificationGesture)
         .background(
             GeometryReader { sizeProxy in
                 Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
@@ -377,6 +380,7 @@ internal struct ThreadCanvasView: View {
         markScrollingActivityForTimelineTagFetch()
         let rawOffsetY = max(0, origin.y)
         let rawOffsetX = max(0, origin.x)
+        viewModel.noteCanvasScrollActivity(rawOffset: rawOffsetY)
         if viewModel.activeMailboxScope == .allFolders {
             viewModel.noteAllFoldersScrollActivity(rawOffset: rawOffsetY)
         }
@@ -743,9 +747,18 @@ internal struct ThreadCanvasView: View {
     private var magnificationGesture: some Gesture {
         MagnificationGesture()
             .onChanged { value in
+                let deltaMagnitude = abs(value - 1)
+                guard isMagnificationGestureActive || deltaMagnitude >= magnificationActivationThreshold else {
+                    return
+                }
+                if !isMagnificationGestureActive {
+                    isMagnificationGestureActive = true
+                }
                 zoomScale = clampedZoom(accumulatedZoom * value)
             }
             .onEnded { value in
+                defer { isMagnificationGestureActive = false }
+                guard isMagnificationGestureActive else { return }
                 let clamped = clampedZoom(accumulatedZoom * value)
                 zoomScale = clamped
                 accumulatedZoom = clamped
@@ -1158,8 +1171,8 @@ internal struct ThreadCanvasView: View {
                 }
                     .frame(width: nodeData.node.frame.width, height: nodeData.node.frame.height)
                     .position(x: nodeData.node.frame.midX, y: nodeData.node.frame.midY)
-                    .gesture(
-                        DragGesture(minimumDistance: 6, coordinateSpace: .named("ThreadCanvasContent"))
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: nodeDragMinimumDistance, coordinateSpace: .named("ThreadCanvasContent"))
                             .onChanged { value in
                                 updateDragState(node: nodeData.node,
                                                 column: column,
@@ -2924,12 +2937,14 @@ private struct ScrollViewResolver: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
+        context.coordinator.updateHandlers(onResolve: onResolve, onBoundsChange: onBoundsChange)
         let view = NSView(frame: .zero)
         context.coordinator.scheduleResolution(from: view)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.updateHandlers(onResolve: onResolve, onBoundsChange: onBoundsChange)
         context.coordinator.scheduleResolution(from: nsView)
     }
 
@@ -2948,13 +2963,19 @@ private struct ScrollViewResolver: NSViewRepresentable {
     }
 
     final class Coordinator {
-        private let onResolve: (NSScrollView) -> Void
-        private let onBoundsChange: (NSScrollView, CGPoint) -> Void
+        private var onResolve: (NSScrollView) -> Void
+        private var onBoundsChange: (NSScrollView, CGPoint) -> Void
         private weak var observedScrollView: NSScrollView?
         private var boundsObserver: NSObjectProtocol?
 
         init(onResolve: @escaping (NSScrollView) -> Void,
              onBoundsChange: @escaping (NSScrollView, CGPoint) -> Void) {
+            self.onResolve = onResolve
+            self.onBoundsChange = onBoundsChange
+        }
+
+        func updateHandlers(onResolve: @escaping (NSScrollView) -> Void,
+                            onBoundsChange: @escaping (NSScrollView, CGPoint) -> Void) {
             self.onResolve = onResolve
             self.onBoundsChange = onBoundsChange
         }
@@ -2974,7 +2995,6 @@ private struct ScrollViewResolver: NSViewRepresentable {
 
         private func bind(to scrollView: NSScrollView) {
             guard observedScrollView !== scrollView else {
-                onBoundsChange(scrollView, scrollView.contentView.bounds.origin)
                 return
             }
 

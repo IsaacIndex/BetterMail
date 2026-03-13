@@ -84,6 +84,13 @@ internal struct FolderMinimapViewportSnapshot: Equatable {
     internal let normalizedRectByFolderID: [String: CGRect]
 }
 
+private struct DeferredCanvasScrollPublication: Equatable {
+    let visibleDayRange: ClosedRange<Int>?
+    let visibleEmptyDayIntervals: [DateInterval]
+    let visibleRangeHasMessages: Bool
+    let minimapViewportSnapshot: FolderMinimapViewportSnapshot
+}
+
 private struct NodeSummaryInput {
     let nodeID: String
     let cacheKey: String
@@ -676,6 +683,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var enrichmentLayoutVersion = 0
     private var timelineTextMeasurementCache = TimelineTextMeasurementCache()
     private var visibleRangeUpdateTask: Task<Void, Never>?
+    private var canvasScrollStateResetTask: Task<Void, Never>?
     private var allFoldersScrollStateResetTask: Task<Void, Never>?
     private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
     private let dayWindowExpansionCooldown: TimeInterval = 0.35
@@ -700,11 +708,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var bottomBarMailboxActionStatusExpiryTask: Task<Void, Never>?
     private var nearBottomHitCount = 0
     private var lastDayWindowExpansionTime: Date?
+    private var isCanvasScrollActive = false
     private var isAllFoldersScrollActive = false
     private var layoutInvalidationCount = 0
     private var layoutInvalidationCountDuringActiveAllFoldersScroll = 0
     private var hasDeferredEnrichmentLayoutInvalidation = false
     private var deferredEnrichmentInvalidationReasons = Set<LayoutInvalidationReason>()
+    private var deferredCanvasScrollPublication: DeferredCanvasScrollPublication?
+    private let canvasScrollStateResetInterval: UInt64 = 350_000_000
     private let allFoldersScrollStateResetInterval: UInt64 = 350_000_000
 
     internal init(settings: AutoRefreshSettings,
@@ -771,6 +782,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         pendingScrollTimeoutTasks.values.forEach { $0.cancel() }
         mailboxThreadAutoMoveTask?.cancel()
         bottomBarMailboxActionStatusExpiryTask?.cancel()
+        canvasScrollStateResetTask?.cancel()
         allFoldersScrollStateResetTask?.cancel()
     }
 
@@ -821,6 +833,37 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    internal func noteCanvasScrollActivity(rawOffset: CGFloat) {
+        if !isCanvasScrollActive {
+            setCanvasScrollActive(true)
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "CanvasScrollSessionStart",
+                        "scope=%{public}s rawOffset=%.1f",
+                        activeMailboxScope == .allFolders ? "allFolders" : "other",
+                        rawOffset)
+        }
+        canvasScrollStateResetTask?.cancel()
+        canvasScrollStateResetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: self?.canvasScrollStateResetInterval ?? 0)
+            guard let self, !Task.isCancelled else { return }
+            self.setCanvasScrollActive(false)
+        }
+    }
+
+    private func setCanvasScrollActive(_ isActive: Bool) {
+        guard isCanvasScrollActive != isActive else { return }
+        isCanvasScrollActive = isActive
+        if !isActive {
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "CanvasScrollSessionEnd",
+                        "scope=%{public}s",
+                        activeMailboxScope == .allFolders ? "allFolders" : "other")
+            flushDeferredCanvasScrollPublicationIfNeeded()
+        }
+    }
+
     private func setAllFoldersScrollActive(_ isActive: Bool) {
         guard isAllFoldersScrollActive != isActive else { return }
         isAllFoldersScrollActive = isActive
@@ -833,6 +876,81 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         layoutInvalidationCount)
             flushDeferredEnrichmentLayoutInvalidationIfNeeded()
         }
+    }
+
+    private var shouldDeferScrollDerivedPublication: Bool {
+        isCanvasScrollActive
+    }
+
+    private func deferCanvasScrollPublication(visibleDayRange: ClosedRange<Int>?,
+                                              visibleEmptyDayIntervals: [DateInterval],
+                                              visibleRangeHasMessages: Bool) {
+        let nextValue = DeferredCanvasScrollPublication(
+            visibleDayRange: visibleDayRange,
+            visibleEmptyDayIntervals: visibleEmptyDayIntervals,
+            visibleRangeHasMessages: visibleRangeHasMessages,
+            minimapViewportSnapshot: deferredCanvasScrollPublication?.minimapViewportSnapshot ?? minimapViewportSnapshot
+        )
+        guard deferredCanvasScrollPublication != nextValue else { return }
+        deferredCanvasScrollPublication = nextValue
+        os_signpost(.event,
+                    log: Log.performance,
+                    name: "CanvasScrollPublicationDeferred",
+                    "scope=%{public}s rangeStart=%{public}d rangeEnd=%{public}d emptyIntervals=%{public}d hasMessages=%{public}d viewportFolders=%{public}d",
+                    activeMailboxScope == .allFolders ? "allFolders" : "other",
+                    visibleDayRange?.lowerBound ?? -1,
+                    visibleDayRange?.upperBound ?? -1,
+                    visibleEmptyDayIntervals.count,
+                    visibleRangeHasMessages ? 1 : 0,
+                    nextValue.minimapViewportSnapshot.normalizedRectByFolderID.count)
+    }
+
+    private func deferCanvasScrollPublication(minimapViewportSnapshot: FolderMinimapViewportSnapshot) {
+        let nextValue = DeferredCanvasScrollPublication(
+            visibleDayRange: deferredCanvasScrollPublication?.visibleDayRange ?? visibleDayRange,
+            visibleEmptyDayIntervals: deferredCanvasScrollPublication?.visibleEmptyDayIntervals ?? visibleEmptyDayIntervals,
+            visibleRangeHasMessages: deferredCanvasScrollPublication?.visibleRangeHasMessages ?? visibleRangeHasMessages,
+            minimapViewportSnapshot: minimapViewportSnapshot
+        )
+        guard deferredCanvasScrollPublication != nextValue else { return }
+        deferredCanvasScrollPublication = nextValue
+        os_signpost(.event,
+                    log: Log.performance,
+                    name: "CanvasScrollPublicationDeferred",
+                    "scope=%{public}s rangeStart=%{public}d rangeEnd=%{public}d emptyIntervals=%{public}d hasMessages=%{public}d viewportFolders=%{public}d",
+                    activeMailboxScope == .allFolders ? "allFolders" : "other",
+                    nextValue.visibleDayRange?.lowerBound ?? -1,
+                    nextValue.visibleDayRange?.upperBound ?? -1,
+                    nextValue.visibleEmptyDayIntervals.count,
+                    nextValue.visibleRangeHasMessages ? 1 : 0,
+                    minimapViewportSnapshot.normalizedRectByFolderID.count)
+    }
+
+    private func flushDeferredCanvasScrollPublicationIfNeeded() {
+        guard let deferredCanvasScrollPublication else { return }
+        self.deferredCanvasScrollPublication = nil
+        if visibleDayRange != deferredCanvasScrollPublication.visibleDayRange {
+            visibleDayRange = deferredCanvasScrollPublication.visibleDayRange
+        }
+        if visibleEmptyDayIntervals != deferredCanvasScrollPublication.visibleEmptyDayIntervals {
+            visibleEmptyDayIntervals = deferredCanvasScrollPublication.visibleEmptyDayIntervals
+        }
+        if visibleRangeHasMessages != deferredCanvasScrollPublication.visibleRangeHasMessages {
+            visibleRangeHasMessages = deferredCanvasScrollPublication.visibleRangeHasMessages
+        }
+        if minimapViewportSnapshot != deferredCanvasScrollPublication.minimapViewportSnapshot {
+            minimapViewportSnapshot = deferredCanvasScrollPublication.minimapViewportSnapshot
+        }
+        os_signpost(.event,
+                    log: Log.performance,
+                    name: "CanvasDeferredScrollPublicationApplied",
+                    "scope=%{public}s rangeStart=%{public}d rangeEnd=%{public}d emptyIntervals=%{public}d hasMessages=%{public}d viewportFolders=%{public}d",
+                    activeMailboxScope == .allFolders ? "allFolders" : "other",
+                    deferredCanvasScrollPublication.visibleDayRange?.lowerBound ?? -1,
+                    deferredCanvasScrollPublication.visibleDayRange?.upperBound ?? -1,
+                    deferredCanvasScrollPublication.visibleEmptyDayIntervals.count,
+                    deferredCanvasScrollPublication.visibleRangeHasMessages ? 1 : 0,
+                    deferredCanvasScrollPublication.minimapViewportSnapshot.normalizedRectByFolderID.count)
     }
 
     private func reportCollectionMutation(name: String,
@@ -2651,6 +2769,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                               scrollOffsetY: scrollOffsetY,
                                                               viewportWidth: viewportWidth,
                                                               viewportHeight: viewportHeight)
+        if shouldDeferScrollDerivedPublication {
+            deferCanvasScrollPublication(minimapViewportSnapshot: snapshot)
+            return
+        }
         if minimapViewportSnapshot != snapshot {
             minimapViewportSnapshot = snapshot
         }
@@ -3142,20 +3264,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let range = Self.visibleDayRange(for: layout,
                                          scrollOffset: scrollOffset,
                                          viewportHeight: viewportHeight)
-        if visibleDayRange != range {
-            visibleDayRange = range
-        }
         let emptyIntervals = Self.emptyDayIntervals(for: layout,
                                                     visibleRange: range,
                                                     today: today,
                                                     calendar: calendar)
-        if visibleEmptyDayIntervals != emptyIntervals {
-            visibleEmptyDayIntervals = emptyIntervals
-        }
         let populatedDays = layout.populatedDayIndices
         let hasMessages = range.map { range in
             range.contains { populatedDays.contains($0) }
         } ?? false
+        if shouldDeferScrollDerivedPublication {
+            deferCanvasScrollPublication(visibleDayRange: range,
+                                         visibleEmptyDayIntervals: emptyIntervals,
+                                         visibleRangeHasMessages: hasMessages)
+            return
+        }
+        if visibleDayRange != range {
+            visibleDayRange = range
+        }
+        if visibleEmptyDayIntervals != emptyIntervals {
+            visibleEmptyDayIntervals = emptyIntervals
+        }
         if visibleRangeHasMessages != hasMessages {
             visibleRangeHasMessages = hasMessages
         }
