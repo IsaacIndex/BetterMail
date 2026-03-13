@@ -205,6 +205,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         internal let totalInvalidationCount: Int
         internal let scrollSessionInvalidationCount: Int
         internal let isAllFoldersScrollActive: Bool
+        internal let hasDeferredEnrichmentInvalidation: Bool
     }
 
     internal struct FolderChromeCacheKey: Hashable {
@@ -702,6 +703,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var isAllFoldersScrollActive = false
     private var layoutInvalidationCount = 0
     private var layoutInvalidationCountDuringActiveAllFoldersScroll = 0
+    private var hasDeferredEnrichmentLayoutInvalidation = false
+    private var deferredEnrichmentInvalidationReasons = Set<LayoutInvalidationReason>()
     private let allFoldersScrollStateResetInterval: UInt64 = 350_000_000
 
     internal init(settings: AutoRefreshSettings,
@@ -774,7 +777,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal func layoutProfilingSnapshot() -> LayoutProfilingSnapshot {
         LayoutProfilingSnapshot(totalInvalidationCount: layoutInvalidationCount,
                                 scrollSessionInvalidationCount: layoutInvalidationCountDuringActiveAllFoldersScroll,
-                                isAllFoldersScrollActive: isAllFoldersScrollActive)
+                                isAllFoldersScrollActive: isAllFoldersScrollActive,
+                                hasDeferredEnrichmentInvalidation: hasDeferredEnrichmentLayoutInvalidation)
     }
 
     internal func folderChromeCacheKey(metrics: ThreadCanvasLayoutMetrics,
@@ -827,6 +831,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         "sessionInvalidations=%{public}d totalInvalidations=%{public}d",
                         layoutInvalidationCountDuringActiveAllFoldersScroll,
                         layoutInvalidationCount)
+            flushDeferredEnrichmentLayoutInvalidationIfNeeded()
         }
     }
 
@@ -3167,6 +3172,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private func invalidateLayoutCache(structural: Bool = true,
                                        enrichment: Bool = true,
                                        reason: LayoutInvalidationReason = .generic) {
+        if shouldDeferEnrichmentLayoutInvalidation(structural: structural,
+                                                  enrichment: enrichment) {
+            hasDeferredEnrichmentLayoutInvalidation = true
+            deferredEnrichmentInvalidationReasons.insert(reason)
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "AllFoldersLayoutInvalidationDeferred",
+                        "reason=%{public}s totalInvalidations=%{public}d sessionInvalidations=%{public}d",
+                        reason.rawValue,
+                        layoutInvalidationCount,
+                        layoutInvalidationCountDuringActiveAllFoldersScroll)
+            return
+        }
         if structural {
             structuralLayoutVersion &+= 1
         }
@@ -3188,6 +3206,36 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
         layoutCacheKey = nil
         layoutCache = nil
+    }
+
+    private func shouldDeferEnrichmentLayoutInvalidation(structural: Bool,
+                                                         enrichment: Bool) -> Bool {
+        activeMailboxScope == .allFolders &&
+            isAllFoldersScrollActive &&
+            structural == false &&
+            enrichment
+    }
+
+    private func flushDeferredEnrichmentLayoutInvalidationIfNeeded() {
+        guard hasDeferredEnrichmentLayoutInvalidation else { return }
+        hasDeferredEnrichmentLayoutInvalidation = false
+        let reasons = deferredEnrichmentInvalidationReasons
+        deferredEnrichmentInvalidationReasons.removeAll(keepingCapacity: true)
+        enrichmentLayoutVersion &+= 1
+        layoutInvalidationCount &+= 1
+        layoutCacheKey = nil
+        layoutCache = nil
+        let reasonSummary = reasons
+            .map(\.rawValue)
+            .sorted()
+            .joined(separator: ",")
+        os_signpost(.event,
+                    log: Log.performance,
+                    name: "AllFoldersDeferredLayoutInvalidationApplied",
+                    "reasonCount=%{public}d reasons=%{public}s totalInvalidations=%{public}d",
+                    reasons.count,
+                    reasonSummary,
+                    layoutInvalidationCount)
     }
 
     private static func metricsBucket(_ value: CGFloat) -> Int {

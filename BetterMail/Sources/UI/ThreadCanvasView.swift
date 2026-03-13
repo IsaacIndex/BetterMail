@@ -181,7 +181,7 @@ internal struct ThreadCanvasView: View {
         os_signpost(.event,
                     log: Log.performance,
                     name: "CanvasRenderContextStats",
-                    "scopeAllFolders=%{public}d columns=%{public}d totalNodes=%{public}d visibleColumns=%{public}d visibleNodes=%{public}d folderOverlays=%{public}d totalInvalidations=%{public}d sessionInvalidations=%{public}d scrollActive=%{public}d",
+                    "scopeAllFolders=%{public}d columns=%{public}d totalNodes=%{public}d visibleColumns=%{public}d visibleNodes=%{public}d folderOverlays=%{public}d totalInvalidations=%{public}d sessionInvalidations=%{public}d scrollActive=%{public}d deferredInvalidation=%{public}d",
                     viewModel.activeMailboxScope == .allFolders ? 1 : 0,
                     layout.columns.count,
                     totalNodeCount,
@@ -190,7 +190,8 @@ internal struct ThreadCanvasView: View {
                     layout.folderOverlays.count,
                     profilingSnapshot.totalInvalidationCount,
                     profilingSnapshot.scrollSessionInvalidationCount,
-                    profilingSnapshot.isAllFoldersScrollActive ? 1 : 0)
+                    profilingSnapshot.isAllFoldersScrollActive ? 1 : 0,
+                    profilingSnapshot.hasDeferredEnrichmentInvalidation ? 1 : 0)
         return CanvasRenderContext(metrics: metrics,
                                    showsDayAxis: showsDayAxis,
                                    today: today,
