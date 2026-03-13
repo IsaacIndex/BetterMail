@@ -211,6 +211,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal struct LayoutProfilingSnapshot {
         internal let totalInvalidationCount: Int
         internal let scrollSessionInvalidationCount: Int
+        internal let isCanvasScrollActive: Bool
         internal let isAllFoldersScrollActive: Bool
         internal let hasDeferredEnrichmentInvalidation: Bool
     }
@@ -583,6 +584,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:] {
         didSet {
+            bumpFolderHeaderStateVersion()
             reportCollectionMutation(name: "folderSummaries",
                                      oldCount: oldValue.count,
                                      newCount: folderSummaries.count)
@@ -592,7 +594,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal var selectedNodeID: String? {
         didSet { refreshBottomBarMailboxActionStatusMessage() }
     }
-    @Published internal var selectedFolderID: String?
+    @Published internal var selectedFolderID: String? {
+        didSet { bumpFolderHeaderStateVersion() }
+    }
     @Published internal private(set) var selectedNodeIDs: Set<String> = [] {
         didSet { refreshBottomBarMailboxActionStatusMessage() }
     }
@@ -611,7 +615,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
     @Published internal private(set) var pinnedFolderIDs: Set<String> = [] {
-        didSet { invalidateLayoutCache(reason: .pinnedFolderIDs) }
+        didSet {
+            bumpFolderHeaderStateVersion()
+            invalidateLayoutCache(reason: .pinnedFolderIDs)
+        }
     }
     @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:] {
         didSet { invalidateLayoutCache(reason: .folderEdits) }
@@ -636,7 +643,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
-    @Published internal private(set) var folderJumpInProgressIDs: Set<String> = []
+    @Published internal private(set) var folderJumpInProgressIDs: Set<String> = [] {
+        didSet { bumpFolderHeaderStateVersion() }
+    }
     @Published internal private(set) var minimapViewportSnapshot = FolderMinimapViewportSnapshot(normalizedRectByFolderID: [:])
     @Published internal var fetchLimit: Int = 10 {
         didSet {
@@ -708,6 +717,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var bottomBarMailboxActionStatusExpiryTask: Task<Void, Never>?
     private var nearBottomHitCount = 0
     private var lastDayWindowExpansionTime: Date?
+    private var folderHeaderStateVersion = 0
     private var isCanvasScrollActive = false
     private var isAllFoldersScrollActive = false
     private var layoutInvalidationCount = 0
@@ -789,8 +799,17 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal func layoutProfilingSnapshot() -> LayoutProfilingSnapshot {
         LayoutProfilingSnapshot(totalInvalidationCount: layoutInvalidationCount,
                                 scrollSessionInvalidationCount: layoutInvalidationCountDuringActiveAllFoldersScroll,
+                                isCanvasScrollActive: isCanvasScrollActive,
                                 isAllFoldersScrollActive: isAllFoldersScrollActive,
                                 hasDeferredEnrichmentInvalidation: hasDeferredEnrichmentLayoutInvalidation)
+    }
+
+    internal func currentFolderHeaderStateVersion() -> Int {
+        folderHeaderStateVersion
+    }
+
+    private func bumpFolderHeaderStateVersion() {
+        folderHeaderStateVersion &+= 1
     }
 
     internal func folderChromeCacheKey(metrics: ThreadCanvasLayoutMetrics,

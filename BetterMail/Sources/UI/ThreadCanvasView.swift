@@ -32,6 +32,9 @@ internal struct ThreadCanvasView: View {
     @State private var lastMinimapSyncTimestamp: TimeInterval = 0
     @State private var lastScrollTraceDirection: Int = 0
     @State private var lastScrollTraceTimestamp: TimeInterval = 0
+    @State private var trackedScrollViewID: ObjectIdentifier?
+    @State private var trackedDocumentViewID: ObjectIdentifier?
+    @State private var trackedDocumentSize: CGSize = .zero
     private let headerSpacing: CGFloat = 0
     private let visualScrollQuantizationStep: CGFloat = 1
     private let logicalScrollQuantizationStep: CGFloat = 1
@@ -99,7 +102,7 @@ internal struct ThreadCanvasView: View {
         var id: String { node.id }
     }
 
-    private struct VisibleFolderHeaderData: Identifiable {
+    private struct VisibleFolderHeaderData: Identifiable, Equatable {
         let chrome: FolderChromeData
         let summaryPreviewText: String?
         let updatedText: String?
@@ -108,13 +111,42 @@ internal struct ThreadCanvasView: View {
         let isJumping: Bool
 
         var id: String { chrome.id }
+
+        static func == (lhs: VisibleFolderHeaderData, rhs: VisibleFolderHeaderData) -> Bool {
+            lhs.chrome.id == rhs.chrome.id &&
+            lhs.chrome.title == rhs.chrome.title &&
+            lhs.chrome.color == rhs.chrome.color &&
+            lhs.chrome.unreadCount == rhs.chrome.unreadCount &&
+            lhs.chrome.mailboxLabel == rhs.chrome.mailboxLabel &&
+            lhs.chrome.updated == rhs.chrome.updated &&
+            lhs.chrome.headerHeight == rhs.chrome.headerHeight &&
+            lhs.chrome.headerTopOffset == rhs.chrome.headerTopOffset &&
+            lhs.chrome.headerIndent == rhs.chrome.headerIndent &&
+            lhs.summaryPreviewText == rhs.summaryPreviewText &&
+            lhs.updatedText == rhs.updatedText &&
+            lhs.isPinned == rhs.isPinned &&
+            lhs.isSelected == rhs.isSelected &&
+            lhs.isJumping == rhs.isJumping
+        }
     }
 
     private final class FolderChromeCacheBox {
         var entry: FolderChromeCacheEntry?
     }
 
+    private struct FolderHeaderRenderCacheEntry {
+        let ownerID: ObjectIdentifier
+        let stateVersion: Int
+        let chromeSignature: Int
+        let data: [VisibleFolderHeaderData]
+    }
+
+    private final class FolderHeaderRenderCacheBox {
+        var entry: FolderHeaderRenderCacheEntry?
+    }
+
     private static let folderChromeCacheBox = FolderChromeCacheBox()
+    private static let folderHeaderRenderCacheBox = FolderHeaderRenderCacheBox()
 
     private struct CanvasRenderContext {
         let metrics: ThreadCanvasLayoutMetrics
@@ -260,8 +292,14 @@ internal struct ThreadCanvasView: View {
                             canvasScrollView = scrollView
                             Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
                         }
+                        trackScrollHostState(scrollView,
+                                             expectedContentSize: context.layout.contentSize,
+                                             totalTopPadding: context.totalTopPadding)
                     },
-                    onBoundsChange: { _, origin in
+                    onBoundsChange: { scrollView, origin in
+                        trackScrollHostState(scrollView,
+                                             expectedContentSize: context.layout.contentSize,
+                                             totalTopPadding: context.totalTopPadding)
                         handleScrollBoundsChange(origin,
                                                  totalTopPadding: context.totalTopPadding,
                                                  proxySize: proxy.size,
@@ -425,6 +463,55 @@ internal struct ThreadCanvasView: View {
                                                 metrics: metrics,
                                                 today: today,
                                                 calendar: calendar)
+    }
+
+    private func trackScrollHostState(_ scrollView: NSScrollView,
+                                      expectedContentSize: CGSize,
+                                      totalTopPadding: CGFloat) {
+        let profilingSnapshot = viewModel.layoutProfilingSnapshot()
+        let scrollViewID = ObjectIdentifier(scrollView)
+        let documentViewID = scrollView.documentView.map(ObjectIdentifier.init)
+        let documentSize = scrollView.documentView?.bounds.size ?? .zero
+        let expectedDocumentSize = CGSize(width: expectedContentSize.width,
+                                          height: expectedContentSize.height + totalTopPadding)
+
+        if trackedScrollViewID != scrollViewID {
+            trackedScrollViewID = scrollViewID
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "CanvasScrollHostChanged",
+                        "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f",
+                        viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
+                        profilingSnapshot.isCanvasScrollActive ? 1 : 0,
+                        documentSize.width,
+                        documentSize.height)
+        }
+
+        if trackedDocumentViewID != documentViewID {
+            trackedDocumentViewID = documentViewID
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "CanvasDocumentViewChanged",
+                        "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f",
+                        viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
+                        profilingSnapshot.isCanvasScrollActive ? 1 : 0,
+                        documentSize.width,
+                        documentSize.height)
+        }
+
+        if trackedDocumentSize != documentSize {
+            trackedDocumentSize = documentSize
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "CanvasDocumentSizeChanged",
+                        "scope=%{public}s scrollActive=%{public}d width=%.1f height=%.1f expectedWidth=%.1f expectedHeight=%.1f",
+                        viewModel.activeMailboxScope == .allFolders ? "allFolders" : "other",
+                        profilingSnapshot.isCanvasScrollActive ? 1 : 0,
+                        documentSize.width,
+                        documentSize.height,
+                        expectedDocumentSize.width,
+                        expectedDocumentSize.height)
+        }
     }
 
     private func markScrollingActivityForTimelineTagFetch() {
@@ -1005,6 +1092,7 @@ internal struct ThreadCanvasView: View {
                                    mailboxLabel: data.chrome.mailboxLabel,
                                    updatedText: data.updatedText,
                                    summaryPreviewText: data.summaryPreviewText,
+                                   accentDescriptor: data.chrome.color,
                                    accentColor: accentColor(for: data.chrome.color),
                                    reduceTransparency: reduceTransparency,
                                    rawZoom: rawZoom,
@@ -1024,6 +1112,7 @@ internal struct ThreadCanvasView: View {
                                    },
                                    onJumpLatest: { viewModel.jumpToLatestNode(in: data.chrome.id) },
                                    onJumpFirst: { viewModel.jumpToFirstNode(in: data.chrome.id) })
+                .equatable()
                 .frame(width: headerFrame.width, alignment: .leading)
                 .offset(x: headerFrame.minX, y: pinnedY)
                 .accessibilityElement(children: .combine)
@@ -1038,12 +1127,27 @@ internal struct ThreadCanvasView: View {
     }
 
     private func visibleFolderHeaderData(chromeData: [FolderChromeData]) -> [VisibleFolderHeaderData] {
+        let cacheOwnerID = ObjectIdentifier(viewModel)
+        let stateVersion = viewModel.currentFolderHeaderStateVersion()
+        let chromeSignature = folderHeaderDataSignature(chromeData: chromeData)
+        if let cached = Self.folderHeaderRenderCacheBox.entry,
+           cached.ownerID == cacheOwnerID,
+           cached.stateVersion == stateVersion,
+           cached.chromeSignature == chromeSignature {
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "FolderHeaderRenderDataCacheHit",
+                        "headers=%{public}d stateVersion=%{public}d",
+                        cached.data.count,
+                        stateVersion)
+            return cached.data
+        }
         let folderSummaries = viewModel.folderSummaries
         let pinnedFolderIDs = viewModel.pinnedFolderIDs
         let selectedFolderID = viewModel.selectedFolderID
         let folderJumpInProgressIDs = viewModel.folderJumpInProgressIDs
 
-        return chromeData.map { chrome in
+        let headerData = chromeData.map { chrome in
             VisibleFolderHeaderData(chrome: chrome,
                                     summaryPreviewText: folderSummaryPreviewText(folderSummaries[chrome.id]),
                                     updatedText: chrome.updated.map { Self.headerTimeFormatter.string(from: $0) },
@@ -1051,6 +1155,31 @@ internal struct ThreadCanvasView: View {
                                     isSelected: selectedFolderID == chrome.id,
                                     isJumping: folderJumpInProgressIDs.contains(chrome.id))
         }
+        Self.folderHeaderRenderCacheBox.entry = FolderHeaderRenderCacheEntry(ownerID: cacheOwnerID,
+                                                                             stateVersion: stateVersion,
+                                                                             chromeSignature: chromeSignature,
+                                                                             data: headerData)
+        os_signpost(.event,
+                    log: Log.performance,
+                    name: "FolderHeaderRenderDataStats",
+                    "headers=%{public}d stateVersion=%{public}d",
+                    headerData.count,
+                    stateVersion)
+        return headerData
+    }
+
+    private func folderHeaderDataSignature(chromeData: [FolderChromeData]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(chromeData.count)
+        for chrome in chromeData {
+            hasher.combine(chrome.id)
+            hasher.combine(chrome.unreadCount)
+            hasher.combine(chrome.depth)
+            hasher.combine(chrome.color)
+            hasher.combine(chrome.mailboxLabel)
+            hasher.combine(chrome.updated?.timeIntervalSinceReferenceDate ?? 0)
+        }
+        return hasher.finalize()
     }
 
     private func folderSummaryPreviewText(_ summaryState: ThreadSummaryState?) -> String? {
@@ -1806,12 +1935,13 @@ private struct FolderHeaderLayout {
     }
 }
 
-private struct FolderColumnHeader: View {
+private struct FolderColumnHeader: View, Equatable {
     let title: String
     let unreadCount: Int
     let mailboxLabel: String?
     let updatedText: String?
     let summaryPreviewText: String?
+    let accentDescriptor: ThreadFolderColor
     let accentColor: Color
     let reduceTransparency: Bool
     let rawZoom: CGFloat
@@ -1825,6 +1955,23 @@ private struct FolderColumnHeader: View {
     let onPinToggle: () -> Void
     let onJumpLatest: () -> Void
     let onJumpFirst: () -> Void
+
+    static func == (lhs: FolderColumnHeader, rhs: FolderColumnHeader) -> Bool {
+        lhs.title == rhs.title &&
+        lhs.unreadCount == rhs.unreadCount &&
+        lhs.mailboxLabel == rhs.mailboxLabel &&
+        lhs.updatedText == rhs.updatedText &&
+        lhs.summaryPreviewText == rhs.summaryPreviewText &&
+        lhs.accentDescriptor == rhs.accentDescriptor &&
+        lhs.rawZoom == rhs.rawZoom &&
+        lhs.textScale == rhs.textScale &&
+        lhs.readabilityMode == rhs.readabilityMode &&
+        lhs.cornerRadius == rhs.cornerRadius &&
+        lhs.isPinned == rhs.isPinned &&
+        lhs.isSelected == rhs.isSelected &&
+        lhs.isJumping == rhs.isJumping &&
+        lhs.reduceTransparency == rhs.reduceTransparency
+    }
 
     private final class MarkdownCacheBox {
         var cache: [String: AttributedString] = [:]
