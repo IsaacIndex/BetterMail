@@ -5,7 +5,7 @@ import Foundation
 import OSLog
 import os.signpost
 
-internal struct ThreadSummaryState {
+internal struct ThreadSummaryState: Equatable {
     internal var text: String
     internal var statusMessage: String
     internal var isSummarizing: Bool
@@ -201,6 +201,24 @@ private enum MailboxFolderActionError: LocalizedError {
 
 @MainActor
 internal final class ThreadCanvasViewModel: ObservableObject {
+    internal struct LayoutProfilingSnapshot {
+        internal let totalInvalidationCount: Int
+        internal let scrollSessionInvalidationCount: Int
+        internal let isAllFoldersScrollActive: Bool
+    }
+
+    internal struct FolderChromeCacheKey: Hashable {
+        internal let viewMode: ThreadCanvasViewMode
+        internal let rowPackingMode: ThreadCanvasRowPackingMode
+        internal let dayCount: Int
+        internal let showsDayAxis: Bool
+        internal let zoomBucket: Int
+        internal let columnWidthBucket: Int
+        internal let textScaleBucket: Int
+        internal let structuralVersion: Int
+        internal let dayStart: Date
+    }
+
     internal enum MailboxFolderDropPlacement {
         case before
         case after
@@ -221,6 +239,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let structuralVersion: Int
         let enrichmentVersion: Int
         let dayStart: Date
+    }
+
+    private enum LayoutInvalidationReason: String {
+        case roots
+        case nodeSummaries
+        case manualAttachmentMessageIDs
+        case jwzThreadMap
+        case threadFolders
+        case pinnedFolderIDs
+        case folderEdits
+        case folderMembershipByThreadID
+        case dayWindowCount
+        case timelineTagsByNodeID
+        case generic
     }
 
     private struct TimelineTextMeasurementCache {
@@ -516,7 +548,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     @Published internal private(set) var roots: [ThreadNode] = [] {
         didSet {
-            invalidateLayoutCache()
+            invalidateLayoutCache(reason: .roots)
             refreshBottomBarMailboxActionStatusMessage()
         }
     }
@@ -534,9 +566,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var lastRefreshDate: Date?
     @Published internal private(set) var nextRefreshDate: Date?
     @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:] {
-        didSet { invalidateLayoutCache(structural: false, enrichment: true) }
+        didSet {
+            invalidateLayoutCache(structural: false, enrichment: true, reason: .nodeSummaries)
+            reportCollectionMutation(name: "nodeSummaries",
+                                     oldCount: oldValue.count,
+                                     newCount: nodeSummaries.count)
+        }
     }
-    @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:]
+    @Published internal private(set) var folderSummaries: [String: ThreadSummaryState] = [:] {
+        didSet {
+            reportCollectionMutation(name: "folderSummaries",
+                                     oldCount: oldValue.count,
+                                     newCount: folderSummaries.count)
+        }
+    }
     @Published internal private(set) var expandedSummaryIDs: Set<String> = []
     @Published internal var selectedNodeID: String? {
         didSet { refreshBottomBarMailboxActionStatusMessage() }
@@ -547,36 +590,41 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
     @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = [] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(reason: .manualAttachmentMessageIDs) }
     }
     @Published internal private(set) var manualGroups: [String: ManualThreadGroup] = [:]
     @Published internal private(set) var jwzThreadMap: [String: String] = [:] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(reason: .jwzThreadMap) }
     }
     @Published internal private(set) var threadFolders: [ThreadFolder] = [] {
         didSet {
             prunePinnedFolderIDs(using: threadFolders)
-            invalidateLayoutCache()
+            invalidateLayoutCache(reason: .threadFolders)
         }
     }
     @Published internal private(set) var pinnedFolderIDs: Set<String> = [] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(reason: .pinnedFolderIDs) }
     }
     @Published private var folderEditsByID: [String: ThreadFolderEdit] = [:] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(reason: .folderEdits) }
     }
     @Published internal private(set) var folderMembershipByThreadID: [String: String] = [:] {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(reason: .folderMembershipByThreadID) }
     }
     @Published internal private(set) var openInMailState: OpenInMailState?
     @Published internal private(set) var pendingScrollRequest: ThreadCanvasScrollRequest?
     @Published internal private(set) var dayWindowCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount {
-        didSet { invalidateLayoutCache() }
+        didSet { invalidateLayoutCache(reason: .dayWindowCount) }
     }
     @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
     @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
     @Published internal private(set) var timelineTagsByNodeID: [String: [String]] = [:] {
-        didSet { invalidateLayoutCache(structural: false, enrichment: true) }
+        didSet {
+            invalidateLayoutCache(structural: false, enrichment: true, reason: .timelineTagsByNodeID)
+            reportCollectionMutation(name: "timelineTagsByNodeID",
+                                     oldCount: oldValue.count,
+                                     newCount: timelineTagsByNodeID.count)
+        }
     }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
@@ -627,6 +675,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var enrichmentLayoutVersion = 0
     private var timelineTextMeasurementCache = TimelineTextMeasurementCache()
     private var visibleRangeUpdateTask: Task<Void, Never>?
+    private var allFoldersScrollStateResetTask: Task<Void, Never>?
     private let visibleRangeUpdateThrottleInterval: UInt64 = 50_000_000
     private let dayWindowExpansionCooldown: TimeInterval = 0.35
     private let dayWindowExpansionNearBottomHitThreshold = 2
@@ -650,6 +699,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var bottomBarMailboxActionStatusExpiryTask: Task<Void, Never>?
     private var nearBottomHitCount = 0
     private var lastDayWindowExpansionTime: Date?
+    private var isAllFoldersScrollActive = false
+    private var layoutInvalidationCount = 0
+    private var layoutInvalidationCountDuringActiveAllFoldersScroll = 0
+    private let allFoldersScrollStateResetInterval: UInt64 = 350_000_000
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
@@ -715,6 +768,81 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         pendingScrollTimeoutTasks.values.forEach { $0.cancel() }
         mailboxThreadAutoMoveTask?.cancel()
         bottomBarMailboxActionStatusExpiryTask?.cancel()
+        allFoldersScrollStateResetTask?.cancel()
+    }
+
+    internal func layoutProfilingSnapshot() -> LayoutProfilingSnapshot {
+        LayoutProfilingSnapshot(totalInvalidationCount: layoutInvalidationCount,
+                                scrollSessionInvalidationCount: layoutInvalidationCountDuringActiveAllFoldersScroll,
+                                isAllFoldersScrollActive: isAllFoldersScrollActive)
+    }
+
+    internal func folderChromeCacheKey(metrics: ThreadCanvasLayoutMetrics,
+                                       viewMode: ThreadCanvasViewMode = .default,
+                                       today: Date = Date(),
+                                       calendar: Calendar = .current) -> FolderChromeCacheKey {
+        let dayStart = calendar.startOfDay(for: today)
+        let rowPackingMode: ThreadCanvasRowPackingMode = activeMailboxScope == .allFolders ? .folderAlignedDense : .dateBucketed
+        return FolderChromeCacheKey(viewMode: viewMode,
+                                    rowPackingMode: rowPackingMode,
+                                    dayCount: metrics.dayCount,
+                                    showsDayAxis: metrics.showsDayAxis,
+                                    zoomBucket: Self.zoomCacheBucket(metrics.zoom),
+                                    columnWidthBucket: Self.metricsBucket(metrics.columnWidthAdjustment),
+                                    textScaleBucket: Self.metricsBucket(metrics.textScale),
+                                    structuralVersion: structuralLayoutVersion,
+                                    dayStart: dayStart)
+    }
+
+    internal func noteAllFoldersScrollActivity(rawOffset: CGFloat) {
+        guard activeMailboxScope == .allFolders else {
+            setAllFoldersScrollActive(false)
+            return
+        }
+        if !isAllFoldersScrollActive {
+            layoutInvalidationCountDuringActiveAllFoldersScroll = 0
+            setAllFoldersScrollActive(true)
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "AllFoldersScrollSessionStart",
+                        "rawOffset=%.1f totalInvalidations=%{public}d",
+                        rawOffset,
+                        layoutInvalidationCount)
+        }
+        allFoldersScrollStateResetTask?.cancel()
+        allFoldersScrollStateResetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: self?.allFoldersScrollStateResetInterval ?? 0)
+            guard let self, !Task.isCancelled else { return }
+            self.setAllFoldersScrollActive(false)
+        }
+    }
+
+    private func setAllFoldersScrollActive(_ isActive: Bool) {
+        guard isAllFoldersScrollActive != isActive else { return }
+        isAllFoldersScrollActive = isActive
+        if !isActive {
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "AllFoldersScrollSessionEnd",
+                        "sessionInvalidations=%{public}d totalInvalidations=%{public}d",
+                        layoutInvalidationCountDuringActiveAllFoldersScroll,
+                        layoutInvalidationCount)
+        }
+    }
+
+    private func reportCollectionMutation(name: String,
+                                          oldCount: Int,
+                                          newCount: Int) {
+        guard activeMailboxScope == .allFolders, isAllFoldersScrollActive else { return }
+        os_signpost(.event,
+                    log: Log.performance,
+                    name: "AllFoldersStateMutation",
+                    "collection=%{public}s oldCount=%{public}d newCount=%{public}d totalInvalidations=%{public}d sessionInvalidations=%{public}d",
+                    name,
+                    oldCount,
+                    newCount,
+                    layoutInvalidationCount,
+                    layoutInvalidationCountDuringActiveAllFoldersScroll)
     }
 
     internal func start() {
@@ -1055,6 +1183,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return nil
         }
         return MailboxPathFormatter.leafName(from: destination.path)
+    }
+
+    internal func folderMailboxLeafNames(for folderIDs: Set<String>) -> [String: String] {
+        guard !folderIDs.isEmpty else { return [:] }
+        var labelsByFolderID: [String: String] = [:]
+        labelsByFolderID.reserveCapacity(folderIDs.count)
+        for folder in effectiveThreadFolders where folderIDs.contains(folder.id) {
+            guard let destination = folder.mailboxDestination else { continue }
+            guard let leafName = MailboxPathFormatter.leafName(from: destination.path),
+                  !leafName.isEmpty else { continue }
+            labelsByFolderID[folder.id] = leafName
+        }
+        return labelsByFolderID
     }
 
     internal func folderMailboxEditingDisabledReason(for folderID: String) -> String? {
@@ -3023,12 +3164,27 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         expandDayWindowIfNeeded(visibleRange: range, forceIncrement: forceExpansion)
     }
 
-    private func invalidateLayoutCache(structural: Bool = true, enrichment: Bool = true) {
+    private func invalidateLayoutCache(structural: Bool = true,
+                                       enrichment: Bool = true,
+                                       reason: LayoutInvalidationReason = .generic) {
         if structural {
             structuralLayoutVersion &+= 1
         }
         if enrichment {
             enrichmentLayoutVersion &+= 1
+        }
+        layoutInvalidationCount &+= 1
+        if activeMailboxScope == .allFolders, isAllFoldersScrollActive {
+            layoutInvalidationCountDuringActiveAllFoldersScroll &+= 1
+            os_signpost(.event,
+                        log: Log.performance,
+                        name: "AllFoldersLayoutInvalidated",
+                        "reason=%{public}s structural=%{public}d enrichment=%{public}d totalInvalidations=%{public}d sessionInvalidations=%{public}d",
+                        reason.rawValue,
+                        structural,
+                        enrichment,
+                        layoutInvalidationCount,
+                        layoutInvalidationCountDuringActiveAllFoldersScroll)
         }
         layoutCacheKey = nil
         layoutCache = nil
