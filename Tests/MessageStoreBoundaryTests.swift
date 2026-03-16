@@ -149,6 +149,43 @@ final class MessageStoreBoundaryTests: XCTestCase {
         XCTAssertEqual(Set(results.map(\.messageID)), Set(["msg-inbox", "msg-all-inboxes"]))
     }
 
+    func testCountMessages_withFolderScope_matchesOnlyExactPath() async throws {
+        let defaults = UserDefaults(suiteName: "MessageStoreBoundaryTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let now = Date()
+        let inRangeDate = now.addingTimeInterval(-60)
+        let start = now.addingTimeInterval(-3600)
+        let range = DateInterval(start: start, end: now)
+
+        let expected = EmailMessage(messageID: "msg-count-expected",
+                                    mailboxID: "Projects/Acme",
+                                    accountName: "Work",
+                                    subject: "Expected",
+                                    from: "a@example.com",
+                                    to: "me@example.com",
+                                    date: inRangeDate,
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+        let sameLeafDifferentPath = EmailMessage(messageID: "msg-count-other-path",
+                                                 mailboxID: "Clients/Acme",
+                                                 accountName: "Work",
+                                                 subject: "Other path",
+                                                 from: "a@example.com",
+                                                 to: "me@example.com",
+                                                 date: inRangeDate,
+                                                 snippet: "",
+                                                 isUnread: false,
+                                                 inReplyTo: nil,
+                                                 references: [])
+        try await store.upsert(messages: [expected, sameLeafDifferentPath])
+
+        let count = try await store.countMessages(in: range, mailbox: "Projects/Acme")
+
+        XCTAssertEqual(count, 1)
+    }
+
     func testFetchMessages_withFolderScope_usesFullPathAndAccount() async throws {
         let defaults = UserDefaults(suiteName: "MessageStoreBoundaryTests-\(UUID().uuidString)")!
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)

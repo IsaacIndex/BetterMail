@@ -707,19 +707,7 @@ internal final class MessageStore {
             return NSCompoundPredicate(orPredicateWithSubpredicates: aliasPredicates)
         }
 
-        var predicates: [NSPredicate] = [
-            NSPredicate(format: "mailboxID ==[c] %@", trimmedMailbox)
-        ]
-
-        if let leafName = MailboxPathFormatter.leafName(from: trimmedMailbox),
-           leafName.caseInsensitiveCompare(trimmedMailbox) != .orderedSame {
-            predicates.append(NSPredicate(format: "mailboxID ==[c] %@", leafName))
-            predicates.append(NSPredicate(format: "mailboxID ENDSWITH[c] %@", "/" + leafName))
-            predicates.append(NSPredicate(format: "mailboxID ENDSWITH[c] %@", "." + leafName))
-            predicates.append(NSPredicate(format: "mailboxID ENDSWITH[c] %@", ":" + leafName))
-        }
-
-        return NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
+        return NSPredicate(format: "mailboxID ==[c] %@", trimmedMailbox)
     }
 
     private static func deduplicatedSummaryEntries(from entries: [SummaryCacheEntry]) -> [SummaryCacheEntry] {

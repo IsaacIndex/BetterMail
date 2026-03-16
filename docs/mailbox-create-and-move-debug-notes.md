@@ -41,3 +41,7 @@ This page records all directions attempted in this session for Apple Mail mailbo
   - Outlook account (literal slash-name behavior),
   - parent-child nested mailbox behavior,
   - sidebar hierarchy rendering consistency after refresh.
+
+## Follow-up guardrails (PR #25 review fixes)
+- MessageStore folder filters now match `mailboxID` by exact full path only for scoped fetch/count queries, preventing sibling folders that share the same leaf name from being co-mingled (for example `Projects/Acme` vs `Clients/Acme`).
+- MailAppleScript mailbox resolution now attempts hierarchy/full-path resolution before leaf-name fallback, so duplicate leaf names under different parents resolve to the requested path first.

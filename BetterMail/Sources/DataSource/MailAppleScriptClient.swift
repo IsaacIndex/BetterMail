@@ -261,24 +261,7 @@ internal actor MailAppleScriptClient {
           if (count of _accounts) is 0 then return missing value
 
           tell application id "com.apple.mail"
-            -- pass 1: exact leaf-name match among all account mailboxes
-            repeat with _acct in _accounts
-              set _allMailboxes to {}
-              try
-                set _allMailboxes to every mailbox of _acct
-              end try
-              repeat with _candidate in _allMailboxes
-                try
-                  ignoring case
-                    if (name of _candidate as string) is _leaf then
-                      return _candidate
-                    end if
-                  end ignoring
-                end try
-              end repeat
-            end repeat
-
-            -- pass 2: hierarchical path walk
+            -- pass 1: hierarchical path walk
             repeat with _acct in _accounts
               set _candidates to {}
               try
@@ -314,7 +297,7 @@ internal actor MailAppleScriptClient {
               end if
             end repeat
 
-            -- pass 3: exact full-path or suffix full-path match
+            -- pass 2: exact full-path match among all account mailboxes
             repeat with _acct in _accounts
               set _allMailboxes to {}
               try
@@ -326,10 +309,24 @@ internal actor MailAppleScriptClient {
                   if _candidatePath is _wantedPath then
                     return _candidate
                   end if
-                  if _candidatePath ends with ("/" & _leaf) then
-                    return _candidate
-                  end if
                 end ignoring
+              end repeat
+            end repeat
+
+            -- pass 3: leaf fallback only when no exact path match exists
+            repeat with _acct in _accounts
+              set _allMailboxes to {}
+              try
+                set _allMailboxes to every mailbox of _acct
+              end try
+              repeat with _candidate in _allMailboxes
+                try
+                  ignoring case
+                    if (name of _candidate as string) is _leaf then
+                      return _candidate
+                    end if
+                  end ignoring
+                end try
               end repeat
             end repeat
           end tell
