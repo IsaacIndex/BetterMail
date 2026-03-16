@@ -33,6 +33,30 @@ final class ThreadSummaryCacheTests: XCTestCase {
         XCTAssertTrue(afterDelete.isEmpty)
     }
 
+    func testScopedSummaryCacheDeduplicatesByNewestGeneratedAt() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadSummaryCacheTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let olderEntry = SummaryCacheEntry(scope: .emailNode,
+                                           scopeID: "node-1",
+                                           summaryText: "Older summary",
+                                           generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                           fingerprint: "fingerprint-old",
+                                           provider: "foundation-models")
+        let newerEntry = SummaryCacheEntry(scope: .emailNode,
+                                           scopeID: "node-1",
+                                           summaryText: "Newer summary",
+                                           generatedAt: Date(timeIntervalSince1970: 1_700_000_100),
+                                           fingerprint: "fingerprint-new",
+                                           provider: "foundation-models")
+
+        try await store.upsertSummaries([olderEntry, newerEntry])
+        let fetchedNodes = try await store.fetchSummaries(scope: .emailNode, ids: [olderEntry.scopeID])
+
+        XCTAssertEqual(fetchedNodes.count, 1)
+        XCTAssertEqual(fetchedNodes.first?.summaryText, newerEntry.summaryText)
+        XCTAssertEqual(fetchedNodes.first?.fingerprint, newerEntry.fingerprint)
+    }
+
     func testNodeSummaryFingerprintChangesWhenInputsChange() {
         let base = ThreadSummaryFingerprint.makeNode(subject: "Invoice",
                                                      body: "Paid on Friday",

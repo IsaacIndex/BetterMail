@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import OSLog
+import SwiftUI
 
 @MainActor
 internal final class BatchBackfillSettingsViewModel: ObservableObject {
@@ -9,28 +10,72 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         case regeneration
     }
 
+    internal static let minimumPreferredBatchSize = 1
+    internal static let maximumPreferredBatchSize = 100
+    internal static let defaultPreferredBatchSize = 5
+
+    @AppStorage("batchBackfillPreferredBatchSize")
+    private var storedPreferredBatchSize = BatchBackfillSettingsViewModel.defaultPreferredBatchSize
+
     @Published internal var startDate: Date
     @Published internal var endDate: Date
+    @Published internal var preferredBatchSize = BatchBackfillSettingsViewModel.defaultPreferredBatchSize {
+        didSet {
+            let clamped = Self.clampPreferredBatchSize(preferredBatchSize)
+            if clamped != preferredBatchSize {
+                preferredBatchSize = clamped
+                return
+            }
+            storedPreferredBatchSize = clamped
+        }
+    }
     @Published internal private(set) var statusText: String = ""
     @Published internal private(set) var isRunning = false
     @Published internal private(set) var progressValue: Double?
     @Published internal private(set) var totalCount: Int?
     @Published internal private(set) var completedCount: Int = 0
     @Published internal private(set) var currentBatchSize: Int = 5
+    @Published internal private(set) var estimatedTimeRemainingText: String?
+    @Published internal private(set) var isStopping = false
     @Published internal private(set) var errorMessage: String?
     @Published internal private(set) var currentAction: Action?
 
-    private let service: BatchBackfillService
+    private struct ETASnapshot {
+        let deltaCompleted: Int?
+        let deltaSeconds: TimeInterval?
+        let sampleCount: Int
+        let averageSecondsPerMessage: TimeInterval?
+        let remainingSeconds: TimeInterval?
+        let formattedETA: String?
+    }
+
+    private let service: any BatchBackfillServicing
     private let regenerationService: SummaryRegenerationServicing
     private let snippetLineLimitProvider: () -> Int
     private let stopPhrasesProvider: () -> [String]
     private let backfillMailbox: String = "inbox"
     private let regenerationMailbox: String? = nil
-    private let defaultBatchSize = 5
     private var runTask: Task<Void, Never>?
+    private var runStartDate: Date?
+    private var lastProgressDate: Date?
+    private var lastCompletedCount: Int?
+    private var secondsPerMessageSamples: [TimeInterval] = []
     private let logger = Log.refresh
+    private static let rangeFormatter: DateIntervalFormatter = {
+        let formatter = DateIntervalFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+    private static let etaFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 2
+        return formatter
+    }()
 
-    internal init(service: BatchBackfillService = BatchBackfillService(),
+    internal init(service: any BatchBackfillServicing = BatchBackfillService(),
                   regenerationService: SummaryRegenerationServicing = SummaryRegenerationService(),
                   snippetLineLimitProvider: @escaping () -> Int = { InspectorViewSettings.defaultSnippetLineLimit },
                   stopPhrasesProvider: @escaping () -> [String] = { [] },
@@ -41,11 +86,24 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         self.stopPhrasesProvider = stopPhrasesProvider
         let now = Date()
         let startOfYear = calendar.date(from: DateComponents(year: calendar.component(.year, from: now), month: 1, day: 1)) ?? now
+        let normalizedBatchSize = Self.clampPreferredBatchSize(_storedPreferredBatchSize.wrappedValue)
+        storedPreferredBatchSize = normalizedBatchSize
         self.startDate = startOfYear
         self.endDate = now
+        self.preferredBatchSize = normalizedBatchSize
     }
 
     deinit {
+        runTask?.cancel()
+    }
+
+    internal func cancelCurrentRun() {
+        guard isRunning else { return }
+        isStopping = true
+        estimatedTimeRemainingText = nil
+        errorMessage = nil
+        statusText = NSLocalizedString(stoppingStatusKey(for: currentAction),
+                                       comment: "Status while waiting for the current batch operation to stop")
         runTask?.cancel()
     }
 
@@ -62,46 +120,61 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let total = try await service.countMessages(in: orderedRange, mailbox: backfillMailbox)
+                let backfillAccount: String? = nil
+                let total = try await service.countMessages(in: orderedRange,
+                                                            mailbox: backfillMailbox,
+                                                            account: backfillAccount)
+                try Task.checkCancellation()
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
                 let result = try await service.runBackfill(range: orderedRange,
                                                            mailbox: backfillMailbox,
-                                                           preferredBatchSize: defaultBatchSize,
+                                                           account: backfillAccount,
+                                                           preferredBatchSize: preferredBatchSize,
                                                            totalExpected: total,
                                                            snippetLineLimit: snippetLimit) { [weak self] progress in
                     Task { @MainActor [weak self] in
                         self?.handle(progress: progress)
                     }
                 }
+                try Task.checkCancellation()
 
                 await MainActor.run {
-                    isRunning = false
-                    currentAction = nil
-                    progressValue = total > 0 ? 1.0 : nil
-                    statusText = String.localizedStringWithFormat(
+                    self.isRunning = false
+                    self.isStopping = false
+                    self.currentAction = nil
+                    self.progressValue = total > 0 ? 1.0 : nil
+                    self.estimatedTimeRemainingText = nil
+                    self.statusText = String.localizedStringWithFormat(
                         NSLocalizedString("settings.backfill.status.finished", comment: "Status after backfill completes"),
                         result.fetched
                     )
-                    runTask = nil
+                    self.runTask = nil
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    isRunning = false
-                    currentAction = nil
-                    runTask = nil
+                    self.isRunning = false
+                    self.isStopping = false
+                    self.statusText = NSLocalizedString(self.cancelledStatusKey(for: self.currentAction),
+                                                   comment: "Status when the current batch operation is stopped")
+                    self.estimatedTimeRemainingText = nil
+                    self.errorMessage = nil
+                    self.currentAction = nil
+                    self.runTask = nil
                 }
             } catch {
                 await MainActor.run {
-                    isRunning = false
-                    errorMessage = error.localizedDescription
-                    statusText = String.localizedStringWithFormat(
+                    self.isRunning = false
+                    self.isStopping = false
+                    self.estimatedTimeRemainingText = nil
+                    self.errorMessage = error.localizedDescription
+                    self.statusText = String.localizedStringWithFormat(
                         NSLocalizedString("settings.backfill.status.error", comment: "Status when backfill fails"),
                         error.localizedDescription
                     )
-                    currentAction = nil
-                    runTask = nil
+                    self.currentAction = nil
+                    self.runTask = nil
                 }
             }
         }
@@ -125,13 +198,14 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
             guard let self else { return }
             do {
                 let total = try await regenerationService.countMessages(in: orderedRange, mailbox: regenerationMailbox)
+                try Task.checkCancellation()
                 logger.info("RegenAI count: total=\(total, privacy: .public) mailbox=\(mailboxLabel, privacy: .public)")
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
                 let result = try await regenerationService.runRegeneration(range: orderedRange,
                                                                            mailbox: regenerationMailbox,
-                                                                           preferredBatchSize: defaultBatchSize,
+                                                                           preferredBatchSize: preferredBatchSize,
                                                                            totalExpected: total,
                                                                            snippetLineLimit: snippetLimit,
                                                                            stopPhrases: stopPhrases) { [weak self] progress in
@@ -139,35 +213,45 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                         self?.handle(regeneration: progress)
                     }
                 }
+                try Task.checkCancellation()
 
                 await MainActor.run {
-                    isRunning = false
-                    currentAction = nil
-                    progressValue = total > 0 ? 1.0 : nil
-                    statusText = String.localizedStringWithFormat(
+                    self.isRunning = false
+                    self.isStopping = false
+                    self.currentAction = nil
+                    self.progressValue = total > 0 ? 1.0 : nil
+                    self.estimatedTimeRemainingText = nil
+                    self.statusText = String.localizedStringWithFormat(
                         NSLocalizedString("settings.regenai.status.finished", comment: "Status after Re-GenAI completes"),
                         result.regenerated
                     )
-                    runTask = nil
+                    self.runTask = nil
                 }
                 logger.info("RegenAI finished: regenerated=\(result.regenerated, privacy: .public) total=\(total, privacy: .public)")
             } catch is CancellationError {
                 await MainActor.run {
-                    isRunning = false
-                    currentAction = nil
-                    runTask = nil
+                    self.isRunning = false
+                    self.isStopping = false
+                    self.statusText = NSLocalizedString(self.cancelledStatusKey(for: self.currentAction),
+                                                   comment: "Status when the current batch operation is stopped")
+                    self.estimatedTimeRemainingText = nil
+                    self.errorMessage = nil
+                    self.currentAction = nil
+                    self.runTask = nil
                 }
                 logger.info("RegenAI cancelled")
             } catch {
                 await MainActor.run {
-                    isRunning = false
-                    errorMessage = error.localizedDescription
-                    statusText = String.localizedStringWithFormat(
+                    self.isRunning = false
+                    self.isStopping = false
+                    self.estimatedTimeRemainingText = nil
+                    self.errorMessage = error.localizedDescription
+                    self.statusText = String.localizedStringWithFormat(
                         NSLocalizedString("settings.regenai.status.error", comment: "Status when Re-GenAI fails"),
                         error.localizedDescription
                     )
-                    currentAction = nil
-                    runTask = nil
+                    self.currentAction = nil
+                    self.runTask = nil
                 }
                 logger.error("RegenAI failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -176,10 +260,12 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
 
     private func handle(progress: BatchBackfillProgress) {
         guard currentAction == .backfill else { return }
+        guard !isStopping else { return }
         totalCount = progress.total
         completedCount = progress.completed
         currentBatchSize = progress.currentBatchSize
         progressValue = progress.total > 0 ? Double(progress.completed) / Double(progress.total) : nil
+        let etaSnapshot = updateEstimatedTimeRemaining(completed: progress.completed, total: progress.total)
 
         switch progress.state {
         case .running:
@@ -187,26 +273,39 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                 NSLocalizedString("settings.backfill.status.running", comment: "Status while backfill is running"),
                 progress.completed,
                 progress.total,
-                progress.currentBatchSize
+                runningDetail(for: progress)
             )
+            errorMessage = nil
+        case .splitting:
+            statusText = String.localizedStringWithFormat(
+                NSLocalizedString("settings.backfill.status.splitting", comment: "Status when backfill splits a range into smaller slices"),
+                rangeDescription(progress.currentRange),
+                progress.rangeMessageCount ?? progress.currentBatchSize,
+                BatchBackfillService.maximumFetchCount
+            )
+            errorMessage = nil
         case .retrying:
             statusText = String.localizedStringWithFormat(
-                NSLocalizedString("settings.backfill.status.retry", comment: "Status when backfill retries with smaller batch"),
-                progress.currentBatchSize,
+                NSLocalizedString("settings.backfill.status.retry", comment: "Status when backfill retries a slice after an error"),
+                rangeDescription(progress.currentRange),
                 progress.errorMessage ?? ""
             )
             errorMessage = progress.errorMessage
         case .finished:
             break
         }
+
+        logBackfillProgress(progress, eta: etaSnapshot)
     }
 
     private func handle(regeneration progress: SummaryRegenerationProgress) {
         guard currentAction == .regeneration else { return }
+        guard !isStopping else { return }
         totalCount = progress.total
         completedCount = progress.completed
         currentBatchSize = progress.currentBatchSize
         progressValue = progress.total > 0 ? Double(progress.completed) / Double(progress.total) : nil
+        _ = updateEstimatedTimeRemaining(completed: progress.completed, total: progress.total)
 
         switch progress.state {
         case .running:
@@ -226,6 +325,8 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
             totalCount = total
             completedCount = 0
             progressValue = total > 0 ? 0 : nil
+            estimatedTimeRemainingText = nil
+            isStopping = false
             if total == 0 {
                 let action = currentAction
                 let orderedRange = startDate <= endDate
@@ -256,7 +357,15 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         totalCount = nil
         completedCount = 0
         progressValue = nil
-        currentBatchSize = defaultBatchSize
+        estimatedTimeRemainingText = nil
+        isStopping = false
+        currentBatchSize = action == .backfill
+            ? min(preferredBatchSize, BatchBackfillService.maximumFetchCount)
+            : preferredBatchSize
+        runStartDate = Date()
+        lastProgressDate = nil
+        lastCompletedCount = nil
+        secondsPerMessageSamples.removeAll(keepingCapacity: true)
     }
 
     internal var progressAccessibilityLabel: String {
@@ -298,5 +407,165 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         case .empty:
             return "\(prefix).empty"
         }
+    }
+
+    private func runningDetail(for progress: BatchBackfillProgress) -> String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("settings.backfill.status.running.slice", comment: "Detail for the current backfill slice"),
+            progress.rangeMessageCount ?? progress.currentBatchSize,
+            rangeDescription(progress.currentRange)
+        )
+    }
+
+    private func rangeDescription(_ range: DateInterval?) -> String {
+        guard let range else {
+            return NSLocalizedString("settings.backfill.status.range.selected", comment: "Fallback label for the selected backfill range")
+        }
+        return Self.rangeFormatter.string(from: range.start, to: range.end)
+    }
+
+    private func cancelledStatusKey(for action: Action?) -> String {
+        switch action {
+        case .regeneration:
+            return "settings.regenai.status.cancelled"
+        case .backfill, .none:
+            return "settings.backfill.status.cancelled"
+        }
+    }
+
+    private func stoppingStatusKey(for action: Action?) -> String {
+        switch action {
+        case .regeneration:
+            return "settings.regenai.status.stopping"
+        case .backfill, .none:
+            return "settings.backfill.status.stopping"
+        }
+    }
+
+    private func updateEstimatedTimeRemaining(completed: Int, total: Int) -> ETASnapshot {
+        let now = Date()
+        if completed <= 0 || completed >= total {
+            estimatedTimeRemainingText = nil
+            lastProgressDate = now
+            lastCompletedCount = completed
+            return ETASnapshot(deltaCompleted: nil,
+                               deltaSeconds: nil,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: nil,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
+        }
+
+        guard let lastProgressDate, let lastCompletedCount else {
+            self.lastProgressDate = now
+            self.lastCompletedCount = completed
+            return estimateUsingCurrentSamples(completed: completed,
+                                               total: total,
+                                               deltaCompleted: nil,
+                                               deltaSeconds: nil)
+        }
+
+        let deltaCompleted = completed - lastCompletedCount
+        let deltaSeconds = now.timeIntervalSince(lastProgressDate)
+        guard deltaCompleted > 0, deltaSeconds > 0 else {
+            return estimateUsingCurrentSamples(completed: completed,
+                                               total: total,
+                                               deltaCompleted: deltaCompleted,
+                                               deltaSeconds: deltaSeconds)
+        }
+
+        secondsPerMessageSamples.append(deltaSeconds / Double(deltaCompleted))
+        if secondsPerMessageSamples.count > 5 {
+            secondsPerMessageSamples.removeFirst(secondsPerMessageSamples.count - 5)
+        }
+        self.lastProgressDate = now
+        self.lastCompletedCount = completed
+        return estimateUsingCurrentSamples(completed: completed,
+                                           total: total,
+                                           deltaCompleted: deltaCompleted,
+                                           deltaSeconds: deltaSeconds)
+    }
+
+    private func estimateUsingCurrentSamples(completed: Int,
+                                             total: Int,
+                                             deltaCompleted: Int?,
+                                             deltaSeconds: TimeInterval?) -> ETASnapshot {
+        let rollingAverage = secondsPerMessageSamples.isEmpty
+            ? nil
+            : secondsPerMessageSamples.reduce(0, +) / Double(secondsPerMessageSamples.count)
+        let overallAverage = runStartDate.map { Date().timeIntervalSince($0) / Double(completed) }
+        let averageSecondsPerMessage = max(rollingAverage ?? 0, overallAverage ?? 0)
+        guard averageSecondsPerMessage.isFinite, averageSecondsPerMessage > 0 else {
+            return ETASnapshot(deltaCompleted: deltaCompleted,
+                               deltaSeconds: deltaSeconds,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: nil,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
+        }
+
+        let remainingSeconds = averageSecondsPerMessage * Double(total - completed)
+        guard remainingSeconds.isFinite,
+              remainingSeconds > 0,
+              let formatted = Self.etaFormatter.string(from: remainingSeconds) else {
+            return ETASnapshot(deltaCompleted: deltaCompleted,
+                               deltaSeconds: deltaSeconds,
+                               sampleCount: secondsPerMessageSamples.count,
+                               averageSecondsPerMessage: averageSecondsPerMessage,
+                               remainingSeconds: nil,
+                               formattedETA: nil)
+        }
+
+        estimatedTimeRemainingText = String.localizedStringWithFormat(
+            NSLocalizedString("settings.batch.eta", comment: "Estimated time remaining label for batch operations"),
+            formatted
+        )
+        return ETASnapshot(deltaCompleted: deltaCompleted,
+                           deltaSeconds: deltaSeconds,
+                           sampleCount: secondsPerMessageSamples.count,
+                           averageSecondsPerMessage: averageSecondsPerMessage,
+                           remainingSeconds: remainingSeconds,
+                           formattedETA: formatted)
+    }
+
+    private func logBackfillProgress(_ progress: BatchBackfillProgress, eta: ETASnapshot) {
+        let range = rangeDescription(progress.currentRange)
+        let state = backfillLogState(progress.state)
+        let rangeMessageCount = progress.rangeMessageCount ?? 0
+        let deltaCompleted = eta.deltaCompleted ?? 0
+        let deltaSeconds = eta.deltaSeconds ?? 0
+        let sampleCount = eta.sampleCount
+        let rollingAverage = eta.averageSecondsPerMessage ?? 0
+        let remainingSeconds = eta.remainingSeconds ?? 0
+        let etaLabel = eta.formattedETA ?? "n/a"
+        let elapsedSeconds = runStartDate.map { Date().timeIntervalSince($0) } ?? 0
+        let overallAverage = progress.completed > 0 ? elapsedSeconds / Double(progress.completed) : 0
+        let progressPercent = progress.total > 0
+            ? String(format: "%.1f%%", (Double(progress.completed) / Double(progress.total)) * 100)
+            : "0.0%"
+        let errorMessage = progress.errorMessage ?? "none"
+
+        logger.info(
+            """
+            [BACKFILL][ETA] state=\(state, privacy: .public) completed=\(progress.completed, privacy: .public)/\(progress.total, privacy: .public) progress=\(progressPercent, privacy: .public) batchSize=\(progress.currentBatchSize, privacy: .public) rangeCount=\(rangeMessageCount, privacy: .public) range=\(range, privacy: .public) deltaCompleted=\(deltaCompleted, privacy: .public) deltaSeconds=\(deltaSeconds, format: .fixed(precision: 2)) rollingSamples=\(sampleCount, privacy: .public) rollingSecondsPerMessage=\(rollingAverage, format: .fixed(precision: 2)) overallSecondsPerMessage=\(overallAverage, format: .fixed(precision: 2)) remainingSeconds=\(remainingSeconds, format: .fixed(precision: 2)) eta=\(etaLabel, privacy: .public) error=\(errorMessage, privacy: .public)
+            """
+        )
+    }
+
+    private func backfillLogState(_ state: BatchBackfillProgress.State) -> String {
+        switch state {
+        case .running:
+            return "running"
+        case .splitting:
+            return "splitting"
+        case .retrying:
+            return "retrying"
+        case .finished:
+            return "finished"
+        }
+    }
+
+    private static func clampPreferredBatchSize(_ value: Int) -> Int {
+        min(max(value, minimumPreferredBatchSize), maximumPreferredBatchSize)
     }
 }

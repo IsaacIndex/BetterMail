@@ -9,6 +9,8 @@ internal struct ThreadCanvasLayoutMetrics {
     internal let zoom: CGFloat
     internal let dayCount: Int
     internal let columnWidthAdjustment: CGFloat
+    internal let showsDayAxis: Bool
+    internal let textScale: CGFloat
 
     internal var clampedZoom: CGFloat {
         min(max(zoom, Self.minZoom), Self.maxZoom)
@@ -27,7 +29,7 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 
     internal var dayLabelWidth: CGFloat {
-        96 * clampedZoom
+        showsDayAxis ? (96 * clampedZoom) : 0
     }
 
     internal var contentPadding: CGFloat {
@@ -51,7 +53,7 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 
     internal var fontScale: CGFloat {
-        min(max(clampedZoom, 0.85), 1.2)
+        min(max(clampedZoom, 0.85), 1.2) * textScale
     }
 
     internal var nodeWidth: CGFloat {
@@ -60,10 +62,14 @@ internal struct ThreadCanvasLayoutMetrics {
 
     internal init(zoom: CGFloat,
                   dayCount: Int = ThreadCanvasLayoutMetrics.defaultDayCount,
-                  columnWidthAdjustment: CGFloat = 0) {
+                  columnWidthAdjustment: CGFloat = 0,
+                  showsDayAxis: Bool = true,
+                  textScale: CGFloat = ThreadCanvasDisplaySettings.defaultTextScale) {
         self.zoom = zoom
         self.dayCount = max(dayCount, 1)
         self.columnWidthAdjustment = columnWidthAdjustment
+        self.showsDayAxis = showsDayAxis
+        self.textScale = textScale
     }
 }
 
@@ -109,6 +115,14 @@ internal struct ThreadTimelineLayoutConstants {
 
     internal static func tagFontSize(fontScale: CGFloat) -> CGFloat {
         10 * fontScale
+    }
+
+    internal static func tagChipFontSize(fontScale: CGFloat) -> CGFloat {
+        max(7 * fontScale, 6.5)
+    }
+
+    internal static func mailboxChipFontSize(fontScale: CGFloat) -> CGFloat {
+        max(timeFontSize(fontScale: fontScale) - (2 * fontScale), 8 * fontScale)
     }
 
     internal static func tagVerticalPadding(fontScale: CGFloat) -> CGFloat {

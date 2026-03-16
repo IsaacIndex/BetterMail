@@ -5,12 +5,17 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
-- Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator.
+- Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Emails` as the default landing scope.
+- Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
+- Mailbox sidebar folder expand/collapse state is persisted across launches and pruned against the latest Mail hierarchy so folders removed/moved in Mail are not retained as stale expansion entries.
+- Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator, and pinned folder headers remain visible even when their messages fall outside the current day window.
+- Canvas folders can optionally carry a mailbox-folder destination; the folder inspector can assign or clear it, re-calibrate folder colors into a muted palette that holds up better under white labels, folder headers show the assigned mailbox leaf name, and new thread folders now default to that same muted family before any manual adjustments.
 - Folder details inspector includes a non-scrollable minimap with selected-node highlight, folder-scoped viewport overlay, and date ticks/labels while preserving relative spacing for click-to-jump navigation.
 - Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
+- Settings expose one relative text-size control for thread canvas, timeline, and inspector typography while preserving the existing size hierarchy between labels, summaries, and metadata.
 - Appearance preferences support System, Light, and Dark modes from BetterMail Settings while keeping the glassmorphism styling consistent.
-- AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/flag/search actions against Apple Mail.
-- Inspector "Open in Mail" uses AppleScript targeting (Message-ID plus filtered fallback search) without `message://` URLs.
+- AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/create mailbox-folder, flag, and search actions against Apple Mail.
+- Inspector "Open in Mail" uses AppleScript heuristic targeting only (mailbox/account hints plus subject, sender, and received-day matching) without `message://` URLs, and now treats AppleScript boolean return values correctly so a successful open does not leave a false failure status behind.
 - Persistent Core Data cache (`MessageStore`) so the UI can render instantly while refresh jobs run off the main actor.
 - JWZ-style threading (`JWZThreader`) that annotates unread/message counts per thread and keeps a `MessageEntity` ↔ `ThreadEntity` mapping.
 - Optional Apple Intelligence digests powered by `FoundationModelsEmailSummaryProvider` (Foundation Models on macOS 15.2+) that surface summaries in the inspector for the selected thread.
@@ -64,7 +69,7 @@ Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Cor
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
 - `EmailSummaryProviderFactory` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
-- `MailControl` demonstrates how to execute follow-up AppleScript commands (move, flag, search) against the current Mail selection.
+- `MailControl` provides AppleScript helpers for message targeting, move/create mailbox-folder actions, flagging, and search workflows.
 
 ## Technical Notes
 
@@ -151,7 +156,7 @@ sequenceDiagram
 
 ### Infinite Canvas Paging
 - The thread canvas expands in 7-day blocks when you scroll near the bottom of the current range.
-- Scroll detection for paging is driven by `GeometryReader` content-frame updates so two-axis scrolling (horizontal + vertical) still triggers expansion.
+- Scroll detection for paging is driven by the native `NSScrollView` bounds observer (`ScrollViewResolver`) so two-axis scrolling (horizontal + vertical) still triggers expansion without pushing per-tick scroll offsets through the parent SwiftUI view state.
 - Scroll offsets are quantized before updating visible-range state, and paging expansion now uses a short near-bottom hysteresis/cooldown to avoid thrashing while scrubbing in and out near the threshold.
 - Timeline layout cache keys use coarse zoom buckets so pinch gestures reuse layout work instead of rebuilding on tiny zoom deltas.
 - Folder headers include icon-only jump actions (with hover tooltips) to move directly to the latest or first email node in that folder.
@@ -159,6 +164,8 @@ sequenceDiagram
 
 ### Canvas Virtualization Window
 - The virtualized render window is computed in content coordinates using the raw scroll offset, so pinned folder headers/top padding do not shift which days and nodes are considered visible.
+- In `All Folders`, folder-member nodes render regardless of day-window position so folder columns do not degrade into header-only shells; in other scopes, pinned out-of-range folders still keep header chrome visible (including ancestor context for nested pinned folders).
+- Connector lanes (JWZ + manual) are derived from each visible column’s full node list rather than only viewport-filtered nodes, so vertical continuity is preserved across empty day spans and viewport boundaries.
 
 ### Manual Grouping & Ungrouping
 **User-facing**
@@ -169,6 +176,7 @@ sequenceDiagram
 **Technical**
 - Manual grouping is stored in `ManualThreadGroup` records with two sets: `jwzThreadIDs` (grouped JWZ threads) and `manualMessageKeys` (manual attachments).
 - `JWZThreader.applyManualGroups` overlays these manual groups onto the JWZ thread map so the UI renders combined groups.
+- When grouping changes the effective thread identity, BetterMail remaps canvas-folder membership and mailbox auto-follow rules so foldered threads keep their canvas/mailbox destination.
 - Ungrouping updates the owning `ManualThreadGroup` by removing selected `jwzThreadIDs` or `manualMessageKeys`; empty groups are deleted from `MessageStore`.
 
 ### JWZ Threading Algorithm
@@ -191,13 +199,26 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 
 ## UI Layers (Current)
 - App entry point: `BetterMail/BetterMailApp.swift` shows `ContentView` in the main `WindowGroup`.
-- `BetterMail/ContentView.swift` renders only `ThreadListView` (no split view/sidebar container at the moment).
+- `BetterMail/ContentView.swift` renders a split layout with:
+  - `MailboxSidebarView` on the left for account + mailbox-folder navigation.
+  - `ThreadListView` on the right for the thread canvas, inspector, and action bars.
 - `BetterMail/Sources/UI/ThreadListView.swift` composes the main canvas stack:
   - `ThreadCanvasView` as the full-window canvas.
   - `ThreadInspectorView` as a right-side overlay panel.
   - `navigationBarOverlay` as the top bar above the canvas.
   - `selectionActionBar` as a bottom overlay for multi-select actions.
-- The older left sidebar thread list (vertical list of subjects/unread counts) has been removed; the canvas UI is the canonical surface. See `TechDocs/MigrationLog.md` for legacy removals.
+- Mailbox-folder actions in the selection bar target Apple Mail folders (existing or newly created), while `Add to Thread Folder` keeps using BetterMail's internal canvas grouping feature.
+- New canvas folders automatically inherit a mailbox destination when every selected node already resolves to the same account/mailbox path.
+- The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable hierarchical folder selector to make destination picking clearer.
+- Mailbox-folder move actions are thread-scoped: selecting any node in a thread moves all cached messages in that thread to keep mailbox/thread state consistent.
+- The selection bar's mailbox status line is also thread-scoped: it only appears while that thread remains selected and auto-clears after 5 minutes.
+- Mailbox-folder move execution now requires cached Apple Mail internal IDs and uses source-mailbox-scoped lookups to reduce move latency on long threads.
+- Successful mailbox-thread moves register a persistent auto-follow rule so future off-destination messages in that thread are moved to the same mailbox folder on subsequent refresh passes.
+- When a canvas folder contains exactly one thread, a successful mailbox move of that thread updates the folder's mailbox destination to match.
+- Sidebar folder reordering is local to BetterMail and does not modify folder order inside Apple Mail.
+- Opening the mailbox-folder move sheet now triggers a hierarchy refresh when account/folder destinations are missing, and hierarchy reads automatically retry AppleEvent timeout failures before surfacing an error.
+- `All Inboxes` remains inbox-only. Messages moved out of inbox appear in `All Emails` and in their destination folder scope after refresh/rethread reconciliation. `All Folders` shows only foldered threads, hides date-rail labels, and bypasses day-window node filtering so folder members remain visible in dense rows.
+- The global Refresh button keeps the same mailbox-scoped behavior in every view. Folder-specific refresh is exposed separately in the folder inspector via `Refresh Threads`, which refreshes the selected folder's threads plus any nested sub-folder threads by scanning the relevant mailboxes for matching normalized subjects without altering manual-group attachments.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:

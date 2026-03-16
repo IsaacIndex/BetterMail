@@ -3,17 +3,26 @@ import SwiftUI
 
 internal struct ThreadFolderInspectorView: View {
     internal let folder: ThreadFolder
+    internal let mailboxAccounts: [MailboxAccount]
+    internal let isMailboxHierarchyLoading: Bool
+    internal let mailboxEditingDisabledReason: String?
+    internal let preferredMailboxAccount: String?
+    internal let textScale: CGFloat
     internal let minimapModel: FolderMinimapModel?
     internal let minimapSelectedNodeID: String?
     internal let minimapViewportRect: CGRect?
     internal let summaryState: ThreadSummaryState?
     internal let canRegenerateSummary: Bool
+    internal let isRefreshingFolderThreads: Bool
     internal let onRegenerateSummary: (() -> Void)?
     internal let onMinimapJump: (CGPoint) -> Void
     internal let onJumpToLatest: () -> Void
     internal let onJumpToOldest: () -> Void
-    internal let onPreview: (String, ThreadFolderColor) -> Void
-    internal let onSave: (String, ThreadFolderColor) -> Void
+    internal let onRefreshFolderThreads: () -> Void
+    internal let onRefreshMailboxHierarchy: () -> Void
+    internal let onRecalibrateColor: () -> ThreadFolderColor?
+    internal let onPreview: (String, ThreadFolderColor, String?, String?) -> Void
+    internal let onSave: (String, ThreadFolderColor, String?, String?) -> Void
 
     internal static let minimapHeight: CGFloat = 160
 
@@ -22,50 +31,95 @@ internal struct ThreadFolderInspectorView: View {
 
     @State private var draftTitle: String
     @State private var draftColor: Color
+    @State private var draftMailboxAccount: String?
+    @State private var draftMailboxPath: String?
     @State private var baselineTitle: String
     @State private var baselineColor: ThreadFolderColor
+    @State private var baselineMailboxAccount: String?
+    @State private var baselineMailboxPath: String?
     @State private var isResettingDraft = false
     @State private var pendingSaveTask: Task<Void, Never>?
 
     internal init(folder: ThreadFolder,
+                  mailboxAccounts: [MailboxAccount],
+                  isMailboxHierarchyLoading: Bool,
+                  mailboxEditingDisabledReason: String?,
+                  preferredMailboxAccount: String?,
+                  textScale: CGFloat,
                   minimapModel: FolderMinimapModel?,
                   minimapSelectedNodeID: String?,
                   minimapViewportRect: CGRect?,
                   summaryState: ThreadSummaryState?,
                   canRegenerateSummary: Bool,
+                  isRefreshingFolderThreads: Bool,
                   onRegenerateSummary: (() -> Void)?,
                   onMinimapJump: @escaping (CGPoint) -> Void,
                   onJumpToLatest: @escaping () -> Void,
                   onJumpToOldest: @escaping () -> Void,
-                  onPreview: @escaping (String, ThreadFolderColor) -> Void,
-                  onSave: @escaping (String, ThreadFolderColor) -> Void) {
+                  onRefreshFolderThreads: @escaping () -> Void,
+                  onRefreshMailboxHierarchy: @escaping () -> Void,
+                  onRecalibrateColor: @escaping () -> ThreadFolderColor?,
+                  onPreview: @escaping (String, ThreadFolderColor, String?, String?) -> Void,
+                  onSave: @escaping (String, ThreadFolderColor, String?, String?) -> Void) {
         self.folder = folder
+        self.mailboxAccounts = mailboxAccounts
+        self.isMailboxHierarchyLoading = isMailboxHierarchyLoading
+        self.mailboxEditingDisabledReason = mailboxEditingDisabledReason
+        self.preferredMailboxAccount = preferredMailboxAccount
+        self.textScale = textScale
         self.minimapModel = minimapModel
         self.minimapSelectedNodeID = minimapSelectedNodeID
         self.minimapViewportRect = minimapViewportRect
         self.summaryState = summaryState
         self.canRegenerateSummary = canRegenerateSummary
+        self.isRefreshingFolderThreads = isRefreshingFolderThreads
         self.onRegenerateSummary = onRegenerateSummary
         self.onMinimapJump = onMinimapJump
         self.onJumpToLatest = onJumpToLatest
         self.onJumpToOldest = onJumpToOldest
+        self.onRefreshFolderThreads = onRefreshFolderThreads
+        self.onRefreshMailboxHierarchy = onRefreshMailboxHierarchy
+        self.onRecalibrateColor = onRecalibrateColor
         self.onPreview = onPreview
         self.onSave = onSave
         let initialColor = Color(red: folder.color.red,
                                  green: folder.color.green,
                                  blue: folder.color.blue,
                                  opacity: folder.color.alpha)
+        let initialMailboxAccount = folder.mailboxDestination?.account ?? preferredMailboxAccount
+        let initialMailboxPath = folder.mailboxDestination?.path
         _draftTitle = State(initialValue: folder.title)
         _draftColor = State(initialValue: initialColor)
+        _draftMailboxAccount = State(initialValue: initialMailboxAccount)
+        _draftMailboxPath = State(initialValue: initialMailboxPath)
         _baselineTitle = State(initialValue: folder.title)
         _baselineColor = State(initialValue: folder.color)
+        _baselineMailboxAccount = State(initialValue: folder.mailboxDestination?.account)
+        _baselineMailboxPath = State(initialValue: folder.mailboxDestination?.path)
     }
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("threadcanvas.folder.inspector.title",
-                                   comment: "Title for the folder inspector panel"))
-                .font(.headline)
+            HStack(alignment: .center, spacing: 8) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.title",
+                                       comment: "Title for the folder inspector panel"))
+                    .font(font(size: 13, weight: .semibold))
+                Spacer()
+                Button(action: onRefreshFolderThreads) {
+                    Label(NSLocalizedString("threadcanvas.folder.inspector.refresh_threads",
+                                            comment: "Button label for refreshing the selected folder threads"),
+                          systemImage: "arrow.clockwise")
+                        .labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .disabled(isRefreshingFolderThreads)
+                .help(NSLocalizedString("threadcanvas.folder.inspector.refresh_threads.help",
+                                        comment: "Help text for refreshing the selected folder threads"))
+                if isRefreshingFolderThreads {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
 
             Divider()
 
@@ -77,6 +131,7 @@ internal struct ThreadFolderInspectorView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     folderNameField
                     folderColorPicker
+                    folderMailboxField
                     folderSummaryField
                     folderPreview
                 }
@@ -94,6 +149,16 @@ internal struct ThreadFolderInspectorView: View {
         .onChange(of: folder.id) { _, _ in
             resetDraft(with: folder)
         }
+        .onChange(of: draftMailboxAccount) { _, newValue in
+            guard !isResettingDraft else { return }
+            if let account = newValue, !mailboxChoices(for: account).contains(where: { $0.path == draftMailboxPath }) {
+                draftMailboxPath = mailboxChoices(for: account).first?.path
+            }
+            updatePreviewIfNeeded()
+        }
+        .onChange(of: draftMailboxPath) { _, _ in
+            updatePreviewIfNeeded()
+        }
         .onDisappear {
             flushPendingSave()
         }
@@ -104,12 +169,12 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.minimap",
                                        comment: "Folder minimap section label"))
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Spacer()
                 Button(action: onJumpToLatest) {
                     Image(systemName: "arrow.up.to.line.compact")
-                        .font(.caption)
+                        .font(font(size: 12))
                 }
                 .buttonStyle(.plain)
                 .controlSize(.mini)
@@ -120,7 +185,7 @@ internal struct ThreadFolderInspectorView: View {
                                         comment: "Help text for jump to latest folder node"))
                 Button(action: onJumpToOldest) {
                     Image(systemName: "arrow.down.to.line.compact")
-                        .font(.caption)
+                        .font(font(size: 12))
                 }
                 .buttonStyle(.plain)
                 .controlSize(.mini)
@@ -131,6 +196,7 @@ internal struct ThreadFolderInspectorView: View {
                                         comment: "Help text for jump to oldest folder node"))
             }
             FolderMinimapSurface(model: minimapModel,
+                                 textScale: textScale,
                                  selectedNodeID: minimapSelectedNodeID,
                                  viewportRect: minimapViewportRect,
                                  foreground: inspectorPrimaryForegroundStyle,
@@ -144,9 +210,10 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.name",
                                    comment: "Folder name field label"))
-                .font(.caption)
+                .font(font(size: 12))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             TextField("", text: $draftTitle)
+                .font(font(size: 13))
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: draftTitle) { _, _ in
                     updatePreviewIfNeeded()
@@ -156,10 +223,21 @@ internal struct ThreadFolderInspectorView: View {
 
     private var folderColorPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(NSLocalizedString("threadcanvas.folder.inspector.color",
-                                   comment: "Folder color picker label"))
-                .font(.caption)
-                .foregroundStyle(inspectorSecondaryForegroundStyle)
+            HStack(spacing: 8) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.color",
+                                       comment: "Folder color picker label"))
+                    .font(font(size: 12))
+                    .foregroundStyle(inspectorSecondaryForegroundStyle)
+                Spacer()
+                Button(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate",
+                                         comment: "Button to recalibrate a folder color to match the current palette")) {
+                    applyRecalibratedColor()
+                }
+                .buttonStyle(.link)
+                .font(font(size: 11))
+                .help(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate.help",
+                                        comment: "Help text for recalibrating a folder color"))
+            }
             ColorPicker("", selection: $draftColor, supportsOpacity: true)
                 .labelsHidden()
                 .onChange(of: draftColor) { _, _ in
@@ -168,11 +246,79 @@ internal struct ThreadFolderInspectorView: View {
         }
     }
 
+    private var folderMailboxField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.mailbox",
+                                       comment: "Folder mailbox field label"))
+                    .font(font(size: 12))
+                    .foregroundStyle(inspectorSecondaryForegroundStyle)
+                Spacer()
+                Button(NSLocalizedString("threadcanvas.folder.inspector.mailbox.clear",
+                                         comment: "Button to clear a folder mailbox destination")) {
+                    draftMailboxAccount = preferredMailboxAccount
+                    draftMailboxPath = nil
+                    updatePreviewIfNeeded()
+                }
+                .buttonStyle(.link)
+                .font(font(size: 11))
+                .disabled(draftMailboxPath == nil && folder.mailboxDestination == nil)
+
+                Button(action: onRefreshMailboxHierarchy) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(font(size: 11))
+                }
+                .buttonStyle(.plain)
+                .help(NSLocalizedString("threadcanvas.folder.inspector.mailbox.refresh",
+                                        comment: "Help text for refreshing mailbox hierarchy"))
+                .disabled(isMailboxHierarchyLoading)
+            }
+
+            if let mailboxEditingDisabledReason {
+                Text(mailboxEditingDisabledReason)
+                    .font(font(size: 11))
+                    .foregroundStyle(inspectorSecondaryForegroundStyle)
+            }
+
+            Picker(NSLocalizedString("threadcanvas.folder.inspector.mailbox.account",
+                                     comment: "Folder mailbox account picker label"),
+                   selection: $draftMailboxAccount) {
+                Text(NSLocalizedString("threadcanvas.folder.inspector.mailbox.none",
+                                       comment: "Folder mailbox none option"))
+                    .tag(Optional<String>.none)
+                ForEach(mailboxAccounts, id: \.name) { account in
+                    Text(account.name).tag(Optional(account.name))
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled((mailboxEditingDisabledReason != nil && folder.mailboxDestination == nil) || mailboxAccounts.isEmpty)
+
+            if let draftMailboxAccount {
+                Picker(NSLocalizedString("threadcanvas.folder.inspector.mailbox.folder",
+                                         comment: "Folder mailbox path picker label"),
+                       selection: $draftMailboxPath) {
+                    Text(NSLocalizedString("threadcanvas.folder.inspector.mailbox.none",
+                                           comment: "Folder mailbox none option"))
+                        .tag(Optional<String>.none)
+                    ForEach(mailboxChoices(for: draftMailboxAccount), id: \.id) { choice in
+                        Text(choice.displayPath).tag(Optional(choice.path))
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled((mailboxEditingDisabledReason != nil && folder.mailboxDestination == nil) || mailboxChoices(for: draftMailboxAccount).isEmpty)
+            }
+
+            Text(mailboxSelectionLabel)
+                .font(font(size: 11))
+                .foregroundStyle(inspectorSecondaryForegroundStyle)
+        }
+    }
+
     private var folderPreview: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.preview",
                                    comment: "Folder preview label"))
-                .font(.caption)
+                .font(font(size: 12))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(draftColor.opacity(0.4))
@@ -185,7 +331,7 @@ internal struct ThreadFolderInspectorView: View {
                          ? NSLocalizedString("threadcanvas.subject.placeholder",
                                              comment: "Placeholder subject when missing")
                          : draftTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(font(size: 13, weight: .semibold))
                         .foregroundStyle(inspectorPrimaryForegroundStyle)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
@@ -206,12 +352,12 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.summary",
                                        comment: "Folder summary label"))
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 if let onRegenerateSummary {
                     Button(action: onRegenerateSummary) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.caption)
+                            .font(font(size: 12))
                     }
                     .buttonStyle(.plain)
                     .controlSize(.mini)
@@ -228,7 +374,7 @@ internal struct ThreadFolderInspectorView: View {
             }
             ScrollView {
                 Text(displayText)
-                    .font(.callout)
+                    .font(font(size: 13))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .padding(8)
@@ -305,11 +451,43 @@ internal struct ThreadFolderInspectorView: View {
         return !minimapModel.nodes.isEmpty
     }
 
+    private var mailboxSelectionLabel: String {
+        guard let account = effectiveMailboxDestination?.account,
+              let path = effectiveMailboxDestination?.path else {
+            return NSLocalizedString("threadcanvas.folder.inspector.mailbox.none",
+                                     comment: "Folder mailbox none option")
+        }
+        return "\(account) / \(path)"
+    }
+
+    private var effectiveMailboxDestination: (account: String, path: String)? {
+        let trimmedAccount = draftMailboxAccount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedPath = draftMailboxPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedAccount.isEmpty, !trimmedPath.isEmpty else { return nil }
+        return (trimmedAccount, trimmedPath)
+    }
+
+    private func mailboxChoices(for account: String) -> [MailboxFolderChoice] {
+        guard let mailboxAccount = mailboxAccounts.first(where: { $0.name == account }) else { return [] }
+        return MailboxHierarchyBuilder.folderChoices(for: mailboxAccount)
+    }
+
     private func updatePreviewIfNeeded() {
         guard !isResettingDraft else { return }
         let color = draftFolderColor
-        onPreview(draftTitle, color)
-        scheduleSaveIfNeeded(title: draftTitle, color: color)
+        onPreview(draftTitle, color, effectiveMailboxDestination?.account, effectiveMailboxDestination?.path)
+        scheduleSaveIfNeeded(title: draftTitle,
+                             color: color,
+                             mailboxAccount: effectiveMailboxDestination?.account,
+                             mailboxPath: effectiveMailboxDestination?.path)
+    }
+
+    private func applyRecalibratedColor() {
+        guard let recalibratedColor = onRecalibrateColor() else { return }
+        draftColor = Color(red: recalibratedColor.red,
+                           green: recalibratedColor.green,
+                           blue: recalibratedColor.blue,
+                           opacity: recalibratedColor.alpha)
     }
 
     private func resetDraft(with folder: ThreadFolder) {
@@ -321,22 +499,34 @@ internal struct ThreadFolderInspectorView: View {
                            green: folder.color.green,
                            blue: folder.color.blue,
                            opacity: folder.color.alpha)
+        draftMailboxAccount = folder.mailboxDestination?.account ?? preferredMailboxAccount
+        draftMailboxPath = folder.mailboxDestination?.path
         baselineTitle = folder.title
         baselineColor = folder.color
+        baselineMailboxAccount = folder.mailboxDestination?.account
+        baselineMailboxPath = folder.mailboxDestination?.path
         DispatchQueue.main.async {
             isResettingDraft = false
         }
     }
 
-    private func scheduleSaveIfNeeded(title: String, color: ThreadFolderColor) {
-        guard title != baselineTitle || color != baselineColor else { return }
+    private func scheduleSaveIfNeeded(title: String,
+                                      color: ThreadFolderColor,
+                                      mailboxAccount: String?,
+                                      mailboxPath: String?) {
+        guard title != baselineTitle ||
+                color != baselineColor ||
+                mailboxAccount != baselineMailboxAccount ||
+                mailboxPath != baselineMailboxPath else { return }
         pendingSaveTask?.cancel()
         pendingSaveTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
-            onSave(title, color)
+            onSave(title, color, mailboxAccount, mailboxPath)
             baselineTitle = title
             baselineColor = color
+            baselineMailboxAccount = mailboxAccount
+            baselineMailboxPath = mailboxPath
         }
     }
 
@@ -345,15 +535,27 @@ internal struct ThreadFolderInspectorView: View {
         pendingSaveTask?.cancel()
         pendingSaveTask = nil
         let color = draftFolderColor
-        guard draftTitle != baselineTitle || color != baselineColor else { return }
-        onSave(draftTitle, color)
+        let mailboxAccount = effectiveMailboxDestination?.account
+        let mailboxPath = effectiveMailboxDestination?.path
+        guard draftTitle != baselineTitle ||
+                color != baselineColor ||
+                mailboxAccount != baselineMailboxAccount ||
+                mailboxPath != baselineMailboxPath else { return }
+        onSave(draftTitle, color, mailboxAccount, mailboxPath)
         baselineTitle = draftTitle
         baselineColor = color
+        baselineMailboxAccount = mailboxAccount
+        baselineMailboxPath = mailboxPath
+    }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
     }
 }
 
 internal struct FolderMinimapSurface: View {
     let model: FolderMinimapModel?
+    let textScale: CGFloat
     let selectedNodeID: String?
     let viewportRect: CGRect?
     let foreground: Color
@@ -445,7 +647,7 @@ internal struct FolderMinimapSurface: View {
                             let text = Self.timeFormatter.string(from: tick.date)
                             let resolved = context.resolve(
                                 Text(text)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: 9 * textScale, weight: .medium))
                                     .foregroundStyle(secondaryForeground)
                             )
                             context.draw(resolved,
@@ -456,7 +658,7 @@ internal struct FolderMinimapSurface: View {
                 } else {
                     Text(NSLocalizedString("threadcanvas.folder.inspector.minimap.empty",
                                            comment: "Placeholder text when minimap has no nodes"))
-                        .font(.caption)
+                        .font(.system(size: 12 * textScale))
                         .foregroundStyle(secondaryForeground)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 10)

@@ -77,6 +77,7 @@ internal final class MessageStore {
                 entity.messageID = message.messageID
                 let normalized = message.normalizedMessageID.isEmpty ? message.id.uuidString.lowercased() : message.normalizedMessageID
                 entity.normalizedMessageID = normalized
+                entity.internalMailID = message.internalMailID
                 entity.mailboxID = message.mailboxID
                 entity.accountName = message.accountName
                 entity.subject = message.subject
@@ -98,18 +99,38 @@ internal final class MessageStore {
     }
 
     internal func fetchMessages(limit: Int? = nil) async throws -> [EmailMessage] {
-        try await fetchMessages(since: nil, limit: limit)
+        try await fetchMessages(since: nil,
+                                limit: limit,
+                                mailbox: nil,
+                                account: nil,
+                                includeAllInboxesAliases: false)
     }
 
-    internal func fetchMessages(since date: Date?, limit: Int? = nil) async throws -> [EmailMessage] {
+    internal func fetchMessages(since date: Date?,
+                                limit: Int? = nil,
+                                mailbox: String? = nil,
+                                account: String? = nil,
+                                includeAllInboxesAliases: Bool = false) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
             request.sortDescriptors = [
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
             ]
+            var predicates: [NSPredicate] = []
             if let date {
-                request.predicate = NSPredicate(format: "date >= %@", date as NSDate)
+                predicates.append(NSPredicate(format: "date >= %@", date as NSDate))
+            }
+            if let mailbox {
+                predicates.append(self.mailboxPredicate(mailbox: mailbox,
+                                                        includeAllInboxesAliases: includeAllInboxesAliases))
+            }
+            let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedAccount.isEmpty {
+                predicates.append(NSPredicate(format: "accountName ==[c] %@", trimmedAccount))
+            }
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
@@ -132,7 +153,7 @@ internal final class MessageStore {
 
                 let mailboxRequest: NSFetchRequest<NSFetchRequestResult> = MessageEntity.fetchRequest()
                 mailboxRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: basePredicates + [
-                    NSPredicate(format: "mailboxID ==[c] %@", mailbox)
+                    self.mailboxPredicate(mailbox: mailbox, includeAllInboxesAliases: false)
                 ])
                 let mailboxCount = try context.count(for: mailboxRequest)
 
@@ -163,6 +184,8 @@ internal final class MessageStore {
 
     internal func fetchMessages(in range: DateInterval,
                                 mailbox: String? = nil,
+                                account: String? = nil,
+                                includeAllInboxesAliases: Bool = false,
                                 limit: Int? = nil,
                                 offset: Int = 0) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
@@ -176,7 +199,12 @@ internal final class MessageStore {
                 NSPredicate(format: "date <= %@", range.end as NSDate)
             ]
             if let mailbox {
-                predicates.append(NSPredicate(format: "mailboxID ==[c] %@", mailbox))
+                predicates.append(self.mailboxPredicate(mailbox: mailbox,
+                                                        includeAllInboxesAliases: includeAllInboxesAliases))
+            }
+            let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedAccount.isEmpty {
+                predicates.append(NSPredicate(format: "accountName ==[c] %@", trimmedAccount))
             }
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             if let limit {
@@ -297,7 +325,9 @@ internal final class MessageStore {
                              title: folder.title,
                              color: colorsByFolder[folder.id] ?? ThreadFolderColor(red: 0.6, green: 0.6, blue: 0.7, alpha: 1),
                              threadIDs: threadIDsByFolder[folder.id, default: []],
-                             parentID: folder.parentID)
+                             parentID: folder.parentID,
+                             mailboxAccount: folder.mailboxAccount,
+                             mailboxPath: folder.mailboxPath)
             }
         }
     }
@@ -328,6 +358,8 @@ internal final class MessageStore {
                 entity.id = folder.id
                 entity.title = folder.title
                 entity.parentID = folder.parentID
+                entity.mailboxAccount = folder.mailboxDestination?.account
+                entity.mailboxPath = folder.mailboxDestination?.path
                 folderLookup[folder.id] = entity
 
                 let color = ThreadFolderColorEntity(context: context)
@@ -430,21 +462,38 @@ internal final class MessageStore {
         return try await container.performBackgroundTask { context in
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             request.predicate = NSPredicate(format: "scope == %@ AND scopeID IN %@", scope.rawValue, ids)
-            return try context.fetch(request).map { $0.toModel() }
+            let entities = try context.fetch(request)
+            return Self.deduplicatedSummaryEntries(from: entities.map { $0.toModel() })
         }
     }
 
     internal func upsertSummaries(_ summaries: [SummaryCacheEntry]) async throws {
         guard !summaries.isEmpty else { return }
         try await container.performBackgroundTask { context in
-            let ids = summaries.map(\.scopeID)
-            let scopes = Set(summaries.map(\.scope))
+            let dedupedSummaries = Self.deduplicatedSummaryEntries(from: summaries)
+            let ids = dedupedSummaries.map(\.scopeID)
+            let scopes = Set(dedupedSummaries.map(\.scope))
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             request.predicate = NSPredicate(format: "scope IN %@ AND scopeID IN %@", scopes.map(\.rawValue), ids)
             let existing = try context.fetch(request)
-            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ("\($0.scope)|\($0.scopeID)", $0) })
+            var lookup: [String: SummaryCacheEntity] = [:]
 
-            for summary in summaries {
+            for entity in existing {
+                let key = "\(entity.scope)|\(entity.scopeID)"
+                if let prior = lookup[key] {
+                    let shouldKeepEntity = prior.generatedAt >= entity.generatedAt
+                    if shouldKeepEntity {
+                        context.delete(entity)
+                    } else {
+                        context.delete(prior)
+                        lookup[key] = entity
+                    }
+                } else {
+                    lookup[key] = entity
+                }
+            }
+
+            for summary in dedupedSummaries {
                 let key = "\(summary.scope.rawValue)|\(summary.scopeID)"
                 let entity = lookup[key] ?? SummaryCacheEntity(context: context)
                 entity.scope = summary.scope.rawValue
@@ -644,6 +693,38 @@ internal final class MessageStore {
         }
     }
 
+    private func mailboxPredicate(mailbox: String, includeAllInboxesAliases: Bool) -> NSPredicate {
+        let trimmedMailbox = mailbox.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMailbox.isEmpty else {
+            return NSPredicate(value: false)
+        }
+
+        if includeAllInboxesAliases {
+            let inboxAliases = ["inbox", "all inboxes"]
+            let aliasPredicates = inboxAliases.map {
+                NSPredicate(format: "mailboxID ==[c] %@", $0)
+            }
+            return NSCompoundPredicate(orPredicateWithSubpredicates: aliasPredicates)
+        }
+
+        return NSPredicate(format: "mailboxID ==[c] %@", trimmedMailbox)
+    }
+
+    private static func deduplicatedSummaryEntries(from entries: [SummaryCacheEntry]) -> [SummaryCacheEntry] {
+        var deduped: [String: SummaryCacheEntry] = [:]
+        deduped.reserveCapacity(entries.count)
+
+        for entry in entries {
+            let key = "\(entry.scope.rawValue)|\(entry.scopeID)"
+            if let prior = deduped[key], prior.generatedAt >= entry.generatedAt {
+                continue
+            }
+            deduped[key] = entry
+        }
+
+        return Array(deduped.values)
+    }
+
     private static func makeModel() -> NSManagedObjectModel {
         let model = NSManagedObjectModel()
 
@@ -667,6 +748,12 @@ internal final class MessageStore {
         normalizedAttr.attributeType = .stringAttributeType
         normalizedAttr.isOptional = false
         normalizedAttr.isIndexed = true
+
+        let internalMailIDAttr = NSAttributeDescription()
+        internalMailIDAttr.name = "internalMailID"
+        internalMailIDAttr.attributeType = .stringAttributeType
+        internalMailIDAttr.isOptional = true
+        internalMailIDAttr.isIndexed = true
 
         let mailboxAttr = NSAttributeDescription()
         mailboxAttr.name = "mailboxID"
@@ -734,6 +821,7 @@ internal final class MessageStore {
             idAttr,
             msgIDAttr,
             normalizedAttr,
+            internalMailIDAttr,
             mailboxAttr,
             accountAttr,
             subjectAttr,
@@ -888,7 +976,23 @@ internal final class MessageStore {
         threadFolderParentIDAttr.isOptional = true
         threadFolderParentIDAttr.isIndexed = true
 
-        threadFolderEntity.properties = [threadFolderIDAttr, threadFolderTitleAttr, threadFolderParentIDAttr]
+        let threadFolderMailboxAccountAttr = NSAttributeDescription()
+        threadFolderMailboxAccountAttr.name = "mailboxAccount"
+        threadFolderMailboxAccountAttr.attributeType = .stringAttributeType
+        threadFolderMailboxAccountAttr.isOptional = true
+
+        let threadFolderMailboxPathAttr = NSAttributeDescription()
+        threadFolderMailboxPathAttr.name = "mailboxPath"
+        threadFolderMailboxPathAttr.attributeType = .stringAttributeType
+        threadFolderMailboxPathAttr.isOptional = true
+
+        threadFolderEntity.properties = [
+            threadFolderIDAttr,
+            threadFolderTitleAttr,
+            threadFolderParentIDAttr,
+            threadFolderMailboxAccountAttr,
+            threadFolderMailboxPathAttr
+        ]
 
         let threadFolderColorEntity = NSEntityDescription()
         threadFolderColorEntity.name = "ThreadFolderColorEntity"
@@ -1172,6 +1276,7 @@ internal final class MessageEntity: NSManagedObject {
     @NSManaged var id: UUID
     @NSManaged var messageID: String
     @NSManaged var normalizedMessageID: String
+    @NSManaged var internalMailID: String?
     @NSManaged var mailboxID: String
     @NSManaged var accountName: String?
     @NSManaged var subject: String
@@ -1195,6 +1300,7 @@ internal final class MessageEntity: NSManagedObject {
         let rawURL = rawSourcePath.flatMap { URL(fileURLWithPath: $0) }
         return EmailMessage(id: id,
                             messageID: messageID,
+                            internalMailID: internalMailID,
                             mailboxID: mailboxID,
                             accountName: accountName ?? "",
                             subject: subject,
@@ -1293,6 +1399,8 @@ internal final class ThreadFolderEntity: NSManagedObject {
     @NSManaged var id: String
     @NSManaged var title: String
     @NSManaged var parentID: String?
+    @NSManaged var mailboxAccount: String?
+    @NSManaged var mailboxPath: String?
 }
 
 internal extension ThreadFolderEntity {

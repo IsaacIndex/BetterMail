@@ -3,6 +3,7 @@ import Foundation
 internal struct EmailMessage: Identifiable, Hashable {
     internal let id: UUID
     internal let messageID: String
+    internal let internalMailID: String?
     internal let mailboxID: String
     internal let accountName: String
     internal let subject: String
@@ -18,6 +19,7 @@ internal struct EmailMessage: Identifiable, Hashable {
 
     internal init(id: UUID = UUID(),
                   messageID: String,
+                  internalMailID: String? = nil,
                   mailboxID: String,
                   accountName: String,
                   subject: String,
@@ -32,6 +34,7 @@ internal struct EmailMessage: Identifiable, Hashable {
                   rawSourceLocation: URL? = nil) {
         self.id = id
         self.messageID = messageID
+        self.internalMailID = internalMailID
         self.mailboxID = mailboxID
         self.accountName = accountName
         self.subject = subject
@@ -58,6 +61,43 @@ internal struct EmailMessage: Identifiable, Hashable {
     internal func assigning(threadID: String?) -> EmailMessage {
         EmailMessage(id: id,
                      messageID: messageID,
+                     internalMailID: internalMailID,
+                     mailboxID: mailboxID,
+                     accountName: accountName,
+                     subject: subject,
+                     from: from,
+                     to: to,
+                     date: date,
+                     snippet: snippet,
+                     isUnread: isUnread,
+                     inReplyTo: inReplyTo,
+                     references: references,
+                     threadID: threadID,
+                     rawSourceLocation: rawSourceLocation)
+    }
+
+    internal func assigning(internalMailID: String?) -> EmailMessage {
+        EmailMessage(id: id,
+                     messageID: messageID,
+                     internalMailID: internalMailID,
+                     mailboxID: mailboxID,
+                     accountName: accountName,
+                     subject: subject,
+                     from: from,
+                     to: to,
+                     date: date,
+                     snippet: snippet,
+                     isUnread: isUnread,
+                     inReplyTo: inReplyTo,
+                     references: references,
+                     threadID: threadID,
+                     rawSourceLocation: rawSourceLocation)
+    }
+
+    internal func assigning(mailboxID: String, accountName: String) -> EmailMessage {
+        EmailMessage(id: id,
+                     messageID: messageID,
+                     internalMailID: internalMailID,
                      mailboxID: mailboxID,
                      accountName: accountName,
                      subject: subject,
@@ -85,4 +125,47 @@ internal extension EmailMessage {
                                           isUnread: false,
                                           inReplyTo: nil,
                                           references: [])
+}
+
+internal enum MailboxRefreshSubjectNormalizer {
+    private static let replyPrefixes = ["re:", "fw:", "fwd:", "aw:", "sv:", "wg:"]
+
+    internal static func normalize(_ subject: String) -> String {
+        var normalized = collapseWhitespace(subject)
+        guard !normalized.isEmpty else { return "" }
+
+        for _ in 0..<12 {
+            let previous = normalized
+            normalized = stripLeadingBracketToken(normalized)
+
+            let lowered = normalized.lowercased()
+            if let prefix = replyPrefixes.first(where: { lowered.hasPrefix($0) }) {
+                normalized = String(normalized.dropFirst(prefix.count))
+            }
+
+            normalized = collapseWhitespace(normalized)
+            if normalized == previous {
+                break
+            }
+        }
+
+        return normalized.lowercased()
+    }
+
+    private static func stripLeadingBracketToken(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("["),
+              let closing = trimmed.firstIndex(of: "]") else {
+            return trimmed
+        }
+        let suffix = trimmed[trimmed.index(after: closing)...]
+        return String(suffix).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func collapseWhitespace(_ value: String) -> String {
+        value
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }

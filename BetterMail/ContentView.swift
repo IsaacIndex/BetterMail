@@ -21,10 +21,16 @@ internal struct ContentView: View {
     }
 
     internal var body: some View {
-        ThreadListView(viewModel: viewModel,
-                       settings: settings,
-                       inspectorSettings: inspectorSettings,
-                       displaySettings: displaySettings)
-            .frame(minWidth: 720, minHeight: 520)
+        NavigationSplitView {
+            MailboxSidebarView(viewModel: viewModel)
+                .frame(minWidth: 220, idealWidth: 260)
+        } detail: {
+            ThreadListView(viewModel: viewModel,
+                           settings: settings,
+                           inspectorSettings: inspectorSettings,
+                           displaySettings: displaySettings)
+                .frame(minWidth: 720, minHeight: 520)
+        }
+        .navigationSplitViewStyle(.balanced)
     }
 }

@@ -100,6 +100,19 @@ internal struct AutoRefreshSettingsView: View {
                         .monospacedDigit()
                 }
 
+                LabeledContent(NSLocalizedString("settings.canvas.text_size", comment: "Label for relative thread canvas text size")) {
+                    Stepper(
+                        value: textScaleBinding,
+                        in: Double(ThreadCanvasDisplaySettings.minimumTextScale)...Double(ThreadCanvasDisplaySettings.maximumTextScale),
+                        step: 0.05
+                    ) {
+                        Text(textScaleBinding.wrappedValue,
+                             format: .percent.precision(.fractionLength(0)))
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                }
+
                 LabeledContent(NSLocalizedString("settings.canvas.zoom.detailed", comment: "Label for detailed zoom threshold")) {
                     Stepper(
                         value: detailedThresholdBinding,
@@ -151,6 +164,21 @@ internal struct AutoRefreshSettingsView: View {
                 DatePicker(NSLocalizedString("settings.backfill.end", comment: "Label for backfill end date"),
                            selection: $backfillViewModel.endDate,
                            displayedComponents: .date)
+                LabeledContent(NSLocalizedString("settings.backfill.batch_size", comment: "Label for preferred batch size setting")) {
+                    Stepper(
+                        value: $backfillViewModel.preferredBatchSize,
+                        in: BatchBackfillSettingsViewModel.minimumPreferredBatchSize...BatchBackfillSettingsViewModel.maximumPreferredBatchSize,
+                        step: 1
+                    ) {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("settings.backfill.batch_size.value", comment: "Value label for preferred batch size setting"),
+                            backfillViewModel.preferredBatchSize
+                        ))
+                        .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .trailing)
+                    .disabled(backfillViewModel.isRunning)
+                }
 
                 HStack(spacing: 12) {
                     Button {
@@ -180,6 +208,21 @@ internal struct AutoRefreshSettingsView: View {
                     .disabled(backfillViewModel.isRunning)
                     .accessibilityHint(Text(NSLocalizedString("settings.regenai.accessibility.hint",
                                                               comment: "Accessibility hint for starting Re-GenAI")))
+
+                    if backfillViewModel.isRunning {
+                        Button(role: .destructive) {
+                            backfillViewModel.cancelCurrentRun()
+                        } label: {
+                            if backfillViewModel.isStopping {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(NSLocalizedString("settings.backfill.stop", comment: "Button label to stop the current batch operation"))
+                        }
+                        .disabled(backfillViewModel.isStopping)
+                        .accessibilityHint(Text(NSLocalizedString("settings.backfill.stop.hint",
+                                                                  comment: "Accessibility hint for stopping the current batch operation")))
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -194,6 +237,11 @@ internal struct AutoRefreshSettingsView: View {
                         ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    }
+                    if let estimatedTimeRemainingText = backfillViewModel.estimatedTimeRemainingText {
+                        Text(estimatedTimeRemainingText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     if let error = backfillViewModel.errorMessage {
                         Text(error)
@@ -263,6 +311,13 @@ internal struct AutoRefreshSettingsView: View {
         Binding(
             get: { Double(displaySettings.detailedThreshold) },
             set: { displaySettings.detailedThreshold = CGFloat($0) }
+        )
+    }
+
+    private var textScaleBinding: Binding<Double> {
+        Binding(
+            get: { Double(displaySettings.textScale) },
+            set: { displaySettings.textScale = CGFloat($0) }
         )
     }
 

@@ -6,7 +6,8 @@ Source: `BetterMail/Sources/UI/ThreadCanvasView.swift`
 `ThreadCanvasView` builds a scrollable canvas and draws its content inside a `ZStack(alignment: .topLeading)`.
 The order of views in the ZStack defines the visual stacking (earlier = further back, later = on top).
 Timeline layout work is cached in the view model and visible-range updates are throttled to avoid per-scroll recomputation.
-During scrolling, the canvas renders only visible days, columns, and nodes (plus a small buffer) to reduce view work. Columns belonging to pinned folders are always rendered.
+The live scroll position used for paging/minimap updates comes from the native `NSScrollView` bounds observer (`ScrollViewResolver`) rather than parent-level SwiftUI `@State`.
+During scrolling, the canvas renders only visible days, columns, and nodes (plus a small buffer) to reduce view work. Columns belonging to pinned folders are always rendered. In `All Folders`, folder-member nodes are kept visible regardless of day-window position; in other scopes, pinned out-of-range folders still keep header chrome visible.
 
 ZStack draw order (back to front):
 1) `dayBands`
@@ -45,7 +46,7 @@ ZStack draw order (back to front):
 ### 5) connectorLayer
 - Role: Renders JWZ and manual connector lanes linking related nodes within each column.
 - Key inputs: `layout.columns`, `metrics`, `zoomScale` (for visual emphasis), selection state.
-- Notes: Uses `ThreadCanvasConnectorColumn` per column; highlights if any node is selected.
+- Notes: Uses `ThreadCanvasConnectorColumn` per visible column; highlights if any node is selected. Connector segments are computed from each column’s full node list so lines remain continuous across empty day ranges and offscreen spans.
 
 ### 6) nodesLayer
 - Role: Draws every message node and wires up selection + drag gesture handling.
@@ -65,7 +66,7 @@ ZStack draw order (back to front):
 ### 9) folderColumnHeaderLayer
 - Role: Draws the visual folder headers (title, summary, unread count, timestamps).
 - Key inputs: `chromeData`, `metrics`, `rawZoom`, `readabilityMode`, selection state.
-- Notes: Offset upward to sit above the day bands; hit testing disabled so clicks pass through.
+- Notes: Offset upward to sit above the day bands; hit testing disabled so clicks pass through. In non-`All Folders` scopes, pinned out-of-range folders remain visible here (including ancestor header context for nested pinned folders).
 
 ### 10) folderHeaderHitTargets
 - Role: Invisible buttons aligned with headers to handle folder selection.

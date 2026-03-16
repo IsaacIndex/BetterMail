@@ -6,6 +6,7 @@ internal struct ThreadInspectorView: View {
     internal let summaryState: ThreadSummaryState?
     internal let summaryExpansion: Binding<Bool>?
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    internal let textScale: CGFloat
     internal let openInMailState: OpenInMailState?
     internal let canRegenerateSummary: Bool
     internal let onRegenerateSummary: (() -> Void)?
@@ -27,7 +28,7 @@ internal struct ThreadInspectorView: View {
     internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
-                .font(.headline)
+                .font(font(size: 13, weight: .semibold))
 
             Divider()
 
@@ -56,12 +57,12 @@ internal struct ThreadInspectorView: View {
     private func details(for node: ThreadNode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(subjectText(for: node))
-                .font(.title3.weight(.semibold))
+                .font(font(size: 15, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
 
             if node.message.isUnread {
                 Label(NSLocalizedString("threadcanvas.inspector.unread", comment: "Unread indicator"), systemImage: "circle.fill")
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(Color.accentColor)
             }
 
@@ -69,24 +70,28 @@ internal struct ThreadInspectorView: View {
                 ThreadSummaryDisclosureView(title: NSLocalizedString("threadcanvas.inspector.summary.title",
                                                                      comment: "Title for the thread summary disclosure in the inspector"),
                                              state: summaryState,
+                                             textScale: textScale,
                                              onRegenerate: onRegenerateSummary,
                                              isRegenerateEnabled: canRegenerateSummary,
                                              isExpanded: summaryExpansion)
             }
 
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.from", comment: "From label"),
-                           value: node.message.from)
+                           value: node.message.from,
+                           textScale: textScale)
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.to", comment: "To label"),
-                           value: node.message.to)
+                           value: node.message.to,
+                           textScale: textScale)
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.date", comment: "Date label"),
-                           value: Self.dateFormatter.string(from: node.message.date))
+                           value: Self.dateFormatter.string(from: node.message.date),
+                           textScale: textScale)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(NSLocalizedString("threadcanvas.inspector.snippet", comment: "Snippet label"))
-                    .font(.caption)
+                    .font(font(size: 12))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Text(snippetText(for: node))
-                    .font(.callout)
+                    .font(font(size: 13))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -182,18 +187,18 @@ internal struct ThreadInspectorView: View {
 
     @ViewBuilder
     private func openInMailStatus(for node: ThreadNode) -> some View {
-        let status = Self.openInMailStatus(for: openInMailState, messageID: node.message.messageID)
+        let status = Self.openInMailStatus(for: openInMailState, messageKey: node.message.id.uuidString)
         VStack(alignment: .leading, spacing: 8) {
             statusLine(for: status)
             hintText(for: status)
             copyControls(for: node)
         }
-        .font(.caption)
+        .font(font(size: 12))
         .foregroundStyle(inspectorSecondaryForegroundStyle)
     }
 
-    internal static func openInMailStatus(for state: OpenInMailState?, messageID: String) -> OpenInMailStatus {
-        guard let state, state.messageID == messageID else { return .idle }
+    internal static func openInMailStatus(for state: OpenInMailState?, messageKey: String) -> OpenInMailStatus {
+        guard let state, state.messageKey == messageKey else { return .idle }
         return state.status
     }
 
@@ -202,18 +207,10 @@ internal struct ThreadInspectorView: View {
         switch status {
         case .idle:
             EmptyView()
-        case .searchingMessageID:
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching",
-                                    comment: "Open in Mail fallback search status"),
-                  systemImage: "magnifyingglass")
         case .searchingFilteredFallback:
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.searching_filtered",
                                     comment: "Open in Mail filtered fallback search status"),
                   systemImage: "magnifyingglass")
-        case .opened(.messageID):
-            Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_message_id",
-                                    comment: "Open in Mail success status using Message-ID"),
-                  systemImage: "checkmark.circle")
         case .opened(.filteredFallback):
             Label(NSLocalizedString("threadcanvas.inspector.open_in_mail.status.opened_filtered",
                                     comment: "Open in Mail success status using filtered fallback"),
@@ -239,15 +236,9 @@ internal struct ThreadInspectorView: View {
     }
 
     private func copyControls(for node: ThreadNode) -> some View {
-        let messageID = node.message.messageID
         let subject = node.message.subject
         let mailboxValue = mailboxCopyValue(for: node)
         return HStack(spacing: 8) {
-            Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_message_id",
-                                     comment: "Copy Message-ID action"),
-                   action: { handleCopyAction(messageID) })
-                .controlSize(.mini)
-                .disabled(messageID.isEmpty)
             Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_subject",
                                      comment: "Copy subject action"),
                    action: { handleCopyAction(subject) })
@@ -305,7 +296,7 @@ internal struct ThreadInspectorView: View {
     private var copyToast: some View {
         if isCopyToastVisible {
             Text(copyToastMessage)
-                .font(.caption)
+                .font(font(size: 12))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(copyToastBackground)
@@ -343,11 +334,16 @@ internal struct ThreadInspectorView: View {
         }
         return Color.white.opacity(0.95)
     }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
+    }
 }
 
 private struct InspectorField: View {
     let label: String
     let value: String
+    let textScale: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -355,10 +351,10 @@ private struct InspectorField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .font(font(size: 11))
                 .foregroundStyle(labelForegroundStyle)
             Text(value)
-                .font(.callout)
+                .font(font(size: 13))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -372,6 +368,10 @@ private struct InspectorField: View {
             return Color.white.opacity(0.75)
         }
         return Color.secondary
+    }
+
+    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size * textScale, weight: weight)
     }
 }
 
