@@ -3016,6 +3016,44 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    internal func moveFolder(folderID: String, toParentFolderID parentFolderID: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let updated = Self.applyFolderMove(folderID: folderID,
+                                                     toParentFolderID: parentFolderID,
+                                                     folders: threadFolders) else { return }
+            do {
+                try await store.upsertThreadFolders(updated.folders)
+                await MainActor.run {
+                    self.threadFolders = updated.folders
+                    self.folderMembershipByThreadID = updated.membership
+                    self.refreshFolderSummaries(for: self.roots, folders: updated.folders)
+                }
+            } catch {
+                Log.app.error("Failed to move folder into folder: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    internal func removeFolderFromParent(folderID: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let updated = Self.applyFolderMove(folderID: folderID,
+                                                     toParentFolderID: nil,
+                                                     folders: threadFolders) else { return }
+            do {
+                try await store.upsertThreadFolders(updated.folders)
+                await MainActor.run {
+                    self.threadFolders = updated.folders
+                    self.folderMembershipByThreadID = updated.membership
+                    self.refreshFolderSummaries(for: self.roots, folders: updated.folders)
+                }
+            } catch {
+                Log.app.error("Failed to move folder to root: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     internal func removeThreadFromFolder(threadID: String) {
         Task { [weak self] in
             guard let self else { return }
@@ -3042,6 +3080,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal var selectedFolder: ThreadFolder? {
         threadFolders.first { $0.id == selectedFolderID }
+    }
+
+    internal func parentFolderID(for folderID: String) -> String? {
+        threadFolders.first(where: { $0.id == folderID })?.parentID
     }
 
     internal func timelineNodes(today: Date = Date(),
@@ -6270,6 +6312,11 @@ extension ThreadCanvasViewModel {
         internal let membership: [String: String]
     }
 
+    internal struct FolderHierarchyUpdate {
+        internal let folders: [ThreadFolder]
+        internal let membership: [String: String]
+    }
+
     internal struct FolderRemovalUpdate {
         internal let remainingFolders: [ThreadFolder]
         internal let deletedFolderIDs: Set<String>
@@ -6305,6 +6352,28 @@ extension ThreadCanvasViewModel {
         return FolderMoveUpdate(folders: updatedFolders,
                                 deletedFolderIDs: deletedFolderIDs,
                                 membership: membership)
+    }
+
+    internal static func applyFolderMove(folderID: String,
+                                         toParentFolderID parentFolderID: String?,
+                                         folders: [ThreadFolder]) -> FolderHierarchyUpdate? {
+        guard let folderIndex = folders.firstIndex(where: { $0.id == folderID }) else { return nil }
+        if let parentFolderID {
+            guard parentFolderID != folderID,
+                  folders.contains(where: { $0.id == parentFolderID }) else {
+                return nil
+            }
+            let descendantIDs = Set(descendantFolderIDs(of: folderID,
+                                                        childrenByParent: childFolderIDsByParent(folders: folders)))
+            guard !descendantIDs.contains(parentFolderID) else { return nil }
+        }
+
+        guard folders[folderIndex].parentID != parentFolderID else { return nil }
+
+        var updatedFolders = folders
+        updatedFolders[folderIndex].parentID = parentFolderID
+        return FolderHierarchyUpdate(folders: updatedFolders,
+                                     membership: folderMembershipMap(for: updatedFolders))
     }
 
     internal static func remapThreadIDsInFolders(_ sourceThreadIDs: Set<String>,

@@ -1127,6 +1127,71 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(update?.membership["thread-1"], "folder-b")
     }
 
+    func testApplyFolderMoveReparentsFolderAndPreservesMembership() {
+        let parentFolder = ThreadFolder(id: "folder-parent",
+                                        title: "Parent",
+                                        color: ThreadFolderColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1),
+                                        threadIDs: ["thread-parent"],
+                                        parentID: nil)
+        let childFolder = ThreadFolder(id: "folder-child",
+                                       title: "Child",
+                                       color: ThreadFolderColor(red: 0.4, green: 0.5, blue: 0.6, alpha: 1),
+                                       threadIDs: ["thread-child"],
+                                       parentID: nil)
+
+        let update = ThreadCanvasViewModel.applyFolderMove(folderID: "folder-child",
+                                                           toParentFolderID: "folder-parent",
+                                                           folders: [parentFolder, childFolder])
+
+        XCTAssertEqual(update?.folders.first(where: { $0.id == "folder-child" })?.parentID, "folder-parent")
+        XCTAssertEqual(update?.membership["thread-parent"], "folder-parent")
+        XCTAssertEqual(update?.membership["thread-child"], "folder-child")
+    }
+
+    func testApplyFolderMoveToRootClearsParent() {
+        let parentFolder = ThreadFolder(id: "folder-parent",
+                                        title: "Parent",
+                                        color: ThreadFolderColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1),
+                                        threadIDs: ["thread-parent"],
+                                        parentID: nil)
+        let childFolder = ThreadFolder(id: "folder-child",
+                                       title: "Child",
+                                       color: ThreadFolderColor(red: 0.4, green: 0.5, blue: 0.6, alpha: 1),
+                                       threadIDs: ["thread-child"],
+                                       parentID: "folder-parent")
+
+        let update = ThreadCanvasViewModel.applyFolderMove(folderID: "folder-child",
+                                                           toParentFolderID: nil,
+                                                           folders: [parentFolder, childFolder])
+
+        XCTAssertNil(update?.folders.first(where: { $0.id == "folder-child" })?.parentID)
+        XCTAssertEqual(update?.membership["thread-child"], "folder-child")
+    }
+
+    func testApplyFolderMoveRejectsDescendantCycle() {
+        let parentFolder = ThreadFolder(id: "folder-parent",
+                                        title: "Parent",
+                                        color: ThreadFolderColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 1),
+                                        threadIDs: ["thread-parent"],
+                                        parentID: nil)
+        let childFolder = ThreadFolder(id: "folder-child",
+                                       title: "Child",
+                                       color: ThreadFolderColor(red: 0.4, green: 0.5, blue: 0.6, alpha: 1),
+                                       threadIDs: ["thread-child"],
+                                       parentID: "folder-parent")
+        let grandchildFolder = ThreadFolder(id: "folder-grandchild",
+                                            title: "Grandchild",
+                                            color: ThreadFolderColor(red: 0.7, green: 0.8, blue: 0.9, alpha: 1),
+                                            threadIDs: ["thread-grandchild"],
+                                            parentID: "folder-child")
+
+        let update = ThreadCanvasViewModel.applyFolderMove(folderID: "folder-parent",
+                                                           toParentFolderID: "folder-grandchild",
+                                                           folders: [parentFolder, childFolder, grandchildFolder])
+
+        XCTAssertNil(update)
+    }
+
     func testApplyRemovalDeletesEmptyFolder() {
         let folder = ThreadFolder(id: "folder-a",
                                   title: "A",

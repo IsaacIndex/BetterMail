@@ -311,7 +311,8 @@ internal struct ThreadCanvasView: View {
                                 metrics: context.metrics,
                                 rawScrollOffset: context.viewportState.rawScrollOffset,
                                 rawZoom: zoomScale,
-                                readabilityMode: context.readabilityMode)
+                                readabilityMode: context.readabilityMode,
+                                folderHeaderHeight: visibility.headerStackHeight + headerSpacing)
             .offset(y: -(visibility.headerStackHeight + headerSpacing))
     }
 
@@ -626,7 +627,8 @@ internal struct ThreadCanvasView: View {
                                          metrics: ThreadCanvasLayoutMetrics,
                                          rawScrollOffset: CGFloat,
                                          rawZoom: CGFloat,
-                                         readabilityMode: ThreadCanvasReadabilityMode) -> some View {
+                                         readabilityMode: ThreadCanvasReadabilityMode,
+                                         folderHeaderHeight: CGFloat) -> some View {
         let headerData = visibleFolderHeaderData(chromeData: chromeData)
         return ZStack(alignment: .topLeading) {
             ForEach(headerData) { data in
@@ -661,6 +663,20 @@ internal struct ThreadCanvasView: View {
                 .equatable()
                 .frame(width: headerFrame.width, alignment: .leading)
                 .offset(x: headerFrame.minX, y: pinnedY)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: nodeDragMinimumDistance, coordinateSpace: .named("ThreadCanvasContent"))
+                        .onChanged { value in
+                            updateFolderDragState(chrome: data.chrome,
+                                                  location: value.location,
+                                                  chromeData: chromeData,
+                                                  folderHeaderHeight: folderHeaderHeight)
+                        }
+                        .onEnded { value in
+                            finishDrag(location: value.location,
+                                       chromeData: chromeData,
+                                       folderHeaderHeight: folderHeaderHeight)
+                        }
+                )
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(data.chrome.title.isEmpty
                                     ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
@@ -741,7 +757,7 @@ internal struct ThreadCanvasView: View {
     @ViewBuilder
     private func dragPreviewLayer() -> some View {
         if let dragState {
-            ThreadDragPreview(subject: dragState.subject, count: dragState.count)
+            ThreadDragPreview(title: dragState.previewTitle, detail: dragState.previewDetail)
                 .scaleEffect(dragPreviewScale)
                 .opacity(dragPreviewOpacity)
                 .position(x: dragState.location.x, y: dragState.location.y)
@@ -910,29 +926,67 @@ internal struct ThreadCanvasView: View {
                                  chromeData: [FolderChromeData],
                                  folderHeaderHeight: CGFloat) {
         if dragState == nil {
-            startDrag(node: node, column: column, location: location)
+            startThreadDrag(node: node, column: column, location: location)
         }
 
         guard var dragState else { return }
         dragState.location = location
         self.dragState = dragState
 
-        activeDropFolderID = folderHitTestID(at: location,
-                                             chromeData: chromeData,
-                                             headerHeight: folderHeaderHeight)
+        let rawDropFolderID = folderHitTestID(at: location,
+                                              chromeData: chromeData,
+                                              headerHeight: folderHeaderHeight)
+        activeDropFolderID = normalizedDropFolderID(rawDropFolderID, for: dragState)
     }
 
-    private func startDrag(node: ThreadCanvasNode,
-                           column: ThreadCanvasColumn,
-                           location: CGPoint) {
+    private func updateFolderDragState(chrome: FolderChromeData,
+                                       location: CGPoint,
+                                       chromeData: [FolderChromeData],
+                                       folderHeaderHeight: CGFloat) {
+        if dragState == nil {
+            startFolderDrag(chrome: chrome, location: location)
+        }
+
+        guard var dragState else { return }
+        dragState.location = location
+        self.dragState = dragState
+
+        let rawDropFolderID = folderHitTestID(at: location,
+                                              chromeData: chromeData,
+                                              headerHeight: folderHeaderHeight)
+        activeDropFolderID = normalizedDropFolderID(rawDropFolderID, for: dragState)
+    }
+
+    private func startThreadDrag(node: ThreadCanvasNode,
+                                 column: ThreadCanvasColumn,
+                                 location: CGPoint) {
         let subject = latestSubject(in: column) ?? column.title
         let count = column.nodes.count
         let initialFolderID = viewModel.folderMembershipByThreadID[node.threadID]
-        dragState = ThreadCanvasDragState(threadID: node.threadID,
-                                          nodeID: node.id,
-                                          subject: subject,
-                                          count: count,
-                                          initialFolderID: initialFolderID,
+        dragState = ThreadCanvasDragState(payload: .thread(threadID: node.threadID,
+                                                           initialFolderID: initialFolderID),
+                                          previewTitle: subject,
+                                          previewDetail: "\(count) message\(count == 1 ? "" : "s")",
+                                          location: location)
+        dragPreviewOpacity = 0
+        dragPreviewScale = 0.94
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            dragPreviewOpacity = 1
+            dragPreviewScale = 1
+        }
+    }
+
+    private func startFolderDrag(chrome: FolderChromeData,
+                                 location: CGPoint) {
+        let title = chrome.title.isEmpty
+            ? NSLocalizedString("threadcanvas.subject.placeholder",
+                                comment: "Placeholder subject when missing")
+            : chrome.title
+        let count = chrome.columnIDs.count
+        dragState = ThreadCanvasDragState(payload: .folder(folderID: chrome.id,
+                                                           initialParentFolderID: viewModel.parentFolderID(for: chrome.id)),
+                                          previewTitle: title,
+                                          previewDetail: "\(count) thread\(count == 1 ? "" : "s")",
                                           location: location)
         dragPreviewOpacity = 0
         dragPreviewScale = 0.94
@@ -946,15 +1000,41 @@ internal struct ThreadCanvasView: View {
                             chromeData: [FolderChromeData],
                             folderHeaderHeight: CGFloat) {
         guard let dragState else { return }
-        let dropFolderID = folderHitTestID(at: location,
-                                           chromeData: chromeData,
-                                           headerHeight: folderHeaderHeight)
-        if let dropFolderID {
-            viewModel.moveThread(threadID: dragState.threadID, toFolderID: dropFolderID)
-        } else if dragState.initialFolderID != nil {
-            viewModel.removeThreadFromFolder(threadID: dragState.threadID)
+        let rawDropFolderID = folderHitTestID(at: location,
+                                              chromeData: chromeData,
+                                              headerHeight: folderHeaderHeight)
+        let dropFolderID = normalizedDropFolderID(rawDropFolderID, for: dragState)
+
+        switch dragState.payload {
+        case let .thread(threadID, initialFolderID):
+            if let dropFolderID {
+                viewModel.moveThread(threadID: threadID, toFolderID: dropFolderID)
+            } else if initialFolderID != nil {
+                viewModel.removeThreadFromFolder(threadID: threadID)
+            }
+        case let .folder(folderID, initialParentFolderID):
+            if let dropFolderID {
+                viewModel.moveFolder(folderID: folderID, toParentFolderID: dropFolderID)
+            } else if rawDropFolderID == nil, initialParentFolderID != nil {
+                viewModel.removeFolderFromParent(folderID: folderID)
+            }
         }
         endDrag()
+    }
+
+    private func normalizedDropFolderID(_ candidateFolderID: String?,
+                                        for dragState: ThreadCanvasDragState) -> String? {
+        switch dragState.payload {
+        case .thread:
+            return candidateFolderID
+        case let .folder(folderID, _):
+            guard let candidateFolderID else { return nil }
+            return ThreadCanvasViewModel.applyFolderMove(folderID: folderID,
+                                                         toParentFolderID: candidateFolderID,
+                                                         folders: viewModel.threadFolders) == nil
+                ? nil
+                : candidateFolderID
+        }
     }
 
     private func cancelDrag() {
@@ -3067,27 +3147,32 @@ private struct ThreadCanvasNodeView: View, Equatable {
 
 // MARK: - Drag preview
 
+private enum ThreadCanvasDragPayload: Equatable {
+    case thread(threadID: String, initialFolderID: String?)
+    case folder(folderID: String, initialParentFolderID: String?)
+}
+
 private struct ThreadCanvasDragState: Equatable {
-    let threadID: String
-    let nodeID: String
-    let subject: String
-    let count: Int
-    let initialFolderID: String?
+    let payload: ThreadCanvasDragPayload
+    let previewTitle: String
+    let previewDetail: String?
     var location: CGPoint
 }
 
 private struct ThreadDragPreview: View {
-    let subject: String
-    let count: Int
+    let title: String
+    let detail: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder",
-                                                     comment: "Placeholder subject when missing") : subject)
+            Text(title.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder",
+                                                   comment: "Placeholder subject when missing") : title)
                 .font(.headline)
-            Text("\(count) message\(count == 1 ? "" : "s")")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(
