@@ -155,6 +155,12 @@ internal struct ThreadCanvasView: View {
         let scrollOffset: CGFloat
         let viewportWidth: CGFloat
         let viewportHeight: CGFloat
+        // Unquantized offsets used exclusively for overlay header positioning.
+        // The main rawScrollOffset/X are quantized for performance (fewer visibility
+        // recalculations), but the overlay header needs pixel-accurate values so it
+        // stays aligned with the folder backgrounds inside the scroll view.
+        let overlayScrollOffset: CGFloat
+        let overlayScrollOffsetX: CGFloat
     }
 
     internal var body: some View {
@@ -307,28 +313,33 @@ internal struct ThreadCanvasView: View {
                                  metrics: context.metrics,
                                  headerHeight: visibility.headerStackHeight + headerSpacing)
         dragPreviewLayer()
-        folderColumnHeaderLayer(chromeData: visibility.visibleHeaderChromeData,
-                                metrics: context.metrics,
-                                rawScrollOffset: context.viewportState.rawScrollOffset,
-                                rawZoom: zoomScale,
-                                readabilityMode: context.readabilityMode,
-                                folderHeaderHeight: visibility.headerStackHeight + headerSpacing)
-            .offset(y: -(visibility.headerStackHeight + headerSpacing))
     }
 
     @ViewBuilder
     private func canvasOverlay(context: CanvasRenderContext,
                                proxySize: CGSize) -> some View {
-        if context.showsDayAxis {
-            floatingDateRail(layout: context.layout,
-                             metrics: context.metrics,
-                             readabilityMode: context.readabilityMode,
-                             totalTopPadding: context.totalTopPadding,
-                             rawScrollOffset: context.viewportState.rawScrollOffset,
-                             viewportHeight: proxySize.height,
-                             visibleYStart: context.visibility.visibleYStart,
-                             visibleYEnd: context.visibility.visibleYEnd)
+        ZStack(alignment: .topLeading) {
+            if context.showsDayAxis {
+                floatingDateRail(layout: context.layout,
+                                 metrics: context.metrics,
+                                 readabilityMode: context.readabilityMode,
+                                 totalTopPadding: context.totalTopPadding,
+                                 rawScrollOffset: context.viewportState.rawScrollOffset,
+                                 viewportHeight: proxySize.height,
+                                 visibleYStart: context.visibility.visibleYStart,
+                                 visibleYEnd: context.visibility.visibleYEnd)
+            }
+            folderColumnHeaderLayer(chromeData: context.visibility.visibleHeaderChromeData,
+                                    metrics: context.metrics,
+                                    rawScrollOffset: context.viewportState.overlayScrollOffset,
+                                    rawScrollOffsetX: context.viewportState.overlayScrollOffsetX,
+                                    rawZoom: zoomScale,
+                                    readabilityMode: context.readabilityMode,
+                                    topInset: topInset,
+                                    totalTopPadding: context.totalTopPadding,
+                                    folderHeaderHeight: context.visibility.headerStackHeight + headerSpacing)
         }
+        .coordinateSpace(name: "ThreadCanvasOverlay")
     }
 
     private func canvasVisibilityState(staticContext: CanvasStaticContext,
@@ -626,15 +637,21 @@ internal struct ThreadCanvasView: View {
     private func folderColumnHeaderLayer(chromeData: [FolderChromeData],
                                          metrics: ThreadCanvasLayoutMetrics,
                                          rawScrollOffset: CGFloat,
+                                         rawScrollOffsetX: CGFloat,
                                          rawZoom: CGFloat,
                                          readabilityMode: ThreadCanvasReadabilityMode,
+                                         topInset: CGFloat,
+                                         totalTopPadding: CGFloat,
                                          folderHeaderHeight: CGFloat) -> some View {
         let headerData = visibleFolderHeaderData(chromeData: chromeData)
         return ZStack(alignment: .topLeading) {
             ForEach(headerData) { data in
+                // Position in viewport/overlay coordinates so this layer can live outside the
+                // ScrollView — no scroll counteraction needed, eliminating the quantization wiggle.
                 let headerFrame = folderHeaderFrame(for: data.chrome, metrics: metrics)
-                let maxPinnedY = max(headerFrame.minY, data.chrome.frame.maxY - data.chrome.headerHeight)
-                let pinnedY = min(headerFrame.minY + rawScrollOffset, maxPinnedY)
+                let maxSlideY = max(data.chrome.headerTopOffset, data.chrome.frame.maxY - data.chrome.headerHeight)
+                let pinnedY = topInset + min(data.chrome.headerTopOffset, maxSlideY - rawScrollOffset)
+                let pinnedX = headerFrame.minX - rawScrollOffsetX
                 FolderColumnHeader(title: data.chrome.title,
                                    unreadCount: data.chrome.unreadCount,
                                    mailboxLabel: data.chrome.mailboxLabel,
@@ -662,17 +679,26 @@ internal struct ThreadCanvasView: View {
                                    onJumpFirst: { viewModel.jumpToFirstNode(in: data.chrome.id) })
                 .equatable()
                 .frame(width: headerFrame.width, alignment: .leading)
-                .offset(x: headerFrame.minX, y: pinnedY)
+                .offset(x: pinnedX, y: pinnedY)
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: nodeDragMinimumDistance, coordinateSpace: .named("ThreadCanvasContent"))
+                    DragGesture(minimumDistance: nodeDragMinimumDistance, coordinateSpace: .named("ThreadCanvasOverlay"))
                         .onChanged { value in
+                            // Convert overlay (viewport) coordinates to canvas content coordinates.
+                            let canvasLocation = overlayToCanvasLocation(value.location,
+                                                                         rawScrollOffset: rawScrollOffset,
+                                                                         rawScrollOffsetX: rawScrollOffsetX,
+                                                                         totalTopPadding: totalTopPadding)
                             updateFolderDragState(chrome: data.chrome,
-                                                  location: value.location,
+                                                  location: canvasLocation,
                                                   chromeData: chromeData,
                                                   folderHeaderHeight: folderHeaderHeight)
                         }
                         .onEnded { value in
-                            finishDrag(location: value.location,
+                            let canvasLocation = overlayToCanvasLocation(value.location,
+                                                                         rawScrollOffset: rawScrollOffset,
+                                                                         rawScrollOffsetX: rawScrollOffsetX,
+                                                                         totalTopPadding: totalTopPadding)
+                            finishDrag(location: canvasLocation,
                                        chromeData: chromeData,
                                        folderHeaderHeight: folderHeaderHeight)
                         }
@@ -686,6 +712,14 @@ internal struct ThreadCanvasView: View {
                 .accessibilityAddTraits(data.isSelected ? .isSelected : [])
             }
         }
+    }
+
+    private func overlayToCanvasLocation(_ overlayLocation: CGPoint,
+                                         rawScrollOffset: CGFloat,
+                                         rawScrollOffsetX: CGFloat,
+                                         totalTopPadding: CGFloat) -> CGPoint {
+        CGPoint(x: overlayLocation.x + rawScrollOffsetX,
+                y: overlayLocation.y + rawScrollOffset - totalTopPadding)
     }
 
     private func visibleFolderHeaderData(chromeData: [FolderChromeData]) -> [VisibleFolderHeaderData] {
@@ -1401,6 +1435,8 @@ internal struct ThreadCanvasView: View {
         @State private var scrollOffset: CGFloat = 0
         @State private var rawScrollOffset: CGFloat = 0
         @State private var rawScrollOffsetX: CGFloat = 0
+        @State private var overlayScrollOffset: CGFloat = 0
+        @State private var overlayScrollOffsetX: CGFloat = 0
         @State private var viewportWidth: CGFloat = 0
         @State private var viewportHeight: CGFloat = 0
         @State private var canvasScrollView: NSScrollView?
@@ -1440,7 +1476,9 @@ internal struct ThreadCanvasView: View {
                                                  rawScrollOffsetX: rawScrollOffsetX,
                                                  scrollOffset: scrollOffset,
                                                  viewportWidth: viewportWidth,
-                                                 viewportHeight: viewportHeight)
+                                                 viewportHeight: viewportHeight,
+                                                 overlayScrollOffset: overlayScrollOffset,
+                                                 overlayScrollOffsetX: overlayScrollOffsetX)
         }
 
         var body: some View {
@@ -1622,6 +1660,14 @@ internal struct ThreadCanvasView: View {
                 }
                 if abs(rawScrollOffsetX - snappedRawXOffset) >= scrollStateUpdateTolerance {
                     rawScrollOffsetX = snappedRawXOffset
+                }
+                // Overlay offsets track every pixel (step=1) so folder headers in the
+                // overlay stay aligned with folder backgrounds inside the scroll view.
+                if abs(overlayScrollOffset - rawOffsetY) >= scrollStateUpdateTolerance {
+                    overlayScrollOffset = rawOffsetY
+                }
+                if abs(overlayScrollOffsetX - rawOffsetX) >= scrollStateUpdateTolerance {
+                    overlayScrollOffsetX = rawOffsetX
                 }
             }
             syncFolderMinimapViewportSnapshot()
