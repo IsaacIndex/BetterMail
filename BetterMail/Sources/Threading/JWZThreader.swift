@@ -179,6 +179,8 @@ extension JWZThreader {
         let allNodes = result.roots.flatMap { Self.flattenNodes(from: $0) }
         let baseThreadMap = result.jwzThreadMap
         var messageKeyToMessageID: [String: String] = [:]
+        let visibleThreadIDs = Set(baseThreadMap.values)
+        let linkedThreadIDs = Self.linkedJWZThreadIDs(for: allNodes, baseThreadMap: baseThreadMap)
 
         for node in allNodes {
             let key = node.message.threadKey
@@ -192,12 +194,18 @@ extension JWZThreader {
 
         for group in groups {
             let manualKeysInCurrentWindow = group.manualMessageKeys.filter { baseThreadMap[$0] != nil }
+            let seedThreadIDs = group.jwzThreadIDs.intersection(visibleThreadIDs)
+                .union(manualKeysInCurrentWindow.compactMap { baseThreadMap[$0] })
+            let expandedThreadIDs = group.jwzThreadIDs.union(
+                Self.expandLinkedThreadIDs(startingFrom: seedThreadIDs,
+                                           linkedThreadIDs: linkedThreadIDs)
+            )
             let updatedGroup = ManualThreadGroup(id: group.id,
-                                                 jwzThreadIDs: group.jwzThreadIDs,
+                                                 jwzThreadIDs: expandedThreadIDs,
                                                  manualMessageKeys: group.manualMessageKeys)
             updatedGroups.append(updatedGroup)
 
-            for (messageKey, jwzThreadID) in baseThreadMap where group.jwzThreadIDs.contains(jwzThreadID) {
+            for (messageKey, jwzThreadID) in baseThreadMap where expandedThreadIDs.contains(jwzThreadID) {
                 if manualGroupByMessageKey[messageKey] == nil {
                     manualGroupByMessageKey[messageKey] = group.id
                 }
@@ -282,5 +290,46 @@ extension JWZThreader {
             return preferred
         }
         return messages.min { $0.date < $1.date }
+    }
+
+    private static func linkedJWZThreadIDs(for nodes: [ThreadNode],
+                                           baseThreadMap: [String: String]) -> [String: Set<String>] {
+        var links: [String: Set<String>] = [:]
+
+        func addLink(_ lhs: String, _ rhs: String) {
+            guard lhs != rhs else { return }
+            links[lhs, default: []].insert(rhs)
+            links[rhs, default: []].insert(lhs)
+        }
+
+        for node in nodes {
+            let messageKey = node.message.threadKey
+            guard let threadID = baseThreadMap[messageKey] else { continue }
+            let referenceKeys = node.message.references.map(normalizeIdentifier)
+            let replyKey = node.message.inReplyTo.map(normalizeIdentifier)
+            for referenceKey in referenceKeys + (replyKey.map { [$0] } ?? []) {
+                guard let referenceThreadID = baseThreadMap[referenceKey] else { continue }
+                addLink(threadID, referenceThreadID)
+            }
+        }
+
+        return links
+    }
+
+    private static func expandLinkedThreadIDs(startingFrom seedThreadIDs: Set<String>,
+                                              linkedThreadIDs: [String: Set<String>]) -> Set<String> {
+        guard !seedThreadIDs.isEmpty else { return [] }
+
+        var visited: Set<String> = []
+        var pending = Array(seedThreadIDs)
+
+        while let current = pending.popLast() {
+            guard visited.insert(current).inserted else { continue }
+            for linkedThreadID in linkedThreadIDs[current] ?? [] where !visited.contains(linkedThreadID) {
+                pending.append(linkedThreadID)
+            }
+        }
+
+        return visited
     }
 }
