@@ -1450,6 +1450,10 @@ internal struct ThreadCanvasView: View {
         @State private var trackedScrollViewID: ObjectIdentifier?
         @State private var trackedDocumentViewID: ObjectIdentifier?
         @State private var trackedDocumentSize: CGSize = .zero
+        // Bumped every time the zoom level changes so that `body` re-runs and picks up the
+        // updated `buildRenderContext`/`renderOverlay` closures from the parent re-render.
+        // (@Binding reads in body are not tracked as dependencies by SwiftUI, but @State reads are.)
+        @State private var zoomRenderVersion: Int = 0
 
         private let calendar = Calendar.current
         private let scrollTraceMinimumDelta: CGFloat = 2
@@ -1482,6 +1486,11 @@ internal struct ThreadCanvasView: View {
         }
 
         var body: some View {
+            // zoomRenderVersion is a @State that is bumped inside magnificationGesture whenever
+            // the zoom level changes.  Reading it here makes it a tracked body dependency, so
+            // SwiftUI re-invokes body (and therefore re-evaluates buildRenderContext /
+            // renderOverlay with the parent's updated closures) on every zoom step.
+            let _ = zoomRenderVersion
             let renderContext = buildRenderContext(viewportState)
             ScrollViewReader { _ in
                 configuredScrollView(renderContext: renderContext)
@@ -1600,6 +1609,7 @@ internal struct ThreadCanvasView: View {
                         isMagnificationGestureActive = true
                     }
                     zoomScale = clampedZoom(value)
+                    zoomRenderVersion &+= 1
                 }
                 .onEnded { value in
                     defer { isMagnificationGestureActive = false }
@@ -1607,6 +1617,7 @@ internal struct ThreadCanvasView: View {
                     let clamped = clampedZoom(value)
                     zoomScale = clamped
                     accumulatedZoom = clamped
+                    zoomRenderVersion &+= 1
                 }
         }
 
