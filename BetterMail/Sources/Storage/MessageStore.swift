@@ -1341,7 +1341,7 @@ internal final class MessageStore {
         _ = try? await container.performBackgroundTask { context -> Void in
             let request = ActionItemEntity.fetchRequest()
             request.predicate = NSPredicate(format: "messageID == %@", message.messageID)
-            let existing = (try? context.fetch(request)) ?? []
+            let existing = try context.fetch(request)
             guard existing.isEmpty else { return } // idempotent
             let entity = ActionItemEntity(context: context)
             entity.messageID = message.messageID
@@ -1361,7 +1361,7 @@ internal final class MessageStore {
         _ = try? await container.performBackgroundTask { context -> Void in
             let request = ActionItemEntity.fetchRequest()
             request.predicate = NSPredicate(format: "messageID == %@", message.messageID)
-            let entities = (try? context.fetch(request)) ?? []
+            let entities = try context.fetch(request)
             entities.forEach { context.delete($0) }
             try context.save()
         }
@@ -1371,7 +1371,7 @@ internal final class MessageStore {
         _ = try? await container.performBackgroundTask { context -> Void in
             let request = ActionItemEntity.fetchRequest()
             request.predicate = NSPredicate(format: "messageID == %@", messageID)
-            guard let entity = try? context.fetch(request).first else { return }
+            guard let entity = try context.fetch(request).first else { return }
             entity.isDone.toggle()
             try context.save()
         }
@@ -1615,7 +1615,7 @@ private final class ActionItemEntity: NSManagedObject {
     @NSManaged var isDone: Bool
     @NSManaged var addedAt: Date
 
-    func toModel() -> ActionItem? {
+    fileprivate func toModel() -> ActionItem? {
         let tags: [String]
         if let data = tagsData,
            let decoded = try? JSONDecoder().decode([String].self, from: data) {
