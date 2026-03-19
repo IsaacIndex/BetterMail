@@ -4287,7 +4287,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         case .mailboxFolder(let scopedAccount, _):
             let trimmedScopedAccount = scopedAccount.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedScopedAccount.isEmpty ? nil : trimmedScopedAccount
-        case .allEmails, .allFolders, .allInboxes:
+        case .actionItems, .allEmails, .allFolders, .allInboxes:
             return nil
         }
     }
@@ -4390,7 +4390,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private var activeMailboxFetchTarget: (mailbox: String, account: String?) {
         switch activeMailboxScope {
-        case .allEmails, .allFolders, .allInboxes:
+        case .actionItems, .allEmails, .allFolders, .allInboxes:
             return (mailbox: "inbox", account: nil)
         case .mailboxFolder(let account, let path):
             return (mailbox: path, account: account)
@@ -4399,7 +4399,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private var activeMailboxStoreFilter: (mailbox: String?, account: String?, includeAllInboxesAliases: Bool) {
         switch activeMailboxScope {
-        case .allEmails, .allFolders:
+        case .actionItems, .allEmails, .allFolders:
             return (mailbox: nil, account: nil, includeAllInboxesAliases: false)
         case .allInboxes:
             return (mailbox: "inbox", account: nil, includeAllInboxesAliases: true)
