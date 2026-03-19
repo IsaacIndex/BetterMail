@@ -604,7 +604,7 @@ In the section that applies `.onTapGesture` to each canvas node (around line 914
 }
 ```
 
-Note: `VisibleCanvasNodeData` already has a `tags: [String]` field (line 935). If the field is named differently (e.g. `timelineTags`), use the actual field name — check the struct definition at line 71.
+Note: `VisibleCanvasNodeData.tags: [String]` is confirmed (line 74 of `ThreadCanvasView.swift`). Use `nodeData.tags` as shown.
 
 - [ ] **Step 2: Build check**
 
