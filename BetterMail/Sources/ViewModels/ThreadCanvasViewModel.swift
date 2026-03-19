@@ -2144,27 +2144,29 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func addActionItem(message: EmailMessage, folderID: String?, tags: [String]) {
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             await MessageStore.shared.addActionItem(for: message, folderID: folderID, tags: tags)
             await refreshActionItemIDs()
         }
     }
 
     internal func removeActionItem(message: EmailMessage) {
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             await MessageStore.shared.removeActionItem(for: message)
             await refreshActionItemIDs()
         }
     }
 
     internal func toggleActionItemDone(_ messageID: String) {
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             await MessageStore.shared.toggleActionItemDone(messageID)
             await refreshActionItemIDs()
         }
     }
 
-    @MainActor
     private func refreshActionItemIDs() async {
         actionItemIDs = await MessageStore.shared.fetchActionItemIDs()
     }
