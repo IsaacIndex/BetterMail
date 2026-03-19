@@ -1136,6 +1136,69 @@ internal final class MessageStore {
             summaryCacheProviderAttr
         ]
 
+        let actionItemEntity = NSEntityDescription()
+        actionItemEntity.name = "ActionItemEntity"
+        actionItemEntity.managedObjectClassName = NSStringFromClass(ActionItemEntity.self)
+
+        let aiMessageIDAttr = NSAttributeDescription()
+        aiMessageIDAttr.name = "messageID"
+        aiMessageIDAttr.attributeType = .stringAttributeType
+        aiMessageIDAttr.isOptional = false
+        aiMessageIDAttr.isIndexed = true
+
+        let aiThreadIDAttr = NSAttributeDescription()
+        aiThreadIDAttr.name = "threadID"
+        aiThreadIDAttr.attributeType = .stringAttributeType
+        aiThreadIDAttr.isOptional = false
+
+        let aiSubjectAttr = NSAttributeDescription()
+        aiSubjectAttr.name = "subject"
+        aiSubjectAttr.attributeType = .stringAttributeType
+        aiSubjectAttr.isOptional = false
+
+        let aiFromAttr = NSAttributeDescription()
+        aiFromAttr.name = "fromAddress"
+        aiFromAttr.attributeType = .stringAttributeType
+        aiFromAttr.isOptional = false
+
+        let aiDateAttr = NSAttributeDescription()
+        aiDateAttr.name = "date"
+        aiDateAttr.attributeType = .dateAttributeType
+        aiDateAttr.isOptional = false
+
+        let aiFolderIDAttr = NSAttributeDescription()
+        aiFolderIDAttr.name = "folderID"
+        aiFolderIDAttr.attributeType = .stringAttributeType
+        aiFolderIDAttr.isOptional = true
+
+        let aiTagsAttr = NSAttributeDescription()
+        aiTagsAttr.name = "tagsData"
+        aiTagsAttr.attributeType = .binaryDataAttributeType
+        aiTagsAttr.isOptional = true
+
+        let aiIsDoneAttr = NSAttributeDescription()
+        aiIsDoneAttr.name = "isDone"
+        aiIsDoneAttr.attributeType = .booleanAttributeType
+        aiIsDoneAttr.isOptional = false
+        aiIsDoneAttr.defaultValue = false
+
+        let aiAddedAtAttr = NSAttributeDescription()
+        aiAddedAtAttr.name = "addedAt"
+        aiAddedAtAttr.attributeType = .dateAttributeType
+        aiAddedAtAttr.isOptional = false
+
+        actionItemEntity.properties = [
+            aiMessageIDAttr,
+            aiThreadIDAttr,
+            aiSubjectAttr,
+            aiFromAttr,
+            aiDateAttr,
+            aiFolderIDAttr,
+            aiTagsAttr,
+            aiIsDoneAttr,
+            aiAddedAtAttr
+        ]
+
         model.entities = [
             messageEntity,
             threadEntity,
@@ -1147,7 +1210,8 @@ internal final class MessageStore {
             threadFolderColorEntity,
             threadFolderMembershipEntity,
             threadSummaryEntity,
-            summaryCacheEntity
+            summaryCacheEntity,
+            actionItemEntity
         ]
         return model
     }
@@ -1268,6 +1332,61 @@ internal final class MessageStore {
             }
             return (nodeIDs, folderIDs, tagIDs)
         }
+    }
+
+    // Note: `tags:` extends the spec's 2-param signature to support tag snapshotting.
+    internal func addActionItem(for message: EmailMessage,
+                                 folderID: String?,
+                                 tags: [String]) async {
+        _ = try? await container.performBackgroundTask { context -> Void in
+            let request = ActionItemEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "messageID == %@", message.messageID)
+            let existing = (try? context.fetch(request)) ?? []
+            guard existing.isEmpty else { return } // idempotent
+            let entity = ActionItemEntity(context: context)
+            entity.messageID = message.messageID
+            entity.threadID = message.threadID ?? message.messageID
+            entity.subject = message.subject
+            entity.fromAddress = message.from
+            entity.date = message.date
+            entity.folderID = folderID
+            entity.tagsData = try? JSONEncoder().encode(Array(tags.prefix(3)))
+            entity.isDone = false
+            entity.addedAt = Date()
+            try context.save()
+        }
+    }
+
+    internal func removeActionItem(for message: EmailMessage) async {
+        _ = try? await container.performBackgroundTask { context -> Void in
+            let request = ActionItemEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "messageID == %@", message.messageID)
+            let entities = (try? context.fetch(request)) ?? []
+            entities.forEach { context.delete($0) }
+            try context.save()
+        }
+    }
+
+    internal func toggleActionItemDone(_ messageID: String) async {
+        _ = try? await container.performBackgroundTask { context -> Void in
+            let request = ActionItemEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "messageID == %@", messageID)
+            guard let entity = try? context.fetch(request).first else { return }
+            entity.isDone.toggle()
+            try context.save()
+        }
+    }
+
+    internal func fetchActionItems() async -> [ActionItem] {
+        (try? await container.performBackgroundTask { context -> [ActionItem] in
+            let request = ActionItemEntity.fetchRequest()
+            request.sortDescriptors = [NSSortDescriptor(key: "addedAt", ascending: false)]
+            return try context.fetch(request).compactMap { $0.toModel() }
+        }) ?? []
+    }
+
+    internal func fetchActionItemIDs() async -> Set<String> {
+        Set(await fetchActionItems().map(\.id))
     }
 }
 
@@ -1481,6 +1600,44 @@ internal final class SummaryCacheEntity: NSManagedObject {
 internal extension SummaryCacheEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<SummaryCacheEntity> {
         NSFetchRequest<SummaryCacheEntity>(entityName: "SummaryCacheEntity")
+    }
+}
+
+@objc(ActionItemEntity)
+private final class ActionItemEntity: NSManagedObject {
+    @NSManaged var messageID: String
+    @NSManaged var threadID: String
+    @NSManaged var subject: String
+    @NSManaged var fromAddress: String
+    @NSManaged var date: Date
+    @NSManaged var folderID: String?
+    @NSManaged var tagsData: Data?   // JSON-encoded [String]
+    @NSManaged var isDone: Bool
+    @NSManaged var addedAt: Date
+
+    func toModel() -> ActionItem? {
+        let tags: [String]
+        if let data = tagsData,
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            tags = decoded
+        } else {
+            tags = []
+        }
+        return ActionItem(id: messageID,
+                          threadID: threadID,
+                          subject: subject,
+                          from: fromAddress,
+                          date: date,
+                          folderID: folderID,
+                          tags: tags,
+                          isDone: isDone,
+                          addedAt: addedAt)
+    }
+}
+
+private extension ActionItemEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ActionItemEntity> {
+        NSFetchRequest<ActionItemEntity>(entityName: "ActionItemEntity")
     }
 }
 
