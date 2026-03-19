@@ -600,6 +600,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var selectedNodeIDs: Set<String> = [] {
         didSet { refreshBottomBarMailboxActionStatusMessage() }
     }
+    @Published internal private(set) var actionItemIDs: Set<String> = []
     @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
     @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = [] {
         didSet { invalidateLayoutCache(reason: .manualAttachmentMessageIDs) }
@@ -995,6 +996,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         refreshMailboxHierarchy()
         refreshNow()
         applyAutoRefreshSettings()
+        Task { await refreshActionItemIDs() }
     }
 
     internal func refreshNow(limit: Int? = nil) {
@@ -2139,6 +2141,32 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         mailboxActionStatusMessage = nil
         bottomBarMailboxActionStatusMessage = nil
         scheduleRethread(delay: 0)
+    }
+
+    internal func addActionItem(message: EmailMessage, folderID: String?, tags: [String]) {
+        Task {
+            await MessageStore.shared.addActionItem(for: message, folderID: folderID, tags: tags)
+            await refreshActionItemIDs()
+        }
+    }
+
+    internal func removeActionItem(message: EmailMessage) {
+        Task {
+            await MessageStore.shared.removeActionItem(for: message)
+            await refreshActionItemIDs()
+        }
+    }
+
+    internal func toggleActionItemDone(_ messageID: String) {
+        Task {
+            await MessageStore.shared.toggleActionItemDone(messageID)
+            await refreshActionItemIDs()
+        }
+    }
+
+    @MainActor
+    private func refreshActionItemIDs() async {
+        actionItemIDs = await MessageStore.shared.fetchActionItemIDs()
     }
 
     private func setBottomBarMailboxActionStatus(_ message: String?,
