@@ -185,9 +185,10 @@ Note: `BetterMailTests` is the Xcode test target name (matches `-only-testing:Be
 
 - [ ] **Step 3: Add ActionItemEntity NSManagedObject subclass**
 
-At the bottom of `MessageStore.swift`, after the existing entity classes (e.g. after `ManualThreadGroupEntity`), add:
+At the bottom of `MessageStore.swift`, after the existing entity classes (e.g. after `ManualThreadGroupEntity`). Follow the exact pattern used by `MessageEntity` (line ~1274): `@objc(ClassName)` attribute, then the class, then a **separate extension** with `@nonobjc class func fetchRequest()`.
 
 ```swift
+@objc(ActionItemEntity)
 private final class ActionItemEntity: NSManagedObject {
     @NSManaged var messageID: String
     @NSManaged var threadID: String
@@ -198,10 +199,6 @@ private final class ActionItemEntity: NSManagedObject {
     @NSManaged var tagsData: Data?   // JSON-encoded [String]
     @NSManaged var isDone: Bool
     @NSManaged var addedAt: Date
-
-    static func fetchRequest() -> NSFetchRequest<ActionItemEntity> {
-        NSFetchRequest<ActionItemEntity>(entityName: "ActionItemEntity")
-    }
 
     func toModel() -> ActionItem? {
         let tags: [String]
@@ -220,6 +217,12 @@ private final class ActionItemEntity: NSManagedObject {
                           tags: tags,
                           isDone: isDone,
                           addedAt: addedAt)
+    }
+}
+
+private extension ActionItemEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ActionItemEntity> {
+        NSFetchRequest<ActionItemEntity>(entityName: "ActionItemEntity")
     }
 }
 ```
@@ -295,21 +298,22 @@ actionItemEntity.properties = [
 
 Then add `actionItemEntity` to the `model.entities = [...]` array at the end of `makeModel()`.
 
-- [ ] **Step 5: Add the 4 CRUD methods to MessageStore**
+- [ ] **Step 5: Add the CRUD methods to MessageStore**
+
+The `NSPersistentContainer` extension (line ~1487) declares `performBackgroundTask` as `async throws`. Use `try? await` on writes (swallow non-critical errors) and `(try? await ...) ?? []` on fetch. Do NOT use `withCheckedContinuation` — that pattern doesn't exist in this codebase.
 
 Add after `fetchMessages` methods:
 
 ```swift
-// Note: the spec defines addActionItem(for:folderID:) with 2 params.
-// We add a `tags:` parameter here to support snapshotting at tag time (spec lines 56–59).
+// Note: `tags:` extends the spec's 2-param signature to support tag snapshotting (spec §Tag Persistence).
 internal func addActionItem(for message: EmailMessage,
                              folderID: String?,
                              tags: [String]) async {
-    await container.performBackgroundTask { context in
+    _ = try? await container.performBackgroundTask { context -> Void in
         let request = ActionItemEntity.fetchRequest()
         request.predicate = NSPredicate(format: "messageID == %@", message.messageID)
-        let existing = try? context.fetch(request)
-        guard existing?.isEmpty != false else { return } // idempotent
+        let existing = (try? context.fetch(request)) ?? []
+        guard existing.isEmpty else { return } // idempotent
         let entity = ActionItemEntity(context: context)
         entity.messageID = message.messageID
         entity.threadID = message.threadID ?? message.messageID
@@ -320,44 +324,40 @@ internal func addActionItem(for message: EmailMessage,
         entity.tagsData = try? JSONEncoder().encode(Array(tags.prefix(3)))
         entity.isDone = false
         entity.addedAt = Date()
-        try? context.save()
+        try context.save()
     }
 }
 
 internal func removeActionItem(for message: EmailMessage) async {
-    await container.performBackgroundTask { context in
+    _ = try? await container.performBackgroundTask { context -> Void in
         let request = ActionItemEntity.fetchRequest()
         request.predicate = NSPredicate(format: "messageID == %@", message.messageID)
         let entities = (try? context.fetch(request)) ?? []
         entities.forEach { context.delete($0) }
-        try? context.save()
+        try context.save()
     }
 }
 
 internal func toggleActionItemDone(_ messageID: String) async {
-    await container.performBackgroundTask { context in
+    _ = try? await container.performBackgroundTask { context -> Void in
         let request = ActionItemEntity.fetchRequest()
         request.predicate = NSPredicate(format: "messageID == %@", messageID)
         guard let entity = try? context.fetch(request).first else { return }
         entity.isDone.toggle()
-        try? context.save()
+        try context.save()
     }
 }
 
 internal func fetchActionItems() async -> [ActionItem] {
-    await withCheckedContinuation { continuation in
-        container.performBackgroundTask { context in
-            let request = ActionItemEntity.fetchRequest()
-            request.sortDescriptors = [NSSortDescriptor(key: "addedAt", ascending: false)]
-            let entities = (try? context.fetch(request)) ?? []
-            continuation.resume(returning: entities.compactMap { $0.toModel() })
-        }
-    }
+    (try? await container.performBackgroundTask { context -> [ActionItem] in
+        let request = ActionItemEntity.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(key: "addedAt", ascending: false)]
+        return try context.fetch(request).compactMap { $0.toModel() }
+    }) ?? []
 }
 
 internal func fetchActionItemIDs() async -> Set<String> {
-    let items = await fetchActionItems()
-    return Set(items.map(\.id))
+    Set(await fetchActionItems().map(\.id))
 }
 ```
 
@@ -440,16 +440,18 @@ case .actionItems, .allEmails, .allFolders, .allInboxes:
     // existing behaviour unchanged
 ```
 
-**`ThreadCanvasViewModel.swift` ~line 4393 — scope → fetch predicate:**
+**`ThreadCanvasViewModel.swift` ~line 4391 — `activeMailboxFetchTarget` computed var:**
+When `.actionItems` is active, `ContentView` shows `ActionItemsView` (not the canvas), so this var is never called. Add to satisfy exhaustiveness — fall through to the same return as `.allEmails`:
 ```swift
 case .actionItems, .allEmails, .allFolders, .allInboxes:
-    // existing behaviour unchanged
+    return (mailbox: "inbox", account: nil)
 ```
 
-**`ThreadCanvasViewModel.swift` ~line 4402 — scope → inbox alias flag:**
+**`ThreadCanvasViewModel.swift` ~line 4400 — `activeMailboxStoreFilter` computed var:**
+Same reasoning — not called when `.actionItems` is active. Add `.actionItems` alongside `.allEmails, .allFolders`:
 ```swift
 case .actionItems, .allEmails, .allFolders:
-    // existing behaviour unchanged
+    return (mailbox: nil, account: nil, includeAllInboxesAliases: false)
 ```
 
 The `selectMailboxScope` at line ~2136 uses `!=` equality, not a switch — no change needed there.
@@ -524,12 +526,19 @@ private func refreshActionItemIDs() async {
 
 - [ ] **Step 3: Load actionItemIDs on start**
 
-In the existing `start()` method (or `viewModel.start()`), add a call to `refreshActionItemIDs()` so the set is populated on launch.
-
-Find the `start()` function and add at the end of its `Task { }` block:
+`start()` (line ~990) contains several independent `Task { }` calls — there is no single enclosing Task block. Add a **new** Task call after the existing ones:
 
 ```swift
-await refreshActionItemIDs()
+internal func start() {
+    guard !didStart else { return }
+    didStart = true
+    // ... existing lines ...
+    Task { await loadCachedMessages() }
+    refreshMailboxHierarchy()
+    refreshNow()
+    applyAutoRefreshSettings()
+    Task { await refreshActionItemIDs() }  // ← add this line at the end
+}
 ```
 
 - [ ] **Step 4: Build check**
