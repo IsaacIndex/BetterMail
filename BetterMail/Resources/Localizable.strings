@@ -20,6 +20,8 @@
 "threadlist.backfill.confirm.cancel" = "Cancel";
 "threadcanvas.subject.placeholder" = "(No Subject)";
 "threadcanvas.node.accessibility" = "%@, %@, %@";
+"threadcanvas.node.menu.add_action_item" = "Add to Action Items";
+"threadcanvas.node.menu.remove_action_item" = "Remove from Action Items";
 "threadcanvas.inspector.title" = "Inspector";
 "threadcanvas.inspector.empty" = "Select a message to see details.";
 "threadcanvas.inspector.unread" = "Unread";
@@ -90,6 +92,7 @@
 "threadlist.selection.ungroup" = "Ungroup";
 "threadlist.selection.ungroup.verb" = "Ungroup";
 "threadlist.backfill.button.verb" = "Backfill";
+"mailbox.sidebar.action_items" = "Action Items";
 "mailbox.sidebar.all_emails" = "All Emails";
 "mailbox.sidebar.all_folders" = "All Folders";
 "mailbox.sidebar.all_inboxes" = "All Inboxes";
