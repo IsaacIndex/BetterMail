@@ -1210,7 +1210,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let currentNodeIDs = Set(Self.flatten(nodes: scopedRoots).map(\.id))
             let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
             let removedFolderIDs = previousFolderIDs.subtracting(rethreadResult.folders.map(\.id))
-            if activeMailboxScope == .allEmails && (!removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty) {
+            if (activeMailboxScope == .allEmails || activeMailboxScope == .actionItems) && (!removedNodeIDs.isEmpty || !removedFolderIDs.isEmpty) {
                 Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -4707,7 +4707,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func pinnedThreadIDsToIncludeForRethread() async throws -> Set<String> {
-        guard activeMailboxScope == .allEmails || activeMailboxScope == .allFolders || activeMailboxScope == .allInboxes else { return [] }
+        guard activeMailboxScope == .allEmails || activeMailboxScope == .actionItems || activeMailboxScope == .allFolders || activeMailboxScope == .allInboxes else { return [] }
         let storedFolders = try await store.fetchThreadFolders()
         let threadIDsByFolder = Self.folderThreadIDsByFolder(folders: storedFolders)
         if activeMailboxScope == .allFolders {
