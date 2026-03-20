@@ -601,6 +601,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didSet { refreshBottomBarMailboxActionStatusMessage() }
     }
     @Published internal private(set) var actionItemIDs: Set<String> = []
+    @Published internal private(set) var actionItems: [ActionItem] = []
     @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
     @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = [] {
         didSet { invalidateLayoutCache(reason: .manualAttachmentMessageIDs) }
@@ -2168,7 +2169,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func refreshActionItemIDs() async {
-        actionItemIDs = await MessageStore.shared.fetchActionItemIDs()
+        let fetched = await MessageStore.shared.fetchActionItems()
+        actionItems = fetched
+        actionItemIDs = Set(fetched.map(\.id))
     }
 
     private func setBottomBarMailboxActionStatus(_ message: String?,

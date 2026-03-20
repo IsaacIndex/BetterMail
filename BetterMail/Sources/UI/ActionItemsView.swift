@@ -4,23 +4,16 @@ import SwiftUI
 internal struct ActionItemsView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
     @State private var showDone = false
-    @State private var items: [ActionItem] = []
 
     internal var body: some View {
         VStack(spacing: 0) {
             topBar
             Divider()
-            if items.isEmpty {
+            if viewModel.actionItems.isEmpty {
                 emptyState
             } else {
                 itemList
             }
-        }
-        .task {
-            await loadItems()
-        }
-        .onChange(of: viewModel.actionItemIDs) { _, _ in
-            Task { await loadItems() }
         }
     }
 
@@ -28,7 +21,7 @@ internal struct ActionItemsView: View {
 
     private var topBar: some View {
         HStack(spacing: 8) {
-            Text("⚡ Action Items")
+            Text("Action Items")
                 .font(.headline)
             Text(subtitleText)
                 .font(.subheadline)
@@ -45,8 +38,8 @@ internal struct ActionItemsView: View {
     }
 
     private var subtitleText: String {
-        let open = items.filter { !$0.isDone }.count
-        let folderCount = Set(items.filter { !$0.isDone }.compactMap(\.folderID)).count
+        let open = viewModel.actionItems.filter { !$0.isDone }.count
+        let folderCount = Set(viewModel.actionItems.filter { !$0.isDone }.compactMap(\.folderID)).count
         if open == 0 { return "All done" }
         return "\(open) open · \(folderCount) folder\(folderCount == 1 ? "" : "s")"
     }
@@ -69,7 +62,7 @@ internal struct ActionItemsView: View {
     private var itemList: some View {
         let grouped = groupedItems
         return List {
-            ForEach(grouped, id: \.folderID) { group in
+            ForEach(grouped) { group in
                 Section {
                     ForEach(group.items) { item in
                         ActionItemRow(item: item,
@@ -98,14 +91,15 @@ internal struct ActionItemsView: View {
 
     // MARK: - Grouping
 
-    private struct ItemGroup {
+    private struct ItemGroup: Identifiable {
+        var id: String { folderID ?? "__unfiled__" }
         let folderID: String?
         let folderTitle: String
         let items: [ActionItem]
     }
 
     private var groupedItems: [ItemGroup] {
-        let visible = showDone ? items : items.filter { !$0.isDone }
+        let visible = showDone ? viewModel.actionItems : viewModel.actionItems.filter { !$0.isDone }
         let folderMap = Dictionary(grouping: visible, by: \.folderID)
         let folders = viewModel.threadFolders
 
@@ -126,11 +120,6 @@ internal struct ActionItemsView: View {
         return groups
     }
 
-    // MARK: - Data
-
-    private func loadItems() async {
-        items = await MessageStore.shared.fetchActionItems()
-    }
 }
 
 // MARK: - Row
