@@ -26,9 +26,6 @@ internal struct ThreadListView: View {
     internal var body: some View {
         content
             .frame(minWidth: 480, minHeight: 400)
-            .task {
-                viewModel.start()
-            }
             .onAppear {
                 isInspectorVisible = viewModel.selectedNodeID != nil || viewModel.selectedFolderID != nil
             }

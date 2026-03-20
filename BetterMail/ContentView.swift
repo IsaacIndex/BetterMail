@@ -25,6 +25,7 @@ internal struct ContentView: View {
             MailboxSidebarView(viewModel: viewModel)
                 .frame(minWidth: 220, idealWidth: 260)
         } detail: {
+
             if viewModel.activeMailboxScope == .actionItems {
                 ActionItemsView(viewModel: viewModel,
                                 inspectorSettings: inspectorSettings,
@@ -39,5 +40,8 @@ internal struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .task {
+            viewModel.start()
+        }
     }
 }
