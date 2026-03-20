@@ -914,6 +914,31 @@ internal struct ThreadCanvasView: View {
                     .onTapGesture {
                         viewModel.selectNode(id: nodeData.node.id, additive: isCommandClick())
                     }
+                    .contextMenu {
+                        let message = nodeData.node.message
+                        let isActionItem = viewModel.actionItemIDs.contains(message.messageID)
+                        let folderID = viewModel.folderMembershipByThreadID[nodeData.node.threadID]
+                        let tags = nodeData.tags
+
+                        Button {
+                            if isActionItem {
+                                viewModel.removeActionItem(message: message)
+                            } else {
+                                viewModel.addActionItem(message: message,
+                                                        folderID: folderID,
+                                                        tags: tags)
+                            }
+                        } label: {
+                            Label(
+                                isActionItem
+                                    ? NSLocalizedString("threadcanvas.node.menu.remove_action_item",
+                                                        comment: "Remove from Action Items")
+                                    : NSLocalizedString("threadcanvas.node.menu.add_action_item",
+                                                        comment: "Add to Action Items"),
+                                systemImage: isActionItem ? "checkmark.circle.fill" : "bolt.circle"
+                            )
+                        }
+                    }
             }
         }
     }
