@@ -12,6 +12,9 @@ internal struct ActionItemsView: View {
 
     internal var body: some View {
         ZStack(alignment: .topTrailing) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { viewModel.selectNode(id: nil) }
             VStack(spacing: 0) {
                 topBar
                 Divider()
@@ -209,6 +212,6 @@ private struct ActionItemRow: View {
         .padding(.vertical, 2)
         .opacity(item.isDone ? 0.55 : 1)
         .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
+        .highPriorityGesture(TapGesture().onEnded { _ in onSelect() })
     }
 }
