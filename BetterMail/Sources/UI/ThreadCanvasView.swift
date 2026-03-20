@@ -2847,22 +2847,16 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(selectionBackground)
         .overlay(selectionOverlay)
-        .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .leading) {
             if isActionItem {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 8 * fontScale, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.75))
-                    .padding(.horizontal, 5 * fontScale)
-                    .padding(.vertical, 3 * fontScale)
-                    .background(Color.yellow, in: UnevenRoundedRectangle(
-                        topLeadingRadius: 0,
-                        bottomLeadingRadius: 4 * fontScale,
-                        bottomTrailingRadius: 0,
-                        topTrailingRadius: selectionCornerRadius
-                    ))
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.yellow.opacity(0.9))
+                    .frame(width: 3 * fontScale)
+                    .padding(.vertical, 4 * fontScale)
+                    .padding(.leading, 2 * fontScale)
             }
         }
+        .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -3105,25 +3099,19 @@ private struct ThreadCanvasNodeView: View, Equatable {
         .background(nodeBackground)
         .overlay(selectionOverlay)
         .shadow(color: textShadowColor, radius: textShadowRadius, x: 0, y: 1)
+        .overlay(alignment: .leading) {
+            if isActionItem {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.yellow.opacity(0.9))
+                    .frame(width: 3 * fontScale)
+                    .padding(.vertical, 4 * fontScale)
+                    .padding(.leading, 2 * fontScale)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .overlay(alignment: .topTrailing) {
-            if isActionItem {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 8 * fontScale, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.75))
-                    .padding(.horizontal, 5 * fontScale)
-                    .padding(.vertical, 3 * fontScale)
-                    .background(Color.yellow, in: UnevenRoundedRectangle(
-                        topLeadingRadius: 0,
-                        bottomLeadingRadius: 4 * fontScale,
-                        bottomTrailingRadius: 0,
-                        topTrailingRadius: cornerRadius
-                    ))
-            }
-        }
     }
 
     private var subjectText: String {
