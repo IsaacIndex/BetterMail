@@ -7,6 +7,7 @@ BetterMail.xcodeproj/project.xcworkspace/xcuserdata/isaacibm.xcuserdatad/Bookmar
 
 # Local IDE metadata
 .vscode/
+.superpowers/
 
 # Local signing configuration (copy from *.xcconfig.example)
 Config/*.xcconfig
