@@ -25,11 +25,16 @@ internal struct ContentView: View {
             MailboxSidebarView(viewModel: viewModel)
                 .frame(minWidth: 220, idealWidth: 260)
         } detail: {
-            ThreadListView(viewModel: viewModel,
-                           settings: settings,
-                           inspectorSettings: inspectorSettings,
-                           displaySettings: displaySettings)
-                .frame(minWidth: 720, minHeight: 520)
+            if viewModel.activeMailboxScope == .actionItems {
+                ActionItemsView(viewModel: viewModel)
+                    .frame(minWidth: 480, minHeight: 400)
+            } else {
+                ThreadListView(viewModel: viewModel,
+                               settings: settings,
+                               inspectorSettings: inspectorSettings,
+                               displaySettings: displaySettings)
+                    .frame(minWidth: 720, minHeight: 520)
+            }
         }
         .navigationSplitViewStyle(.balanced)
     }

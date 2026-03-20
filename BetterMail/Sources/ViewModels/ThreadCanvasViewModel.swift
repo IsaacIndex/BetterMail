@@ -565,7 +565,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var refreshingFolderThreadIDs: Set<String> = []
     @Published internal private(set) var status: String = ""
     @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
-    @Published internal private(set) var activeMailboxScope: MailboxScope = .allEmails
+    @Published internal private(set) var activeMailboxScope: MailboxScope = .actionItems
     @Published internal private(set) var isMailboxHierarchyLoading = false
     @Published internal private(set) var mailboxActionStatusMessage: String?
     @Published internal private(set) var bottomBarMailboxActionStatusMessage: String?

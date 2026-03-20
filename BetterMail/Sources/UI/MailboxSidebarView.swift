@@ -28,6 +28,10 @@ internal struct MailboxSidebarView: View {
 
     internal var body: some View {
         List(selection: $selectedScope) {
+            sidebarRow(scope: .actionItems,
+                       title: NSLocalizedString("mailbox.sidebar.action_items",
+                                                comment: "Action Items sidebar entry"),
+                       systemImage: "bolt.circle")
             sidebarRow(scope: .allEmails,
                        title: NSLocalizedString("mailbox.sidebar.all_emails",
                                                 comment: "All Emails sidebar entry"),
