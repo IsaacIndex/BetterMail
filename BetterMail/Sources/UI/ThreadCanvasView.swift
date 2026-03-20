@@ -875,6 +875,7 @@ internal struct ThreadCanvasView: View {
                                                      summaryState: nodeData.summaryState,
                                                      tags: nodeData.tags,
                                                      isSelected: nodeData.isSelected,
+                                                     isActionItem: viewModel.actionItemIDs.contains(nodeData.node.message.messageID),
                                                      mailboxLabel: nodeData.mailboxLabel,
                                                      fontScale: metrics.fontScale,
                                                      readabilityMode: readabilityMode)
@@ -2777,6 +2778,7 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
     let summaryState: ThreadSummaryState?
     let tags: [String]
     let isSelected: Bool
+    let isActionItem: Bool
     let mailboxLabel: String?
     let fontScale: CGFloat
     let readabilityMode: ThreadCanvasReadabilityMode
@@ -2796,6 +2798,7 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
             lhs.summaryState == rhs.summaryState &&
             lhs.tags == rhs.tags &&
             lhs.isSelected == rhs.isSelected &&
+            lhs.isActionItem == rhs.isActionItem &&
             lhs.mailboxLabel == rhs.mailboxLabel &&
             lhs.fontScale == rhs.fontScale &&
             lhs.readabilityMode == rhs.readabilityMode
@@ -2844,6 +2847,14 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(selectionBackground)
         .overlay(selectionOverlay)
+        .overlay(alignment: .topTrailing) {
+            if isActionItem {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 7 * fontScale, weight: .semibold))
+                    .foregroundStyle(Color.yellow.opacity(0.85))
+                    .padding(4 * fontScale)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
@@ -3474,6 +3485,7 @@ private extension EmailMessage {
         summaryState: nil,
         tags: ["Finance", "Q1", "Update"],
         isSelected: true,
+        isActionItem: false,
         mailboxLabel: "Inbox",
         fontScale: 1.0,
         readabilityMode: .detailed
