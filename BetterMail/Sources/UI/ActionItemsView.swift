@@ -108,6 +108,7 @@ internal struct ActionItemsView: View {
                 Section {
                     ForEach(group.items) { item in
                         ActionItemRow(item: item,
+                                      displayTitle: displayTitle(for: item),
                                       onToggleDone: { viewModel.toggleActionItemDone(item.id) },
                                       onSelect: { viewModel.selectNode(id: item.id) })
                     }
@@ -130,6 +131,15 @@ internal struct ActionItemsView: View {
             }
         }
         .listStyle(.inset)
+    }
+
+    // MARK: - Helpers
+
+    private func displayTitle(for item: ActionItem) -> String {
+        let summary = viewModel.summaryState(for: item.id)?.text
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !summary.isEmpty { return summary }
+        return item.subject.isEmpty ? "(no subject)" : item.subject
     }
 
     // MARK: - Grouping
@@ -169,6 +179,7 @@ internal struct ActionItemsView: View {
 
 private struct ActionItemRow: View {
     let item: ActionItem
+    let displayTitle: String
     let onToggleDone: () -> Void
     let onSelect: () -> Void
 
@@ -182,7 +193,7 @@ private struct ActionItemRow: View {
             .buttonStyle(.borderless)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.subject.isEmpty ? "(no subject)" : item.subject)
+                Text(displayTitle)
                     .font(.callout)
                     .fontWeight(.medium)
                     .foregroundStyle(item.isDone ? .tertiary : .primary)
