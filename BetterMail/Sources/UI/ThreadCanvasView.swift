@@ -887,6 +887,7 @@ internal struct ThreadCanvasView: View {
                         ThreadCanvasNodeView(node: nodeData.node,
                                              summaryState: nodeData.summaryState,
                                              isSelected: nodeData.isSelected,
+                                             isActionItem: viewModel.actionItemIDs.contains(nodeData.node.message.messageID),
                                              mailboxLabel: nodeData.mailboxLabel,
                                              fontScale: metrics.fontScale,
                                              viewMode: displaySettings.viewMode,
@@ -3040,6 +3041,7 @@ private struct ThreadCanvasNodeView: View, Equatable {
     let node: ThreadCanvasNode
     let summaryState: ThreadSummaryState?
     let isSelected: Bool
+    let isActionItem: Bool
     let mailboxLabel: String?
     let fontScale: CGFloat
     let viewMode: ThreadCanvasViewMode
@@ -3059,6 +3061,7 @@ private struct ThreadCanvasNodeView: View, Equatable {
         lhs.node == rhs.node &&
             lhs.summaryState == rhs.summaryState &&
             lhs.isSelected == rhs.isSelected &&
+            lhs.isActionItem == rhs.isActionItem &&
             lhs.mailboxLabel == rhs.mailboxLabel &&
             lhs.fontScale == rhs.fontScale &&
             lhs.viewMode == rhs.viewMode &&
@@ -3083,6 +3086,14 @@ private struct ThreadCanvasNodeView: View, Equatable {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(nodeBackground)
         .overlay(selectionOverlay)
+        .overlay(alignment: .topTrailing) {
+            if isActionItem {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 7 * fontScale, weight: .semibold))
+                    .foregroundStyle(Color.yellow.opacity(0.85))
+                    .padding(4 * fontScale)
+            }
+        }
         .shadow(color: textShadowColor, radius: textShadowRadius, x: 0, y: 1)
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)

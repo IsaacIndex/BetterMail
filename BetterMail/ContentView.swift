@@ -26,7 +26,9 @@ internal struct ContentView: View {
                 .frame(minWidth: 220, idealWidth: 260)
         } detail: {
             if viewModel.activeMailboxScope == .actionItems {
-                ActionItemsView(viewModel: viewModel)
+                ActionItemsView(viewModel: viewModel,
+                                inspectorSettings: inspectorSettings,
+                                textScale: displaySettings.textScale)
                     .frame(minWidth: 480, minHeight: 400)
             } else {
                 ThreadListView(viewModel: viewModel,

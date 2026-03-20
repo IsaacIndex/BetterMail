@@ -3,16 +3,55 @@ import SwiftUI
 
 internal struct ActionItemsView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
+    @ObservedObject internal var inspectorSettings: InspectorViewSettings
+    internal var textScale: CGFloat
     @State private var showDone = false
+    @State private var isInspectorVisible = false
+
+    private let inspectorWidth: CGFloat = 320
 
     internal var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            Divider()
-            if viewModel.actionItems.isEmpty {
-                emptyState
-            } else {
-                itemList
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                topBar
+                Divider()
+                if viewModel.actionItems.isEmpty {
+                    emptyState
+                } else {
+                    itemList
+                }
+            }
+            if isInspectorVisible, let selectedNode = viewModel.selectedNode {
+                ThreadInspectorView(
+                    node: selectedNode,
+                    summaryState: viewModel.summaryState(for: selectedNode.id),
+                    summaryExpansion: Binding(
+                        get: { viewModel.isSummaryExpanded(for: selectedNode.id) },
+                        set: { viewModel.setSummaryExpanded($0, for: selectedNode.id) }
+                    ),
+                    inspectorSettings: inspectorSettings,
+                    textScale: textScale,
+                    openInMailState: viewModel.openInMailState,
+                    canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                    onRegenerateSummary: { viewModel.regenerateNodeSummary(for: selectedNode.id) },
+                    onOpenInMail: viewModel.openMessageInMail,
+                    onCopyOpenInMailText: viewModel.copyToPasteboard
+                )
+                .id(selectedNode.id)
+                .frame(width: inspectorWidth)
+                .padding(.top, 50)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .zIndex(1)
+                .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
+                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: viewModel.selectedNodeID)
+            }
+        }
+        .onAppear {
+            isInspectorVisible = viewModel.selectedNodeID != nil
+        }
+        .onChange(of: viewModel.selectedNodeID) { _, newValue in
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                isInspectorVisible = newValue != nil
             }
         }
     }
@@ -66,7 +105,8 @@ internal struct ActionItemsView: View {
                 Section {
                     ForEach(group.items) { item in
                         ActionItemRow(item: item,
-                                      onToggleDone: { viewModel.toggleActionItemDone(item.id) })
+                                      onToggleDone: { viewModel.toggleActionItemDone(item.id) },
+                                      onSelect: { viewModel.selectNode(id: item.id) })
                     }
                 } header: {
                     HStack {
@@ -127,6 +167,7 @@ internal struct ActionItemsView: View {
 private struct ActionItemRow: View {
     let item: ActionItem
     let onToggleDone: () -> Void
+    let onSelect: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -167,5 +208,7 @@ private struct ActionItemRow: View {
         }
         .padding(.vertical, 2)
         .opacity(item.isDone ? 0.55 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }
     }
 }
