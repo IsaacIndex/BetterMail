@@ -328,6 +328,22 @@ internal struct ThreadCanvasView: View {
                                  viewportHeight: proxySize.height,
                                  visibleYStart: context.visibility.visibleYStart,
                                  visibleYEnd: context.visibility.visibleYEnd)
+            } else if let dateDescription = viewModel.visibleDateRangeDescription {
+                Text(dateDescription)
+                    .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
+                                            weight: .medium,
+                                            textScale: displaySettings.textScale))
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.85))
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
+                    )
+                    .padding(.leading, 12)
+                    .padding(.top, context.totalTopPadding + 8)
+                    .allowsHitTesting(false)
             }
             folderColumnHeaderLayer(chromeData: context.visibility.visibleHeaderChromeData,
                                     metrics: context.metrics,

@@ -640,6 +640,29 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
     @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
+
+    /// Formatted description of the visible date range for display in the date rail overlay.
+    internal var visibleDateRangeDescription: String? {
+        guard let range = visibleDayRange else { return nil }
+        let calendar = Calendar.current
+        let today = Date()
+        guard let startDate = calendar.date(byAdding: .day, value: range.lowerBound, to: today),
+              let endDate = calendar.date(byAdding: .day, value: range.upperBound, to: today) else {
+            return nil
+        }
+        let formatter = DateFormatter()
+        if calendar.component(.year, from: startDate) == calendar.component(.year, from: endDate),
+           calendar.component(.year, from: startDate) == calendar.component(.year, from: today) {
+            formatter.dateFormat = "MMM d"
+            let start = formatter.string(from: startDate)
+            let end = formatter.string(from: endDate)
+            return start == end ? start : "\(start) – \(end)"
+        }
+        formatter.dateFormat = "MMM d, yyyy"
+        let start = formatter.string(from: startDate)
+        let end = formatter.string(from: endDate)
+        return start == end ? start : "\(start) – \(end)"
+    }
     @Published internal private(set) var timelineTagsByNodeID: [String: [String]] = [:] {
         didSet {
             invalidateLayoutCache(structural: false, enrichment: true, reason: .timelineTagsByNodeID)

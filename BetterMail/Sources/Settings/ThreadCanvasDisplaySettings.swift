@@ -41,6 +41,8 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     @Published internal private(set) var currentZoom: CGFloat = ThreadCanvasDisplaySettings.defaultCurrentZoom
 
     private var isNormalizing = false
+    private var lastReadabilityMode: ThreadCanvasReadabilityMode?
+    private let readabilityHysteresis: CGFloat = 0.03
     private let userDefaults: UserDefaults
 
     internal init(userDefaults: UserDefaults = .standard) {
@@ -70,13 +72,40 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     }
 
     internal func readabilityMode(for zoom: CGFloat) -> ThreadCanvasReadabilityMode {
+        let raw: ThreadCanvasReadabilityMode
         if zoom >= detailedThreshold {
-            return .detailed
+            raw = .detailed
+        } else if zoom >= compactThreshold {
+            raw = .compact
+        } else {
+            raw = .minimal
         }
-        if zoom >= compactThreshold {
-            return .compact
+
+        // Apply hysteresis: once in a mode, require the zoom to cross the
+        // threshold by an extra margin before switching, preventing flicker
+        // at exact threshold boundaries.
+        if let last = lastReadabilityMode, last != raw {
+            switch last {
+            case .detailed:
+                if zoom >= detailedThreshold - readabilityHysteresis {
+                    return last
+                }
+            case .compact:
+                if raw == .detailed, zoom < detailedThreshold + readabilityHysteresis {
+                    return last
+                }
+                if raw == .minimal, zoom >= compactThreshold - readabilityHysteresis {
+                    return last
+                }
+            case .minimal:
+                if zoom < compactThreshold + readabilityHysteresis {
+                    return last
+                }
+            }
         }
-        return .minimal
+
+        lastReadabilityMode = raw
+        return raw
     }
 
     private func normalizeSettings() {
