@@ -18,7 +18,7 @@ internal struct ThreadCanvasView: View {
     @State private var isDropHighlightPulsing: Bool = false
     @State private var dragState: ThreadCanvasDragState?
     @State private var dragPreviewOpacity: Double = 0
-    @State private var dragPreviewScale: CGFloat = 0.94
+    @State private var dragPreviewScale: CGFloat = 0.85
     @State private var suspendTimelineTagFetch = false
     private let headerSpacing: CGFloat = 0
     private let layoutZoomQuantizationStep: CGFloat = 0.025
@@ -629,7 +629,7 @@ internal struct ThreadCanvasView: View {
                                                 headerHeight: headerHeight)
                 RoundedRectangle(cornerRadius: metrics.nodeCornerRadius * 1.6, style: .continuous)
                     .stroke(accentColor(for: chrome.color).opacity(isDropHighlightPulsing ? 1.0 : 0.85),
-                            lineWidth: isDropHighlightPulsing ? 4 : 3)
+                            lineWidth: isDropHighlightPulsing ? 5 : 4)
                     .frame(width: dropFrame.width, height: dropFrame.height, alignment: .topLeading)
                     .offset(x: dropFrame.minX, y: dropFrame.minY)
             }
@@ -795,6 +795,7 @@ internal struct ThreadCanvasView: View {
     private func dragPreviewLayer() -> some View {
         if let dragState {
             ThreadDragPreview(title: dragState.previewTitle, detail: dragState.previewDetail)
+                .overlay(Color.accentColor.opacity(0.15))
                 .scaleEffect(dragPreviewScale)
                 .opacity(dragPreviewOpacity)
                 .position(x: dragState.location.x, y: dragState.location.y)
@@ -919,6 +920,7 @@ internal struct ThreadCanvasView: View {
                     .onTapGesture {
                         viewModel.selectNode(id: nodeData.node.id, additive: isCommandClick())
                     }
+                    .help("Right-click for more options")
                     .contextMenu {
                         let message = nodeData.node.message
                         let isActionItem = viewModel.actionItemIDs.contains(message.messageID)
@@ -1033,7 +1035,7 @@ internal struct ThreadCanvasView: View {
                                           previewDetail: "\(count) message\(count == 1 ? "" : "s")",
                                           location: location)
         dragPreviewOpacity = 0
-        dragPreviewScale = 0.94
+        dragPreviewScale = 0.85
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
             dragPreviewOpacity = 1
             dragPreviewScale = 1
@@ -1053,7 +1055,7 @@ internal struct ThreadCanvasView: View {
                                           previewDetail: "\(count) thread\(count == 1 ? "" : "s")",
                                           location: location)
         dragPreviewOpacity = 0
-        dragPreviewScale = 0.94
+        dragPreviewScale = 0.85
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
             dragPreviewOpacity = 1
             dragPreviewScale = 1
@@ -1120,12 +1122,12 @@ internal struct ThreadCanvasView: View {
     private func startDropHighlightPulse() {
         dropHighlightPulseToken += 1
         let token = dropHighlightPulseToken
-        withAnimation(.easeOut(duration: 0.12)) {
+        withAnimation(.easeOut(duration: 0.3)) {
             isDropHighlightPulsing = true
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             guard token == dropHighlightPulseToken else { return }
-            withAnimation(.easeOut(duration: 0.18)) {
+            withAnimation(.easeOut(duration: 0.3)) {
                 isDropHighlightPulsing = false
             }
         }
