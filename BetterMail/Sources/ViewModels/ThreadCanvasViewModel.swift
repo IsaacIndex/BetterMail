@@ -564,6 +564,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var isRefreshing = false
     @Published internal private(set) var refreshingFolderThreadIDs: Set<String> = []
     @Published internal private(set) var status: String = ""
+    @Published internal private(set) var errorMessage: String?
+    private var errorDismissTask: Task<Void, Never>?
     @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
     @Published internal private(set) var activeMailboxScope: MailboxScope = .actionItems
     @Published internal private(set) var isMailboxHierarchyLoading = false
@@ -1000,6 +1002,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Task { await refreshActionItemIDs() }
     }
 
+    // MARK: - Error Display
+
+    internal func showError(_ message: String) {
+        errorMessage = message
+        errorDismissTask?.cancel()
+        errorDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.errorMessage = nil
+            }
+        }
+    }
+
+    internal func dismissError() {
+        errorDismissTask?.cancel()
+        errorDismissTask = nil
+        errorMessage = nil
+    }
+
     internal func refreshNow(limit: Int? = nil) {
         guard !isAnyRefreshRunning else {
             Log.refresh.debug("Refresh skipped because another refresh is in progress.")
@@ -1053,12 +1075,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     if Self.isMailboxResolveNotFound(error) {
                         self.status = NSLocalizedString("refresh.status.mailbox_unavailable",
                                                         comment: "Status when selected mailbox scope cannot be resolved in Mail")
+                        self.showError(self.status)
                         return
                     }
                     self.status = String.localizedStringWithFormat(
                         NSLocalizedString("refresh.status.failed", comment: "Status when refresh fails"),
                         error.localizedDescription
                     )
+                    self.showError(self.status)
                 }
             }
             await MainActor.run { self.isRefreshing = false }
@@ -1115,6 +1139,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         NSLocalizedString("refresh.status.failed", comment: "Status when refresh fails"),
                         error.localizedDescription
                     )
+                    self.showError(self.status)
                 }
             }
         }
@@ -1235,6 +1260,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 NSLocalizedString("refresh.status.threading_failed", comment: "Status when threading fails"),
                 error.localizedDescription
             )
+            showError(status)
         }
     }
 
@@ -1438,6 +1464,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        status: error.localizedDescription,
                                        isSummarizing: false,
                                        in: \.nodeSummaries)
+                    self.showError(error.localizedDescription)
                 }
             }
         }
@@ -1515,6 +1542,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        status: error.localizedDescription,
                                        isSummarizing: false,
                                        in: \.folderSummaries)
+                    self.showError(error.localizedDescription)
                 }
             }
         }
@@ -2629,6 +2657,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.mailboxActionStatusMessage = Self.mailboxMoveFailureMessage(for: error)
                     self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
                                                          forThreadID: bottomBarThreadID)
+                    if let msg = self.mailboxActionStatusMessage {
+                        self.showError(msg)
+                    }
                 }
             }
         }
@@ -2762,6 +2793,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveFailureMessage(for: error)
                     self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
                                                          forThreadID: bottomBarThreadID)
+                    if let msg = self.mailboxActionStatusMessage {
+                        self.showError(msg)
+                    }
                 }
             }
         }
@@ -3518,6 +3552,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                           comment: "Status when backfill fails"),
                         error.localizedDescription
                     )
+                    self.showError(self.status)
                 }
             }
         }

@@ -239,33 +239,38 @@ internal struct ThreadListView: View {
     }
 
     private var navBarContent: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Threads")
-                    .font(font(size: 13, weight: .semibold))
-                Text(statusText)
-                    .font(font(size: 12))
-                    .foregroundStyle(navSecondaryForegroundStyle)
-                refreshTimingView
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Threads")
+                        .font(font(size: 13, weight: .semibold))
+                    Text(statusText)
+                        .font(font(size: 12))
+                        .foregroundStyle(navSecondaryForegroundStyle)
+                    refreshTimingView
+                }
+                Spacer()
+                if viewModel.isRefreshing {
+                    ProgressView().controlSize(.small)
+                }
+                if viewModel.isBackfilling {
+                    ProgressView().controlSize(.small)
+                }
+                viewModeToggle
+                HStack(spacing: 6) {
+                    Text("Limit")
+                        .font(font(size: 12))
+                        .foregroundStyle(navSecondaryForegroundStyle)
+                    limitField
+                }
+                refreshButton
             }
-            Spacer()
-            if viewModel.isRefreshing {
-                ProgressView().controlSize(.small)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            if let errorMessage = viewModel.errorMessage {
+                errorBanner(message: errorMessage)
             }
-            if viewModel.isBackfilling {
-                ProgressView().controlSize(.small)
-            }
-            viewModeToggle
-            HStack(spacing: 6) {
-                Text("Limit")
-                    .font(font(size: 12))
-                    .foregroundStyle(navSecondaryForegroundStyle)
-                limitField
-            }
-            refreshButton
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(navPrimaryForegroundStyle)
         .shadow(color: Color.black.opacity(isGlassNavEnabled ? (colorScheme == .light ? 0.18 : 0.45) : 0),
@@ -285,6 +290,30 @@ internal struct ThreadListView: View {
                     .preference(key: NavHeightPreferenceKey.self, value: proxy.size.height)
             }
         )
+    }
+
+    private func errorBanner(message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.white)
+                .font(.system(size: 12))
+            Text(message)
+                .font(font(size: 12, weight: .medium))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+            Spacer()
+            Button {
+                viewModel.dismissError()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.red.opacity(0.85))
     }
 
     private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
