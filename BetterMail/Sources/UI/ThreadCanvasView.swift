@@ -167,6 +167,7 @@ internal struct ThreadCanvasView: View {
         GeometryReader { proxy in
             canvasContent(proxy: proxy)
         }
+        .ignoresSafeArea(.container, edges: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectNode(id: nil)
