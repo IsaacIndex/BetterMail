@@ -2785,6 +2785,8 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
+    @State private var gradientRotation: Double = 0
+    @State private var glowPulse: Double = 1.0
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -2847,13 +2849,30 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(selectionBackground)
         .overlay(selectionOverlay)
-        .overlay(alignment: .leading) {
+        .overlay {
             if isActionItem {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.yellow.opacity(0.9))
-                    .frame(width: 3 * fontScale)
-                    .padding(.vertical, 4 * fontScale)
-                    .padding(.leading, 2 * fontScale)
+                RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous)
+                    .stroke(
+                        AngularGradient(
+                            colors: [
+                                .orange,
+                                .yellow,
+                                Color(hue: 0.11, saturation: 1.0, brightness: 1.0),
+                                .orange.opacity(0.25),
+                                .orange,
+                            ],
+                            center: .center,
+                            startAngle: .degrees(gradientRotation),
+                            endAngle: .degrees(gradientRotation + 360)
+                        ),
+                        lineWidth: 1.5 * fontScale
+                    )
+                    .opacity(glowPulse)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                            glowPulse = 0.45
+                        }
+                    }
             }
         }
         .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
@@ -3061,6 +3080,8 @@ private struct ThreadCanvasNodeView: View, Equatable {
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
+    @State private var gradientRotation: Double = 0
+    @State private var glowPulse: Double = 1.0
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -3099,13 +3120,30 @@ private struct ThreadCanvasNodeView: View, Equatable {
         .background(nodeBackground)
         .overlay(selectionOverlay)
         .shadow(color: textShadowColor, radius: textShadowRadius, x: 0, y: 1)
-        .overlay(alignment: .leading) {
+        .overlay {
             if isActionItem {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.yellow.opacity(0.9))
-                    .frame(width: 3 * fontScale)
-                    .padding(.vertical, 4 * fontScale)
-                    .padding(.leading, 2 * fontScale)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        AngularGradient(
+                            colors: [
+                                .orange,
+                                .yellow,
+                                Color(hue: 0.11, saturation: 1.0, brightness: 1.0),
+                                .orange.opacity(0.25),
+                                .orange,
+                            ],
+                            center: .center,
+                            startAngle: .degrees(gradientRotation),
+                            endAngle: .degrees(gradientRotation + 360)
+                        ),
+                        lineWidth: 1.5 * fontScale
+                    )
+                    .opacity(glowPulse)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                            glowPulse = 0.45
+                        }
+                    }
             }
         }
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
