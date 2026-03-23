@@ -102,9 +102,14 @@ internal struct ThreadInspectorView: View {
     }
 
     private var emptyState: some View {
-        Text(NSLocalizedString("threadcanvas.inspector.empty", comment: "Empty inspector placeholder"))
-            .foregroundStyle(inspectorSecondaryForegroundStyle)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        VStack(spacing: 12) {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 32))
+                .foregroundStyle(.tertiary)
+            Text(NSLocalizedString("threadcanvas.inspector.empty", comment: "Empty inspector placeholder"))
+                .foregroundStyle(inspectorSecondaryForegroundStyle)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var isGlassInspectorEnabled: Bool {

@@ -124,7 +124,7 @@ internal struct MailboxSidebarView: View {
                     Color.clear
                 }
             }
-            .frame(width: 10, height: 10)
+            .frame(width: 22, height: 22)
             .contentShape(Rectangle())
             .onTapGesture {
                 guard hasChildren else { return }

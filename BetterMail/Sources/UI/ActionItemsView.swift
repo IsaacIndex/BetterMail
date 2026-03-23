@@ -89,13 +89,21 @@ internal struct ActionItemsView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer()
+            Image(systemName: "checklist")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
             Text("No action items yet")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            Text("Right-click any thread on the canvas\nto add an action item.")
+            Text("Right-click any thread on the canvas\nto mark it as an action item.")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+            Button("View Canvas") {
+                viewModel.selectMailboxScope(.allFolders)
+            }
+            .controlSize(.small)
+            .buttonStyle(.bordered)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
