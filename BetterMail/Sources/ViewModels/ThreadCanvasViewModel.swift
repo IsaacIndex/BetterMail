@@ -561,6 +561,30 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             refreshBottomBarMailboxActionStatusMessage()
         }
     }
+    @Published internal var searchQuery: String = "" {
+        didSet {
+            invalidateLayoutCache(reason: .roots)
+        }
+    }
+
+    /// Roots filtered by the current search query. Returns all roots when the query is empty.
+    internal var filteredRoots: [ThreadNode] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return roots }
+        return roots.filter { node in
+            node.message.subject.lowercased().contains(query) ||
+            node.message.from.lowercased().contains(query) ||
+            node.message.snippet.lowercased().contains(query)
+        }
+    }
+
+    /// Count of threads matching the current search query, nil when no search is active.
+    internal var searchResultCount: Int? {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return nil }
+        return filteredRoots.count
+    }
+
     @Published internal private(set) var isRefreshing = false
     @Published internal private(set) var refreshProgress: Double?
     @Published internal var activeToast: ToastMessage?
@@ -3395,7 +3419,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return cachedLayout
         }
 
-        let layout = Self.canvasLayout(for: roots,
+        let layout = Self.canvasLayout(for: filteredRoots,
                                        metrics: metrics,
                                        viewMode: viewMode,
                                        rowPackingMode: rowPackingMode,

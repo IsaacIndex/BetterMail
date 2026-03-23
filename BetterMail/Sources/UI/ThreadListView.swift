@@ -15,6 +15,7 @@ internal struct ThreadListView: View {
     @State private var backfillLimit: Int = 10
     @State private var isInspectorVisible = false
     @State private var isShowingMailboxMoveSheet = false
+    @State private var isSearchFieldVisible = false
 
     private let navCornerRadius: CGFloat = 18
     private let navHorizontalPadding: CGFloat = 16
@@ -260,6 +261,7 @@ internal struct ThreadListView: View {
                     ProgressView().controlSize(.small)
                 }
                 viewModeToggle
+                searchBar
                 HStack(spacing: 6) {
                     Text("Limit")
                         .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
@@ -321,6 +323,45 @@ internal struct ThreadListView: View {
 
 
     @ViewBuilder
+    private var searchBar: some View {
+        HStack(spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isSearchFieldVisible.toggle()
+                    if !isSearchFieldVisible {
+                        viewModel.searchQuery = ""
+                    }
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
+                                            weight: .medium,
+                                            textScale: displaySettings.textScale))
+            }
+            .buttonStyle(.borderless)
+            .help(NSLocalizedString("threadlist.search.toggle", comment: "Toggle search field"))
+
+            if isSearchFieldVisible {
+                TextField(NSLocalizedString("threadlist.search.placeholder",
+                                            comment: "Search field placeholder"),
+                          text: $viewModel.searchQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
+                                            textScale: displaySettings.textScale))
+                    .frame(width: 140)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+
+                if let count = viewModel.searchResultCount {
+                    Text("\(count)")
+                        .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
+                                                textScale: displaySettings.textScale))
+                        .foregroundStyle(navSecondaryForegroundStyle)
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+
     private var viewModeToggle: some View {
         Toggle(isOn: viewModeToggleBinding) {
             Text(viewModeLabel)
