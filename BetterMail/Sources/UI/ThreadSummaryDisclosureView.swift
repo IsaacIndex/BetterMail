@@ -18,27 +18,27 @@ internal struct ThreadSummaryDisclosureView: View {
                 } label: {
                     HStack() {
                         Image(systemName: "sparkles")
-                            .font(font(size: 12))
+                            .font(DesignTokens.font(size: 12, textScale: textScale))
                         Text(title)
-                            .font(font(size: 12, weight: .semibold))
+                            .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
                         if state.isSummarizing {
                             ProgressView().controlSize(.mini)
                         }
                         Spacer()
                         if !state.text.isEmpty {
                             Text(state.text)
-                                .font(font(size: 11))
+                                .font(DesignTokens.font(size: 11, textScale: textScale))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .opacity(isExpanded ? 0 : 1)
                         } else if !state.statusMessage.isEmpty {
                             Text(state.statusMessage)
-                                .font(font(size: 11))
+                                .font(DesignTokens.font(size: 11, textScale: textScale))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
                         Image(systemName: "chevron.down")
-                            .font(font(size: 11, weight: .semibold))
+                            .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
                             .rotationEffect(isExpanded ? .degrees(180) : .degrees(0))
                             .foregroundStyle(.secondary)
                     }
@@ -50,7 +50,7 @@ internal struct ThreadSummaryDisclosureView: View {
                 if let onRegenerate {
                     Button(action: onRegenerate) {
                         Image(systemName: "arrow.clockwise")
-                            .font(font(size: 12))
+                            .font(DesignTokens.font(size: 12, textScale: textScale))
                     }
                     .buttonStyle(.plain)
                     .controlSize(.mini)
@@ -66,12 +66,12 @@ internal struct ThreadSummaryDisclosureView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if !state.text.isEmpty {
                         Text(state.text)
-                            .font(font(size: 12))
+                            .font(DesignTokens.font(size: 12, textScale: textScale))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if !state.statusMessage.isEmpty {
                         Text(state.statusMessage)
-                            .font(font(size: 11))
+                            .font(DesignTokens.font(size: 11, textScale: textScale))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -84,7 +84,7 @@ internal struct ThreadSummaryDisclosureView: View {
 
     @ViewBuilder
     private var summaryBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
         if reduceTransparency {
             shape
                 .fill(Color(nsColor: NSColor.windowBackgroundColor))
@@ -96,7 +96,4 @@ internal struct ThreadSummaryDisclosureView: View {
         }
     }
 
-    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size * textScale, weight: weight)
-    }
 }

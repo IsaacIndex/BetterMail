@@ -75,6 +75,17 @@ internal enum DesignTokens {
         internal static let comfortable: CGFloat = 16
     }
 
+    // MARK: - Font Size
+
+    internal enum FontSize {
+        internal static let panelTitle: CGFloat = 13
+        internal static let sectionTitle: CGFloat = 15
+        internal static let bodyPrimary: CGFloat = 13
+        internal static let bodySecondary: CGFloat = 12
+        internal static let caption: CGFloat = 11
+        internal static let micro: CGFloat = 9
+    }
+
     // MARK: - Font
 
     /// Shared scaled-font factory. Replaces per-view `font(size:weight:)` helpers.
@@ -99,8 +110,9 @@ internal extension Color {
     /// Primary text colour for glass surfaces.
     ///
     /// When glass effects are active (macOS 26+, reduce-transparency off) it
-    /// returns white at the token-defined opacity so text remains legible over
-    /// translucent backgrounds. Otherwise falls back to the system primary.
+    /// returns a high-contrast colour appropriate for the colour scheme so text
+    /// remains legible over translucent backgrounds. Otherwise falls back to the
+    /// system primary.
     static func glassPrimary(
         colorScheme: ColorScheme,
         isGlassEnabled: Bool
@@ -109,7 +121,10 @@ internal extension Color {
             return Color.primary
         }
         let opacity = DesignTokens.Opacity.primaryTextGlass(for: colorScheme)
-        return Color.white.opacity(opacity)
+        if colorScheme == .light {
+            return Color.black.opacity(opacity)
+        }
+        return Color.white
     }
 
     /// Secondary text colour for glass surfaces.
@@ -124,6 +139,9 @@ internal extension Color {
             return Color.secondary
         }
         let opacity = DesignTokens.Opacity.secondaryTextGlass(for: colorScheme)
+        if colorScheme == .light {
+            return Color.black.opacity(opacity)
+        }
         return Color.white.opacity(opacity)
     }
 }

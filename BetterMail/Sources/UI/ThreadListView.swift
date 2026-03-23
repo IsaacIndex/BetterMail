@@ -219,19 +219,11 @@ internal struct ThreadListView: View {
     }
 
     private var navPrimaryForegroundStyle: Color {
-        guard isGlassNavEnabled else { return Color.primary }
-        if colorScheme == .light {
-            return Color.black.opacity(0.82)
-        }
-        return Color.white
+        Color.glassPrimary(colorScheme: colorScheme, isGlassEnabled: isGlassNavEnabled)
     }
 
     private var navSecondaryForegroundStyle: Color {
-        guard isGlassNavEnabled else { return Color.secondary }
-        if colorScheme == .light {
-            return Color.black.opacity(0.62)
-        }
-        return Color.white.opacity(0.75)
+        Color.glassSecondary(colorScheme: colorScheme, isGlassEnabled: isGlassNavEnabled)
     }
 
     private var navBar: some View {
@@ -243,9 +235,9 @@ internal struct ThreadListView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Threads")
-                        .font(font(size: 13, weight: .semibold))
+                        .font(DesignTokens.font(size: 13, weight: .semibold, textScale: displaySettings.textScale))
                     Text(statusText)
-                        .font(font(size: 12))
+                        .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
                         .foregroundStyle(navSecondaryForegroundStyle)
                     refreshTimingView
                 }
@@ -259,7 +251,7 @@ internal struct ThreadListView: View {
                 viewModeToggle
                 HStack(spacing: 6) {
                     Text("Limit")
-                        .font(font(size: 12))
+                        .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
                         .foregroundStyle(navSecondaryForegroundStyle)
                     limitField
                 }
@@ -298,7 +290,7 @@ internal struct ThreadListView: View {
                 .foregroundStyle(.white)
                 .font(.system(size: 12))
             Text(message)
-                .font(font(size: 12, weight: .medium))
+                .font(DesignTokens.font(size: 12, weight: .medium, textScale: displaySettings.textScale))
                 .foregroundStyle(.white)
                 .lineLimit(2)
             Spacer()
@@ -316,15 +308,12 @@ internal struct ThreadListView: View {
         .background(Color.red.opacity(0.85))
     }
 
-    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size * displaySettings.textScale, weight: weight)
-    }
 
     @ViewBuilder
     private var viewModeToggle: some View {
         Toggle(isOn: viewModeToggleBinding) {
             Text(viewModeLabel)
-                .font(font(size: 12))
+                .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
         }
         .toggleStyle(.switch)
         .tint(.green)
@@ -361,12 +350,12 @@ internal struct ThreadListView: View {
         VStack(alignment: .leading, spacing: 2) {
             if let lastRefreshDate = viewModel.lastRefreshDate {
                 Text("Last updated: \(lastRefreshDate.formatted(date: .numeric, time: .shortened))")
-                    .font(font(size: 11))
+                    .font(DesignTokens.font(size: 11, textScale: displaySettings.textScale))
                     .foregroundStyle(navSecondaryForegroundStyle)
             }
             if settings.isEnabled, let nextRefreshDate = viewModel.nextRefreshDate {
                 Text("Next refresh: \(nextRefreshDate.formatted(date: .numeric, time: .shortened))")
-                    .font(font(size: 11))
+                    .font(DesignTokens.font(size: 11, textScale: displaySettings.textScale))
                     .foregroundStyle(navSecondaryForegroundStyle)
             }
         }
@@ -379,7 +368,7 @@ internal struct ThreadListView: View {
             let fieldStroke = colorScheme == .light ? Color.black.opacity(0.2) : Color.white.opacity(0.55)
             let fieldForeground = colorScheme == .light ? Color.black.opacity(0.9) : Color.white
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
-                .font(font(size: 13))
+                .font(DesignTokens.font(size: 13, textScale: displaySettings.textScale))
                 .textFieldStyle(.plain)
                 .controlSize(.small)
                 .padding(.horizontal, 8)
@@ -396,7 +385,7 @@ internal struct ThreadListView: View {
                 .frame(width: 60, height: 24)
         } else {
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
-                .font(font(size: 13))
+                .font(DesignTokens.font(size: 13, textScale: displaySettings.textScale))
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .frame(width: 60, height: 24)
@@ -420,33 +409,17 @@ internal struct ThreadListView: View {
         }
     }
 
-    @ViewBuilder
     private var navBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: navCornerRadius, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.15) : Color.white.opacity(0.3)))
-        } else if #available(macOS 26, *) {
-            let strokeColor = colorScheme == .light ? Color.black.opacity(0.16) : Color.white.opacity(0.35)
-            let shadowOpacity = colorScheme == .light ? 0.12 : 0.25
-            let tintOpacity = colorScheme == .light ? 0.52 : 0.2
-            let fillOpacity = colorScheme == .light ? 0.24 : 0.08
-            shape
-                .fill(Color.white.opacity(fillOpacity))
-                .glassEffect(
-                    .regular
-                        .tint(Color.white.opacity(tintOpacity))
-                        .interactive(),
-                    in: .rect(cornerRadius: navCornerRadius)
-                )
-                .overlay(shape.stroke(strokeColor))
-                .shadow(color: Color.black.opacity(shadowOpacity), radius: 16, y: 8)
-        } else {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.14) : Color.white.opacity(0.25)))
-        }
+        GlassBackground(
+            cornerRadius: navCornerRadius,
+            fillOpacity: DesignTokens.Opacity.fill(for: colorScheme),
+            strokeOpacity: DesignTokens.Opacity.stroke(for: colorScheme),
+            shadowOpacity: DesignTokens.Opacity.shadow(for: colorScheme),
+            shadowRadius: 16,
+            shadowY: 8,
+            tintOpacity: DesignTokens.Opacity.tint(for: colorScheme),
+            isInteractive: true
+        )
     }
 
     private var selectionActionBar: some View {
@@ -553,12 +526,7 @@ internal struct ThreadListView: View {
                 .padding(.vertical, 10)
                 .frame(maxWidth: actionBarMaxWidth)
                 .background(selectionActionBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(actionBarStrokeColor)
-                )
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .shadow(color: Color.black.opacity(isGlassNavEnabled ? 0.3 : 0.2), radius: 12, y: 6)
                 .padding(.bottom, 16)
                 .offset(x: selectionActionBarHorizontalOffset)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -613,25 +581,23 @@ internal struct ThreadListView: View {
         return DateInterval(start: first.start, end: last.end)
     }
 
-    @ViewBuilder
     private var selectionActionBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-        if reduceTransparency {
-            shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.92))
-        } else if #available(macOS 26, *), isGlassNavEnabled {
-            let fillOpacity = colorScheme == .light ? 0.24 : 0.1
-            let tintOpacity = colorScheme == .light ? 0.36 : 0.16
-            shape
-                .fill(Color.white.opacity(fillOpacity))
-                .glassEffect(
-                    .regular
-                        .tint(Color.white.opacity(tintOpacity))
-                        .interactive(),
-                    in: .rect(cornerRadius: 14)
-                )
-        } else {
-            shape.fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.86))
-        }
+        let actionBarFill = colorScheme == .light ? 0.24 : 0.1
+        let actionBarTint = colorScheme == .light ? 0.36 : 0.16
+        let actionBarStroke = colorScheme == .light
+            ? (reduceTransparency ? 0.18 : 0.14)
+            : (reduceTransparency ? 0.15 : 0.25)
+        let actionBarShadow = isGlassNavEnabled ? 0.3 : 0.2
+        return GlassBackground(
+            cornerRadius: 14,
+            fillOpacity: actionBarFill,
+            strokeOpacity: actionBarStroke,
+            shadowOpacity: actionBarShadow,
+            shadowRadius: 12,
+            shadowY: 6,
+            tintOpacity: actionBarTint,
+            isInteractive: true
+        )
     }
 
     private var navDividerColor: Color {
@@ -641,12 +607,6 @@ internal struct ThreadListView: View {
         return Color.white.opacity(reduceTransparency ? 0.2 : 0.12)
     }
 
-    private var actionBarStrokeColor: Color {
-        if colorScheme == .light {
-            return Color.black.opacity(reduceTransparency ? 0.18 : 0.14)
-        }
-        return Color.white.opacity(reduceTransparency ? 0.15 : 0.25)
-    }
 
     private var selectedSummaryState: ThreadSummaryState? {
         guard let selectedNodeID = viewModel.selectedNodeID else {
@@ -1002,11 +962,11 @@ private struct MailboxFolderMoveSheet: View {
             }
             .padding(10)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
                     .fill(cardFillColor)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
                     .stroke(cardStrokeColor)
             )
 

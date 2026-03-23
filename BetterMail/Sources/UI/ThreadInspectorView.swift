@@ -28,7 +28,7 @@ internal struct ThreadInspectorView: View {
     internal var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(NSLocalizedString("threadcanvas.inspector.title", comment: "Title for the inspector panel"))
-                .font(font(size: 13, weight: .semibold))
+                .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
 
             Divider()
 
@@ -57,12 +57,12 @@ internal struct ThreadInspectorView: View {
     private func details(for node: ThreadNode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(subjectText(for: node))
-                .font(font(size: 15, weight: .semibold))
+                .font(DesignTokens.font(size: 15, weight: .semibold, textScale: textScale))
                 .fixedSize(horizontal: false, vertical: true)
 
             if node.message.isUnread {
                 Label(NSLocalizedString("threadcanvas.inspector.unread", comment: "Unread indicator"), systemImage: "circle.fill")
-                    .font(font(size: 12))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
                     .foregroundStyle(Color.accentColor)
             }
 
@@ -88,10 +88,10 @@ internal struct ThreadInspectorView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(NSLocalizedString("threadcanvas.inspector.snippet", comment: "Snippet label"))
-                    .font(font(size: 12))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Text(snippetText(for: node))
-                    .font(font(size: 13))
+                    .font(DesignTokens.font(size: 13, textScale: textScale))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -120,47 +120,23 @@ internal struct ThreadInspectorView: View {
     }
 
     private var inspectorPrimaryForegroundStyle: Color {
-        guard isGlassInspectorEnabled else { return Color.primary }
-        if colorScheme == .light {
-            return Color.black.opacity(0.82)
-        }
-        return Color.white
+        Color.glassPrimary(colorScheme: colorScheme, isGlassEnabled: isGlassInspectorEnabled)
     }
 
     private var inspectorSecondaryForegroundStyle: Color {
-        guard isGlassInspectorEnabled else { return Color.secondary }
-        if colorScheme == .light {
-            return Color.black.opacity(0.62)
-        }
-        return Color.white.opacity(0.75)
+        Color.glassSecondary(colorScheme: colorScheme, isGlassEnabled: isGlassInspectorEnabled)
     }
 
-    @ViewBuilder
     private var inspectorBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.15) : Color.white.opacity(0.3)))
-        } else if #available(macOS 26, *) {
-            let strokeColor = colorScheme == .light ? Color.black.opacity(0.16) : Color.white.opacity(0.35)
-            let shadowOpacity = colorScheme == .light ? 0.12 : 0.25
-            let tintOpacity = colorScheme == .light ? 0.52 : 0.2
-            let fillOpacity = colorScheme == .light ? 0.24 : 0.08
-            shape
-                .fill(Color.white.opacity(fillOpacity))
-                .glassEffect(
-                    .regular
-                        .tint(Color.white.opacity(tintOpacity)),
-                    in: .rect(cornerRadius: 18)
-                )
-                .overlay(shape.stroke(strokeColor))
-                .shadow(color: Color.black.opacity(shadowOpacity), radius: 16, y: 8)
-        } else {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.14) : Color.white.opacity(0.25)))
-        }
+        GlassBackground(
+            cornerRadius: DesignTokens.CornerRadius.panel,
+            fillOpacity: DesignTokens.Opacity.fill(for: colorScheme),
+            strokeOpacity: DesignTokens.Opacity.stroke(for: colorScheme),
+            shadowOpacity: DesignTokens.Opacity.shadow(for: colorScheme),
+            shadowRadius: 16,
+            shadowY: 8,
+            tintOpacity: DesignTokens.Opacity.tint(for: colorScheme)
+        )
     }
 
     private func subjectText(for node: ThreadNode) -> String {
@@ -198,7 +174,7 @@ internal struct ThreadInspectorView: View {
             hintText(for: status)
             copyControls(for: node)
         }
-        .font(font(size: 12))
+        .font(DesignTokens.font(size: 12, textScale: textScale))
         .foregroundStyle(inspectorSecondaryForegroundStyle)
     }
 
@@ -301,7 +277,7 @@ internal struct ThreadInspectorView: View {
     private var copyToast: some View {
         if isCopyToastVisible {
             Text(copyToastMessage)
-                .font(font(size: 12))
+                .font(DesignTokens.font(size: 12, textScale: textScale))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(copyToastBackground)
@@ -340,9 +316,6 @@ internal struct ThreadInspectorView: View {
         return Color.white.opacity(0.95)
     }
 
-    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size * textScale, weight: weight)
-    }
 }
 
 private struct InspectorField: View {
@@ -356,10 +329,10 @@ private struct InspectorField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(font(size: 11))
+                .font(DesignTokens.font(size: 11, textScale: textScale))
                 .foregroundStyle(labelForegroundStyle)
             Text(value)
-                .font(font(size: 13))
+                .font(DesignTokens.font(size: 13, textScale: textScale))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -375,9 +348,6 @@ private struct InspectorField: View {
         return Color.secondary
     }
 
-    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size * textScale, weight: weight)
-    }
 }
 
 private struct InspectorCopyButtonStyle: ButtonStyle {

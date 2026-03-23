@@ -103,7 +103,7 @@ internal struct ThreadFolderInspectorView: View {
             HStack(alignment: .center, spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.title",
                                        comment: "Title for the folder inspector panel"))
-                    .font(font(size: 13, weight: .semibold))
+                    .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
                 Spacer()
                 Button(action: onRefreshFolderThreads) {
                     Label(NSLocalizedString("threadcanvas.folder.inspector.refresh_threads",
@@ -169,12 +169,12 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.minimap",
                                        comment: "Folder minimap section label"))
-                    .font(font(size: 12))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Spacer()
                 Button(action: onJumpToLatest) {
                     Image(systemName: "arrow.up.to.line.compact")
-                        .font(font(size: 12))
+                        .font(DesignTokens.font(size: 12, textScale: textScale))
                 }
                 .buttonStyle(.plain)
                 .controlSize(.mini)
@@ -185,7 +185,7 @@ internal struct ThreadFolderInspectorView: View {
                                         comment: "Help text for jump to latest folder node"))
                 Button(action: onJumpToOldest) {
                     Image(systemName: "arrow.down.to.line.compact")
-                        .font(font(size: 12))
+                        .font(DesignTokens.font(size: 12, textScale: textScale))
                 }
                 .buttonStyle(.plain)
                 .controlSize(.mini)
@@ -210,10 +210,10 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.name",
                                    comment: "Folder name field label"))
-                .font(font(size: 12))
+                .font(DesignTokens.font(size: 12, textScale: textScale))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             TextField("", text: $draftTitle)
-                .font(font(size: 13))
+                .font(DesignTokens.font(size: 13, textScale: textScale))
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: draftTitle) { _, _ in
                     updatePreviewIfNeeded()
@@ -226,7 +226,7 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.color",
                                        comment: "Folder color picker label"))
-                    .font(font(size: 12))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Spacer()
                 Button(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate",
@@ -234,7 +234,7 @@ internal struct ThreadFolderInspectorView: View {
                     applyRecalibratedColor()
                 }
                 .buttonStyle(.link)
-                .font(font(size: 11))
+                .font(DesignTokens.font(size: 11, textScale: textScale))
                 .help(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate.help",
                                         comment: "Help text for recalibrating a folder color"))
             }
@@ -251,7 +251,7 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.mailbox",
                                        comment: "Folder mailbox field label"))
-                    .font(font(size: 12))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 Spacer()
                 Button(NSLocalizedString("threadcanvas.folder.inspector.mailbox.clear",
@@ -261,12 +261,12 @@ internal struct ThreadFolderInspectorView: View {
                     updatePreviewIfNeeded()
                 }
                 .buttonStyle(.link)
-                .font(font(size: 11))
+                .font(DesignTokens.font(size: 11, textScale: textScale))
                 .disabled(draftMailboxPath == nil && folder.mailboxDestination == nil)
 
                 Button(action: onRefreshMailboxHierarchy) {
                     Image(systemName: "arrow.clockwise")
-                        .font(font(size: 11))
+                        .font(DesignTokens.font(size: 11, textScale: textScale))
                 }
                 .buttonStyle(.plain)
                 .help(NSLocalizedString("threadcanvas.folder.inspector.mailbox.refresh",
@@ -276,7 +276,7 @@ internal struct ThreadFolderInspectorView: View {
 
             if let mailboxEditingDisabledReason {
                 Text(mailboxEditingDisabledReason)
-                    .font(font(size: 11))
+                    .font(DesignTokens.font(size: 11, textScale: textScale))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
             }
 
@@ -309,7 +309,7 @@ internal struct ThreadFolderInspectorView: View {
             }
 
             Text(mailboxSelectionLabel)
-                .font(font(size: 11))
+                .font(DesignTokens.font(size: 11, textScale: textScale))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
         }
     }
@@ -318,7 +318,7 @@ internal struct ThreadFolderInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(NSLocalizedString("threadcanvas.folder.inspector.preview",
                                    comment: "Folder preview label"))
-                .font(font(size: 12))
+                .font(DesignTokens.font(size: 12, textScale: textScale))
                 .foregroundStyle(inspectorSecondaryForegroundStyle)
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(draftColor.opacity(0.4))
@@ -331,7 +331,7 @@ internal struct ThreadFolderInspectorView: View {
                          ? NSLocalizedString("threadcanvas.subject.placeholder",
                                              comment: "Placeholder subject when missing")
                          : draftTitle)
-                        .font(font(size: 13, weight: .semibold))
+                        .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
                         .foregroundStyle(inspectorPrimaryForegroundStyle)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
@@ -352,12 +352,12 @@ internal struct ThreadFolderInspectorView: View {
             HStack(spacing: 8) {
                 Text(NSLocalizedString("threadcanvas.folder.inspector.summary",
                                        comment: "Folder summary label"))
-                    .font(font(size: 12))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
                     .foregroundStyle(inspectorSecondaryForegroundStyle)
                 if let onRegenerateSummary {
                     Button(action: onRegenerateSummary) {
                         Image(systemName: "arrow.clockwise")
-                            .font(font(size: 12))
+                            .font(DesignTokens.font(size: 12, textScale: textScale))
                     }
                     .buttonStyle(.plain)
                     .controlSize(.mini)
@@ -374,7 +374,7 @@ internal struct ThreadFolderInspectorView: View {
             }
             ScrollView {
                 Text(displayText)
-                    .font(font(size: 13))
+                    .font(DesignTokens.font(size: 13, textScale: textScale))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .padding(8)
@@ -394,47 +394,23 @@ internal struct ThreadFolderInspectorView: View {
     }
 
     private var inspectorPrimaryForegroundStyle: Color {
-        guard isGlassInspectorEnabled else { return Color.primary }
-        if colorScheme == .light {
-            return Color.black.opacity(0.82)
-        }
-        return Color.white
+        Color.glassPrimary(colorScheme: colorScheme, isGlassEnabled: isGlassInspectorEnabled)
     }
 
     private var inspectorSecondaryForegroundStyle: Color {
-        guard isGlassInspectorEnabled else { return Color.secondary }
-        if colorScheme == .light {
-            return Color.black.opacity(0.62)
-        }
-        return Color.white.opacity(0.75)
+        Color.glassSecondary(colorScheme: colorScheme, isGlassEnabled: isGlassInspectorEnabled)
     }
 
-    @ViewBuilder
     private var inspectorBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        if reduceTransparency {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.96))
-                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.15) : Color.white.opacity(0.3)))
-        } else if #available(macOS 26, *) {
-            let strokeColor = colorScheme == .light ? Color.black.opacity(0.16) : Color.white.opacity(0.35)
-            let shadowOpacity = colorScheme == .light ? 0.12 : 0.25
-            let tintOpacity = colorScheme == .light ? 0.52 : 0.2
-            let fillOpacity = colorScheme == .light ? 0.24 : 0.08
-            shape
-                .fill(Color.white.opacity(fillOpacity))
-                .glassEffect(
-                    .regular
-                        .tint(Color.white.opacity(tintOpacity)),
-                    in: .rect(cornerRadius: 18)
-                )
-                .overlay(shape.stroke(strokeColor))
-                .shadow(color: Color.black.opacity(shadowOpacity), radius: 16, y: 8)
-        } else {
-            shape
-                .fill(Color(nsColor: NSColor.windowBackgroundColor).opacity(0.9))
-                .overlay(shape.stroke(colorScheme == .light ? Color.black.opacity(0.14) : Color.white.opacity(0.25)))
-        }
+        GlassBackground(
+            cornerRadius: DesignTokens.CornerRadius.panel,
+            fillOpacity: DesignTokens.Opacity.fill(for: colorScheme),
+            strokeOpacity: DesignTokens.Opacity.stroke(for: colorScheme),
+            shadowOpacity: DesignTokens.Opacity.shadow(for: colorScheme),
+            shadowRadius: 16,
+            shadowY: 8,
+            tintOpacity: DesignTokens.Opacity.tint(for: colorScheme)
+        )
     }
 
     private var draftFolderColor: ThreadFolderColor {
@@ -548,9 +524,6 @@ internal struct ThreadFolderInspectorView: View {
         baselineMailboxPath = mailboxPath
     }
 
-    private func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size * textScale, weight: weight)
-    }
 }
 
 internal struct FolderMinimapSurface: View {

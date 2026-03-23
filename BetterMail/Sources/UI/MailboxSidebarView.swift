@@ -203,11 +203,11 @@ internal struct MailboxSidebarView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
                     .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
                     .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
