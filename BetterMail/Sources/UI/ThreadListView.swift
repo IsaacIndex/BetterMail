@@ -345,11 +345,10 @@ internal struct ThreadListView: View {
                                             textScale: displaySettings.textScale))
             }
             .buttonStyle(.borderless)
-            .help(NSLocalizedString("threadlist.search.toggle", comment: "Toggle search field"))
+            .help("Search threads")
 
             if isSearchFieldVisible {
-                TextField(NSLocalizedString("threadlist.search.placeholder",
-                                            comment: "Search field placeholder"),
+                TextField("Search threads…",
                           text: $viewModel.searchQuery)
                     .textFieldStyle(.roundedBorder)
                     .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
