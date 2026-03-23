@@ -562,6 +562,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
     @Published internal private(set) var isRefreshing = false
+    @Published internal private(set) var refreshProgress: Double?
+    @Published internal var activeToast: ToastMessage?
+    private var toastDismissTask: Task<Void, Never>?
     @Published internal private(set) var refreshingFolderThreadIDs: Set<String> = []
     @Published internal private(set) var status: String = ""
     @Published internal private(set) var errorMessage: String?
@@ -1004,6 +1007,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     // MARK: - Error Display
 
+    internal func showToast(_ text: String, style: ToastStyle = .info, duration: TimeInterval = 3.0) {
+        activeToast = ToastMessage(text: text, style: style, duration: duration)
+        toastDismissTask?.cancel()
+        toastDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.activeToast = nil
+            }
+        }
+    }
+
     internal func showError(_ message: String) {
         errorMessage = message
         errorDismissTask?.cancel()
@@ -1029,6 +1044,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
         let effectiveLimit = limit ?? fetchLimit
         isRefreshing = true
+        refreshProgress = nil
         status = NSLocalizedString("refresh.status.refreshing", comment: "Status when refresh begins")
         let useFullReload = shouldForceFullReload
         let mailboxTarget = activeMailboxFetchTarget
@@ -1085,7 +1101,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.showError(self.status)
                 }
             }
-            await MainActor.run { self.isRefreshing = false }
+            await MainActor.run {
+                self.isRefreshing = false
+                self.refreshProgress = nil
+            }
         }
     }
 

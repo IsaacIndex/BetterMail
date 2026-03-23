@@ -91,6 +91,7 @@ internal struct ThreadListView: View {
             inspectorOverlay
             navigationBarOverlay
             selectionActionBar
+            ToastOverlay(activeToast: $viewModel.activeToast)
         }
     }
 
@@ -243,7 +244,11 @@ internal struct ThreadListView: View {
                 }
                 Spacer()
                 if viewModel.isRefreshing {
-                    ProgressView().controlSize(.small)
+                    if let progress = viewModel.refreshProgress {
+                        ProgressView(value: progress).controlSize(.small).frame(width: 60)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                 }
                 if viewModel.isBackfilling {
                     ProgressView().controlSize(.small)
