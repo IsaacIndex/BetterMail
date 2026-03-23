@@ -2191,6 +2191,69 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 #endif
 
+    /// Directions for keyboard-based spatial navigation between thread nodes.
+    internal enum CanvasNavigationDirection {
+        case up, down, left, right
+    }
+
+    /// Navigates to the spatially adjacent thread node in the given direction.
+    /// Uses the current layout to find the closest neighbor.
+    internal func navigateToAdjacentNode(direction: CanvasNavigationDirection,
+                                          layout: ThreadCanvasLayout) {
+        guard let currentID = selectedNodeID else {
+            // If nothing selected, select the first node in the first column
+            if let firstNode = layout.columns.first?.nodes.first {
+                selectNode(id: firstNode.id)
+            }
+            return
+        }
+
+        // Find current node's column and position
+        var currentColumnIndex: Int?
+        var currentNodeIndex: Int?
+        for (colIdx, column) in layout.columns.enumerated() {
+            if let nodeIdx = column.nodes.firstIndex(where: { $0.id == currentID }) {
+                currentColumnIndex = colIdx
+                currentNodeIndex = nodeIdx
+                break
+            }
+        }
+
+        guard let colIdx = currentColumnIndex, let nodeIdx = currentNodeIndex else { return }
+        let column = layout.columns[colIdx]
+        let currentNode = column.nodes[nodeIdx]
+
+        switch direction {
+        case .up:
+            if nodeIdx > 0 {
+                selectNode(id: column.nodes[nodeIdx - 1].id)
+            }
+        case .down:
+            if nodeIdx < column.nodes.count - 1 {
+                selectNode(id: column.nodes[nodeIdx + 1].id)
+            }
+        case .left:
+            if colIdx > 0 {
+                let targetColumn = layout.columns[colIdx - 1]
+                if let nearest = Self.nearestNode(to: currentNode.frame.midY, in: targetColumn.nodes) {
+                    selectNode(id: nearest.id)
+                }
+            }
+        case .right:
+            if colIdx < layout.columns.count - 1 {
+                let targetColumn = layout.columns[colIdx + 1]
+                if let nearest = Self.nearestNode(to: currentNode.frame.midY, in: targetColumn.nodes) {
+                    selectNode(id: nearest.id)
+                }
+            }
+        }
+    }
+
+    private static func nearestNode(to targetY: CGFloat,
+                                     in nodes: [ThreadCanvasNode]) -> ThreadCanvasNode? {
+        nodes.min { abs($0.frame.midY - targetY) < abs($1.frame.midY - targetY) }
+    }
+
     internal func selectNode(id: String?) {
         selectNode(id: id, additive: false)
     }

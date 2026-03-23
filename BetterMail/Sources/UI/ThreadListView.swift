@@ -27,6 +27,12 @@ internal struct ThreadListView: View {
     internal var body: some View {
         content
             .frame(minWidth: 480, minHeight: 400)
+            .focusable()
+            .onKeyPress(.upArrow) { handleCanvasNavigation(.up) }
+            .onKeyPress(.downArrow) { handleCanvasNavigation(.down) }
+            .onKeyPress(.leftArrow) { handleCanvasNavigation(.left) }
+            .onKeyPress(.rightArrow) { handleCanvasNavigation(.right) }
+            .onKeyPress(.return) { handleEnterKey() }
             .onAppear {
                 isInspectorVisible = viewModel.selectedNodeID != nil || viewModel.selectedFolderID != nil
             }
@@ -1157,6 +1163,32 @@ private extension ThreadListView {
         let inclusiveRange = DateInterval(start: orderedRange.start, end: inclusiveEnd)
         isShowingBackfillConfirmation = false
         viewModel.backfillVisibleRange(rangeOverride: inclusiveRange, limitOverride: adjustedLimit)
+    }
+
+    // MARK: - Keyboard Navigation
+
+    private func handleCanvasNavigation(
+        _ direction: ThreadCanvasViewModel.CanvasNavigationDirection
+    ) -> KeyPress.Result {
+        let metrics = ThreadCanvasLayoutMetrics(
+            zoom: displaySettings.currentZoom,
+            dayCount: viewModel.dayWindowCount,
+            columnWidthAdjustment: displaySettings.viewMode == .timeline
+                ? ThreadTimelineLayoutConstants.summaryColumnExtraWidth : 0,
+            showsDayAxis: viewModel.activeMailboxScope != .allFolders,
+            textScale: displaySettings.textScale
+        )
+        let layout = viewModel.canvasLayout(metrics: metrics,
+                                             viewMode: displaySettings.viewMode)
+        viewModel.navigateToAdjacentNode(direction: direction, layout: layout)
+        return .handled
+    }
+
+    private func handleEnterKey() -> KeyPress.Result {
+        // Enter opens inspector for the selected node (selection triggers inspector)
+        // If nothing selected, do nothing
+        guard viewModel.selectedNodeID != nil else { return .ignored }
+        return .handled
     }
 
     static var backfillIntervalFormatter: DateIntervalFormatter = {
