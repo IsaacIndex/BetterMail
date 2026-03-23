@@ -99,7 +99,7 @@ internal struct ThreadListView: View {
                          displaySettings: displaySettings,
                          topInset: canvasTopPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.trailing, navHorizontalPadding)
+        .padding(.horizontal, navHorizontalPadding)
     }
 
     @ViewBuilder
@@ -205,8 +205,7 @@ internal struct ThreadListView: View {
 
     private var navigationBarOverlay: some View {
         navBar
-            .padding(.leading, navHorizontalPadding / 2)
-            .padding(.trailing, navHorizontalPadding)
+            .padding(.horizontal, navHorizontalPadding)
             .padding(.top, navTopPadding)
             .onPreferenceChange(NavHeightPreferenceKey.self) { navHeight = $0 }
             .zIndex(1)

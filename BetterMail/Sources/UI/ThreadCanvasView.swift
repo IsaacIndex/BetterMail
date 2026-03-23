@@ -167,7 +167,6 @@ internal struct ThreadCanvasView: View {
         GeometryReader { proxy in
             canvasContent(proxy: proxy)
         }
-        .ignoresSafeArea(.container, edges: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectNode(id: nil)
@@ -561,7 +560,10 @@ internal struct ThreadCanvasView: View {
         if reduceTransparency {
             return Color(nsColor: NSColor.windowBackgroundColor).opacity(0.75)
         }
-        return Color.clear
+        if colorScheme == .light {
+            return Color.black.opacity(0.02)
+        }
+        return Color.white.opacity(0.035)
     }
 
     private func quantized(_ value: CGFloat, step: CGFloat) -> CGFloat {
@@ -1563,6 +1565,7 @@ internal struct ThreadCanvasView: View {
             .overlay(alignment: .topLeading) {
                 renderOverlay(renderContext)
             }
+            .clipped()
             .simultaneousGesture(magnificationGesture)
             .background(
                 GeometryReader { sizeProxy in
