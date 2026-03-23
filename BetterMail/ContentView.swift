@@ -40,6 +40,8 @@ internal struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .focusedValue(\.canvasViewModel, viewModel)
+        .focusedValue(\.displaySettings, displaySettings)
         .task {
             viewModel.start()
         }
