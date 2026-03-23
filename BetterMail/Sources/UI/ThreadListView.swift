@@ -93,6 +93,12 @@ internal struct ThreadListView: View {
             selectionActionBar
             ToastOverlay(activeToast: $viewModel.activeToast)
         }
+        .overlay(alignment: .bottomLeading) {
+            GlobalMinimapOverlay(
+                folders: viewModel.globalMinimapFolders,
+                viewportRect: viewModel.globalMinimapViewportRect
+            )
+        }
     }
 
     private var canvasContent: some View {

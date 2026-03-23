@@ -2851,6 +2851,45 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         jumpToFolderBoundaryNode(in: folderID, boundary: .oldest)
     }
 
+    /// Aggregated minimap data across all thread folders for the global minimap overlay.
+    internal var globalMinimapFolders: [GlobalMinimapFolder] {
+        let allNodes = Self.flatten(nodes: roots)
+        guard !allNodes.isEmpty else { return [] }
+        let allDates = allNodes.map(\.message.date)
+        guard let earliest = allDates.min(), let latest = allDates.max() else { return [] }
+        let dateSpan = latest.timeIntervalSince(earliest)
+        guard dateSpan > 0 else { return [] }
+
+        let totalColumns = max(threadFolders.count, 1)
+        return threadFolders.enumerated().compactMap { folderIndex, folder -> GlobalMinimapFolder? in
+            let folderNodes = allNodes.filter { node in
+                guard let threadID = effectiveThreadID(for: node) else { return false }
+                return folder.threadIDs.contains(threadID)
+            }
+            guard !folderNodes.isEmpty else { return nil }
+            let normalizedX = (CGFloat(folderIndex) + 0.5) / CGFloat(totalColumns)
+            let nodes = folderNodes.map { node -> GlobalMinimapNode in
+                let normalizedY = CGFloat(latest.timeIntervalSince(node.message.date) / dateSpan)
+                return GlobalMinimapNode(normalizedX: normalizedX, normalizedY: normalizedY)
+            }
+            let color = GlobalMinimapColor(red: folder.color.red,
+                                            green: folder.color.green,
+                                            blue: folder.color.blue)
+            return GlobalMinimapFolder(id: folder.id, color: color, nodes: nodes)
+        }
+    }
+
+    /// Normalized viewport rectangle for the global minimap (0-1 range).
+    internal var globalMinimapViewportRect: CGRect? {
+        let rects = minimapViewportSnapshot.normalizedRectByFolderID.values
+        guard !rects.isEmpty else { return nil }
+        let minX = rects.map(\.minX).min() ?? 0
+        let minY = rects.map(\.minY).min() ?? 0
+        let maxX = rects.map(\.maxX).max() ?? 1
+        let maxY = rects.map(\.maxY).max() ?? 1
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
     internal func folderMinimapModel(for folderID: String) -> FolderMinimapModel? {
         let threadIDs = folderThreadIDs(for: folderID)
         guard !threadIDs.isEmpty else { return nil }
