@@ -20,6 +20,10 @@ internal struct ThreadCanvasLayoutMetrics {
         120 * clampedZoom
     }
 
+    internal var collapsedDayHeight: CGFloat {
+        24 * clampedZoom
+    }
+
     internal var columnWidth: CGFloat {
         (260 + columnWidthAdjustment) * clampedZoom
     }

@@ -100,12 +100,13 @@ internal struct ThreadListView: View {
             selectionActionBar
             ToastOverlay(activeToast: $viewModel.activeToast)
         }
-        .overlay(alignment: .bottomLeading) {
-            GlobalMinimapOverlay(
-                folders: viewModel.globalMinimapFolders,
-                viewportRect: viewModel.globalMinimapViewportRect
-            )
-        }
+        // Global minimap disabled — viewport coordinate alignment needs further work.
+        // .overlay(alignment: .bottomLeading) {
+        //     GlobalMinimapOverlay(
+        //         folders: viewModel.globalMinimapFoldersSnapshot,
+        //         viewportRect: viewModel.globalMinimapViewportRect
+        //     )
+        // }
     }
 
     private var canvasContent: some View {

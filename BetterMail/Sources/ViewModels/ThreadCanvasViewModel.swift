@@ -701,6 +701,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didSet { bumpFolderHeaderStateVersion() }
     }
     @Published internal private(set) var minimapViewportSnapshot = FolderMinimapViewportSnapshot(normalizedRectByFolderID: [:])
+    @Published internal private(set) var globalMinimapViewportNormalizedRect: CGRect?
+    @Published internal private(set) var globalMinimapFoldersSnapshot: [GlobalMinimapFolder] = []
     @Published internal var fetchLimit: Int = 10 {
         didSet {
             if fetchLimit < 1 {
@@ -2939,42 +2941,39 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     /// Aggregated minimap data across all thread folders for the global minimap overlay.
-    internal var globalMinimapFolders: [GlobalMinimapFolder] {
-        let allNodes = Self.flatten(nodes: roots)
-        guard !allNodes.isEmpty else { return [] }
-        let allDates = allNodes.map(\.message.date)
-        guard let earliest = allDates.min(), let latest = allDates.max() else { return [] }
-        let dateSpan = latest.timeIntervalSince(earliest)
-        guard dateSpan > 0 else { return [] }
+    /// Uses actual layout node frame positions normalized by content size so the coordinate
+    /// system matches the viewport rect (scrollOffset / contentSize).
+    internal func globalMinimapFolders(layout: ThreadCanvasLayout) -> [GlobalMinimapFolder] {
+        let contentWidth = layout.contentSize.width
+        let contentHeight = layout.contentSize.height
+        guard contentWidth > 0, contentHeight > 0 else { return [] }
 
-        let totalColumns = max(threadFolders.count, 1)
-        return threadFolders.enumerated().compactMap { folderIndex, folder -> GlobalMinimapFolder? in
-            let folderNodes = allNodes.filter { node in
-                guard let threadID = effectiveThreadID(for: node) else { return false }
-                return folder.threadIDs.contains(threadID)
-            }
-            guard !folderNodes.isEmpty else { return nil }
-            let normalizedX = (CGFloat(folderIndex) + 0.5) / CGFloat(totalColumns)
-            let nodes = folderNodes.map { node -> GlobalMinimapNode in
-                let normalizedY = CGFloat(latest.timeIntervalSince(node.message.date) / dateSpan)
-                return GlobalMinimapNode(normalizedX: normalizedX, normalizedY: normalizedY)
+        // Group layout nodes by folderID
+        var folderNodes: [String: [ThreadCanvasNode]] = [:]
+        for column in layout.columns {
+            guard let folderID = column.folderID else { continue }
+            folderNodes[folderID, default: []].append(contentsOf: column.nodes)
+        }
+
+        return threadFolders.compactMap { folder -> GlobalMinimapFolder? in
+            guard let nodes = folderNodes[folder.id], !nodes.isEmpty else { return nil }
+            let minimapNodes = nodes.map { node -> GlobalMinimapNode in
+                GlobalMinimapNode(normalizedX: node.frame.midX / contentWidth,
+                                  normalizedY: node.frame.midY / contentHeight)
             }
             let color = GlobalMinimapColor(red: folder.color.red,
                                             green: folder.color.green,
                                             blue: folder.color.blue)
-            return GlobalMinimapFolder(id: folder.id, color: color, nodes: nodes)
+            return GlobalMinimapFolder(id: folder.id, color: color, nodes: minimapNodes)
         }
     }
 
     /// Normalized viewport rectangle for the global minimap (0-1 range).
+    /// Uses the stored `globalMinimapViewportNormalizedRect` which is computed
+    /// from raw scroll offset / content size in the same coordinate space as
+    /// the global minimap node positions.
     internal var globalMinimapViewportRect: CGRect? {
-        let rects = minimapViewportSnapshot.normalizedRectByFolderID.values
-        guard !rects.isEmpty else { return nil }
-        let minX = rects.map(\.minX).min() ?? 0
-        let minY = rects.map(\.minY).min() ?? 0
-        let maxX = rects.map(\.maxX).max() ?? 1
-        let maxY = rects.map(\.maxY).max() ?? 1
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        globalMinimapViewportNormalizedRect
     }
 
     internal func folderMinimapModel(for folderID: String) -> FolderMinimapModel? {
@@ -3013,6 +3012,21 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         minimapViewportSnapshot.normalizedRectByFolderID[folderID]
     }
 
+    /// Updates the global minimap node positions from the current layout.
+    /// Call when the layout changes (not on every scroll).
+    internal func updateGlobalMinimapFolders(layout: ThreadCanvasLayout) {
+        let newFolders = globalMinimapFolders(layout: layout)
+        if newFolders.count != globalMinimapFoldersSnapshot.count {
+            globalMinimapFoldersSnapshot = newFolders
+        } else {
+            // Quick check — only update if content actually changed
+            let changed = zip(newFolders, globalMinimapFoldersSnapshot).contains { $0.0.id != $0.1.id || $0.0.nodes.count != $0.1.nodes.count }
+            if changed {
+                globalMinimapFoldersSnapshot = newFolders
+            }
+        }
+    }
+
     internal func updateFolderMinimapViewportSnapshot(layout: ThreadCanvasLayout,
                                                       scrollOffsetX: CGFloat,
                                                       scrollOffsetY: CGFloat,
@@ -3023,6 +3037,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                               scrollOffsetY: scrollOffsetY,
                                                               viewportWidth: viewportWidth,
                                                               viewportHeight: viewportHeight)
+
         if shouldDeferScrollDerivedPublication {
             deferCanvasScrollPublication(minimapViewportSnapshot: snapshot)
             return
@@ -6229,7 +6244,11 @@ extension ThreadCanvasViewModel {
         var heights: [Int: CGFloat] = [:]
         for dayIndex in 0..<metrics.dayCount {
             let count = maxCountsByDay[dayIndex, default: 0]
-            heights[dayIndex] = max(metrics.dayHeight, requiredDefaultDayHeight(nodeCount: count, metrics: metrics))
+            if count == 0 {
+                heights[dayIndex] = metrics.collapsedDayHeight
+            } else {
+                heights[dayIndex] = max(metrics.dayHeight, requiredDefaultDayHeight(nodeCount: count, metrics: metrics))
+            }
         }
         return heights
     }
@@ -6283,7 +6302,11 @@ extension ThreadCanvasViewModel {
         var heights: [Int: CGFloat] = [:]
         for dayIndex in 0..<metrics.dayCount {
             let required = maxHeightsByDay[dayIndex, default: 0]
-            heights[dayIndex] = max(metrics.dayHeight, required)
+            if required == 0 {
+                heights[dayIndex] = metrics.collapsedDayHeight
+            } else {
+                heights[dayIndex] = max(metrics.dayHeight, required)
+            }
         }
         return heights
     }

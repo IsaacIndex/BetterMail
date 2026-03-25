@@ -197,7 +197,7 @@ internal struct ThreadCanvasView: View {
                 AnyView(canvasLayers(context: context))
             },
             renderOverlay: { context in
-                AnyView(canvasOverlay(context: context, proxySize: proxy.size))
+                AnyView(canvasOverlay(context: context))
             },
             onStartDropHighlightPulse: {
                 startDropHighlightPulse()
@@ -292,6 +292,15 @@ internal struct ThreadCanvasView: View {
         dayBands(days: visibility.visibleDays,
                  metrics: context.metrics,
                  contentWidth: context.layout.contentSize.width)
+        if context.showsDayAxis {
+            floatingDateRail(layout: context.layout,
+                             metrics: context.metrics,
+                             readabilityMode: context.readabilityMode,
+                             rawScrollOffsetX: context.viewportState.overlayScrollOffsetX,
+                             contentHeight: context.layout.contentSize.height,
+                             visibleYStart: visibility.visibleYStart,
+                             visibleYEnd: visibility.visibleYEnd)
+        }
         folderColumnBackgroundLayer(chromeData: visibility.visibleChromeData,
                                     metrics: context.metrics,
                                     headerHeight: visibility.headerStackHeight + headerSpacing)
@@ -316,19 +325,9 @@ internal struct ThreadCanvasView: View {
     }
 
     @ViewBuilder
-    private func canvasOverlay(context: CanvasRenderContext,
-                               proxySize: CGSize) -> some View {
+    private func canvasOverlay(context: CanvasRenderContext) -> some View {
         ZStack(alignment: .topLeading) {
-            if context.showsDayAxis {
-                floatingDateRail(layout: context.layout,
-                                 metrics: context.metrics,
-                                 readabilityMode: context.readabilityMode,
-                                 totalTopPadding: context.totalTopPadding,
-                                 rawScrollOffset: context.viewportState.rawScrollOffset,
-                                 viewportHeight: proxySize.height,
-                                 visibleYStart: context.visibility.visibleYStart,
-                                 visibleYEnd: context.visibility.visibleYEnd)
-            } else if let dateDescription = viewModel.visibleDateRangeDescription {
+            if !context.showsDayAxis, let dateDescription = viewModel.visibleDateRangeDescription {
                 Text(dateDescription)
                     .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
                                             weight: .medium,
@@ -1333,9 +1332,8 @@ internal struct ThreadCanvasView: View {
     private func floatingDateRail(layout: ThreadCanvasLayout,
                                   metrics: ThreadCanvasLayoutMetrics,
                                   readabilityMode: ThreadCanvasReadabilityMode,
-                                  totalTopPadding: CGFloat,
-                                  rawScrollOffset: CGFloat,
-                                  viewportHeight: CGFloat,
+                                  rawScrollOffsetX: CGFloat,
+                                  contentHeight: CGFloat,
                                   visibleYStart: CGFloat,
                                   visibleYEnd: CGFloat) -> some View {
         let railWidth = metrics.dayLabelWidth
@@ -1351,7 +1349,7 @@ internal struct ThreadCanvasView: View {
                             .fill(legendGuideColor)
                             .frame(width: railWidth - metrics.nodeHorizontalInset, height: 1)
                             .offset(x: metrics.nodeHorizontalInset,
-                                    y: item.startY + totalTopPadding - rawScrollOffset)
+                                    y: item.startY)
                     }
                 }
                 ForEach(items) { item in
@@ -1382,28 +1380,29 @@ internal struct ThreadCanvasView: View {
                                height: item.height,
                                alignment: .topLeading)
                         .offset(x: metrics.nodeHorizontalInset,
-                                y: item.startY + totalTopPadding - rawScrollOffset)
+                                y: item.startY)
                     }
                 }
             } else {
                 ForEach(layout.days) { day in
                     let dayStart = day.yOffset
                     let dayEnd = day.yOffset + day.height
-                    if dayEnd >= visibleYStart && dayStart <= visibleYEnd {
+                    let isCollapsed = day.height <= metrics.collapsedDayHeight + 1
+                    if dayEnd >= visibleYStart && dayStart <= visibleYEnd && !isCollapsed {
                         Text(day.label)
                             .font(.system(size: 11 * metrics.fontScale, weight: .medium))
                             .foregroundStyle(.secondary)
                             .frame(width: railWidth - metrics.nodeHorizontalInset, alignment: .trailing)
                             .padding(.leading, metrics.nodeHorizontalInset)
                             .padding(.top, metrics.nodeVerticalSpacing)
-                            .offset(y: day.yOffset + totalTopPadding - rawScrollOffset)
+                            .offset(y: day.yOffset)
                             .accessibilityAddTraits(.isHeader)
                     }
                 }
             }
         }
-        .frame(width: railWidth, height: viewportHeight, alignment: .topLeading)
-        .clipped()
+        .frame(width: railWidth, height: contentHeight, alignment: .topLeading)
+        .offset(x: rawScrollOffsetX)
         .allowsHitTesting(false)
     }
 
