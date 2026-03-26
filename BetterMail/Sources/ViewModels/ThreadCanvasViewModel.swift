@@ -614,6 +614,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var isMailboxActionRunning = false
     @Published internal private(set) var mailboxActionProgressMessage: String?
     @Published internal private(set) var unreadTotal: Int = 0
+    @Published internal private(set) var needsAttentionCount: Int = 0
     @Published internal private(set) var lastRefreshDate: Date?
     @Published internal private(set) var nextRefreshDate: Date?
     @Published internal private(set) var nodeSummaries: [String: ThreadSummaryState] = [:] {
@@ -1340,6 +1341,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             self.unreadTotal = Self.flatten(nodes: scopedRoots).reduce(0) { partial, node in
                 partial + (node.message.isUnread ? 1 : 0)
             }
+            let actionItemThreadIDSet = Set(actionItems.map(\.threadID))
+            let userAddrs = Self.buildUserAddresses(from: scopedRoots)
+            self.needsAttentionCount = Self.computeNeedsAttentionCount(
+                roots: scopedRoots,
+                actionItemThreadIDs: actionItemThreadIDSet,
+                userAddresses: userAddrs,
+                now: Date(),
+                calendar: Calendar.current
+            )
             self.folderEditsByID = [:]
             pruneSelection(using: scopedRoots)
             pruneFolderSelection(using: rethreadResult.folders)
@@ -1365,7 +1375,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     }
                 }
             }
-            Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public)")
+            Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public) needsAttention=\(self.needsAttentionCount, privacy: .public)")
             await runPendingManualAttachmentMailboxMoveIfNeeded()
             scheduleMailboxThreadAutoMovePass()
         } catch {
@@ -6564,6 +6574,76 @@ extension ThreadCanvasViewModel {
             results.append(contentsOf: flatten(node: node))
         }
         return results
+    }
+
+    // MARK: - Needs Attention
+
+    /// Threads updated more than this many days ago do not count as needing attention.
+    internal static let needsAttentionRecencyDays: Int = 7
+
+    /// Extracts a lowercased email address from a header value like `"Name <user@example.com>"`.
+    /// Falls back to the full trimmed, lowercased string when no angle brackets are found.
+    internal static func extractEmailAddress(from headerValue: String) -> String {
+        let trimmed = headerValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let open = trimmed.lastIndex(of: "<"),
+              let close = trimmed.lastIndex(of: ">"),
+              open < close else {
+            return trimmed.lowercased()
+        }
+        return String(trimmed[trimmed.index(after: open)..<close])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    /// Returns the newest message in a thread tree by date.
+    internal static func newestMessage(in node: ThreadNode) -> EmailMessage {
+        node.children.reduce(node.message) { current, child in
+            let childNewest = newestMessage(in: child)
+            return childNewest.date > current.date ? childNewest : current
+        }
+    }
+
+    /// Builds a set of lowercased email addresses that likely belong to the user
+    /// by collecting addresses that appear in the `to` field of messages.
+    internal static func buildUserAddresses(from nodes: [ThreadNode]) -> Set<String> {
+        var addresses = Set<String>()
+        for node in flatten(nodes: nodes) {
+            let toField = node.message.to
+            guard !toField.isEmpty else { continue }
+            // Split on commas for multi-recipient fields, then extract each address.
+            for part in toField.split(separator: ",") {
+                let addr = extractEmailAddress(from: String(part))
+                if !addr.isEmpty {
+                    addresses.insert(addr)
+                }
+            }
+        }
+        return addresses
+    }
+
+    /// Counts threads that need attention: newest message is inbound (not from the user),
+    /// updated within the recency window, and not tracked as an action item.
+    internal static func computeNeedsAttentionCount(
+        roots: [ThreadNode],
+        actionItemThreadIDs: Set<String>,
+        userAddresses: Set<String>,
+        now: Date,
+        calendar: Calendar
+    ) -> Int {
+        guard let cutoff = calendar.date(byAdding: .day, value: -needsAttentionRecencyDays, to: now) else {
+            return 0
+        }
+        var count = 0
+        for root in roots {
+            let threadID = root.message.threadKey
+            if actionItemThreadIDs.contains(threadID) { continue }
+            let newest = newestMessage(in: root)
+            if newest.date < cutoff { continue }
+            let senderAddress = extractEmailAddress(from: newest.from)
+            if userAddresses.contains(senderAddress) { continue }
+            count += 1
+        }
+        return count
     }
 
     internal static func folderMembershipMap(for folders: [ThreadFolder]) -> [String: String] {

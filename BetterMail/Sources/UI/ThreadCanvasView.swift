@@ -31,6 +31,26 @@ internal struct ThreadCanvasView: View {
         formatter.dateFormat = "MMM d, yyyy HH:mm"
         return formatter
     }()
+    private static let dateChipSingleDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+    private static let dateChipSameMonthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+    private static let dateChipDayOnlyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d"
+        return formatter
+    }()
+    private static let dateChipFullFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter
+    }()
 
     internal init(viewModel: ThreadCanvasViewModel,
                   displaySettings: ThreadCanvasDisplaySettings,
@@ -327,7 +347,7 @@ internal struct ThreadCanvasView: View {
     @ViewBuilder
     private func canvasOverlay(context: CanvasRenderContext) -> some View {
         ZStack(alignment: .topLeading) {
-            if !context.showsDayAxis, let dateDescription = viewModel.visibleDateRangeDescription {
+            if !context.showsDayAxis, let dateDescription = visibleDateChipDescription(context: context) {
                 Text(dateDescription)
                     .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
                                             weight: .medium,
@@ -1408,6 +1428,40 @@ internal struct ThreadCanvasView: View {
 
     private var legendGuideColor: Color {
         Color.secondary.opacity(0.35)
+    }
+
+    private func visibleDateChipDescription(context: CanvasRenderContext) -> String? {
+        let visibleNodes = context.visibility.visibleNodesByColumnID.values.flatMap(\.self)
+        if let visibleDateRange = compactVisibleDateRangeDescription(for: visibleNodes.map(\.message.date)) {
+            return visibleDateRange
+        }
+        return viewModel.visibleDateRangeDescription
+    }
+
+    private func compactVisibleDateRangeDescription(for dates: [Date]) -> String? {
+        guard !dates.isEmpty else { return nil }
+        let startOfDays = dates.map { calendar.startOfDay(for: $0) }
+        guard let minDate = startOfDays.min(),
+              let maxDate = startOfDays.max() else {
+            return nil
+        }
+        if calendar.isDate(minDate, inSameDayAs: maxDate) {
+            return Self.dateChipSingleDayFormatter.string(from: minDate)
+        }
+
+        let minYear = calendar.component(.year, from: minDate)
+        let maxYear = calendar.component(.year, from: maxDate)
+        let minMonth = calendar.component(.month, from: minDate)
+        let maxMonth = calendar.component(.month, from: maxDate)
+
+        if minYear == maxYear {
+            if minMonth == maxMonth {
+                return "\(Self.dateChipSameMonthFormatter.string(from: minDate))-\(Self.dateChipDayOnlyFormatter.string(from: maxDate))"
+            }
+            return "\(Self.dateChipSameMonthFormatter.string(from: minDate))-\(Self.dateChipSameMonthFormatter.string(from: maxDate))"
+        }
+
+        return "\(Self.dateChipFullFormatter.string(from: minDate))-\(Self.dateChipFullFormatter.string(from: maxDate))"
     }
 
     private func groupedLegendItems(days: [ThreadCanvasDay],

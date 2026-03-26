@@ -394,10 +394,10 @@ internal struct ThreadListView: View {
     }
 
     private var statusText: String {
-        if viewModel.unreadTotal > 0 {
+        if viewModel.needsAttentionCount > 0 {
             return String.localizedStringWithFormat(
-                NSLocalizedString("threadlist.status.unread", comment: "Status showing unread count"),
-                viewModel.unreadTotal,
+                NSLocalizedString("threadlist.status.needs_attention", comment: "Status showing needs-attention count"),
+                viewModel.needsAttentionCount,
                 viewModel.status
             )
         }

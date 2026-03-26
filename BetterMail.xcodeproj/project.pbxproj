@@ -15,6 +15,7 @@
 		7A8B9C0D1E2F3A4B5C6D7E8F /* Tests/ThreadFolderColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5E4D3C2B1A098765432110 /* Tests/ThreadFolderColorTests.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* Tests/ActionItemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */; };
 		CA32DC8C96F34952A33D8F16 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08CE01DE8A1C40779BF22717 /* XCTest.framework */; };
+		D3E4F5061728394A5B6C7D8E /* Tests/NeedsAttentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,6 +64,7 @@
 		8C7D6E5F4A3B2C1D0E9F8A7B /* Tests/BatchBackfillServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/BatchBackfillServiceTests.swift; sourceTree = SOURCE_ROOT; };
 		B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ActionItemTests.swift; sourceTree = SOURCE_ROOT; };
 		C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasLayoutTests.swift; sourceTree = SOURCE_ROOT; };
+		E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/NeedsAttentionTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -136,6 +138,7 @@
 				6F5E4D3C2B1A098765432110 /* Tests/ThreadFolderColorTests.swift */,
 				C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */,
 				B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */,
+				E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -349,6 +352,7 @@
 				7A8B9C0D1E2F3A4B5C6D7E8F /* Tests/ThreadFolderColorTests.swift in Sources */,
 				22F837F5A55C486AB0F0F200 /* Tests/ThreadCanvasLayoutTests.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* Tests/ActionItemTests.swift in Sources */,
+				D3E4F5061728394A5B6C7D8E /* Tests/NeedsAttentionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

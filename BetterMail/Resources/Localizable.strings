@@ -4,6 +4,7 @@
 "refresh.status.mailbox_unavailable" = "Refresh failed: selected mailbox could not be resolved in Mail. Reopen the mailbox sidebar and reselect the folder.";
 "refresh.status.threading_failed" = "Threading failed: %@";
 "threadlist.status.unread" = "Unread: %d - %@";
+"threadlist.status.needs_attention" = "Needs attention: %d - %@";
 "threadlist.viewmode.default" = "Default View";
 "threadlist.viewmode.timeline" = "Timeline View";
 "threadlist.backfill.button" = "Backfill";
