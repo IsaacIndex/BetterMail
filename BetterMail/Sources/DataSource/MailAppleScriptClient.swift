@@ -1100,6 +1100,92 @@ internal struct HeaderDecoder {
         let end = trimmed.firstIndex(where: { $0 == ";" || $0.isWhitespace }) ?? trimmed.endIndex
         return String(trimmed[..<end])
     }
+
+    func decodeMIMEBody(_ text: String, transferEncoding: String, contentType: String) -> String {
+        let data = decodeTransferEncodingToData(text, encoding: transferEncoding)
+        return decodeCharset(data, contentType: contentType)
+    }
+
+    private func decodeTransferEncodingToData(_ text: String, encoding: String) -> Data {
+        switch encoding.lowercased().trimmingCharacters(in: .whitespaces) {
+        case "quoted-printable":
+            return decodeQuotedPrintable(text)
+        case "base64":
+            let cleaned = text.replacingOccurrences(of: "\n", with: "")
+                .replacingOccurrences(of: "\r", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            return Data(base64Encoded: cleaned) ?? Data(text.utf8)
+        default:
+            return Data(text.utf8)
+        }
+    }
+
+    private func decodeCharset(_ data: Data, contentType: String) -> String {
+        let encoding = charsetEncoding(from: contentType)
+        return String(data: data, encoding: encoding) ?? String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func charsetEncoding(from contentType: String) -> String.Encoding {
+        let lower = contentType.lowercased()
+        guard let range = lower.range(of: "charset=") else { return .utf8 }
+        let afterCharset = lower[range.upperBound...]
+        let value: String
+        if afterCharset.first == "\"" {
+            let unquoted = afterCharset.dropFirst()
+            let end = unquoted.firstIndex(of: "\"") ?? unquoted.endIndex
+            value = String(unquoted[..<end])
+        } else {
+            let end = afterCharset.firstIndex(where: { $0 == ";" || $0.isWhitespace }) ?? afterCharset.endIndex
+            value = String(afterCharset[..<end])
+        }
+        switch value.trimmingCharacters(in: .whitespaces) {
+        case "us-ascii":
+            return .ascii
+        case "iso-8859-1", "latin1":
+            return .isoLatin1
+        case "windows-1252", "cp1252":
+            return .windowsCP1252
+        default:
+            return .utf8
+        }
+    }
+
+    private func decodeQuotedPrintable(_ text: String) -> Data {
+        var result = Data()
+        let bytes = Array(text.utf8)
+        var i = 0
+        while i < bytes.count {
+            if bytes[i] == 0x3D {
+                if i + 1 < bytes.count && bytes[i + 1] == 0x0A {
+                    i += 2
+                    continue
+                }
+                if i + 2 < bytes.count,
+                   let high = hexValue(bytes[i + 1]),
+                   let low = hexValue(bytes[i + 2]) {
+                    result.append(high << 4 | low)
+                    i += 3
+                    continue
+                }
+            }
+            result.append(bytes[i])
+            i += 1
+        }
+        return result
+    }
+
+    private func hexValue(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case 0x30...0x39:
+            return byte - 0x30
+        case 0x41...0x46:
+            return byte - 0x41 + 10
+        case 0x61...0x66:
+            return byte - 0x61 + 10
+        default:
+            return nil
+        }
+    }
 }
  
 private extension String {
