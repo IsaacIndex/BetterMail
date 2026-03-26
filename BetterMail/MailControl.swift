@@ -74,11 +74,7 @@ internal struct MailControl {
     }
 
     nonisolated internal static func appleScriptErrorCode(from error: Error) -> Int? {
-        guard let scriptError = error as? NSAppleScriptRunner.ScriptError,
-              case let .executionFailed(details) = scriptError else {
-            return nil
-        }
-        return details[NSAppleScript.errorNumber] as? Int
+        NSAppleScriptRunner.appleScriptErrorCode(from: error)
     }
 
     private static func mailboxPathResolverHandlersScript() -> String {

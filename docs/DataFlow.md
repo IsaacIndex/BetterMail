@@ -5,7 +5,7 @@ This document describes the primary data flow and concurrency boundaries.
 ## Refresh Flow
 
 1. `ThreadCanvasViewModel` triggers refresh.
-2. `SidebarBackgroundWorker` (actor) calls `MailAppleScriptClient` to fetch messages.
+2. `SidebarBackgroundWorker` (actor) calls `MailAppleScriptClient` with a lightweight refresh profile that fetches headers/source without body content, retries AppleScript timeout `-1712`, and caps each refresh batch to 4 messages.
 3. `MessageStore` persists new messages in Core Data.
 4. `JWZThreader` rebuilds threads.
 5. The view model updates SwiftUI state on the main actor.

@@ -100,4 +100,16 @@ final class MailControlTests: XCTestCase {
         XCTAssertTrue(script.contains("set _targetSender to \"alice@example.com\""))
         XCTAssertTrue(script.contains("return {_matchCount, _firstID, _usedAccountWideFallback, _fallbackMailboxCount, _fallbackMessageCount}"))
     }
+
+    func test_buildRefreshScript_omitsBodyContentFetch() async throws {
+        let client = MailAppleScriptClient()
+
+        let script = await client.buildRefreshScriptForTesting(mailbox: "inbox",
+                                                               account: nil,
+                                                               limit: 4,
+                                                               since: nil)
+
+        XCTAssertTrue(script.contains("set _src to (source of m as string)"))
+        XCTAssertFalse(script.contains("set _body to (content of m as string)"))
+    }
 }

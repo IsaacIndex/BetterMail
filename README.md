@@ -64,7 +64,7 @@ Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Cor
                                                                              ↘︎ FoundationModelsEmailSummaryProvider (Apple Intelligence)
 ```
 - `NSAppleScriptRunner` makes sure Mail is running, executes scripts, and logs failures.
-- `MailAppleScriptClient` fetches message metadata + raw source, decodes headers/snippets, and hands `EmailMessage` models to the store.
+- `MailAppleScriptClient` fetches message metadata + raw source for normal refreshes, escalates to fuller payloads for exhaustive flows, decodes headers/snippets, and hands `EmailMessage` models to the store.
 - `MessageStore` keeps everything off the main actor, exposes async fetch/upsert helpers, and maintains per-thread entities.
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
@@ -82,6 +82,7 @@ To keep the Liquid Glass look without losing nav bar legibility, the glass conta
 
 ### Refresh & Summary Concurrency (Non-Blocking)
 - Heavy work stays off `@MainActor`: AppleScript fetch, Core Data upserts, JWZ threading, subject gathering, and Apple Intelligence summaries all run on a dedicated serial actor (`SidebarBackgroundWorker`), with AppleScript executed by `NSAppleScriptRunner`.
+- Normal refreshes are reliability-biased: each AppleScript fetch is capped to 4 messages, skips `content of m`, and retries Mail timeout `-1712` failures before surfacing an error.
 - The main actor only applies UI state (`roots`, unread totals, summary text/status, `isRefreshing`), so the SwiftUI sidebar remains responsive during refreshes and summaries.
 - Sequence diagram (source at `openspec/changes/refactor-refresh-concurrency/refresh-flow.mmd`):
 

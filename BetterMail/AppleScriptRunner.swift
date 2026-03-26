@@ -35,6 +35,23 @@ internal actor NSAppleScriptRunner {
         }
     }
 
+    nonisolated internal static func appleScriptErrorCode(from error: Error) -> Int? {
+        guard let scriptError = error as? ScriptError,
+              case let .executionFailed(details) = scriptError else {
+            return nil
+        }
+        return details[NSAppleScript.errorNumber] as? Int
+    }
+
+    nonisolated internal static func isTimeoutError(_ error: Error) -> Bool {
+        if let errorNumber = appleScriptErrorCode(from: error) {
+            return errorNumber == -1712
+        }
+
+        let description = error.localizedDescription
+        return description.contains("-1712") || description.localizedCaseInsensitiveContains("timed out")
+    }
+
     internal func run(_ source: String, logPrefix: String? = nil) throws -> NSAppleEventDescriptor {
         try Task.checkCancellation()
         try ensureMailRunning(logPrefix: logPrefix)

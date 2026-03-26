@@ -206,6 +206,18 @@ private enum MailboxFolderActionError: LocalizedError {
     }
 }
 
+internal protocol MailCanvasClient: MailMessageFetching {
+    func fetchMessages(since date: Date?,
+                       limit: Int,
+                       mailbox: String,
+                       account: String?,
+                       snippetLineLimit: Int,
+                       profile: MailFetchProfile) async throws -> [EmailMessage]
+    func fetchMailboxHierarchy() async throws -> [MailboxFolder]
+}
+
+extension MailAppleScriptClient: MailCanvasClient {}
+
 @MainActor
 internal final class ThreadCanvasViewModel: ObservableObject {
     internal struct LayoutProfilingSnapshot {
@@ -364,11 +376,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private actor SidebarBackgroundWorker {
-        private let client: MailAppleScriptClient
+        private let client: any MailCanvasClient
         private let store: MessageStore
         private let threader: JWZThreader
 
-        init(client: MailAppleScriptClient,
+        init(client: any MailCanvasClient,
              store: MessageStore,
              threader: JWZThreader) {
             self.client = client
@@ -402,7 +414,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                          limit: effectiveLimit,
                                                          mailbox: mailbox,
                                                          account: account,
-                                                         snippetLineLimit: snippetLineLimit)
+                                                         snippetLineLimit: snippetLineLimit,
+                                                         profile: .refresh)
             try await store.upsert(messages: fetched)
             let latest = fetched.map(\.date).max()
             return RefreshOutcome(fetchedCount: fetched.count, latestDate: latest)
@@ -713,8 +726,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    private static let maximumRefreshFetchCount = 4
+    private static let maximumAppleScriptRetryAttempts = 3
+    private static let appleScriptRetryDelayNanoseconds: UInt64 = 750_000_000
+
     private let store: MessageStore
-    private let client: MailAppleScriptClient
+    private let client: any MailCanvasClient
     private let threader: JWZThreader
     private let summaryProvider: EmailSummaryProviding?
     private let summaryProviderID: String
@@ -790,7 +807,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   mailboxFolderOrderSettings: MailboxFolderOrderSettings? = nil,
                   mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings? = nil,
                   store: MessageStore = .shared,
-                  client: MailAppleScriptClient = MailAppleScriptClient(),
+                  client: any MailCanvasClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
                   backfillService: BatchBackfillServicing? = nil,
                   summaryCapability: EmailSummaryCapability? = nil,
@@ -1091,7 +1108,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             Log.refresh.debug("Refresh skipped because another refresh is in progress.")
             return
         }
-        let effectiveLimit = limit ?? fetchLimit
+        let requestedLimit = max(1, limit ?? fetchLimit)
+        let effectiveLimit = min(requestedLimit, Self.maximumRefreshFetchCount)
         isRefreshing = true
         refreshProgress = nil
         status = NSLocalizedString("refresh.status.refreshing", comment: "Status when refresh begins")
@@ -1105,16 +1123,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             since = store.lastSyncDate
         }
         let sinceDisplay = since?.ISO8601Format() ?? "nil"
-        Log.refresh.info("Starting refresh. limit=\(effectiveLimit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
+        Log.refresh.info("Starting refresh. requestedLimit=\(requestedLimit, privacy: .public) effectiveLimit=\(effectiveLimit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
         Task { [weak self] in
             guard let self else { return }
             do {
                 let snippetLineLimit = inspectorSettings.snippetLineLimit
-                let outcome = try await worker.performRefresh(effectiveLimit: effectiveLimit,
-                                                              since: since,
-                                                              mailbox: mailboxTarget.mailbox,
-                                                              account: mailboxTarget.account,
-                                                              snippetLineLimit: snippetLineLimit)
+                let outcome = try await self.performRefreshWithRetry(effectiveLimit: effectiveLimit,
+                                                                     since: since,
+                                                                     mailbox: mailboxTarget.mailbox,
+                                                                     account: mailboxTarget.account,
+                                                                     snippetLineLimit: snippetLineLimit)
                 if let latest = outcome.latestDate {
                     store.lastSyncDate = latest
                     Log.refresh.debug("Updated lastSyncDate to \(latest.ISO8601Format(), privacy: .public)")
@@ -1155,6 +1173,34 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 self.refreshProgress = nil
             }
         }
+    }
+
+    private func performRefreshWithRetry(effectiveLimit: Int,
+                                         since: Date?,
+                                         mailbox: String,
+                                         account: String?,
+                                         snippetLineLimit: Int,
+                                         maxAttempts: Int = ThreadCanvasViewModel.maximumAppleScriptRetryAttempts) async throws -> SidebarBackgroundWorker.RefreshOutcome {
+        precondition(maxAttempts > 0)
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            do {
+                return try await worker.performRefresh(effectiveLimit: effectiveLimit,
+                                                       since: since,
+                                                       mailbox: mailbox,
+                                                       account: account,
+                                                       snippetLineLimit: snippetLineLimit)
+            } catch {
+                lastError = error
+                let shouldRetry = attempt < maxAttempts && Self.shouldRetryAppleScriptTimeout(after: error)
+                guard shouldRetry else { throw error }
+                Log.appleScript.info("Retrying refresh after AppleScript timeout. attempt \(attempt + 1, privacy: .public)/\(maxAttempts, privacy: .public)")
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * Self.appleScriptRetryDelayNanoseconds)
+            }
+        }
+
+        throw lastError ?? NSError(domain: "BetterMail.Refresh", code: -1)
     }
 
     internal var isAnyRefreshRunning: Bool {
@@ -2493,10 +2539,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 return try await client.fetchMailboxHierarchy()
             } catch {
                 lastError = error
-                let shouldRetry = attempt < maxAttempts && Self.shouldRetryMailboxHierarchyFetch(after: error)
+                let shouldRetry = attempt < maxAttempts && Self.shouldRetryAppleScriptTimeout(after: error)
                 guard shouldRetry else { throw error }
                 Log.appleScript.info("Retrying mailbox hierarchy fetch after timeout. attempt \(attempt + 1, privacy: .public)/\(maxAttempts, privacy: .public)")
-                let delayNanoseconds = UInt64(attempt) * 750_000_000
+                let delayNanoseconds = UInt64(attempt) * Self.appleScriptRetryDelayNanoseconds
                 try? await Task.sleep(nanoseconds: delayNanoseconds)
             }
         }
@@ -2558,15 +2604,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return nil
     }
 
-    private static func shouldRetryMailboxHierarchyFetch(after error: Error) -> Bool {
-        if let scriptError = error as? NSAppleScriptRunner.ScriptError,
-           case let .executionFailed(details) = scriptError,
-           let errorNumber = details[NSAppleScript.errorNumber] as? Int {
-            return errorNumber == -1712
-        }
-
-        let description = error.localizedDescription
-        return description.contains("-1712") || description.localizedCaseInsensitiveContains("timed out")
+    private static func shouldRetryAppleScriptTimeout(after error: Error) -> Bool {
+        NSAppleScriptRunner.isTimeoutError(error)
     }
 
     private static func isMailboxResolveNotFound(_ error: Error) -> Bool {

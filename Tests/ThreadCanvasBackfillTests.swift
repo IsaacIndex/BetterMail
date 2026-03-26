@@ -309,6 +309,127 @@ final class ThreadCanvasBackfillTests: XCTestCase {
         XCTAssertEqual(Set(fetchCalls.flatMap(\.subjects)), Set(["parent", "child"]))
         XCTAssertFalse(viewModel.isRefreshingFolderThreads(for: "folder-parent"))
     }
+
+    func test_RefreshNow_RetriesTimeoutAndCapsFetchLimit() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadCanvasRefreshRetryTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let client = StubMailCanvasClient(
+            refreshOutcomes: [
+                .failure(Self.timeoutScriptError()),
+                .success([
+                    Self.refreshMessage(id: "refresh-success", date: Date(timeIntervalSince1970: 1_710_000_000))
+                ])
+            ]
+        )
+
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              store: store,
+                                              client: client)
+
+        viewModel.fetchLimit = 9
+        viewModel.refreshNow()
+        try await waitForRefreshCompletion(viewModel)
+
+        let requests = await client.refreshRequestsSnapshot()
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests.allSatisfy { $0.limit == 4 })
+        XCTAssertTrue(requests.allSatisfy { $0.profile == .refresh })
+        XCTAssertEqual(store.lastSyncDate, Date(timeIntervalSince1970: 1_710_000_000))
+        XCTAssertFalse(viewModel.status.localizedCaseInsensitiveContains("failed"))
+    }
+
+    func test_RefreshNow_DoesNotRetryNonTimeoutFailures() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadCanvasRefreshNonTimeoutTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let client = StubMailCanvasClient(
+            refreshOutcomes: [
+                .failure(Self.privilegeScriptError())
+            ]
+        )
+
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              store: store,
+                                              client: client)
+
+        viewModel.refreshNow(limit: 3)
+        try await waitForRefreshCompletion(viewModel)
+
+        let requests = await client.refreshRequestsSnapshot()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(viewModel.status.localizedCaseInsensitiveContains("failed"))
+    }
+
+    func test_RefreshNow_WhenTimeoutPersists_SurfacesFailedStatus() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadCanvasRefreshTimeoutFailureTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let client = StubMailCanvasClient(
+            refreshOutcomes: [
+                .failure(Self.timeoutScriptError()),
+                .failure(Self.timeoutScriptError()),
+                .failure(Self.timeoutScriptError())
+            ]
+        )
+
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              store: store,
+                                              client: client)
+
+        viewModel.refreshNow(limit: 2)
+        try await waitForRefreshCompletion(viewModel)
+
+        let requests = await client.refreshRequestsSnapshot()
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertTrue(viewModel.status.localizedCaseInsensitiveContains("timed out"))
+    }
+
+    private static func refreshMessage(id: String, date: Date) -> EmailMessage {
+        EmailMessage(messageID: id,
+                     mailboxID: "inbox",
+                     accountName: "",
+                     subject: id,
+                     from: "sender@example.com",
+                     to: "me@example.com",
+                     date: date,
+                     snippet: "Snippet",
+                     isUnread: false,
+                     inReplyTo: nil,
+                     references: [],
+                     threadID: "thread-\(id)")
+    }
+
+    private static func timeoutScriptError() -> NSAppleScriptRunner.ScriptError {
+        .executionFailed([
+            NSAppleScript.errorNumber: -1712,
+            NSAppleScript.errorMessage: "Mail got an error: AppleEvent timed out."
+        ])
+    }
+
+    private static func privilegeScriptError() -> NSAppleScriptRunner.ScriptError {
+        .executionFailed([
+            NSAppleScript.errorNumber: -10004,
+            NSAppleScript.errorMessage: "Not authorized to send Apple events to Mail."
+        ])
+    }
+
+    private func waitForRefreshCompletion(_ viewModel: ThreadCanvasViewModel,
+                                          timeoutNanoseconds: UInt64 = 4_000_000_000) async throws {
+        let stepNanoseconds: UInt64 = 100_000_000
+        var elapsed: UInt64 = 0
+        while viewModel.isRefreshing && elapsed < timeoutNanoseconds {
+            try await Task.sleep(nanoseconds: stepNanoseconds)
+            elapsed += stepNanoseconds
+        }
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
 }
 
 private actor StubBatchBackfillService: BatchBackfillServicing {
@@ -414,5 +535,79 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
             return [messageToInsert]
         }
         return []
+    }
+}
+
+private enum StubRefreshOutcome {
+    case success([EmailMessage])
+    case failure(Error)
+}
+
+private struct StubRefreshRequest: Equatable {
+    let limit: Int
+    let mailbox: String
+    let account: String?
+    let profile: MailFetchProfile
+}
+
+private actor StubMailCanvasClient: MailCanvasClient {
+    private var refreshOutcomes: [StubRefreshOutcome]
+    private(set) var refreshRequests: [StubRefreshRequest] = []
+
+    init(refreshOutcomes: [StubRefreshOutcome]) {
+        self.refreshOutcomes = refreshOutcomes
+    }
+
+    func fetchMessages(since date: Date?,
+                       limit: Int,
+                       mailbox: String,
+                       account: String?,
+                       snippetLineLimit: Int,
+                       profile: MailFetchProfile) async throws -> [EmailMessage] {
+        refreshRequests.append(StubRefreshRequest(limit: limit,
+                                                  mailbox: mailbox,
+                                                  account: account,
+                                                  profile: profile))
+        let nextOutcome = refreshOutcomes.isEmpty ? .success([]) : refreshOutcomes.removeFirst()
+        switch nextOutcome {
+        case let .success(messages):
+            return messages
+        case let .failure(error):
+            throw error
+        }
+    }
+
+    func fetchMailboxHierarchy() async throws -> [MailboxFolder] {
+        []
+    }
+
+    func countMessages(in range: DateInterval, mailbox: String, account: String?) async throws -> Int {
+        0
+    }
+
+    func fetchMessages(in range: DateInterval,
+                       limit: Int,
+                       mailbox: String,
+                       account: String?,
+                       snippetLineLimit: Int) async throws -> [EmailMessage] {
+        []
+    }
+
+    func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       mailbox: String,
+                       account: String?) async throws -> Int {
+        0
+    }
+
+    func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
+                       limit: Int,
+                       mailbox: String,
+                       account: String?,
+                       snippetLineLimit: Int) async throws -> [EmailMessage] {
+        []
+    }
+
+    func refreshRequestsSnapshot() -> [StubRefreshRequest] {
+        refreshRequests
     }
 }

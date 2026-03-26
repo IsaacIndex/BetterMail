@@ -7,6 +7,11 @@ private enum MailAppleScriptClientError: Error {
     case missingMessageID
 }
 
+internal enum MailFetchProfile: Equatable, Sendable {
+    case refresh
+    case full
+}
+
 internal actor MailAppleScriptClient {
     private enum LogPrefix {
         static let backfillCount = "[BACKFILL][COUNT]"
@@ -50,11 +55,12 @@ internal actor MailAppleScriptClient {
                                 limit: Int = 10,
                                 mailbox: String = "inbox",
                                 account: String? = nil,
-                                snippetLineLimit: Int = 10) async throws -> [EmailMessage] {
+                                snippetLineLimit: Int = 10,
+                                profile: MailFetchProfile = .full) async throws -> [EmailMessage] {
         try Task.checkCancellation()
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
-        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
-        let script = buildScript(mailbox: mailbox, account: account, limit: limit, since: date)
+        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public) profile=\(String(describing: profile), privacy: .public)")
+        let script = buildScript(mailbox: mailbox, account: account, limit: limit, since: date, profile: profile)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
         try Task.checkCancellation()
@@ -342,12 +348,30 @@ internal actor MailAppleScriptClient {
         """
     }
 
-    private func buildScript(mailbox: String, account: String?, limit: Int, since: Date?) -> String {
+    private func buildScript(mailbox: String,
+                             account: String?,
+                             limit: Int,
+                             since: Date?,
+                             profile: MailFetchProfile) -> String {
         let windowSeconds: Int
         if let since {
             windowSeconds = max(0, Int(Date().timeIntervalSince(since)))
         } else {
             windowSeconds = 0
+        }
+
+        let contentFetchScript: String
+        switch profile {
+        case .refresh:
+            contentFetchScript = ""
+        case .full:
+            contentFetchScript = """
+                try
+                  set _body to (content of m as string)
+                on error
+                  set _body to ""
+                end try
+            """
         }
 
         return """
@@ -398,11 +422,7 @@ internal actor MailAppleScriptClient {
                 on error
                   set _src to ""
                 end try
-                try
-                  set _body to (content of m as string)
-                on error
-                  set _body to ""
-                end try
+        \(contentFetchScript)
                 copy {(id of m as string), (message id of m as string), (subject of m as string), _msgMailboxPath, _msgAccountName, (date received of m), (read status of m), _src, _body} to end of _rows
                 set _count to _count + 1
                 if _count is greater than or equal to _limit then exit repeat
@@ -413,6 +433,19 @@ internal actor MailAppleScriptClient {
         return _rows
         """
     }
+
+#if DEBUG
+    internal func buildRefreshScriptForTesting(mailbox: String = "inbox",
+                                               account: String? = nil,
+                                               limit: Int = 10,
+                                               since: Date? = nil) -> String {
+        buildScript(mailbox: mailbox,
+                    account: account,
+                    limit: limit,
+                    since: since,
+                    profile: .refresh)
+    }
+#endif
 
     private func buildScript(mailbox: String, account: String?, limit: Int, startWindow: Int, endWindow: Int) -> String {
         return """
