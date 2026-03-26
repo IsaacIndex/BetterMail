@@ -968,7 +968,7 @@ internal actor MailAppleScriptClient {
     }
 }
 
-private struct HeaderDecoder {
+internal struct HeaderDecoder {
     func headers(from source: String) -> [String: String] {
         let normalizedSource = source.replacingOccurrences(of: "\r\n", with: "\n")
         var headers: [String: String] = [:]
@@ -1082,6 +1082,23 @@ private struct HeaderDecoder {
             }
         }
         return identifiers
+    }
+
+    func extractBoundary(from contentType: String) -> String? {
+        let lower = contentType.lowercased()
+        guard let range = lower.range(of: "boundary") else { return nil }
+        let afterKey = contentType[range.upperBound...]
+        let trimmed = afterKey.drop { $0.isWhitespace || $0 == "=" }
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.first == "\"" {
+            let unquoted = trimmed.dropFirst()
+            guard let endQuote = unquoted.firstIndex(of: "\"") else {
+                return String(unquoted)
+            }
+            return String(unquoted[..<endQuote])
+        }
+        let end = trimmed.firstIndex(where: { $0 == ";" || $0.isWhitespace }) ?? trimmed.endIndex
+        return String(trimmed[..<end])
     }
 }
  
