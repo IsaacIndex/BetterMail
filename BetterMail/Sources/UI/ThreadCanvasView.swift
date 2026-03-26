@@ -72,6 +72,7 @@ internal struct ThreadCanvasView: View {
         let visibleDays: [ThreadCanvasDay]
         let visibleColumns: [ThreadCanvasColumn]
         let visibleNodesByColumnID: [String: [ThreadCanvasNode]]
+        let visibleDateChipDescription: String?
         let visibleChromeData: [FolderChromeData]
         let visibleHeaderChromeData: [FolderChromeData]
     }
@@ -347,7 +348,8 @@ internal struct ThreadCanvasView: View {
     @ViewBuilder
     private func canvasOverlay(context: CanvasRenderContext) -> some View {
         ZStack(alignment: .topLeading) {
-            if !context.showsDayAxis, let dateDescription = visibleDateChipDescription(context: context) {
+            if !context.showsDayAxis,
+               let dateDescription = context.visibility.visibleDateChipDescription ?? viewModel.visibleDateRangeDescription {
                 Text(dateDescription)
                     .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
                                             weight: .medium,
@@ -420,12 +422,12 @@ internal struct ThreadCanvasView: View {
             }
             return maxX >= visibleXStart && minX <= visibleXEnd
         }
-        let (visibleNodesByColumnID, nodeStats) = visibleNodesByColumnID(columns: visibleColumns,
-                                                                         shouldShowAllNodesInColumn: shouldShowAllNodesInColumn,
-                                                                         pinnedFolderIDs: pinnedFolderIDs,
-                                                                         visibleDayRange: visibleDayRange,
-                                                                         stableVisibleYStart: stableVisibleYStart,
-                                                                         stableVisibleYEnd: stableVisibleYEnd)
+        let (visibleNodesByColumnID, visibleDateChipDescription, nodeStats) = visibleNodesByColumnID(columns: visibleColumns,
+                                                                                                      shouldShowAllNodesInColumn: shouldShowAllNodesInColumn,
+                                                                                                      pinnedFolderIDs: pinnedFolderIDs,
+                                                                                                      visibleDayRange: visibleDayRange,
+                                                                                                      stableVisibleYStart: stableVisibleYStart,
+                                                                                                      stableVisibleYEnd: stableVisibleYEnd)
         let visibleChromeData = visibleBodyChromeData(chromeData: chromeData,
                                                       visibleXStart: visibleXStart,
                                                       visibleXEnd: visibleXEnd,
@@ -466,6 +468,7 @@ internal struct ThreadCanvasView: View {
                                      visibleDays: visibleDays,
                                      visibleColumns: visibleColumns,
                                      visibleNodesByColumnID: visibleNodesByColumnID,
+                                     visibleDateChipDescription: visibleDateChipDescription,
                                      visibleChromeData: visibleChromeData,
                                      visibleHeaderChromeData: visibleHeaderChromeData)
     }
@@ -475,7 +478,7 @@ internal struct ThreadCanvasView: View {
                                         pinnedFolderIDs: Set<String>,
                                         visibleDayRange: ClosedRange<Int>?,
                                         stableVisibleYStart: CGFloat,
-                                        stableVisibleYEnd: CGFloat) -> ([String: [ThreadCanvasNode]], VisibleNodePreparationStats) {
+                                        stableVisibleYEnd: CGFloat) -> ([String: [ThreadCanvasNode]], String?, VisibleNodePreparationStats) {
         let signpostID = OSSignpostID(log: Log.performance)
         os_signpost(.begin, log: Log.performance, name: "VisibleNodePreparation", signpostID: signpostID)
         defer {
@@ -484,6 +487,8 @@ internal struct ThreadCanvasView: View {
 
         var totalNodeCount = 0
         var visibleNodeCount = 0
+        var visibleMinDate: Date?
+        var visibleMaxDate: Date?
         let visibleNodesByColumnID = Dictionary(uniqueKeysWithValues: columns.map { column in
             totalNodeCount += column.nodes.count
             let nodes: [ThreadCanvasNode]
@@ -502,8 +507,15 @@ internal struct ThreadCanvasView: View {
                 }
             }
             visibleNodeCount += nodes.count
+            for node in nodes {
+                let startOfDay = calendar.startOfDay(for: node.message.date)
+                visibleMinDate = min(visibleMinDate ?? startOfDay, startOfDay)
+                visibleMaxDate = max(visibleMaxDate ?? startOfDay, startOfDay)
+            }
             return (column.id, nodes)
         })
+        let visibleDateChipDescription = compactVisibleDateRangeDescription(minDate: visibleMinDate,
+                                                                            maxDate: visibleMaxDate)
         os_signpost(.event,
                     log: Log.performance,
                     name: "VisibleNodePreparationStats",
@@ -512,6 +524,7 @@ internal struct ThreadCanvasView: View {
                     totalNodeCount,
                     visibleNodeCount)
         return (visibleNodesByColumnID,
+                visibleDateChipDescription,
                 VisibleNodePreparationStats(totalNodeCount: totalNodeCount,
                                             visibleNodeCount: visibleNodeCount))
     }
@@ -1430,21 +1443,8 @@ internal struct ThreadCanvasView: View {
         Color.secondary.opacity(0.35)
     }
 
-    private func visibleDateChipDescription(context: CanvasRenderContext) -> String? {
-        let visibleNodes = context.visibility.visibleNodesByColumnID.values.flatMap(\.self)
-        if let visibleDateRange = compactVisibleDateRangeDescription(for: visibleNodes.map(\.message.date)) {
-            return visibleDateRange
-        }
-        return viewModel.visibleDateRangeDescription
-    }
-
-    private func compactVisibleDateRangeDescription(for dates: [Date]) -> String? {
-        guard !dates.isEmpty else { return nil }
-        let startOfDays = dates.map { calendar.startOfDay(for: $0) }
-        guard let minDate = startOfDays.min(),
-              let maxDate = startOfDays.max() else {
-            return nil
-        }
+    private func compactVisibleDateRangeDescription(minDate: Date?, maxDate: Date?) -> String? {
+        guard let minDate, let maxDate else { return nil }
         if calendar.isDate(minDate, inSameDayAs: maxDate) {
             return Self.dateChipSingleDayFormatter.string(from: minDate)
         }
