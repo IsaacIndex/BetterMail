@@ -156,4 +156,23 @@ final class MIMESnippetExtractionTests: XCTestCase {
         let result = decoder.extractPlainTextFromMIME(source)
         XCTAssertEqual(result?.trimmingCharacters(in: .whitespacesAndNewlines), "café")
     }
+
+    // MARK: - bodySnippet integration
+
+    func test_bodySnippet_emptyBodyWithMultipartSource_extractsFromMIME() {
+        let source = "Content-Type: multipart/alternative; boundary=\"inttest\"\nSubject: Test\n\n--inttest\nContent-Type: text/plain; charset=utf-8\n\nThis is the real email body from MIME.\n--inttest\nContent-Type: text/html\n\n<html><body>HTML version</body></html>\n--inttest--\n"
+        let result = decoder.bodySnippet(fromBody: "", fallbackSource: source)
+        XCTAssertTrue(result.contains("This is the real email body from MIME."))
+    }
+
+    func test_bodySnippet_nonEmptyBody_usesPrimaryBody() {
+        let result = decoder.bodySnippet(fromBody: "Primary body text", fallbackSource: "irrelevant")
+        XCTAssertEqual(result, "Primary body text")
+    }
+
+    func test_bodySnippet_emptyBodyNonMultipartSource_usesNaiveFallback() {
+        let source = "Subject: Test\n\nSimple body after headers.\n"
+        let result = decoder.bodySnippet(fromBody: "", fallbackSource: source)
+        XCTAssertTrue(result.contains("Simple body after headers."))
+    }
 }

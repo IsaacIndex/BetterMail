@@ -1010,6 +1010,14 @@ internal struct HeaderDecoder {
     }
 
     private func bodySnippetFromSource(_ source: String, maxLength: Int, maxLines: Int) -> String {
+        if let mimeText = extractPlainTextFromMIME(source) {
+            let cleaned = cleanedSnippetLines(from: mimeText, maxLines: maxLines)
+            if !cleaned.isEmpty {
+                Log.appleScript.debug("MIME parsing: using extracted text/plain for snippet")
+                return truncate(cleaned, maxLength: maxLength)
+            }
+        }
+        Log.appleScript.debug("MIME parsing: falling back to naive header/body split")
         let normalizedSource = source.replacingOccurrences(of: "\r\n", with: "\n")
         guard let range = normalizedSource.range(of: "\n\n") else { return "" }
         let body = normalizedSource[range.upperBound...]
