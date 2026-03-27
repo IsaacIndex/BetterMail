@@ -80,4 +80,80 @@ final class MIMESnippetExtractionTests: XCTestCase {
         let result = decoder.decodeMIMEBody(input, transferEncoding: "7bit", contentType: "text/plain; charset=iso-2022-jp")
         XCTAssertEqual(result, "hello")
     }
+
+    // MARK: - extractPlainTextFromMIME
+
+    func test_extractPlainTextFromMIME_simpleMultipartAlternative_extractsPlainText() {
+        let source = "Content-Type: multipart/alternative; boundary=\"boundary1\"\n\n--boundary1\nContent-Type: text/plain; charset=utf-8\n\nHello from the plain text part.\n--boundary1\nContent-Type: text/html; charset=utf-8\n\n<html><body>Hello from HTML</body></html>\n--boundary1--\n"
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertEqual(result?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       "Hello from the plain text part.")
+    }
+
+    func test_extractPlainTextFromMIME_nestedMultipart_walksToPlainText() {
+        let source = "Content-Type: multipart/mixed; boundary=\"outer\"\n\n--outer\nContent-Type: multipart/related; boundary=\"middle\"\n\n--middle\nContent-Type: multipart/alternative; boundary=\"inner\"\n\n--inner\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\nDear team,=0APlease review.\n--inner\nContent-Type: text/html\n\n<html><body>Dear team</body></html>\n--inner--\n--middle--\n--outer--\n"
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertTrue(result?.contains("Dear team,") == true)
+        XCTAssertTrue(result?.contains("Please review.") == true)
+    }
+
+    func test_extractPlainTextFromMIME_base64PlainText_decodes() {
+        let body = "This is a base64 encoded message."
+        let encoded = Data(body.utf8).base64EncodedString()
+        let source = "Content-Type: multipart/alternative; boundary=\"b64bound\"\n\n--b64bound\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\n\(encoded)\n--b64bound--\n"
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertEqual(result?.trimmingCharacters(in: .whitespacesAndNewlines), body)
+    }
+
+    func test_extractPlainTextFromMIME_nonMultipart_returnsNil() {
+        let source = "Content-Type: text/plain; charset=utf-8\n\nJust a simple email.\n"
+        XCTAssertNil(decoder.extractPlainTextFromMIME(source))
+    }
+
+    func test_extractPlainTextFromMIME_htmlOnly_stripsTagsAsFallback() {
+        let source = "Content-Type: multipart/alternative; boundary=\"htmlonly\"\n\n--htmlonly\nContent-Type: text/html; charset=utf-8\n\n<html><head><style>body{color:red}</style></head><body><p>Important message</p></body></html>\n--htmlonly--\n"
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertNotNil(result)
+        XCTAssertTrue(result?.contains("Important message") == true)
+        XCTAssertFalse(result?.contains("<p>") == true)
+        XCTAssertFalse(result?.contains("color:red") == true)
+    }
+
+    func test_extractPlainTextFromMIME_closingDelimiter_ignoresEpilogue() {
+        let source = "Content-Type: multipart/alternative; boundary=\"epilogue\"\n\n--epilogue\nContent-Type: text/plain\n\nReal content.\n--epilogue--\nThis is epilogue junk that should be ignored.\n"
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertEqual(result?.trimmingCharacters(in: .whitespacesAndNewlines), "Real content.")
+    }
+
+    func test_extractPlainTextFromMIME_depthLimit_returnsNil() {
+        // Use zero-padded names so no boundary is a prefix of another
+        var source = ""
+        for i in 0..<12 {
+            let boundary = String(format: "depth_%02d", i)
+            source += "Content-Type: multipart/mixed; boundary=\"\(boundary)\"\n\n--\(boundary)\n"
+        }
+        source += "Content-Type: text/plain\n\nShould not be reached.\n"
+        for i in stride(from: 11, through: 0, by: -1) {
+            let boundary = String(format: "depth_%02d", i)
+            source += "--\(boundary)--\n"
+        }
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertNil(result)
+    }
+
+    func test_extractPlainTextFromMIME_emptySource_returnsNil() {
+        XCTAssertNil(decoder.extractPlainTextFromMIME(""))
+    }
+
+    func test_extractPlainTextFromMIME_oversizedSource_returnsNil() {
+        let padding = String(repeating: "X", count: 512 * 1024 + 1)
+        let source = "Content-Type: multipart/mixed; boundary=\"big\"\n\n--big\nContent-Type: text/plain\n\n\(padding)\n--big--"
+        XCTAssertNil(decoder.extractPlainTextFromMIME(source))
+    }
+
+    func test_extractPlainTextFromMIME_latin1Part_decodesCorrectly() {
+        let source = "Content-Type: multipart/alternative; boundary=\"latin\"\n\n--latin\nContent-Type: text/plain; charset=iso-8859-1\nContent-Transfer-Encoding: quoted-printable\n\ncaf=E9\n--latin--\n"
+        let result = decoder.extractPlainTextFromMIME(source)
+        XCTAssertEqual(result?.trimmingCharacters(in: .whitespacesAndNewlines), "café")
+    }
 }

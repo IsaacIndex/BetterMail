@@ -1186,6 +1186,95 @@ internal struct HeaderDecoder {
             return nil
         }
     }
+
+    private static let maxMIMESourceSize = 512 * 1024
+    private static let maxMIMEDepth = 10
+
+    func extractPlainTextFromMIME(_ source: String) -> String? {
+        guard source.utf8.count <= Self.maxMIMESourceSize else {
+            Log.appleScript.debug("MIME parsing skipped: source exceeds 512 KB")
+            return nil
+        }
+        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
+        let topHeaders = headers(from: normalized)
+        guard let contentType = topHeaders["content-type"],
+              contentType.lowercased().contains("multipart"),
+              let boundary = extractBoundary(from: contentType) else {
+            return nil
+        }
+        guard let headerEnd = normalized.range(of: "\n\n") else { return nil }
+        let body = String(normalized[headerEnd.upperBound...])
+        Log.appleScript.debug("MIME parsing: attempting multipart extraction with boundary")
+        let result = extractTextFromParts(body, boundary: boundary, depth: 0)
+        if result == nil {
+            Log.appleScript.debug("MIME parsing: no text/plain part found")
+        }
+        return result
+    }
+
+    private func extractTextFromParts(_ body: String, boundary: String, depth: Int) -> String? {
+        guard depth < Self.maxMIMEDepth else { return nil }
+        let delimiter = "--" + boundary
+        let closingDelimiter = delimiter + "--"
+
+        let workingBody: String
+        if let closingRange = body.range(of: closingDelimiter) {
+            workingBody = String(body[..<closingRange.lowerBound])
+        } else {
+            workingBody = body
+        }
+
+        let rawParts = workingBody.components(separatedBy: delimiter)
+        let parts = Array(rawParts.dropFirst())
+
+        var plainTextResult: String?
+        var htmlFallback: String?
+
+        for part in parts {
+            let trimmedPart = part.hasPrefix("\n") ? String(part.dropFirst()) : part
+            guard let headerEnd = trimmedPart.range(of: "\n\n") else { continue }
+            let partHeaderStr = String(trimmedPart[..<headerEnd.lowerBound])
+            let partBody = String(trimmedPart[headerEnd.upperBound...])
+            let partHeaders = headers(from: partHeaderStr + "\n\n")
+            let rawPartContentType = partHeaders["content-type"] ?? ""
+            let partContentType = rawPartContentType.lowercased()
+            let transferEncoding = partHeaders["content-transfer-encoding"] ?? ""
+
+            if partContentType.contains("multipart"),
+               let nestedBoundary = extractBoundary(from: rawPartContentType) {
+                if let nested = extractTextFromParts(partBody, boundary: nestedBoundary, depth: depth + 1) {
+                    return nested
+                }
+            } else if partContentType.contains("text/plain") || (partContentType.isEmpty && depth > 0) {
+                let decoded = decodeMIMEBody(partBody, transferEncoding: transferEncoding, contentType: rawPartContentType)
+                plainTextResult = decoded
+            } else if partContentType.contains("text/html") && htmlFallback == nil {
+                let decoded = decodeMIMEBody(partBody, transferEncoding: transferEncoding, contentType: rawPartContentType)
+                htmlFallback = stripHTML(decoded)
+            }
+
+            if plainTextResult != nil { return plainTextResult }
+        }
+
+        return htmlFallback
+    }
+
+    private func stripHTML(_ html: String) -> String {
+        var result = html
+        result = result.replacingOccurrences(
+            of: "<style[^>]*>[\\s\\S]*?</style>",
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: "<script[^>]*>[\\s\\S]*?</script>",
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        result = result.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
  
 private extension String {
