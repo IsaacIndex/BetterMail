@@ -17,6 +17,8 @@ internal enum AccessibilityID {
     internal static let searchField = "bettermail.thread-list.search-field"
     internal static let fetchLimitField = "bettermail.thread-list.fetch-limit-field"
     internal static let refreshButton = "bettermail.thread-list.refresh-button"
+    internal static let zoomFitButton = "bettermail.thread-list.zoom-fit-button"
+    internal static let zoomResetButton = "bettermail.thread-list.zoom-reset-button"
     internal static let selectionActionBar = "bettermail.thread-list.selection-action-bar"
     internal static let backfillButton = "bettermail.thread-list.backfill-button"
 

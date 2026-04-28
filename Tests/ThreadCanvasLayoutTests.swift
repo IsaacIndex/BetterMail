@@ -546,6 +546,129 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(scrolledRange, 1...3)
     }
 
+    func test_preferredFitNodeBounds_prefersVisibleNodes() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let oldDate = calendar.date(byAdding: .day, value: -40, to: today)!
+        let visibleA = ThreadCanvasNode(id: "visible-a",
+                                        message: makeMessage(id: "visible-a", date: today),
+                                        threadID: "thread-visible-a",
+                                        jwzThreadID: "jwz-visible-a",
+                                        frame: CGRect(x: 90, y: 100, width: 120, height: 60),
+                                        dayIndex: 0,
+                                        isManualAttachment: false)
+        let visibleB = ThreadCanvasNode(id: "visible-b",
+                                        message: makeMessage(id: "visible-b", date: today),
+                                        threadID: "thread-visible-b",
+                                        jwzThreadID: "jwz-visible-b",
+                                        frame: CGRect(x: 260, y: 140, width: 150, height: 70),
+                                        dayIndex: 0,
+                                        isManualAttachment: false)
+        let hiddenOld = ThreadCanvasNode(id: "hidden-old",
+                                         message: makeMessage(id: "hidden-old", date: oldDate),
+                                         threadID: "thread-hidden-old",
+                                         jwzThreadID: "jwz-hidden-old",
+                                         frame: CGRect(x: 900, y: 2_200, width: 160, height: 80),
+                                         dayIndex: 40,
+                                         isManualAttachment: false)
+        let layout = ThreadCanvasLayout(days: [],
+                                        columns: [
+                                            ThreadCanvasColumn(id: "column-a",
+                                                               title: "A",
+                                                               xOffset: 0,
+                                                               nodes: [visibleA, hiddenOld],
+                                                               unreadCount: 0,
+                                                               latestDate: today,
+                                                               folderID: nil),
+                                            ThreadCanvasColumn(id: "column-b",
+                                                               title: "B",
+                                                               xOffset: 0,
+                                                               nodes: [visibleB],
+                                                               unreadCount: 0,
+                                                               latestDate: today,
+                                                               folderID: nil)
+                                        ],
+                                        contentSize: CGSize(width: 1_200, height: 2_600),
+                                        folderOverlays: [],
+                                        populatedDayIndices: [])
+
+        let bounds = ThreadCanvasViewModel.preferredFitNodeBounds(for: layout,
+                                                                  viewportRect: CGRect(x: 0,
+                                                                                       y: 0,
+                                                                                       width: 500,
+                                                                                       height: 500),
+                                                                  calendar: calendar)
+
+        XCTAssertEqual(bounds, visibleA.frame.union(visibleB.frame))
+    }
+
+    func test_preferredFitNodeBounds_fallsBackToNewestClusterWhenViewportIsEmpty() {
+        let calendar = Calendar(identifier: .gregorian)
+        let newestDate = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
+        let secondNewestDate = calendar.date(byAdding: .hour, value: -1, to: newestDate)!
+        let recentDate = calendar.date(byAdding: .day, value: -1, to: newestDate)!
+        let oldDate = calendar.date(byAdding: .day, value: -40, to: newestDate)!
+        let newest = ThreadCanvasNode(id: "newest",
+                                      message: makeMessage(id: "newest", date: newestDate),
+                                      threadID: "thread-newest",
+                                      jwzThreadID: "jwz-newest",
+                                      frame: CGRect(x: 120, y: 120, width: 100, height: 40),
+                                      dayIndex: 0,
+                                      isManualAttachment: false)
+        let secondNewest = ThreadCanvasNode(id: "second-newest",
+                                            message: makeMessage(id: "second-newest",
+                                                                 date: secondNewestDate),
+                                            threadID: "thread-second-newest",
+                                            jwzThreadID: "jwz-second-newest",
+                                            frame: CGRect(x: 260, y: 150, width: 80, height: 50),
+                                            dayIndex: 0,
+                                            isManualAttachment: false)
+        let recent = ThreadCanvasNode(id: "recent",
+                                      message: makeMessage(id: "recent", date: recentDate),
+                                      threadID: "thread-recent",
+                                      jwzThreadID: "jwz-recent",
+                                      frame: CGRect(x: 420, y: 170, width: 60, height: 40),
+                                      dayIndex: 1,
+                                      isManualAttachment: false)
+        let old = ThreadCanvasNode(id: "old",
+                                   message: makeMessage(id: "old", date: oldDate),
+                                   threadID: "thread-old",
+                                   jwzThreadID: "jwz-old",
+                                   frame: CGRect(x: 900, y: 2_200, width: 160, height: 90),
+                                   dayIndex: 40,
+                                   isManualAttachment: false)
+        let layout = ThreadCanvasLayout(days: [],
+                                        columns: [
+                                            ThreadCanvasColumn(id: "column-a",
+                                                               title: "A",
+                                                               xOffset: 0,
+                                                               nodes: [old, recent],
+                                                               unreadCount: 0,
+                                                               latestDate: recentDate,
+                                                               folderID: nil),
+                                            ThreadCanvasColumn(id: "column-b",
+                                                               title: "B",
+                                                               xOffset: 0,
+                                                               nodes: [secondNewest, newest],
+                                                               unreadCount: 0,
+                                                               latestDate: newestDate,
+                                                               folderID: nil)
+                                        ],
+                                        contentSize: CGSize(width: 1_200, height: 2_600),
+                                        folderOverlays: [],
+                                        populatedDayIndices: [])
+
+        let bounds = ThreadCanvasViewModel.preferredFitNodeBounds(for: layout,
+                                                                  viewportRect: CGRect(x: 0,
+                                                                                       y: 0,
+                                                                                       width: 50,
+                                                                                       height: 50),
+                                                                  calendar: calendar,
+                                                                  latestNodeLimit: 2)
+
+        XCTAssertEqual(bounds, newest.frame.union(secondNewest.frame))
+    }
+
     func testPagingThresholdDetection() {
         let shouldExpand = ThreadCanvasViewModel.shouldExpandDayWindow(scrollOffset: 880,
                                                                        viewportHeight: 200,

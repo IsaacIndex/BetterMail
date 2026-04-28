@@ -5,6 +5,7 @@ internal struct ThreadCanvasLayoutMetrics {
     internal static let defaultDayCount = 7
     internal static let minZoom: CGFloat = 0.01
     internal static let maxZoom: CGFloat = 1.6
+    internal static let minimumReadableFontScale: CGFloat = 0.85
 
     internal let zoom: CGFloat
     internal let dayCount: Int
@@ -57,7 +58,7 @@ internal struct ThreadCanvasLayoutMetrics {
     }
 
     internal var fontScale: CGFloat {
-        min(max(clampedZoom, 0.85), 1.2) * textScale
+        max(min(max(clampedZoom, 0.85), 1.2) * textScale, Self.minimumReadableFontScale)
     }
 
     internal var nodeWidth: CGFloat {

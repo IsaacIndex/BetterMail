@@ -1557,6 +1557,9 @@ internal struct ThreadCanvasView: View {
         @State private var trackedScrollViewID: ObjectIdentifier?
         @State private var trackedDocumentViewID: ObjectIdentifier?
         @State private var trackedDocumentSize: CGSize = .zero
+        @State private var manualZoomOverrideKeys: Set<String> = []
+        @State private var lastAdaptiveZoomApplicationKey: String?
+        @State private var isApplyingProgrammaticZoom = false
         // Bumped every time the zoom level changes so that `body` re-runs and picks up the
         // updated `buildRenderContext`/`renderOverlay` closures from the parent re-render.
         // (@Binding reads in body are not tracked as dependencies by SwiftUI, but @State reads are.)
@@ -1582,6 +1585,30 @@ internal struct ThreadCanvasView: View {
             viewModel.activeMailboxScope == .allFolders ? 16 : 8
         }
 
+        private var zoomScopeKey: String {
+            "\(activeScopeZoomKey)|\(displaySettings.viewMode.rawValue)"
+        }
+
+        private var activeScopeZoomKey: String {
+            switch viewModel.activeMailboxScope {
+            case .actionItems:
+                return "actionItems"
+            case .allEmails:
+                return "allEmails"
+            case .allFolders:
+                return "allFolders"
+            case .allInboxes:
+                return "allInboxes"
+            case .mailboxFolder(let account, let path):
+                return "mailboxFolder:\(account):\(path)"
+            }
+        }
+
+        private var usesAdaptiveTimelineZoom: Bool {
+            displaySettings.viewMode == .timeline &&
+                (viewModel.activeMailboxScope == .allEmails || viewModel.activeMailboxScope == .allInboxes)
+        }
+
         private var viewportState: ThreadCanvasView.CanvasViewportState {
             ThreadCanvasView.CanvasViewportState(rawScrollOffset: rawScrollOffset,
                                                  rawScrollOffsetX: rawScrollOffsetX,
@@ -1605,12 +1632,14 @@ internal struct ThreadCanvasView: View {
         }
 
         private func configuredScrollView(renderContext: ThreadCanvasView.CanvasRenderContext) -> some View {
-            ScrollView([.horizontal, .vertical]) {
+            let documentContentHeight = scrollDocumentContentHeight(layoutHeight: staticContext.layout.contentSize.height)
+
+            return ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     renderContent(renderContext)
                 }
                 .frame(width: staticContext.layout.contentSize.width,
-                       height: staticContext.layout.contentSize.height,
+                       height: documentContentHeight,
                        alignment: .topLeading)
                 .coordinateSpace(name: "ThreadCanvasContent")
                 .padding(.top, staticContext.totalTopPadding)
@@ -1624,13 +1653,15 @@ internal struct ThreadCanvasView: View {
                                 Log.app.debug("Thread canvas scroll host resolved. marker=scroll-host-resolved")
                             }
                             trackScrollHostState(scrollView,
-                                                 expectedContentSize: staticContext.layout.contentSize,
+                                                 expectedContentSize: CGSize(width: staticContext.layout.contentSize.width,
+                                                                             height: documentContentHeight),
                                                  totalTopPadding: staticContext.totalTopPadding)
                         },
                         onBoundsChange: { scrollView, origin in
                             updateViewportSize(scrollView.contentView.bounds.size)
                             trackScrollHostState(scrollView,
-                                                 expectedContentSize: staticContext.layout.contentSize,
+                                                 expectedContentSize: CGSize(width: staticContext.layout.contentSize.width,
+                                                                             height: documentContentHeight),
                                                  totalTopPadding: staticContext.totalTopPadding)
                             handleScrollBoundsChange(origin)
                         }
@@ -1653,6 +1684,15 @@ internal struct ThreadCanvasView: View {
             )
             .onPreferenceChange(ThreadCanvasViewportHeightPreferenceKey.self) { height in
                 handleViewportHeightPreferenceChange(height)
+            }
+            .onChange(of: viewportWidth) { _, _ in
+                reconcileAdaptiveTimelineZoom(reason: "viewport_width")
+            }
+            .onChange(of: viewportHeight) { _, _ in
+                reconcileAdaptiveTimelineZoom(reason: "viewport_height")
+            }
+            .onChange(of: staticContext.layout.contentSize.width) { _, _ in
+                reconcileAdaptiveTimelineZoom(reason: "content_width")
             }
             .onChange(of: staticContext.layout.contentSize.height) { _ in
                 handleLayoutContentHeightChange()
@@ -1678,7 +1718,7 @@ internal struct ThreadCanvasView: View {
             }
             .onAppear {
                 accumulatedZoom = zoomScale
-                displaySettings.updateCurrentZoom(zoomScale)
+                displaySettings.updateCurrentZoom(zoomScale, source: .automatic)
                 viewModel.scheduleVisibleDayRangeUpdate(scrollOffset: scrollOffset,
                                                         viewportHeight: effectiveViewportHeight(proxyHeight: proxySize.height,
                                                                                                totalTopPadding: staticContext.totalTopPadding),
@@ -1688,9 +1728,27 @@ internal struct ThreadCanvasView: View {
                                                         calendar: calendar,
                                                         immediate: true)
                 syncFolderMinimapViewportSnapshot()
+                reconcileAdaptiveTimelineZoom(reason: "appear")
             }
             .onChange(of: zoomScale) { _, newValue in
-                displaySettings.updateCurrentZoom(newValue)
+                guard !isApplyingProgrammaticZoom else { return }
+                manualZoomOverrideKeys.insert(zoomScopeKey)
+                displaySettings.updateCurrentZoom(newValue, source: .user)
+            }
+            .onChange(of: displaySettings.currentZoom) { _, newValue in
+                syncZoomFromDisplaySettings(newValue)
+            }
+            .onChange(of: displaySettings.fitVisibleContentRequestID) { _, requestID in
+                guard requestID != nil else { return }
+                fitVisibleContentFromUserRequest()
+            }
+            .onChange(of: displaySettings.viewMode) { _, _ in
+                lastAdaptiveZoomApplicationKey = nil
+                reconcileAdaptiveTimelineZoom(reason: "view_mode")
+            }
+            .onChange(of: viewModel.activeMailboxScope) { _, _ in
+                lastAdaptiveZoomApplicationKey = nil
+                reconcileAdaptiveTimelineZoom(reason: "scope")
             }
             .onHover { isInside in
                 if !isInside {
@@ -1705,6 +1763,17 @@ internal struct ThreadCanvasView: View {
         private func effectiveViewportHeight(proxyHeight: CGFloat,
                                              totalTopPadding: CGFloat) -> CGFloat {
             max(max(viewportHeight, proxyHeight) - totalTopPadding, 1)
+        }
+
+        private func scrollDocumentContentHeight(layoutHeight: CGFloat) -> CGFloat {
+            guard viewModel.activeMailboxScope != .allFolders else {
+                return layoutHeight
+            }
+
+            let effectiveHeight = effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                          totalTopPadding: staticContext.totalTopPadding)
+            let scrollTailHeight = max(effectiveHeight * 0.75, staticContext.metrics.dayHeight * 3)
+            return max(layoutHeight, effectiveHeight + scrollTailHeight)
         }
 
         private var magnificationGesture: some Gesture {
@@ -1734,6 +1803,191 @@ internal struct ThreadCanvasView: View {
             let proposed = accumulatedZoom * gestureValue
             return min(max(proposed, ThreadCanvasLayoutMetrics.minZoom),
                        ThreadCanvasLayoutMetrics.maxZoom)
+        }
+
+        private func syncZoomFromDisplaySettings(_ newValue: CGFloat) {
+            let clamped = min(max(newValue, ThreadCanvasLayoutMetrics.minZoom),
+                              ThreadCanvasLayoutMetrics.maxZoom)
+            guard abs(clamped - zoomScale) >= 0.001 else {
+                if displaySettings.lastZoomChangeSource == .user {
+                    manualZoomOverrideKeys.insert(zoomScopeKey)
+                }
+                return
+            }
+            applyProgrammaticZoom(clamped,
+                                  source: displaySettings.lastZoomChangeSource,
+                                  centerVisibleContent: false,
+                                  updateDisplaySettings: false)
+        }
+
+        private func reconcileAdaptiveTimelineZoom(reason: String) {
+            guard usesAdaptiveTimelineZoom else { return }
+            guard !manualZoomOverrideKeys.contains(zoomScopeKey) else { return }
+            guard let fitBounds = preferredFitNodeBounds() else { return }
+            guard let targetZoom = fitVisibleContentZoomTarget(
+                nodeBounds: fitBounds,
+                minimumZoom: ThreadCanvasDisplaySettings.adaptiveTimelineMinimumZoom,
+                maximumZoom: ThreadCanvasDisplaySettings.adaptiveTimelineMaximumZoom,
+                widthFillRatio: 0.82,
+                heightFillRatio: 0.68
+            ) else { return }
+            guard abs(targetZoom - zoomScale) >= 0.02 else { return }
+
+            let applicationKey = adaptiveZoomApplicationKey(targetZoom: targetZoom,
+                                                            fitBounds: fitBounds)
+            guard applicationKey != lastAdaptiveZoomApplicationKey else { return }
+            lastAdaptiveZoomApplicationKey = applicationKey
+            applyProgrammaticZoom(targetZoom,
+                                  source: .automatic,
+                                  centerVisibleContent: true,
+                                  contentBounds: fitBounds,
+                                  updateDisplaySettings: true)
+        }
+
+        private func fitVisibleContentFromUserRequest() {
+            guard let fitBounds = preferredFitNodeBounds() else { return }
+            guard let targetZoom = fitVisibleContentZoomTarget(
+                nodeBounds: fitBounds,
+                minimumZoom: displaySettings.viewMode == .timeline
+                    ? ThreadCanvasDisplaySettings.adaptiveTimelineMinimumZoom
+                    : ThreadCanvasDisplaySettings.defaultCompactThreshold,
+                maximumZoom: ThreadCanvasDisplaySettings.fitZoomMaximum,
+                widthFillRatio: 0.86,
+                heightFillRatio: 0.72
+            ) else { return }
+            manualZoomOverrideKeys.insert(zoomScopeKey)
+            applyProgrammaticZoom(targetZoom,
+                                  source: .user,
+                                  centerVisibleContent: true,
+                                  contentBounds: fitBounds,
+                                  updateDisplaySettings: true)
+        }
+
+        private func applyProgrammaticZoom(_ value: CGFloat,
+                                           source: ThreadCanvasZoomChangeSource,
+                                           centerVisibleContent: Bool,
+                                           contentBounds: CGRect? = nil,
+                                           updateDisplaySettings: Bool) {
+            let clamped = min(max(value, ThreadCanvasLayoutMetrics.minZoom),
+                              ThreadCanvasLayoutMetrics.maxZoom)
+            if source == .user {
+                manualZoomOverrideKeys.insert(zoomScopeKey)
+            }
+
+            let currentContentBounds = centerVisibleContent ? (contentBounds ?? preferredFitNodeBounds()) : nil
+            let sourceZoom = staticContext.metrics.clampedZoom
+            isApplyingProgrammaticZoom = true
+            zoomScale = clamped
+            accumulatedZoom = clamped
+            zoomRenderVersion &+= 1
+            if updateDisplaySettings {
+                displaySettings.updateCurrentZoom(clamped, source: source)
+            }
+
+            DispatchQueue.main.async {
+                isApplyingProgrammaticZoom = false
+                guard centerVisibleContent else { return }
+                centerVisibleContentIfPossible(bounds: currentContentBounds,
+                                               sourceZoom: sourceZoom,
+                                               targetZoom: clamped)
+            }
+        }
+
+        private func fitVisibleContentZoomTarget(nodeBounds: CGRect,
+                                                 minimumZoom: CGFloat,
+                                                 maximumZoom: CGFloat,
+                                                 widthFillRatio: CGFloat,
+                                                 heightFillRatio: CGFloat) -> CGFloat? {
+            let sourceZoom = max(staticContext.metrics.clampedZoom, ThreadCanvasLayoutMetrics.minZoom)
+            let normalizedWidth = max(nodeBounds.width / sourceZoom, 1)
+            let normalizedHeight = max(nodeBounds.height / sourceZoom, 1)
+            let effectiveWidth = max(viewportWidth, proxySize.width, 1)
+            let effectiveHeight = max(effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                              totalTopPadding: staticContext.totalTopPadding),
+                                      1)
+            let widthTarget = (effectiveWidth * widthFillRatio) / normalizedWidth
+            let heightTarget = (effectiveHeight * heightFillRatio) / normalizedHeight
+            let strictFitTarget = min(widthTarget, heightTarget)
+            let fitTarget: CGFloat
+            if strictFitTarget < minimumZoom, heightTarget > minimumZoom {
+                // In sparse timelines, the visible messages can span the full width while leaving
+                // most of the viewport empty. Keep the readable zoom floor instead of shrinking
+                // text to preserve every visible column horizontally.
+                fitTarget = heightTarget
+            } else {
+                fitTarget = strictFitTarget
+            }
+            guard fitTarget.isFinite else { return minimumZoom }
+            return fitTarget
+                .clamped(to: minimumZoom...maximumZoom)
+                .clamped(to: ThreadCanvasLayoutMetrics.minZoom...ThreadCanvasLayoutMetrics.maxZoom)
+        }
+
+        private func adaptiveZoomApplicationKey(targetZoom: CGFloat,
+                                                fitBounds: CGRect) -> String {
+            let width = Int(max(viewportWidth, proxySize.width).rounded())
+            let height = Int(max(viewportHeight, proxySize.height).rounded())
+            let contentWidth = Int(staticContext.layout.contentSize.width.rounded())
+            let contentHeight = Int(staticContext.layout.contentSize.height.rounded())
+            let targetBucket = Int((targetZoom * 100).rounded())
+            let boundsBucket = [
+                Int(fitBounds.minX.rounded()),
+                Int(fitBounds.minY.rounded()),
+                Int(fitBounds.width.rounded()),
+                Int(fitBounds.height.rounded())
+            ]
+                .map(String.init)
+                .joined(separator: ",")
+            return "\(zoomScopeKey)|\(width)x\(height)|\(contentWidth)x\(contentHeight)|\(boundsBucket)|\(targetBucket)"
+        }
+
+        private func preferredFitNodeBounds() -> CGRect? {
+            let viewportRect = CGRect(
+                x: max(0, rawScrollOffsetX),
+                y: max(0, rawScrollOffset),
+                width: max(viewportWidth, proxySize.width, 1),
+                height: max(effectiveViewportHeight(proxyHeight: proxySize.height,
+                                                     totalTopPadding: staticContext.totalTopPadding),
+                                                    1)
+            )
+            return ThreadCanvasViewModel.preferredFitNodeBounds(for: staticContext.layout,
+                                                                viewportRect: viewportRect,
+                                                                calendar: calendar)
+        }
+
+        private func centerVisibleContentIfPossible(bounds: CGRect?,
+                                                    sourceZoom: CGFloat,
+                                                    targetZoom: CGFloat) {
+            guard let bounds,
+                  let scrollView = canvasScrollView,
+                  let documentView = scrollView.documentView else { return }
+            let clipView = scrollView.contentView
+            let clipSize = clipView.bounds.size
+            guard clipSize.width > 0, clipSize.height > 0 else { return }
+
+            let ratio = max(targetZoom, ThreadCanvasLayoutMetrics.minZoom)
+                / max(sourceZoom, ThreadCanvasLayoutMetrics.minZoom)
+            let targetBounds = CGRect(x: bounds.minX * ratio,
+                                      y: (bounds.minY * ratio) + staticContext.totalTopPadding,
+                                      width: bounds.width * ratio,
+                                      height: bounds.height * ratio)
+            let maxX = max(documentView.bounds.width - clipSize.width, 0)
+            let maxY = max(documentView.bounds.height - clipSize.height, 0)
+            let targetX: CGFloat
+            if targetBounds.width < clipSize.width * 0.9 {
+                targetX = (targetBounds.midX - (clipSize.width / 2))
+                    .clamped(to: 0...maxX)
+            } else {
+                let leadingInset = max(ThreadCanvasLayoutMetrics.minimumReadableFontScale * 18, 16)
+                targetX = (targetBounds.minX - leadingInset)
+                    .clamped(to: 0...maxX)
+            }
+            let targetY = (targetBounds.midY - (clipSize.height / 2))
+                .clamped(to: 0...maxY)
+            let origin = CGPoint(x: targetX, y: targetY)
+            clipView.setBoundsOrigin(origin)
+            scrollView.reflectScrolledClipView(clipView)
+            handleScrollBoundsChange(origin)
         }
 
         private func configureScrollViewBehavior(_ scrollView: NSScrollView) {

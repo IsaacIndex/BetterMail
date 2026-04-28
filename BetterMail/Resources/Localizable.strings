@@ -7,6 +7,9 @@
 "threadlist.status.needs_attention" = "Needs attention: %d - %@";
 "threadlist.viewmode.default" = "Default View";
 "threadlist.viewmode.timeline" = "Timeline View";
+"threadlist.zoom.percent" = "%d%%";
+"threadlist.zoom.fit.help" = "Fit visible emails";
+"threadlist.zoom.reset.help" = "Reset zoom";
 "threadlist.backfill.button" = "Backfill";
 "threadlist.backfill.status.fetching" = "Backfilling visible days...";
 "threadlist.backfill.status.complete" = "Backfill complete: %d";
@@ -109,6 +112,10 @@
 "accessibility.threadlist.search.field" = "Thread search field";
 "accessibility.threadlist.viewmode.toggle" = "Thread canvas view mode";
 "accessibility.threadlist.viewmode.hint" = "Switches between timeline and default canvas views.";
+"accessibility.threadlist.zoom.fit" = "Fit visible emails";
+"accessibility.threadlist.zoom.fit.hint" = "Fits the visible messages to the current canvas size.";
+"accessibility.threadlist.zoom.reset" = "Reset zoom";
+"accessibility.threadlist.zoom.reset.hint" = "Returns the thread canvas zoom to one hundred percent.";
 "accessibility.threadlist.limit.field" = "Fetch limit";
 "accessibility.threadlist.refresh.hint" = "Refreshes the mailbox hierarchy and thread list.";
 "accessibility.threadlist.selection_bar.label" = "Selected message actions";

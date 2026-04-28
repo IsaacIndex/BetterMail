@@ -269,6 +269,7 @@ internal struct ThreadListView: View {
                     ProgressView().controlSize(.small)
                 }
                 viewModeToggle
+                zoomControls
                 searchBar
                 HStack(spacing: 6) {
                     Text("Limit")
@@ -378,6 +379,57 @@ internal struct ThreadListView: View {
                 }
             }
         }
+    }
+
+    private var zoomControls: some View {
+        HStack(spacing: 4) {
+            Text(zoomPercentText)
+                .font(DesignTokens.font(size: 11, weight: .medium, textScale: displaySettings.textScale))
+                .foregroundStyle(navSecondaryForegroundStyle)
+                .frame(minWidth: 38, alignment: .trailing)
+
+            Button {
+                displaySettings.requestFitVisibleContent()
+            } label: {
+                Image(systemName: "viewfinder")
+                    .font(DesignTokens.font(size: 12, weight: .semibold, textScale: displaySettings.textScale))
+            }
+            .buttonStyle(.borderless)
+            .help(NSLocalizedString("threadlist.zoom.fit.help", comment: "Tooltip for fitting visible thread canvas content"))
+            .accessibilityIdentifier(AccessibilityID.zoomFitButton)
+            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.zoom.fit",
+                                                  comment: "Accessibility label for the fit zoom button"))
+            .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.fit.hint",
+                                                comment: "Accessibility hint for the fit zoom button"))
+
+            Button {
+                displaySettings.updateCurrentZoom(ThreadCanvasDisplaySettings.defaultCurrentZoom)
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(DesignTokens.font(size: 12, weight: .semibold, textScale: displaySettings.textScale))
+            }
+            .buttonStyle(.borderless)
+            .help(NSLocalizedString("threadlist.zoom.reset.help", comment: "Tooltip for resetting thread canvas zoom"))
+            .accessibilityIdentifier(AccessibilityID.zoomResetButton)
+            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.zoom.reset",
+                                                  comment: "Accessibility label for the reset zoom button"))
+            .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.reset.hint",
+                                                comment: "Accessibility hint for the reset zoom button"))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(navSecondaryForegroundStyle.opacity(isGlassNavEnabled ? 0.08 : 0.06))
+        )
+    }
+
+    private var zoomPercentText: String {
+        let percent = Int((displaySettings.currentZoom * 100).rounded())
+        return String.localizedStringWithFormat(
+            NSLocalizedString("threadlist.zoom.percent", comment: "Thread canvas zoom percentage"),
+            percent
+        )
     }
 
     private var viewModeToggle: some View {

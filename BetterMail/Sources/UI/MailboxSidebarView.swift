@@ -106,12 +106,34 @@ internal struct MailboxSidebarView: View {
         }
     }
 
-    private func sidebarRow(scope: MailboxScope, title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
+    @ViewBuilder
+    private func sidebarRow(scope: MailboxScope,
+                            title: String,
+                            systemImage: String,
+                            activatesExplicitly: Bool = true) -> some View {
+        let row = Label(title, systemImage: systemImage)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier(AccessibilityID.sidebarScope(scope))
             .accessibilityLabel(title)
             .tag(scope)
+
+        if activatesExplicitly {
+            row
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    select(scope)
+                }
+                .accessibilityAction {
+                    select(scope)
+                }
+        } else {
+            row
+        }
+    }
+
+    private func select(_ scope: MailboxScope) {
+        selectedScope = scope
+        viewModel.selectMailboxScope(scope)
     }
 
     private func folderSidebarRow(folder: MailboxFolderNode, depth: Int) -> some View {
@@ -140,7 +162,8 @@ internal struct MailboxSidebarView: View {
 
             sidebarRow(scope: .mailboxFolder(account: folder.account, path: folder.path),
                        title: folder.name,
-                       systemImage: "folder")
+                       systemImage: "folder",
+                       activatesExplicitly: false)
         }
             .padding(.leading, CGFloat(depth) * 14)
             .accessibilityIdentifier(AccessibilityID.sidebarMailboxFolder(folder.id))

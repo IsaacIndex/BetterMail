@@ -748,6 +748,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let backfillService: BatchBackfillServicing
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
+    private var isRethreadRunning = false
+    private var hasQueuedRethread = false
     private var autoRefreshTask: Task<Void, Never>?
     private var nodeSummaryTasks: [String: Task<Void, Never>] = [:]
     private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
@@ -1314,6 +1316,21 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func performRethread() async {
+        guard !isRethreadRunning else {
+            hasQueuedRethread = true
+            Log.refresh.debug("Rethread requested while another pass is running; queuing a follow-up pass.")
+            return
+        }
+
+        isRethreadRunning = true
+        defer {
+            isRethreadRunning = false
+            if hasQueuedRethread {
+                hasQueuedRethread = false
+                scheduleRethread(delay: 0)
+            }
+        }
+
         do {
             Log.refresh.debug("Beginning rethread from store.")
             let previousNodeIDs = Set(Self.flatten(nodes: self.roots).map(\.id))
@@ -6839,6 +6856,46 @@ extension ThreadCanvasViewModel {
             return nil
         }
         return minID...maxID
+    }
+
+    internal static func preferredFitNodeBounds(for layout: ThreadCanvasLayout,
+                                                viewportRect: CGRect,
+                                                calendar: Calendar,
+                                                latestNodeLimit: Int = 8) -> CGRect? {
+        let visibleNodes = layout.columns
+            .flatMap(\.nodes)
+            .filter { $0.frame.intersects(viewportRect) }
+        if let visibleBounds = nodeBounds(for: visibleNodes) {
+            return visibleBounds
+        }
+
+        let nodes = layout.columns
+            .flatMap(\.nodes)
+            .sorted { lhs, rhs in
+                if lhs.message.date == rhs.message.date {
+                    return lhs.id < rhs.id
+                }
+                return lhs.message.date > rhs.message.date
+            }
+        guard let newest = nodes.first else { return nil }
+
+        let newestDay = calendar.startOfDay(for: newest.message.date)
+        let recentNodes = nodes.filter { node in
+            let nodeDay = calendar.startOfDay(for: node.message.date)
+            guard let dayDelta = calendar.dateComponents([.day], from: nodeDay, to: newestDay).day else {
+                return false
+            }
+            return dayDelta <= 1
+        }
+        let candidates = Array((recentNodes.isEmpty ? nodes : recentNodes).prefix(latestNodeLimit))
+        return nodeBounds(for: candidates)
+    }
+
+    private static func nodeBounds(for nodes: [ThreadCanvasNode]) -> CGRect? {
+        guard let firstFrame = nodes.first?.frame else { return nil }
+        return nodes.dropFirst().reduce(firstFrame) { partial, node in
+            partial.union(node.frame)
+        }
     }
 
     internal static func emptyDayIntervals(for layout: ThreadCanvasLayout,

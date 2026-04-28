@@ -4,7 +4,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
-- Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise.
+- Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise; timeline overview scopes auto-fit to a readable default until the user manually changes zoom.
 - Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Emails` as the default landing scope.
 - Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
 - Mailbox sidebar folder expand/collapse state is persisted across launches and pruned against the latest Mail hierarchy so folders removed/moved in Mail are not retained as stale expansion entries.
@@ -12,7 +12,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 - Canvas folders can optionally carry a mailbox-folder destination; the folder inspector can assign or clear it, re-calibrate folder colors into a muted palette that holds up better under white labels, folder headers show the assigned mailbox leaf name, new thread folders now default to that same muted family before any manual adjustments, and folder headers can be dragged into other canvas folders (or back to empty canvas) to reparent the folder hierarchy.
 - Folder details inspector includes a non-scrollable minimap with selected-node highlight, folder-scoped viewport overlay, and date ticks/labels while preserving relative spacing for click-to-jump navigation.
 - Thread canvas view toggle switches between Default and Timeline modes; Timeline renders a vertical list of message entries with timestamps, sender/summary lines, and AI-generated tag chips.
-- Settings expose one relative text-size control for thread canvas, timeline, and inspector typography while preserving the existing size hierarchy between labels, summaries, and metadata.
+- Settings expose one relative text-size control for thread canvas, timeline, and inspector typography while preserving the existing size hierarchy between labels, summaries, and metadata; canvas typography keeps a readable floor at low zoom levels.
 - Appearance preferences support System, Light, and Dark modes from BetterMail Settings while keeping the glassmorphism styling consistent.
 - AppleScript ingestion via `MailAppleScriptClient`/`NSAppleScriptRunner` plus `MailControl` helpers for move/create mailbox-folder, flag, and search actions against Apple Mail.
 - Inspector "Open in Mail" uses AppleScript heuristic targeting only (mailbox/account hints plus subject, sender, and received-day matching) without `message://` URLs, and now treats AppleScript boolean return values correctly so a successful open does not leave a false failure status behind.

@@ -21,6 +21,9 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     internal static let minimumTextScale: CGFloat = 0.5
     internal static let maximumTextScale: CGFloat = 1.6
     internal static let defaultViewMode: ThreadCanvasViewMode = .default
+    internal static let adaptiveTimelineMinimumZoom: CGFloat = 0.82
+    internal static let adaptiveTimelineMaximumZoom: CGFloat = 1.05
+    internal static let fitZoomMaximum: CGFloat = 1.2
 
     @Published internal var detailedThreshold: CGFloat = ThreadCanvasDisplaySettings.defaultDetailedThreshold {
         didSet { normalizeSettings() }
@@ -39,7 +42,9 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
     }
 
     @Published internal private(set) var currentZoom: CGFloat = ThreadCanvasDisplaySettings.defaultCurrentZoom
+    @Published internal private(set) var fitVisibleContentRequestID: UUID?
 
+    internal private(set) var lastZoomChangeSource: ThreadCanvasZoomChangeSource = .automatic
     private var isNormalizing = false
     private var lastReadabilityMode: ThreadCanvasReadabilityMode?
     private let readabilityHysteresis: CGFloat = 0.03
@@ -61,10 +66,15 @@ internal final class ThreadCanvasDisplaySettings: ObservableObject {
         normalizeSettings()
     }
 
-    internal func updateCurrentZoom(_ value: CGFloat) {
+    internal func updateCurrentZoom(_ value: CGFloat, source: ThreadCanvasZoomChangeSource = .user) {
         let clamped = min(max(value, ThreadCanvasLayoutMetrics.minZoom), ThreadCanvasLayoutMetrics.maxZoom)
+        lastZoomChangeSource = source
         currentZoom = clamped
         storeCGFloat(clamped, forKey: StorageKey.currentZoom)
+    }
+
+    internal func requestFitVisibleContent() {
+        fitVisibleContentRequestID = UUID()
     }
 
     internal func toggleViewMode() {
@@ -166,6 +176,11 @@ internal enum ThreadCanvasReadabilityMode {
     case detailed
     case compact
     case minimal
+}
+
+internal enum ThreadCanvasZoomChangeSource {
+    case automatic
+    case user
 }
 
 internal enum ThreadCanvasViewMode: String {
