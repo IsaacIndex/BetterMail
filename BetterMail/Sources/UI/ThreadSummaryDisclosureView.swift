@@ -46,6 +46,8 @@ internal struct ThreadSummaryDisclosureView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier(AccessibilityID.threadSummaryToggle)
+                .accessibilityLabel(title)
 
                 if let onRegenerate {
                     Button(action: onRegenerate) {
@@ -59,6 +61,7 @@ internal struct ThreadSummaryDisclosureView: View {
                                                           comment: "Accessibility label for regenerating a summary"))
                     .help(NSLocalizedString("threadcanvas.inspector.summary.regenerate",
                                             comment: "Help text for regenerating a summary"))
+                    .accessibilityIdentifier(AccessibilityID.threadSummaryRegenerateButton)
                 }
             }
 
@@ -80,6 +83,7 @@ internal struct ThreadSummaryDisclosureView: View {
         }
         .padding(8)
         .background(summaryBackground)
+        .accessibilityIdentifier(AccessibilityID.threadSummaryDisclosure)
     }
 
     @ViewBuilder

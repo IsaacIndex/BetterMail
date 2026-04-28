@@ -33,6 +33,7 @@ internal struct AutoRefreshSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier(AccessibilityID.settingsAppearancePicker)
             } header: {
                 Text(NSLocalizedString("settings.appearance.title", comment: "Header for appearance settings section"))
             } footer: {
@@ -41,6 +42,7 @@ internal struct AutoRefreshSettingsView: View {
 
             Section {
                 Toggle("Enable auto refresh", isOn: $settings.isEnabled)
+                    .accessibilityIdentifier(AccessibilityID.settingsAutoRefreshToggle)
 
                 LabeledContent("Refresh interval") {
                     Stepper(
@@ -53,6 +55,7 @@ internal struct AutoRefreshSettingsView: View {
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
                     .disabled(!settings.isEnabled)
+                    .accessibilityIdentifier(AccessibilityID.settingsRefreshIntervalStepper)
                 }
             } header: {
                 Text("Auto Refresh")
@@ -74,6 +77,7 @@ internal struct AutoRefreshSettingsView: View {
                         .monospacedDigit()
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
+                    .accessibilityIdentifier(AccessibilityID.settingsInspectorLineLimitStepper)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -83,6 +87,7 @@ internal struct AutoRefreshSettingsView: View {
                     TextEditor(text: $inspectorSettings.stopPhrasesText)
                         .frame(minHeight: 120)
                         .font(.callout)
+                        .accessibilityIdentifier(AccessibilityID.settingsStopPhrasesEditor)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .stroke(Color.secondary.opacity(0.35))
@@ -111,6 +116,7 @@ internal struct AutoRefreshSettingsView: View {
                             .monospacedDigit()
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
+                    .accessibilityIdentifier(AccessibilityID.settingsTextScaleStepper)
                 }
 
                 LabeledContent(NSLocalizedString("settings.canvas.zoom.detailed", comment: "Label for detailed zoom threshold")) {
@@ -124,6 +130,7 @@ internal struct AutoRefreshSettingsView: View {
                             .monospacedDigit()
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
+                    .accessibilityIdentifier(AccessibilityID.settingsDetailedThresholdStepper)
                 }
 
                 LabeledContent(NSLocalizedString("settings.canvas.zoom.compact", comment: "Label for compact zoom threshold")) {
@@ -137,6 +144,7 @@ internal struct AutoRefreshSettingsView: View {
                             .monospacedDigit()
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
+                    .accessibilityIdentifier(AccessibilityID.settingsCompactThresholdStepper)
                 }
 
                 LabeledContent(NSLocalizedString("settings.canvas.zoom.minimal", comment: "Label for minimal zoom threshold")) {
@@ -150,6 +158,7 @@ internal struct AutoRefreshSettingsView: View {
                             .monospacedDigit()
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
+                    .accessibilityIdentifier(AccessibilityID.settingsMinimalThresholdStepper)
                 }
             } header: {
                 Text(NSLocalizedString("settings.canvas.title", comment: "Header for thread canvas settings section"))
@@ -161,9 +170,11 @@ internal struct AutoRefreshSettingsView: View {
                 DatePicker(NSLocalizedString("settings.backfill.start", comment: "Label for backfill start date"),
                            selection: $backfillViewModel.startDate,
                            displayedComponents: .date)
+                .accessibilityIdentifier(AccessibilityID.settingsBackfillStartPicker)
                 DatePicker(NSLocalizedString("settings.backfill.end", comment: "Label for backfill end date"),
                            selection: $backfillViewModel.endDate,
                            displayedComponents: .date)
+                .accessibilityIdentifier(AccessibilityID.settingsBackfillEndPicker)
                 LabeledContent(NSLocalizedString("settings.backfill.batch_size", comment: "Label for preferred batch size setting")) {
                     Stepper(
                         value: $backfillViewModel.preferredBatchSize,
@@ -178,6 +189,7 @@ internal struct AutoRefreshSettingsView: View {
                     }
                     .frame(maxWidth: 180, alignment: .trailing)
                     .disabled(backfillViewModel.isRunning)
+                    .accessibilityIdentifier(AccessibilityID.settingsBackfillBatchSizeStepper)
                 }
 
                 HStack(spacing: 12) {
@@ -193,6 +205,7 @@ internal struct AutoRefreshSettingsView: View {
                         }
                     }
                     .disabled(backfillViewModel.isRunning)
+                    .accessibilityIdentifier(AccessibilityID.settingsStartBackfillButton)
 
                     Button {
                         backfillViewModel.startRegeneration()
@@ -208,6 +221,7 @@ internal struct AutoRefreshSettingsView: View {
                     .disabled(backfillViewModel.isRunning)
                     .accessibilityHint(Text(NSLocalizedString("settings.regenai.accessibility.hint",
                                                               comment: "Accessibility hint for starting Re-GenAI")))
+                    .accessibilityIdentifier(AccessibilityID.settingsStartRegenAIButton)
 
                     if backfillViewModel.isRunning {
                         Button(role: .destructive) {
@@ -222,6 +236,7 @@ internal struct AutoRefreshSettingsView: View {
                         .disabled(backfillViewModel.isStopping)
                         .accessibilityHint(Text(NSLocalizedString("settings.backfill.stop.hint",
                                                                   comment: "Accessibility hint for stopping the current batch operation")))
+                        .accessibilityIdentifier(AccessibilityID.settingsStopBatchButton)
                     }
                 }
 
@@ -266,6 +281,7 @@ internal struct AutoRefreshSettingsView: View {
                 } label: {
                     Text(NSLocalizedString("settings.reset.manual_grouping.button", comment: "Button label for resetting manual grouping"))
                 }
+                .accessibilityIdentifier(AccessibilityID.settingsResetManualGroupingButton)
             } header: {
                 Text(NSLocalizedString("settings.reset.title", comment: "Header for reset section in settings"))
             } footer: {
@@ -275,6 +291,7 @@ internal struct AutoRefreshSettingsView: View {
         .formStyle(.grouped)
         .frame(minWidth: 460, idealWidth: 520)
         .padding(.vertical, 8)
+        .accessibilityIdentifier(AccessibilityID.settingsView)
         .alert(NSLocalizedString("settings.reset.manual_grouping.confirm_title", comment: "Title for confirmation alert when resetting manual grouping"),
                isPresented: $isResetConfirmationPresented) {
             Button(NSLocalizedString("settings.reset.manual_grouping.confirm_action", comment: "Destructive action label for resetting manual grouping"),

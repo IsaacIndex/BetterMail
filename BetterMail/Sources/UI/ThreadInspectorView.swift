@@ -51,6 +51,9 @@ internal struct ThreadInspectorView: View {
         .overlay(alignment: .bottom) {
             copyToast
         }
+        .accessibilityIdentifier(AccessibilityID.threadInspector)
+        .accessibilityLabel(NSLocalizedString("threadcanvas.inspector.title",
+                                              comment: "Title for the inspector panel"))
     }
 
     @ViewBuilder
@@ -158,6 +161,9 @@ internal struct ThreadInspectorView: View {
                   systemImage: "envelope.open")
         }
         .controlSize(.small)
+        .accessibilityIdentifier(AccessibilityID.threadInspectorOpenInMailButton)
+        .accessibilityHint(NSLocalizedString("accessibility.thread_inspector.open_in_mail.hint",
+                                            comment: "Accessibility hint for opening a message in Apple Mail"))
 
         if #available(macOS 26, *) {
             button.buttonStyle(.glass)
@@ -225,11 +231,13 @@ internal struct ThreadInspectorView: View {
                    action: { handleCopyAction(subject) })
                 .controlSize(.mini)
                 .disabled(subject.isEmpty)
+                .accessibilityIdentifier(AccessibilityID.threadInspectorCopySubjectButton)
             Button(NSLocalizedString("threadcanvas.inspector.open_in_mail.action.copy_mailbox",
                                      comment: "Copy mailbox path action"),
                    action: { handleCopyAction(mailboxValue) })
                 .controlSize(.mini)
                 .disabled(mailboxValue.isEmpty)
+                .accessibilityIdentifier(AccessibilityID.threadInspectorCopyMailboxButton)
         }
         .buttonStyle(InspectorCopyButtonStyle())
     }

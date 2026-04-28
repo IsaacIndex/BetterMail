@@ -75,6 +75,7 @@ internal struct ThreadListView: View {
                 .ignoresSafeArea()
             glassLayeredContent
         }
+        .accessibilityIdentifier(AccessibilityID.threadList)
     }
 
     @ViewBuilder
@@ -302,6 +303,9 @@ internal struct ThreadListView: View {
                     .preference(key: NavHeightPreferenceKey.self, value: proxy.size.height)
             }
         )
+        .accessibilityIdentifier(AccessibilityID.threadListNavigationBar)
+        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.navbar.label",
+                                              comment: "Accessibility label for the thread list navigation bar"))
     }
 
     private func errorBanner(message: String) -> some View {
@@ -347,6 +351,11 @@ internal struct ThreadListView: View {
             }
             .buttonStyle(.borderless)
             .help("Search threads")
+            .accessibilityIdentifier(AccessibilityID.searchButton)
+            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.button",
+                                                  comment: "Accessibility label for the thread search button"))
+            .accessibilityHint(NSLocalizedString("accessibility.threadlist.search.hint",
+                                                comment: "Accessibility hint for the thread search button"))
 
             if isSearchFieldVisible {
                 TextField("Search threads…",
@@ -355,6 +364,9 @@ internal struct ThreadListView: View {
                     .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
                                             textScale: displaySettings.textScale))
                     .frame(width: 140)
+                    .accessibilityIdentifier(AccessibilityID.searchField)
+                    .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.field",
+                                                          comment: "Accessibility label for the thread search field"))
                     .transition(.move(edge: .trailing).combined(with: .opacity))
 
                 if let count = viewModel.searchResultCount {
@@ -375,6 +387,11 @@ internal struct ThreadListView: View {
         }
         .toggleStyle(.switch)
         .tint(.green)
+        .accessibilityIdentifier(AccessibilityID.viewModeToggle)
+        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.viewmode.toggle",
+                                              comment: "Accessibility label for the thread view mode toggle"))
+        .accessibilityHint(NSLocalizedString("accessibility.threadlist.viewmode.hint",
+                                            comment: "Accessibility hint for the thread view mode toggle"))
     }
 
     private var viewModeLabel: String {
@@ -441,12 +458,18 @@ internal struct ThreadListView: View {
                 .foregroundStyle(fieldForeground)
                 .tint(fieldForeground)
                 .frame(width: 60, height: 24)
+                .accessibilityIdentifier(AccessibilityID.fetchLimitField)
+                .accessibilityLabel(NSLocalizedString("accessibility.threadlist.limit.field",
+                                                      comment: "Accessibility label for the fetch limit field"))
         } else {
             TextField("Limit", value: $viewModel.fetchLimit, format: .number)
                 .font(DesignTokens.font(size: 13, textScale: displaySettings.textScale))
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .frame(width: 60, height: 24)
+                .accessibilityIdentifier(AccessibilityID.fetchLimitField)
+                .accessibilityLabel(NSLocalizedString("accessibility.threadlist.limit.field",
+                                                      comment: "Accessibility label for the fetch limit field"))
         }
     }
 
@@ -459,6 +482,9 @@ internal struct ThreadListView: View {
             Label("Refresh", systemImage: "arrow.clockwise")
         }
         .disabled(viewModel.isAnyRefreshRunning)
+        .accessibilityIdentifier(AccessibilityID.refreshButton)
+        .accessibilityHint(NSLocalizedString("accessibility.threadlist.refresh.hint",
+                                            comment: "Accessibility hint for the refresh button"))
 
         if #available(macOS 26, *) {
             button.buttonStyle(.glass)
@@ -513,6 +539,7 @@ internal struct ThreadListView: View {
                                 }
                                 .disabled(!viewModel.canGroupSelection)
                                 .help(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"))
+                                .accessibilityIdentifier(AccessibilityID.selectionAction("group"))
                                 Button(action: { viewModel.addFolderForSelection() }) {
                                     actionBarButtonLabel(
                                         systemImage: "folder",
@@ -522,6 +549,7 @@ internal struct ThreadListView: View {
                                 }
                                 .disabled(viewModel.selectedNodeIDs.isEmpty)
                                 .help(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"))
+                                .accessibilityIdentifier(AccessibilityID.selectionAction("add-thread-folder"))
                                 Button(action: { isShowingMailboxMoveSheet = true }) {
                                     actionBarButtonLabel(
                                         systemImage: "folder.badge.plus",
@@ -533,6 +561,7 @@ internal struct ThreadListView: View {
                                 .help(viewModel.mailboxActionDisabledReason ??
                                       NSLocalizedString("threadlist.selection.move_mailbox_folder",
                                                         comment: "Move selected nodes to mailbox folder button"))
+                                .accessibilityIdentifier(AccessibilityID.selectionAction("move-mailbox-folder"))
                                 Button(action: { viewModel.ungroupSelectedMessages() }) {
                                     actionBarButtonLabel(
                                         systemImage: "personalhotspot.slash",
@@ -542,6 +571,7 @@ internal struct ThreadListView: View {
                                 }
                                 .disabled(!viewModel.canUngroupSelection)
                                 .help(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"))
+                                .accessibilityIdentifier(AccessibilityID.selectionAction("ungroup"))
                                 if shouldShowBackfillAction {
                                     Button(action: { presentBackfillConfirmation() }) {
                                         actionBarButtonLabel(
@@ -553,6 +583,7 @@ internal struct ThreadListView: View {
                                     .disabled(viewModel.isBackfilling)
                                     .help(NSLocalizedString("threadlist.backfill.button",
                                                             comment: "Backfill visible days button"))
+                                    .accessibilityIdentifier(AccessibilityID.backfillButton)
                                 }
                             }
                         } else {
@@ -568,6 +599,7 @@ internal struct ThreadListView: View {
                                     .disabled(viewModel.isBackfilling)
                                     .help(NSLocalizedString("threadlist.backfill.button",
                                                             comment: "Backfill visible days button"))
+                                    .accessibilityIdentifier(AccessibilityID.backfillButton)
                                 }
                             }
                         }
@@ -587,6 +619,9 @@ internal struct ThreadListView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .padding(.bottom, 16)
                 .offset(x: selectionActionBarHorizontalOffset)
+                .accessibilityIdentifier(AccessibilityID.selectionActionBar)
+                .accessibilityLabel(NSLocalizedString("accessibility.threadlist.selection_bar.label",
+                                                      comment: "Accessibility label for the selection action bar"))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -926,6 +961,7 @@ private struct MailboxFolderMoveSheet: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .disabled(forcedAccount != nil || viewModel.isMailboxActionRunning)
+            .accessibilityIdentifier(AccessibilityID.mailboxMoveAccountPicker)
 
             if isCreateAndMoveEnabled {
                 Picker(NSLocalizedString("mailbox.sheet.mode", comment: "Mailbox move sheet mode segmented control label"),
@@ -960,6 +996,7 @@ private struct MailboxFolderMoveSheet: View {
                           text: $folderSearchQuery)
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
+                .accessibilityIdentifier(AccessibilityID.mailboxMoveSearchField)
 
                 Group {
                     if viewModel.isMailboxHierarchyLoading && folderChoices.isEmpty {
@@ -1041,6 +1078,7 @@ private struct MailboxFolderMoveSheet: View {
                 }
                 .controlSize(.small)
                 .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier(AccessibilityID.mailboxMoveCancelButton)
 
                 Button(submitButtonTitle) {
                     submit()
@@ -1048,9 +1086,11 @@ private struct MailboxFolderMoveSheet: View {
                 .controlSize(.small)
                 .disabled(!canSubmit)
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier(AccessibilityID.mailboxMoveSubmitButton)
             }
         }
         .padding(14)
+        .accessibilityIdentifier(AccessibilityID.mailboxMoveSheet)
         .onAppear {
             if !isCreateAndMoveEnabled {
                 mode = .existing

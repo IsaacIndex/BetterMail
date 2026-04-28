@@ -39,6 +39,7 @@ internal struct ContentView: View {
                     .frame(minWidth: 720, minHeight: 520)
             }
         }
+        .accessibilityIdentifier(AccessibilityID.contentRoot)
         .navigationSplitViewStyle(.balanced)
         .focusedValue(\.canvasViewModel, viewModel)
         .focusedValue(\.displaySettings, displaySettings)

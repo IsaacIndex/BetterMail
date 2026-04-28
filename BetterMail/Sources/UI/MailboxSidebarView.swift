@@ -53,6 +53,9 @@ internal struct MailboxSidebarView: View {
                 }
             }
         }
+        .accessibilityIdentifier(AccessibilityID.sidebar)
+        .accessibilityLabel(NSLocalizedString("accessibility.sidebar.label",
+                                              comment: "Accessibility label for the mailbox sidebar"))
         .listStyle(.sidebar)
         .onAppear {
             selectedScope = viewModel.activeMailboxScope
@@ -106,6 +109,8 @@ internal struct MailboxSidebarView: View {
     private func sidebarRow(scope: MailboxScope, title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier(AccessibilityID.sidebarScope(scope))
+            .accessibilityLabel(title)
             .tag(scope)
     }
 
@@ -138,6 +143,13 @@ internal struct MailboxSidebarView: View {
                        systemImage: "folder")
         }
             .padding(.leading, CGFloat(depth) * 14)
+            .accessibilityIdentifier(AccessibilityID.sidebarMailboxFolder(folder.id))
+            .accessibilityLabel(folderAccessibilityLabel(folder))
+            .accessibilityHint(hasChildren
+                               ? NSLocalizedString("accessibility.sidebar.folder.expandable_hint",
+                                                   comment: "Accessibility hint for expandable mailbox folder rows")
+                               : NSLocalizedString("accessibility.sidebar.folder.select_hint",
+                                                   comment: "Accessibility hint for mailbox folder rows"))
             .overlay {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(activeDropIndicator?.folderID == folder.id ? Color.accentColor.opacity(0.06) : Color.clear)
@@ -183,6 +195,17 @@ internal struct MailboxSidebarView: View {
                                                         activeDraggedFolderID: $activeDraggedFolderID))
             .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity),
                                     removal: .opacity))
+    }
+
+    private func folderAccessibilityLabel(_ folder: MailboxFolderNode) -> String {
+        let path = folder.path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, path != folder.name else { return folder.name }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("accessibility.sidebar.folder.label",
+                              comment: "Accessibility label for mailbox folder rows"),
+            folder.name,
+            path
+        )
     }
 
     private func visibleFolderRows(in nodes: [MailboxFolderNode], depth: Int = 0) -> [VisibleFolderRow] {

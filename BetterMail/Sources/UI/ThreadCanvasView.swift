@@ -188,6 +188,9 @@ internal struct ThreadCanvasView: View {
         GeometryReader { proxy in
             canvasContent(proxy: proxy)
         }
+        .accessibilityIdentifier(AccessibilityID.threadCanvas)
+        .accessibilityLabel(NSLocalizedString("accessibility.threadcanvas.label",
+                                              comment: "Accessibility label for the thread canvas"))
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectNode(id: nil)
@@ -759,6 +762,9 @@ internal struct ThreadCanvasView: View {
                                     ? NSLocalizedString("threadcanvas.folder.inspector.accessibility",
                                                         comment: "Accessibility label for a folder header")
                                     : data.chrome.title)
+                .accessibilityHint(NSLocalizedString("accessibility.threadcanvas.folder_header.hint",
+                                                    comment: "Accessibility hint for folder headers on the canvas"))
+                .accessibilityIdentifier(AccessibilityID.threadCanvasFolderHeader(data.chrome.id))
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAddTraits(data.isSelected ? .isSelected : [])
             }
@@ -1638,6 +1644,7 @@ internal struct ThreadCanvasView: View {
             }
             .clipped()
             .simultaneousGesture(magnificationGesture)
+            .accessibilityIdentifier(AccessibilityID.threadCanvasScrollView)
             .background(
                 GeometryReader { sizeProxy in
                     Color.clear.preference(key: ThreadCanvasViewportHeightPreferenceKey.self,
@@ -2953,6 +2960,9 @@ private struct ThreadTimelineCanvasNodeView: View, Equatable {
         .contentShape(RoundedRectangle(cornerRadius: selectionCornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(NSLocalizedString("accessibility.threadcanvas.node.hint",
+                                            comment: "Accessibility hint for a thread canvas node"))
+        .accessibilityIdentifier(AccessibilityID.threadCanvasNode(node.id))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -3224,6 +3234,9 @@ private struct ThreadCanvasNodeView: View, Equatable {
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(NSLocalizedString("accessibility.threadcanvas.node.hint",
+                                            comment: "Accessibility hint for a thread canvas node"))
+        .accessibilityIdentifier(AccessibilityID.threadCanvasNode(node.id))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 

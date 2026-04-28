@@ -115,6 +115,7 @@ internal struct ThreadFolderInspectorView: View {
                 .disabled(isRefreshingFolderThreads)
                 .help(NSLocalizedString("threadcanvas.folder.inspector.refresh_threads.help",
                                         comment: "Help text for refreshing the selected folder threads"))
+                .accessibilityIdentifier(AccessibilityID.folderInspectorRefreshThreadsButton)
                 if isRefreshingFolderThreads {
                     ProgressView()
                         .controlSize(.small)
@@ -146,6 +147,9 @@ internal struct ThreadFolderInspectorView: View {
                 x: 0,
                 y: 1)
         .background(inspectorBackground)
+        .accessibilityIdentifier(AccessibilityID.folderInspector)
+        .accessibilityLabel(NSLocalizedString("threadcanvas.folder.inspector.title",
+                                              comment: "Title for the folder inspector panel"))
         .onChange(of: folder.id) { _, _ in
             resetDraft(with: folder)
         }
@@ -203,6 +207,7 @@ internal struct ThreadFolderInspectorView: View {
                                  secondaryForeground: inspectorSecondaryForegroundStyle,
                                  onJump: onMinimapJump)
             .frame(height: Self.minimapHeight)
+            .accessibilityIdentifier(AccessibilityID.folderInspectorMinimap)
         }
     }
 
@@ -215,6 +220,7 @@ internal struct ThreadFolderInspectorView: View {
             TextField("", text: $draftTitle)
                 .font(DesignTokens.font(size: 13, textScale: textScale))
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier(AccessibilityID.folderInspectorNameField)
                 .onChange(of: draftTitle) { _, _ in
                     updatePreviewIfNeeded()
                 }
@@ -237,9 +243,13 @@ internal struct ThreadFolderInspectorView: View {
                 .font(DesignTokens.font(size: 11, textScale: textScale))
                 .help(NSLocalizedString("threadcanvas.folder.inspector.color.recalibrate.help",
                                         comment: "Help text for recalibrating a folder color"))
+                .accessibilityIdentifier(AccessibilityID.folderInspectorRecalibrateColorButton)
             }
             ColorPicker("", selection: $draftColor, supportsOpacity: true)
                 .labelsHidden()
+                .accessibilityIdentifier(AccessibilityID.folderInspectorColorPicker)
+                .accessibilityLabel(NSLocalizedString("threadcanvas.folder.inspector.color",
+                                                      comment: "Folder color picker label"))
                 .onChange(of: draftColor) { _, _ in
                     updatePreviewIfNeeded()
                 }
@@ -263,6 +273,7 @@ internal struct ThreadFolderInspectorView: View {
                 .buttonStyle(.link)
                 .font(DesignTokens.font(size: 11, textScale: textScale))
                 .disabled(draftMailboxPath == nil && folder.mailboxDestination == nil)
+                .accessibilityIdentifier(AccessibilityID.folderInspectorMailboxClearButton)
 
                 Button(action: onRefreshMailboxHierarchy) {
                     Image(systemName: "arrow.clockwise")
@@ -272,6 +283,9 @@ internal struct ThreadFolderInspectorView: View {
                 .help(NSLocalizedString("threadcanvas.folder.inspector.mailbox.refresh",
                                         comment: "Help text for refreshing mailbox hierarchy"))
                 .disabled(isMailboxHierarchyLoading)
+                .accessibilityIdentifier(AccessibilityID.folderInspectorMailboxRefreshButton)
+                .accessibilityLabel(NSLocalizedString("threadcanvas.folder.inspector.mailbox.refresh",
+                                                      comment: "Accessibility label for refreshing mailbox hierarchy"))
             }
 
             if let mailboxEditingDisabledReason {
@@ -292,6 +306,7 @@ internal struct ThreadFolderInspectorView: View {
             }
             .pickerStyle(.menu)
             .disabled((mailboxEditingDisabledReason != nil && folder.mailboxDestination == nil) || mailboxAccounts.isEmpty)
+            .accessibilityIdentifier(AccessibilityID.folderInspectorMailboxAccountPicker)
 
             if let draftMailboxAccount {
                 Picker(NSLocalizedString("threadcanvas.folder.inspector.mailbox.folder",
@@ -306,6 +321,7 @@ internal struct ThreadFolderInspectorView: View {
                 }
                 .pickerStyle(.menu)
                 .disabled((mailboxEditingDisabledReason != nil && folder.mailboxDestination == nil) || mailboxChoices(for: draftMailboxAccount).isEmpty)
+                .accessibilityIdentifier(AccessibilityID.folderInspectorMailboxFolderPicker)
             }
 
             Text(mailboxSelectionLabel)
@@ -384,6 +400,7 @@ internal struct ThreadFolderInspectorView: View {
             .cornerRadius(8)
             .opacity(summaryText.isEmpty ? 0.75 : 1)
         }
+        .accessibilityIdentifier(AccessibilityID.folderInspectorSummary)
     }
 
     private var isGlassInspectorEnabled: Bool {

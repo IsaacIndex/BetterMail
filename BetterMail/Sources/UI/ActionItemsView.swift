@@ -49,6 +49,7 @@ internal struct ActionItemsView: View {
                 .animation(.spring(response: 0.24, dampingFraction: 0.82), value: viewModel.selectedNodeID)
             }
         }
+        .accessibilityIdentifier(AccessibilityID.actionItemsView)
         .onAppear {
             isInspectorVisible = viewModel.selectedNodeID != nil
         }
@@ -74,6 +75,12 @@ internal struct ActionItemsView: View {
             }
             .buttonStyle(.borderless)
             .font(.caption)
+            .accessibilityIdentifier(AccessibilityID.actionItemsShowDoneButton)
+            .accessibilityLabel(showDone
+                                ? NSLocalizedString("accessibility.action_items.hide_done",
+                                                    comment: "Accessibility label for hiding completed action items")
+                                : NSLocalizedString("accessibility.action_items.show_done",
+                                                    comment: "Accessibility label for showing completed action items"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -104,6 +111,7 @@ internal struct ActionItemsView: View {
             }
             .controlSize(.small)
             .buttonStyle(.bordered)
+            .accessibilityIdentifier(AccessibilityID.actionItemsEmptyViewCanvasButton)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -139,6 +147,7 @@ internal struct ActionItemsView: View {
             }
         }
         .listStyle(.inset)
+        .accessibilityIdentifier(AccessibilityID.actionItemsList)
     }
 
     // MARK: - Helpers
@@ -199,6 +208,12 @@ private struct ActionItemRow: View {
                     .font(.system(size: 16))
             }
             .buttonStyle(.borderless)
+            .accessibilityIdentifier(AccessibilityID.actionItemDoneButton(item.id))
+            .accessibilityLabel(item.isDone
+                                ? NSLocalizedString("accessibility.action_items.mark_not_done",
+                                                    comment: "Accessibility label for marking an action item not done")
+                                : NSLocalizedString("accessibility.action_items.mark_done",
+                                                    comment: "Accessibility label for marking an action item done"))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayTitle)
@@ -231,6 +246,27 @@ private struct ActionItemRow: View {
         .padding(.vertical, 2)
         .opacity(item.isDone ? 0.55 : 1)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(AccessibilityID.actionItemRow(item.id))
+        .accessibilityLabel(actionItemAccessibilityLabel)
+        .accessibilityHint(NSLocalizedString("accessibility.action_items.row.hint",
+                                             comment: "Accessibility hint for selecting an action item row"))
         .highPriorityGesture(TapGesture().onEnded { _ in onSelect() })
+    }
+
+    private var actionItemAccessibilityLabel: String {
+        let status = item.isDone
+            ? NSLocalizedString("accessibility.action_items.status.done",
+                                comment: "Accessibility label for completed action item status")
+            : NSLocalizedString("accessibility.action_items.status.open",
+                                comment: "Accessibility label for open action item status")
+        return String.localizedStringWithFormat(
+            NSLocalizedString("accessibility.action_items.row.label",
+                              comment: "Accessibility label for an action item row"),
+            displayTitle,
+            item.from,
+            item.date.formatted(date: .abbreviated, time: .omitted),
+            status
+        )
     }
 }
