@@ -6,6 +6,8 @@ internal struct ThreadListView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
+    @StateObject private var graphSettings = GraphCanvasSettings()
+    @StateObject private var graphViewModel = GraphCanvasViewModel()
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
     @State private var navHeight: CGFloat = 96
@@ -23,6 +25,8 @@ internal struct ThreadListView: View {
     private let navBottomSpacing: CGFloat = 12
     private let navCanvasSpacing: CGFloat = 6
     private let inspectorWidth: CGFloat = 320
+    private let graphInspectorSpacing: CGFloat = 18
+    private let graphSelectionBarReservation: CGFloat = 78
 
     internal var body: some View {
         content
@@ -33,6 +37,13 @@ internal struct ThreadListView: View {
             .onKeyPress(.leftArrow) { handleCanvasNavigation(.left) }
             .onKeyPress(.rightArrow) { handleCanvasNavigation(.right) }
             .onKeyPress(.return) { handleEnterKey() }
+            .onKeyPress("s") { handleGraphKey(.snip) }
+            .onKeyPress("a") { handleGraphKey(.archive) }
+            .onKeyPress("w") { handleGraphKey(.water) }
+            .onKeyPress("+") { handleGraphKey(.zoomIn) }
+            .onKeyPress("-") { handleGraphKey(.zoomOut) }
+            .onKeyPress("0") { handleGraphKey(.reset) }
+            .onKeyPress(.escape) { handleGraphKey(.escape) }
             .onAppear {
                 isInspectorVisible = viewModel.selectedNodeID != nil || viewModel.selectedFolderID != nil
             }
@@ -111,9 +122,25 @@ internal struct ThreadListView: View {
     }
 
     private var canvasContent: some View {
-        ThreadCanvasView(viewModel: viewModel,
-                         displaySettings: displaySettings,
-                         topInset: canvasTopPadding)
+        Group {
+            if graphSettings.mode == .graph {
+                GraphCanvasView(threadViewModel: viewModel,
+                                graphViewModel: graphViewModel,
+                                graphSettings: graphSettings,
+                                displaySettings: displaySettings,
+                                topInset: canvasTopPadding,
+                                bottomChromeInset: graphBottomChromeReservation)
+                .padding(.trailing, graphTrailingChromeReservation)
+                .animation(.spring(response: 0.24, dampingFraction: 0.82),
+                           value: graphTrailingChromeReservation)
+                .animation(.easeInOut(duration: 0.2),
+                           value: graphBottomChromeReservation)
+            } else {
+                ThreadCanvasView(viewModel: viewModel,
+                                 displaySettings: displaySettings,
+                                 topInset: canvasTopPadding)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, navHorizontalPadding)
     }
@@ -219,6 +246,16 @@ internal struct ThreadListView: View {
         navHeight + navTopPadding + navCanvasSpacing
     }
 
+    private var graphTrailingChromeReservation: CGFloat {
+        guard graphSettings.mode == .graph, isInspectorVisible else { return 0 }
+        return inspectorWidth + navHorizontalPadding + graphInspectorSpacing
+    }
+
+    private var graphBottomChromeReservation: CGFloat {
+        guard graphSettings.mode == .graph, shouldShowActionBar else { return 0 }
+        return graphSelectionBarReservation
+    }
+
     private var navigationBarOverlay: some View {
         navBar
             .padding(.horizontal, navHorizontalPadding)
@@ -268,8 +305,11 @@ internal struct ThreadListView: View {
                 if viewModel.isBackfilling {
                     ProgressView().controlSize(.small)
                 }
-                viewModeToggle
-                zoomControls
+                graphModeSegmentedControl
+                if graphSettings.mode == .timeline {
+                    viewModeToggle
+                    zoomControls
+                }
                 searchBar
                 HStack(spacing: 6) {
                     Text("Limit")
@@ -430,6 +470,52 @@ internal struct ThreadListView: View {
             NSLocalizedString("threadlist.zoom.percent", comment: "Thread canvas zoom percentage"),
             percent
         )
+    }
+
+    private var graphModeSegmentedControl: some View {
+        HStack(spacing: 2) {
+            ForEach(GraphCanvasMode.allCases) { mode in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        graphSettings.mode = mode
+                    }
+                } label: {
+                    Text(mode.localizedTitle)
+                        .font(DesignTokens.font(size: 12,
+                                                weight: graphSettings.mode == mode ? .semibold : .medium,
+                                                textScale: displaySettings.textScale))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .foregroundStyle(graphSettings.mode == mode ? DesignTokens.Graph.ink : navSecondaryForegroundStyle)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(graphSettings.mode == mode ? DesignTokens.Graph.panel : Color.clear)
+                                .shadow(color: Color.black.opacity(graphSettings.mode == mode ? 0.08 : 0),
+                                        radius: 1,
+                                        x: 0,
+                                        y: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .focusable()
+                .accessibilityIdentifier(AccessibilityID.graphModeSegment(mode))
+                .accessibilityLabel(mode.localizedTitle)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DesignTokens.Graph.panelSecondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DesignTokens.Graph.line, lineWidth: 1)
+        )
+        .accessibilityIdentifier(AccessibilityID.graphModeToggle)
+        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.graphmode.toggle",
+                                              comment: "Accessibility label for graph mode picker"))
+        .accessibilityHint(NSLocalizedString("accessibility.threadlist.graphmode.hint",
+                                            comment: "Accessibility hint for graph mode picker"))
     }
 
     private var viewModeToggle: some View {
@@ -1262,6 +1348,25 @@ private extension ThreadListView {
     private func handleCanvasNavigation(
         _ direction: ThreadCanvasViewModel.CanvasNavigationDirection
     ) -> KeyPress.Result {
+        if graphSettings.mode == .graph {
+            let graphDirection: GraphDirection
+            switch direction {
+            case .up:
+                graphDirection = .up
+            case .down:
+                graphDirection = .down
+            case .left:
+                graphDirection = .left
+            case .right:
+                graphDirection = .right
+            }
+            guard let nextID = graphViewModel.nextSelection(from: viewModel.selectedNodeID,
+                                                            direction: graphDirection) else {
+                return .ignored
+            }
+            viewModel.selectNode(id: nextID)
+            return .handled
+        }
         let metrics = ThreadCanvasLayoutMetrics(
             zoom: displaySettings.currentZoom,
             dayCount: viewModel.dayWindowCount,
@@ -1280,6 +1385,29 @@ private extension ThreadListView {
         // Enter opens inspector for the selected node (selection triggers inspector)
         // If nothing selected, do nothing
         guard viewModel.selectedNodeID != nil else { return .ignored }
+        return .handled
+    }
+
+    private func handleGraphKey(_ command: GraphKeyboardCommand) -> KeyPress.Result {
+        guard graphSettings.mode == .graph else { return .ignored }
+        switch command {
+        case .snip:
+            graphViewModel.toggleSnipMode()
+        case .archive:
+            graphViewModel.toggleArchiveMode()
+        case .escape:
+            graphViewModel.exitPruneMode()
+        case .water:
+            guard let threadID = graphViewModel.selectedGraphNodeID(for: viewModel.selectedNodeID),
+                  graphViewModel.data.threadByID[threadID] != nil else { return .ignored }
+            graphViewModel.water(threadID: threadID, settings: graphSettings)
+        case .zoomIn:
+            graphViewModel.zoomIn()
+        case .zoomOut:
+            graphViewModel.zoomOut()
+        case .reset:
+            graphViewModel.resetViewport()
+        }
         return .handled
     }
 

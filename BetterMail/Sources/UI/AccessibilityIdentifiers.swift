@@ -13,6 +13,7 @@ internal enum AccessibilityID {
     internal static let threadList = "bettermail.thread-list"
     internal static let threadListNavigationBar = "bettermail.thread-list.navigation-bar"
     internal static let viewModeToggle = "bettermail.thread-list.view-mode-toggle"
+    internal static let graphModeToggle = "bettermail.thread-list.graph-mode-toggle"
     internal static let searchButton = "bettermail.thread-list.search-button"
     internal static let searchField = "bettermail.thread-list.search-field"
     internal static let fetchLimitField = "bettermail.thread-list.fetch-limit-field"
@@ -50,6 +51,15 @@ internal enum AccessibilityID {
 
     internal static let threadCanvas = "bettermail.thread-canvas"
     internal static let threadCanvasScrollView = "bettermail.thread-canvas.scroll-view"
+    internal static let graphCanvas = "bettermail.graph-canvas"
+    internal static let graphToolbar = "bettermail.graph-toolbar"
+    internal static let graphToolbarSnip = "bettermail.graph-toolbar.snip"
+    internal static let graphToolbarArchive = "bettermail.graph-toolbar.archive"
+    internal static let graphToolbarSettings = "bettermail.graph-toolbar.settings"
+    internal static let graphToolbarZoomOut = "bettermail.graph-toolbar.zoom-out"
+    internal static let graphToolbarZoomIn = "bettermail.graph-toolbar.zoom-in"
+    internal static let graphToolbarRecenter = "bettermail.graph-toolbar.recenter"
+    internal static let graphCompostRing = "bettermail.graph-compost-ring"
 
     internal static let settingsView = "bettermail.settings.view"
     internal static let settingsAppearancePicker = "bettermail.settings.appearance-picker"
@@ -106,6 +116,14 @@ internal enum AccessibilityID {
 
     internal static func threadCanvasFolderHeader(_ id: String) -> String {
         "bettermail.thread-canvas.folder-header.\(stable(id))"
+    }
+
+    internal static func graphCompostRingChip(_ id: String) -> String {
+        "bettermail.graph-compost-ring.chip.\(stable(id))"
+    }
+
+    internal static func graphModeSegment(_ mode: GraphCanvasMode) -> String {
+        "bettermail.thread-list.graph-mode.\(stable(mode.rawValue))"
     }
 
     private static func stable(_ rawValue: String) -> String {

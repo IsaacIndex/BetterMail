@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Design Token System
@@ -101,11 +102,66 @@ internal enum DesignTokens {
     ) -> Font {
         .system(size: size * textScale, weight: weight)
     }
+
+    // MARK: - Graph View
+
+    internal enum Graph {
+        internal static let background = Color(hex: 0xFAFAF8)
+        internal static let panel = Color(hex: 0xFFFFFF)
+        internal static let panelSecondary = Color(hex: 0xF5F5F2)
+        internal static let line = Color(hex: 0xECECE7)
+        internal static let ink = Color(hex: 0x16181D)
+        internal static let inkSecondary = Color(hex: 0x5A5E68)
+        internal static let inkTertiary = Color(hex: 0x8C8F98)
+        internal static let inkQuinary = Color(hex: 0xB8BAC0)
+        internal static let accent = Color(hex: 0x4F46E5)
+        internal static let accentSoft = Color(hex: 0xEEF0FF)
+        internal static let snip = Color(hex: 0xB45A3C)
+        internal static let snipSoft = Color(hex: 0xFBEFE8)
+        internal static let archive = Color(hex: 0x6B7280)
+        internal static let archiveSoft = Color(hex: 0xF1F2F4)
+        internal static let live = Color(hex: 0x0EA5A4)
+        internal static let water = Color(hex: 0x14B8A6)
+
+        internal enum Botanical {
+            internal static let edge = Color(hex: 0xA6B098)
+            internal static let trunk = Color(hex: 0x6B7A5C)
+            internal static let message = Color(hex: 0x7A8F66)
+            internal static let highThreadStroke = Color(hex: 0x4A5640)
+
+            internal static let edgeNS = NSColor(hex: 0xA6B098)
+            internal static let trunkNS = NSColor(hex: 0x6B7A5C)
+            internal static let messageNS = NSColor(hex: 0x7A8F66)
+            internal static let highThreadStrokeNS = NSColor(hex: 0x4A5640)
+        }
+
+        internal static let backgroundNS = NSColor(hex: 0xFAFAF8)
+        internal static let panelNS = NSColor(hex: 0xFFFFFF)
+        internal static let lineNS = NSColor(hex: 0xECECE7)
+        internal static let inkNS = NSColor(hex: 0x16181D)
+        internal static let inkSecondaryNS = NSColor(hex: 0x5A5E68)
+        internal static let inkTertiaryNS = NSColor(hex: 0x8C8F98)
+        internal static let inkQuinaryNS = NSColor(hex: 0xB8BAC0)
+        internal static let accentNS = NSColor(hex: 0x4F46E5)
+        internal static let accentSoftNS = NSColor(hex: 0xEEF0FF)
+        internal static let snipNS = NSColor(hex: 0xB45A3C)
+        internal static let snipSoftNS = NSColor(hex: 0xFBEFE8)
+        internal static let archiveNS = NSColor(hex: 0x6B7280)
+        internal static let archiveSoftNS = NSColor(hex: 0xF1F2F4)
+        internal static let liveNS = NSColor(hex: 0x0EA5A4)
+        internal static let waterNS = NSColor(hex: 0x14B8A6)
+    }
 }
 
 // MARK: - Color Extensions
 
 internal extension Color {
+    init(hex: UInt32) {
+        let red = Double((hex >> 16) & 0xFF) / 255.0
+        let green = Double((hex >> 8) & 0xFF) / 255.0
+        let blue = Double(hex & 0xFF) / 255.0
+        self.init(red: red, green: green, blue: blue)
+    }
 
     /// Primary text colour for glass surfaces.
     ///
@@ -143,5 +199,14 @@ internal extension Color {
             return Color.black.opacity(opacity)
         }
         return Color.white.opacity(opacity)
+    }
+}
+
+internal extension NSColor {
+    convenience init(hex: UInt32, alpha: CGFloat = 1) {
+        let red = CGFloat((hex >> 16) & 0xFF) / 255.0
+        let green = CGFloat((hex >> 8) & 0xFF) / 255.0
+        let blue = CGFloat(hex & 0xFF) / 255.0
+        self.init(srgbRed: red, green: green, blue: blue, alpha: alpha)
     }
 }

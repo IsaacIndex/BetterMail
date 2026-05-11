@@ -164,6 +164,31 @@ internal actor MailAppleScriptClient {
         return try decodeMailboxFolders(from: descriptor)
     }
 
+    internal func subMailboxes(of parentPath: String) async throws -> [MailboxFolder] {
+        let trimmedParent = parentPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folders = try await fetchMailboxHierarchy()
+        guard !trimmedParent.isEmpty else { return folders }
+        return folders.filter { folder in
+            folder.parentPath?.caseInsensitiveCompare(trimmedParent) == .orderedSame ||
+            folder.path.caseInsensitiveCompare(trimmedParent) == .orderedSame ||
+            folder.path.lowercased().hasPrefix(trimmedParent.lowercased() + "/")
+        }
+    }
+
+    internal func moveMessages(messageIDs: [String], toMailboxPath mailboxPath: String) async throws {
+        let cleanedIDs = Array(Set(messageIDs.map { MailControl.cleanMessageIDPreservingCase($0) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }))
+            .sorted()
+        guard !cleanedIDs.isEmpty else { return }
+        let trimmedMailboxPath = mailboxPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMailboxPath.isEmpty else { throw MailAppleScriptClientError.missingMessageID }
+        let script = buildMoveMessagesByMessageIDScript(messageIDs: cleanedIDs,
+                                                        mailboxPath: trimmedMailboxPath)
+        Log.appleScript.debug("Generated graph snip move AppleScript for \(cleanedIDs.count, privacy: .public) messages.")
+        _ = try await scriptRunner.run(script)
+    }
+
     private func mailboxPathHelpersScript() -> String {
         """
         on mailboxPathForMailbox(_mailboxRef)
@@ -866,6 +891,69 @@ internal actor MailAppleScriptClient {
           end timeout
         end tell
         return _rows
+        """
+    }
+
+    private func buildMoveMessagesByMessageIDScript(messageIDs: [String],
+                                                    mailboxPath: String) -> String {
+        let escapedIDs = messageIDs.map { "\"\(escapedForAppleScript($0))\"" }.joined(separator: ", ")
+        return """
+        \(mailboxResolverScript(mailbox: mailboxPath, account: nil))
+        set _destinationMailbox to _mbx
+        set _targetMessageIDs to {\(escapedIDs)}
+        set _movedCount to 0
+
+        on childMailboxes(_containerRef)
+          tell application id "com.apple.mail"
+            try
+              return (every mailbox of _containerRef)
+            on error
+              try
+                return (mailboxes of _containerRef)
+              on error
+                return {}
+              end try
+            end try
+          end tell
+        end childMailboxes
+
+        on allMailboxesIn(_containerRef)
+          set _results to {}
+          set _children to my childMailboxes(_containerRef)
+          repeat with _child in _children
+            copy _child to end of _results
+            set _grandchildren to my allMailboxesIn(_child)
+            repeat with _grandchild in _grandchildren
+              copy _grandchild to end of _results
+            end repeat
+          end repeat
+          return _results
+        end allMailboxesIn
+
+        tell application id "com.apple.mail"
+          with timeout of 120 seconds
+            repeat with _account in every account
+              set _mailboxes to my allMailboxesIn(_account)
+              repeat with _mailbox in _mailboxes
+                set _messages to {}
+                try
+                  set _messages to messages of _mailbox
+                end try
+                repeat with _message in _messages
+                  set _messageID to ""
+                  try
+                    set _messageID to (message id of _message as string)
+                  end try
+                  if _messageID is in _targetMessageIDs then
+                    move _message to _destinationMailbox
+                    set _movedCount to _movedCount + 1
+                  end if
+                end repeat
+              end repeat
+            end repeat
+          end timeout
+        end tell
+        return _movedCount
         """
     }
 

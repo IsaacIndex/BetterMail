@@ -300,6 +300,42 @@ internal final class MessageStore {
         }
     }
 
+    internal func fetchArchivedInGraphEntries() async throws -> [ArchivedInGraphEntry] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ArchivedInGraphEntity> = ArchivedInGraphEntity.fetchRequest()
+            request.sortDescriptors = [NSSortDescriptor(key: #keyPath(ArchivedInGraphEntity.archivedAt),
+                                                        ascending: false)]
+            return try context.fetch(request).map { $0.toModel() }
+        }
+    }
+
+    internal func upsertArchivedInGraphEntry(_ entry: ArchivedInGraphEntry) async throws {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ArchivedInGraphEntity> = ArchivedInGraphEntity.fetchRequest()
+            request.fetchLimit = 1
+            request.predicate = NSPredicate(format: "threadID == %@", entry.threadID)
+            let entity = try context.fetch(request).first ?? ArchivedInGraphEntity(context: context)
+            entity.threadID = entry.threadID
+            entity.archivedAt = entry.archivedAt
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
+    internal func deleteArchivedInGraphEntry(threadID: String) async throws {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<ArchivedInGraphEntity> = ArchivedInGraphEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "threadID == %@", threadID)
+            for entity in try context.fetch(request) {
+                context.delete(entity)
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+        }
+    }
+
     internal func fetchThreadFolders() async throws -> [ThreadFolder] {
         try await container.performBackgroundTask { context in
             let folderRequest: NSFetchRequest<ThreadFolderEntity> = ThreadFolderEntity.fetchRequest()
@@ -1199,6 +1235,26 @@ internal final class MessageStore {
             aiAddedAtAttr
         ]
 
+        let archivedInGraphEntity = NSEntityDescription()
+        archivedInGraphEntity.name = "ArchivedInGraphEntity"
+        archivedInGraphEntity.managedObjectClassName = NSStringFromClass(ArchivedInGraphEntity.self)
+
+        let archivedThreadIDAttr = NSAttributeDescription()
+        archivedThreadIDAttr.name = "threadID"
+        archivedThreadIDAttr.attributeType = .stringAttributeType
+        archivedThreadIDAttr.isOptional = false
+        archivedThreadIDAttr.isIndexed = true
+
+        let archivedAtAttr = NSAttributeDescription()
+        archivedAtAttr.name = "archivedAt"
+        archivedAtAttr.attributeType = .dateAttributeType
+        archivedAtAttr.isOptional = false
+
+        archivedInGraphEntity.properties = [
+            archivedThreadIDAttr,
+            archivedAtAttr
+        ]
+
         model.entities = [
             messageEntity,
             threadEntity,
@@ -1211,7 +1267,8 @@ internal final class MessageStore {
             threadFolderMembershipEntity,
             threadSummaryEntity,
             summaryCacheEntity,
-            actionItemEntity
+            actionItemEntity,
+            archivedInGraphEntity
         ]
         return model
     }
@@ -1638,6 +1695,22 @@ private final class ActionItemEntity: NSManagedObject {
 private extension ActionItemEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<ActionItemEntity> {
         NSFetchRequest<ActionItemEntity>(entityName: "ActionItemEntity")
+    }
+}
+
+@objc(ArchivedInGraphEntity)
+internal final class ArchivedInGraphEntity: NSManagedObject {
+    @NSManaged var threadID: String
+    @NSManaged var archivedAt: Date
+
+    internal func toModel() -> ArchivedInGraphEntry {
+        ArchivedInGraphEntry(threadID: threadID, archivedAt: archivedAt)
+    }
+}
+
+internal extension ArchivedInGraphEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<ArchivedInGraphEntity> {
+        NSFetchRequest<ArchivedInGraphEntity>(entityName: "ArchivedInGraphEntity")
     }
 }
 
