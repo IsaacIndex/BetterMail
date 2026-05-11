@@ -51,6 +51,21 @@ final class GraphViewportTests: XCTestCase {
 }
 
 final class GraphForceSimulatorTests: XCTestCase {
+    func test_branchConfig_usesOrganicLimbDefaults() {
+        let config = GraphForceConstants.defaults.branchConfig
+
+        XCTAssertEqual(config.trunkWidth, 2.6)
+        XCTAssertEqual(config.chainWidth, 1.6)
+        XCTAssertEqual(config.taper, 0.6)
+        XCTAssertEqual(config.tipMin, 0.5)
+        XCTAssertEqual(config.taperPow, 1.8)
+        XCTAssertEqual(config.jointRadiusTrunk, 1.8)
+        XCTAssertEqual(config.jointRadiusChain, 1.4)
+        XCTAssertTrue(config.asymmetricArc)
+        XCTAssertTrue(config.outwardArcAnchorEnabled)
+        XCTAssertEqual(config.ribbonSamples, 36)
+    }
+
     func test_forceSimulator_withFixedFixture_energyDecreasesAcrossSettlingWindow() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 6)],
                                    now: Date(timeIntervalSince1970: 10_000))
@@ -116,6 +131,42 @@ final class GraphForceSimulatorTests: XCTestCase {
     }
 }
 
+final class GraphSceneStabilityTests: XCTestCase {
+    func test_graphScene_afterSettling_stopsPublishingPositionsWithoutInput() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 8)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = GraphScene(size: CGSize(width: 960, height: 640))
+        var reportCount = 0
+        scene.onPositionsChanged = { _ in
+            reportCount += 1
+        }
+
+        scene.configure(data: graph,
+                        selectedGraphNodeID: nil,
+                        pruneMode: .idle,
+                        filteredNodeIDs: graph.allNodeIDs,
+                        wateredCounts: [:],
+                        reduceMotion: false,
+                        sproutingMessageIDs: [],
+                        forceConfig: GraphForceConstants.defaults,
+                        theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
+                        zoomScale: 1,
+                        panOffset: .zero)
+
+        for frame in 1...200 {
+            scene.update(Double(frame) * 0.016)
+        }
+        let settledReportCount = reportCount
+
+        for frame in 201...260 {
+            scene.update(Double(frame) * 0.016)
+        }
+
+        XCTAssertGreaterThan(settledReportCount, 0)
+        XCTAssertEqual(reportCount, settledReportCount)
+    }
+}
+
 final class GraphSplineTests: XCTestCase {
     func test_splinePath_withCurl_startsAndEndsAtEdgeEndpointsAndStaysInEnvelope() {
         let start = CGPoint(x: 10, y: 20)
@@ -131,6 +182,43 @@ final class GraphSplineTests: XCTestCase {
 
         let path = splinePath(from: start, to: end, seed: 42, config: config)
         assertPointsEqual(path.currentPoint, end)
+    }
+
+    func test_ribbonPoints_withTaper_preserveRequestedEndpointWidths() {
+        let start = CGPoint(x: 0, y: 0)
+        let end = CGPoint(x: 120, y: 0)
+        let config = GraphCurlConfig(curl: 0, curlVariability: 0, splineTension: 0.35, curlFalloff: 0.45)
+
+        let ribbon = GraphSpline.ribbonPoints(from: start,
+                                              to: end,
+                                              seed: 7,
+                                              config: config,
+                                              anchor: nil,
+                                              widthStart: 8,
+                                              widthEnd: 2,
+                                              tipMin: 1,
+                                              taperPow: 1.8,
+                                              samples: 36)
+
+        XCTAssertEqual(pointDistance(ribbon.left.first, ribbon.right.first), 8, accuracy: 0.001)
+        XCTAssertEqual(pointDistance(ribbon.left.last, ribbon.right.last), 2, accuracy: 0.001)
+    }
+
+    func test_outwardArcSign_whenMidpointIsPositiveNormalSide_returnsPositive() {
+        let start = CGPoint(x: 0, y: 0)
+        let end = CGPoint(x: 100, y: 0)
+        let anchor = CGPoint(x: 50, y: -20)
+        let config = GraphCurlConfig(curl: 9,
+                                     curlVariability: 0,
+                                     splineTension: 0.35,
+                                     curlFalloff: 0.45,
+                                     asymmetricArc: true)
+
+        let sign = GraphSpline.outwardArcSign(from: start, to: end, anchor: anchor, fallbackSign: -1)
+        let points = GraphSpline.points(from: start, to: end, seed: 9, config: config, anchor: anchor)
+
+        XCTAssertEqual(sign, 1)
+        XCTAssertGreaterThan(points[2].y, 0)
     }
 }
 
@@ -152,6 +240,14 @@ final class GraphSummaryPlacementTests: XCTestCase {
                                                         previousAngle: nil)
 
         XCTAssertEqual(angle, .pi, accuracy: 0.001)
+    }
+
+    func test_smoothedAngle_whenEffectivelyAtPickedAngle_snapsToPickedAngle() {
+        let picked = CGFloat.pi / 2
+        let smoothed = GraphSummaryPlacement.smoothedAngle(previous: picked - 0.0005,
+                                                          picked: picked)
+
+        XCTAssertEqual(smoothed, picked, accuracy: 0.000001)
     }
 }
 
@@ -211,6 +307,11 @@ private func assertPointsEqual(_ lhs: CGPoint?,
     }
     XCTAssertEqual(lhs.x, rhs.x, accuracy: accuracy, file: file, line: line)
     XCTAssertEqual(lhs.y, rhs.y, accuracy: accuracy, file: file, line: line)
+}
+
+private func pointDistance(_ lhs: CGPoint?, _ rhs: CGPoint?) -> CGFloat {
+    guard let lhs, let rhs else { return .greatestFiniteMagnitude }
+    return hypot(lhs.x - rhs.x, lhs.y - rhs.y)
 }
 
 private func makeThread(rootID: String, messageCount: Int) -> ThreadNode {

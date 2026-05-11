@@ -2,6 +2,15 @@ import AppKit
 import SpriteKit
 
 internal final class GraphScene: SKScene {
+    private enum EdgeRenderingMode {
+        case ribbon
+        case stroke
+    }
+
+    private static let ribbonEdgeBudget = 420
+    private static let layoutSettlingFrameLimit = 120
+    private static let layoutSettledEnergyPerNodeThreshold: CGFloat = 0.04
+
     internal var onSelectGraphNode: ((String?) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
@@ -19,6 +28,7 @@ internal final class GraphScene: SKScene {
     private let chainEdgeNode = SKShapeNode()
     private let dimmedTrunkEdgeNode = SKShapeNode()
     private let dimmedChainEdgeNode = SKShapeNode()
+    private var appliedEdgeRenderingMode: EdgeRenderingMode?
     private var theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
     private var selectedGraphNodeID: String?
     private var hoveredGraphNodeID: String?
@@ -30,6 +40,9 @@ internal final class GraphScene: SKScene {
     private var sproutingMessageIDs: Set<String> = []
     private var lastUpdateTime: TimeInterval?
     private var edgeRenderFrame = 0
+    private var layoutSettlingFrames = 0
+    private var layoutIsSettled = false
+    private var layoutSettledPositionsReported = false
     private var draggedNodeID: String?
     private var isPanning = false
     private var lastPositionReportTime: TimeInterval = 0
@@ -57,6 +70,8 @@ internal final class GraphScene: SKScene {
                             zoomScale: CGFloat,
                             panOffset: CGPoint) {
         let shouldRebuild = data != graphData || simulator.size != size || theme != self.theme
+        let themeChanged = theme != self.theme
+        let forceConfigChanged = forceConfig != self.forceConfig
         graphData = data
         self.forceConfig = forceConfig
         self.theme = theme
@@ -66,10 +81,14 @@ internal final class GraphScene: SKScene {
         self.wateredCounts = wateredCounts
         self.reduceMotion = reduceMotion
         self.sproutingMessageIDs = sproutingMessageIDs
-        applyTheme()
+        if themeChanged {
+            applyTheme()
+        }
         applyViewport(zoomScale: zoomScale, panOffset: panOffset)
         if shouldRebuild {
             rebuildGraph()
+        } else if forceConfigChanged {
+            resetLayoutSettling()
         }
         applyVisualState()
     }
@@ -83,15 +102,22 @@ internal final class GraphScene: SKScene {
     override func update(_ currentTime: TimeInterval) {
         let previous = lastUpdateTime ?? currentTime
         lastUpdateTime = currentTime
-        simulator.step(deltaTime: currentTime - previous,
-                       elapsedTime: currentTime * 1_000,
-                       reduceMotion: reduceMotion,
-                       config: forceConfig,
-                       labelOccluderRadius: labelOccluderRadius(for:))
+        if !layoutIsSettled {
+            simulator.step(deltaTime: currentTime - previous,
+                           elapsedTime: currentTime * 1_000,
+                           reduceMotion: true,
+                           config: forceConfig,
+                           labelOccluderRadius: labelOccluderRadius(for:))
+            updateLayoutSettlingState()
+        }
         renderFromSimulator(elapsedTime: currentTime * 1_000)
-        if currentTime - lastPositionReportTime > 0.2 {
+        if shouldReportPositions(),
+           currentTime - lastPositionReportTime > 0.2 {
             lastPositionReportTime = currentTime
             onPositionsChanged?(simulator.positionsByID())
+            if layoutIsSettled {
+                layoutSettledPositionsReported = true
+            }
         }
     }
 
@@ -148,6 +174,7 @@ internal final class GraphScene: SKScene {
     override func mouseUp(with event: NSEvent) {
         if let draggedNodeID {
             simulator.setPosition(event.location(in: self), for: draggedNodeID, pinned: false)
+            resetLayoutSettling()
         }
         draggedNodeID = nil
         isPanning = false
@@ -213,26 +240,36 @@ internal final class GraphScene: SKScene {
         anchorPoint = .zero
         scaleMode = .resizeFill
         camera = cameraNode
-        configureEdgeLayers()
+        configureEdgeLayers(mode: edgeRenderingMode())
         addChild(cameraNode)
     }
 
     private func applyTheme() {
         backgroundColor = theme.backgroundNS
-        configureEdgeLayers()
+        appliedEdgeRenderingMode = nil
+        configureEdgeLayers(mode: edgeRenderingMode())
     }
 
-    private func configureEdgeLayers() {
-        let layers: [(SKShapeNode, NSColor, CGFloat, CGFloat)] = [
-            (trunkEdgeNode, theme.inkTertiaryNS, 1.4, 0.72),
-            (chainEdgeNode, theme.inkQuaternaryNS, 1.0, 0.62),
-            (dimmedTrunkEdgeNode, theme.inkTertiaryNS, 1.4, 0.22),
-            (dimmedChainEdgeNode, theme.inkQuaternaryNS, 1.0, 0.22)
+    private func configureEdgeLayers(mode: EdgeRenderingMode) {
+        guard appliedEdgeRenderingMode != mode else { return }
+        appliedEdgeRenderingMode = mode
+        let layers: [(SKShapeNode, NSColor, CGFloat, CGFloat, CGFloat)] = [
+            (trunkEdgeNode, theme.inkTertiaryNS, 1.4, 0.82, 0.72),
+            (chainEdgeNode, theme.inkQuaternaryNS, 1.0, 0.68, 0.62),
+            (dimmedTrunkEdgeNode, theme.inkTertiaryNS, 1.4, 0.22, 0.22),
+            (dimmedChainEdgeNode, theme.inkQuaternaryNS, 1.0, 0.22, 0.22)
         ]
-        for (node, color, width, alpha) in layers {
-            node.fillColor = .clear
-            node.strokeColor = color.withAlphaComponent(alpha)
-            node.lineWidth = width
+        for (node, color, strokeWidth, fillAlpha, strokeAlpha) in layers {
+            switch mode {
+            case .ribbon:
+                node.fillColor = color.withAlphaComponent(fillAlpha)
+                node.strokeColor = .clear
+                node.lineWidth = 0
+            case .stroke:
+                node.fillColor = .clear
+                node.strokeColor = color.withAlphaComponent(strokeAlpha)
+                node.lineWidth = strokeWidth
+            }
             node.zPosition = -10
             node.lineCap = .round
             node.lineJoin = .round
@@ -304,6 +341,7 @@ internal final class GraphScene: SKScene {
     }
 
     private func rebuildGraph() {
+        resetLayoutSettling()
         let existingPositions = simulator.positionsByID()
         simulator.reset(data: graphData, size: size, preserving: existingPositions)
         edgeSourceByTargetID = graphData.edges.reduce(into: [:]) { sourcesByTarget, edge in
@@ -418,10 +456,22 @@ internal final class GraphScene: SKScene {
 
     private func renderEdges(skipCoalescedChains: Bool = false) {
         let visibleRect = cameraVisibleRect().insetBy(dx: -120, dy: -120)
+        let renderingMode = edgeRenderingMode()
+        let modeChanged = appliedEdgeRenderingMode != renderingMode
+        configureEdgeLayers(mode: renderingMode)
+        let branchConfig = forceConfig.branchConfig
+        let curlConfig = forceConfig.branchCurlConfig
+        let anchor: CGPoint?
+        if branchConfig.outwardArcAnchorEnabled {
+            anchor = simulator.nodesByID[graphData.center.id]?.position ?? CGPoint(x: size.width / 2, y: size.height / 2)
+        } else {
+            anchor = nil
+        }
         let trunkPath = CGMutablePath()
-        let chainPath = skipCoalescedChains ? nil : CGMutablePath()
+        let shouldSkipChains = skipCoalescedChains && !modeChanged
+        let chainPath = shouldSkipChains ? nil : CGMutablePath()
         let dimmedTrunkPath = CGMutablePath()
-        let dimmedChainPath = skipCoalescedChains ? nil : CGMutablePath()
+        let dimmedChainPath = shouldSkipChains ? nil : CGMutablePath()
         for edge in graphData.edges {
             guard let source = simulator.nodesByID[edge.sourceID],
                   let target = simulator.nodesByID[edge.targetID] else { continue }
@@ -429,16 +479,47 @@ internal final class GraphScene: SKScene {
                                    y: (source.position.y + target.position.y) / 2)
             guard visibleRect.contains(midpoint) else { continue }
             let isDimmed = isEdgeDimmed(edge)
-            let path = edgePath(edge: edge, source: source.position, target: target.position)
             switch (edge.kind, isDimmed) {
             case (.trunk, false):
-                trunkPath.addPath(path)
+                appendEdge(edge: edge,
+                           source: source.position,
+                           target: target.position,
+                           to: trunkPath,
+                           mode: renderingMode,
+                           branchConfig: branchConfig,
+                           curlConfig: curlConfig,
+                           anchor: anchor)
             case (.trunk, true):
-                dimmedTrunkPath.addPath(path)
+                appendEdge(edge: edge,
+                           source: source.position,
+                           target: target.position,
+                           to: dimmedTrunkPath,
+                           mode: renderingMode,
+                           branchConfig: branchConfig,
+                           curlConfig: curlConfig,
+                           anchor: anchor)
             case (.chain, false):
-                chainPath?.addPath(path)
+                if let chainPath {
+                    appendEdge(edge: edge,
+                               source: source.position,
+                               target: target.position,
+                               to: chainPath,
+                               mode: renderingMode,
+                               branchConfig: branchConfig,
+                               curlConfig: curlConfig,
+                               anchor: anchor)
+                }
             case (.chain, true):
-                dimmedChainPath?.addPath(path)
+                if let dimmedChainPath {
+                    appendEdge(edge: edge,
+                               source: source.position,
+                               target: target.position,
+                               to: dimmedChainPath,
+                               mode: renderingMode,
+                               branchConfig: branchConfig,
+                               curlConfig: curlConfig,
+                               anchor: anchor)
+                }
             }
         }
         trunkEdgeNode.path = trunkPath
@@ -559,11 +640,78 @@ internal final class GraphScene: SKScene {
         }
     }
 
-    private func edgePath(edge: GraphEdge, source: CGPoint, target: CGPoint) -> CGPath {
-        splinePath(from: source,
-                   to: target,
-                   seed: stableEdgeSeed(edge),
-                   config: forceConfig.curlConfig)
+    private func edgeRenderingMode() -> EdgeRenderingMode {
+        graphData.edges.count > Self.ribbonEdgeBudget ? .stroke : .ribbon
+    }
+
+    private func resetLayoutSettling() {
+        layoutSettlingFrames = 0
+        layoutIsSettled = false
+        layoutSettledPositionsReported = false
+    }
+
+    private func updateLayoutSettlingState() {
+        layoutSettlingFrames += 1
+        let nodeCount = max(1, simulator.nodesByID.count)
+        let energyPerNode = simulator.totalEnergy() / CGFloat(nodeCount)
+        if layoutSettlingFrames >= Self.layoutSettlingFrameLimit ||
+            energyPerNode <= Self.layoutSettledEnergyPerNodeThreshold {
+            layoutIsSettled = true
+        }
+    }
+
+    private func shouldReportPositions() -> Bool {
+        !layoutIsSettled || !layoutSettledPositionsReported
+    }
+
+    private func appendEdge(edge: GraphEdge,
+                            source: CGPoint,
+                            target: CGPoint,
+                            to path: CGMutablePath,
+                            mode: EdgeRenderingMode,
+                            branchConfig: GraphBranchConfig,
+                            curlConfig: GraphCurlConfig,
+                            anchor: CGPoint?) {
+        switch mode {
+        case .ribbon:
+            appendBranch(edge: edge,
+                         source: source,
+                         target: target,
+                         to: path,
+                         branchConfig: branchConfig,
+                         curlConfig: curlConfig,
+                         anchor: anchor)
+        case .stroke:
+            path.addPath(splinePath(from: source,
+                                    to: target,
+                                    seed: stableEdgeSeed(edge),
+                                    config: forceConfig.curlConfig))
+        }
+    }
+
+    private func appendBranch(edge: GraphEdge,
+                              source: CGPoint,
+                              target: CGPoint,
+                              to path: CGMutablePath,
+                              branchConfig: GraphBranchConfig,
+                              curlConfig: GraphCurlConfig,
+                              anchor: CGPoint?) {
+        path.addPath(GraphSpline.ribbonPath(from: source,
+                                            to: target,
+                                            seed: stableEdgeSeed(edge),
+                                            config: curlConfig,
+                                            anchor: anchor,
+                                            widthStart: branchConfig.baseWidth(for: edge.kind),
+                                            widthEnd: branchConfig.tipWidth(for: edge.kind),
+                                            tipMin: branchConfig.tipMin,
+                                            taperPow: branchConfig.taperPow,
+                                            samples: branchConfig.ribbonSamples))
+        let jointRadius = branchConfig.jointRadius(for: edge.kind)
+        guard jointRadius > 0 else { return }
+        path.addEllipse(in: CGRect(x: source.x - jointRadius,
+                                   y: source.y - jointRadius,
+                                   width: jointRadius * 2,
+                                   height: jointRadius * 2))
     }
 
     private func nodeID(at location: CGPoint) -> String? {

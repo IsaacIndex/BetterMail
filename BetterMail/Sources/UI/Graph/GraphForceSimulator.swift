@@ -23,6 +23,65 @@ internal struct GraphCurlConfig: Equatable {
     internal let curlVariability: CGFloat
     internal let splineTension: CGFloat
     internal let curlFalloff: CGFloat
+    internal let asymmetricArc: Bool
+
+    internal init(curl: CGFloat,
+                  curlVariability: CGFloat,
+                  splineTension: CGFloat,
+                  curlFalloff: CGFloat,
+                  asymmetricArc: Bool = false) {
+        self.curl = curl
+        self.curlVariability = curlVariability
+        self.splineTension = splineTension
+        self.curlFalloff = curlFalloff
+        self.asymmetricArc = asymmetricArc
+    }
+}
+
+internal struct GraphBranchConfig: Equatable {
+    internal let trunkWidth: CGFloat
+    internal let chainWidth: CGFloat
+    internal let taper: CGFloat
+    internal let tipMin: CGFloat
+    internal let taperPow: CGFloat
+    internal let jointRadiusTrunk: CGFloat
+    internal let jointRadiusChain: CGFloat
+    internal let asymmetricArc: Bool
+    internal let outwardArcAnchorEnabled: Bool
+    internal let ribbonSamples: Int
+
+    internal static let organicLimb = GraphBranchConfig(trunkWidth: 2.6,
+                                                        chainWidth: 1.6,
+                                                        taper: 0.6,
+                                                        tipMin: 0.5,
+                                                        taperPow: 1.8,
+                                                        jointRadiusTrunk: 1.8,
+                                                        jointRadiusChain: 1.4,
+                                                        asymmetricArc: true,
+                                                        outwardArcAnchorEnabled: true,
+                                                        ribbonSamples: 36)
+
+    internal func baseWidth(for edgeKind: GraphEdgeKind) -> CGFloat {
+        switch edgeKind {
+        case .trunk:
+            return trunkWidth
+        case .chain:
+            return chainWidth
+        }
+    }
+
+    internal func tipWidth(for edgeKind: GraphEdgeKind) -> CGFloat {
+        max(tipMin, baseWidth(for: edgeKind) * taper)
+    }
+
+    internal func jointRadius(for edgeKind: GraphEdgeKind) -> CGFloat {
+        switch edgeKind {
+        case .trunk:
+            return jointRadiusTrunk
+        case .chain:
+            return jointRadiusChain
+        }
+    }
 }
 
 internal struct GraphForceConfig: Equatable {
@@ -50,6 +109,18 @@ internal struct GraphForceConfig: Equatable {
                         curlVariability: curlVariability,
                         splineTension: splineTension,
                         curlFalloff: curlFalloff)
+    }
+
+    internal var branchConfig: GraphBranchConfig {
+        .organicLimb
+    }
+
+    internal var branchCurlConfig: GraphCurlConfig {
+        GraphCurlConfig(curl: curl,
+                        curlVariability: curlVariability,
+                        splineTension: splineTension,
+                        curlFalloff: curlFalloff,
+                        asymmetricArc: branchConfig.asymmetricArc)
     }
 }
 

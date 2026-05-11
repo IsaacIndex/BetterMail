@@ -11,7 +11,7 @@ During scrolling, the canvas renders only visible days, columns, and nodes (plus
 
 ## Graph Sibling View
 
-`GraphCanvasView` is mounted as a sibling rendering mode rather than as another layer inside this timeline ZStack. Its SpriteKit scene now uses the Whisper four-force model, deterministic Catmull-Rom edge splines, AppTheme light/dark tokens, and separate per-message summary callouts that auto-place around message nodes. The graph viewport owns its native pan/zoom semantics independently: trackpad scroll pans without modifiers, command/control-scroll zooms around the cursor, pinch zooms through `GraphSKView`, and double-clicking empty canvas recenters the camera.
+`GraphCanvasView` is mounted as a sibling rendering mode rather than as another layer inside this timeline ZStack. Its SpriteKit scene now uses the Whisper four-force model, deterministic ribbon-rendered Catmull-Rom branches with outward arc bias, bounded physics settling for all graph sizes, an automatic stroked-spline fallback for very large graphs, AppTheme light/dark tokens, and separate per-message summary callouts that auto-place around message nodes. The graph viewport owns its native pan/zoom semantics independently: trackpad scroll pans without modifiers, command/control-scroll zooms around the cursor, pinch zooms through `GraphSKView`, and double-clicking empty canvas recenters the camera.
 
 ZStack draw order (back to front):
 1) `dayBands`

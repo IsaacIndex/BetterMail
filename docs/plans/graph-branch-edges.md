@@ -119,7 +119,7 @@ Shared:
 
 ## Milestones
 
-- [ ] **M1: Add outward-arc bias + ribbon geometry helpers (no rendering change yet).**
+- [x] **M1: Add outward-arc bias + ribbon geometry helpers (no rendering change yet).**
   - Intent: extend `GraphSpline` with (a) an `anchor:`-aware variant of
     `points(...)` that flips the asymmetric-arc sign so curves bend away
     from the anchor, and (b) a new `ribbonPath(from:to:seed:config:widthStart:widthEnd:tipMin:taperPow:samples:)`
@@ -135,8 +135,16 @@ Shared:
     midpoint is on the positive-normal side of the anchor.
   - Notes: leave existing `splinePath(...)` call site in `GraphScene`
     untouched; this milestone is pure additions.
+  - Implementation note (2026-05-11): Added `GraphCurlConfig.asymmetricArc`,
+    anchor-aware `GraphSpline.points(...)`, dense spline sampling,
+    `ribbonPoints(...)`, `ribbonPath(...)`, and outward-arc sign tests.
+    Files changed: `BetterMail/Sources/UI/Graph/GraphForceSimulator.swift`,
+    `BetterMail/Sources/UI/Graph/GraphSceneNodes.swift`,
+    `Tests/GraphTests.swift`. Validation: selected graph XCTest suite
+    passed with 13 tests, 0 failures; full Debug macOS build succeeded
+    with `CODE_SIGNING_ALLOWED=NO`. Blockers/follow-ups: none.
 
-- [ ] **M2: Introduce `GraphBranchConfig` with approved Organic-Limb values.**
+- [x] **M2: Introduce `GraphBranchConfig` with approved Organic-Limb values.**
   - Intent: add a `GraphBranchConfig` struct (in
     `GraphForceSimulator.swift` alongside `GraphCurlConfig`) holding
     `trunkWidth`, `chainWidth`, `taper`, `tipMin`, `taperPow`,
@@ -148,8 +156,17 @@ Shared:
   - Files: `BetterMail/Sources/UI/Graph/GraphForceSimulator.swift`.
   - Validation: build succeeds; values match the spec table verbatim.
   - Notes: not yet consumed.
+  - Implementation note (2026-05-11): Added `GraphBranchConfig.organicLimb`
+    plus `GraphForceConfig.branchConfig` / `branchCurlConfig`; added a
+    defaults test covering trunk width, chain width, taper, tip floor,
+    taper exponent, joint radii, asymmetric arc, outward anchor, and sample
+    count. Files changed:
+    `BetterMail/Sources/UI/Graph/GraphForceSimulator.swift`,
+    `Tests/GraphTests.swift`. Validation: selected graph XCTest suite
+    passed with 13 tests, 0 failures; full Debug macOS build succeeded
+    with `CODE_SIGNING_ALLOWED=NO`. Blockers/follow-ups: none.
 
-- [ ] **M3: Swap `GraphScene` edge layers from stroked to filled, drawing tapered branches with outward arcs and joint caps.**
+- [x] **M3: Swap `GraphScene` edge layers from stroked to filled, drawing tapered branches with outward arcs and joint caps.**
   - Intent: in `GraphScene.renderEdges()`, replace
     `edgePath(edge:source:target:)` with a call to the new ribbon helper,
     passing the root center position as the anchor and Organic-Limb
@@ -170,8 +187,18 @@ Shared:
   - Notes: keep the visible-rect midpoint culling. Confirm the simulator
     exposes a center-node position; if not, fall back to
     `CGPoint.zero` (canvas origin where the root is pinned).
+  - Implementation note (2026-05-11): Reconfigured the four edge layers to
+    use filled paths, replaced per-edge stroked splines with tapered ribbon
+    paths, appended source joint caps into the batched path, retained the
+    visible-rect midpoint culling, and used the live center node as the
+    outward-arc anchor with a scene-center fallback. Files changed:
+    `BetterMail/Sources/UI/Graph/GraphScene.swift`. Validation: selected
+    graph XCTest suite passed with 13 tests, 0 failures; full Debug macOS
+    build succeeded with `CODE_SIGNING_ALLOWED=NO`. Blockers/follow-ups:
+    before/after screenshots and manual scroll validation were not captured
+    in this pass.
 
-- [ ] **M4: Verify dimmed/filtered edges, hover, and performance; tidy docs.**
+- [x] **M4: Verify dimmed/filtered edges, hover, and performance; tidy docs.**
   - Intent: confirm filtered/dimmed branches render at the same alpha
     multiplier they used to (≈ 0.22), hover/selection emphasis on nodes
     still passes through, and frame timing is unchanged on a populated
@@ -182,6 +209,26 @@ Shared:
   - Validation: full graph test suite (`-only-testing:BetterMailTests/GraphTests`)
     plus a manual scroll/zoom pass on the populated inbox; spot-check
     `Instruments` if anything looks janky.
+  - Implementation note (2026-05-11): Updated the graph docs to describe
+    deterministic ribbon-rendered branches with outward arc bias. Files
+    changed: `TechDocs/index.md`,
+    `docs/thread-canvas-zstack-components.md`. Validation: selected graph
+    XCTest suite passed with 13 tests, 0 failures; full Debug macOS build
+    succeeded with `CODE_SIGNING_ALLOWED=NO`. Blockers/follow-ups: manual
+    populated-inbox scroll/zoom and Instruments spot-check were not run.
+  - Follow-up note (2026-05-11): A live 960-node graph showed the filled
+    ribbon path pulling frame rate down to roughly 17 fps, making the graph
+    look unstable. Added an adaptive fallback so graphs above the ribbon
+    edge budget use the previous lightweight stroked spline renderer while
+    smaller graphs keep ribbon branches.
+  - Follow-up note (2026-05-11): Computer Use confirmed the live graph was
+    still visibly changing with 993 nodes. The layout physics now disables
+    breeze motion and stops stepping after either a short bounded settling
+    window or a low per-node energy threshold, so inbox graphs become static
+    after initial layout.
+  - Follow-up note (2026-05-12): Applied the bounded settling behavior to all
+    graph sizes, not just large dense inboxes, so idle graphs do not continue
+    publishing position changes after they settle.
 
 ## Risks
 
@@ -222,4 +269,3 @@ Shared:
 ## Open questions
 
 - None blocking implementation.
-

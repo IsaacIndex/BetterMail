@@ -450,6 +450,7 @@ internal enum GraphSummaryPlacement {
     internal static func smoothedAngle(previous: CGFloat?, picked: CGFloat, amount: CGFloat = 0.18) -> CGFloat {
         guard let previous else { return picked }
         let delta = normalizedAngle(picked - previous)
+        guard abs(delta) > 0.001 else { return picked }
         return normalizedAngle(previous + delta * amount)
     }
 
@@ -637,7 +638,8 @@ internal enum GraphSpline {
     internal static func points(from start: CGPoint,
                                 to end: CGPoint,
                                 seed: UInt32,
-                                config: GraphCurlConfig) -> [CGPoint] {
+                                config: GraphCurlConfig,
+                                anchor: CGPoint? = nil) -> [CGPoint] {
         let dx = end.x - start.x
         let dy = end.y - start.y
         let distance = hypot(dx, dy)
@@ -647,7 +649,13 @@ internal enum GraphSpline {
         let falloffPower = max(0.12, 1 - config.curlFalloff * 0.7)
         let middlePoints = [CGFloat(0.25), 0.5, 0.75].enumerated().map { index, t -> CGPoint in
             let noise = deterministicNoise(seed: seed, salt: UInt32(index + 1))
-            let sign: CGFloat = noise >= 0.5 ? 1 : -1
+            let fallbackSign: CGFloat = noise >= 0.5 ? 1 : -1
+            let sign: CGFloat
+            if config.asymmetricArc, let anchor {
+                sign = outwardArcSign(from: start, to: end, anchor: anchor, fallbackSign: fallbackSign)
+            } else {
+                sign = fallbackSign
+            }
             let variability = 1 + (noise * 2 - 1) * config.curlVariability
             let taper = pow(max(0, sin(.pi * t)), falloffPower)
             let offset = config.curl * variability * taper * sign
@@ -660,8 +668,9 @@ internal enum GraphSpline {
     internal static func path(from start: CGPoint,
                               to end: CGPoint,
                               seed: UInt32,
-                              config: GraphCurlConfig) -> CGMutablePath {
-        let splinePoints = points(from: start, to: end, seed: seed, config: config)
+                              config: GraphCurlConfig,
+                              anchor: CGPoint? = nil) -> CGMutablePath {
+        let splinePoints = points(from: start, to: end, seed: seed, config: config, anchor: anchor)
         let path = CGMutablePath()
         path.move(to: start)
         guard splinePoints.count > 2 else {
@@ -681,6 +690,153 @@ internal enum GraphSpline {
             path.addCurve(to: p2, control1: cp1, control2: cp2)
         }
         return path
+    }
+
+    internal static func sampledPoints(from start: CGPoint,
+                                       to end: CGPoint,
+                                       seed: UInt32,
+                                       config: GraphCurlConfig,
+                                       anchor: CGPoint? = nil,
+                                       samples: Int) -> [CGPoint] {
+        let splinePoints = points(from: start, to: end, seed: seed, config: config, anchor: anchor)
+        guard splinePoints.count > 1 else { return splinePoints }
+        let tension = max(0, min(1, config.splineTension))
+        let segmentCount = splinePoints.count - 1
+        let samplesPerSegment = max(2, Int(round(CGFloat(max(samples, 2)) / CGFloat(segmentCount))))
+        var sampled: [CGPoint] = []
+        sampled.reserveCapacity(segmentCount * samplesPerSegment + 1)
+
+        for index in 0..<segmentCount {
+            let p0 = splinePoints[max(0, index - 1)]
+            let p1 = splinePoints[index]
+            let p2 = splinePoints[index + 1]
+            let p3 = splinePoints[min(splinePoints.count - 1, index + 2)]
+            let cp1 = CGPoint(x: p1.x + (p2.x - p0.x) * tension / 6,
+                              y: p1.y + (p2.y - p0.y) * tension / 6)
+            let cp2 = CGPoint(x: p2.x - (p3.x - p1.x) * tension / 6,
+                              y: p2.y - (p3.y - p1.y) * tension / 6)
+            let firstSample = index == 0 ? 0 : 1
+            for sampleIndex in firstSample...samplesPerSegment {
+                let t = CGFloat(sampleIndex) / CGFloat(samplesPerSegment)
+                sampled.append(cubicPoint(from: p1, control1: cp1, control2: cp2, to: p2, t: t))
+            }
+        }
+        return sampled
+    }
+
+    internal static func ribbonPoints(from start: CGPoint,
+                                      to end: CGPoint,
+                                      seed: UInt32,
+                                      config: GraphCurlConfig,
+                                      anchor: CGPoint?,
+                                      widthStart: CGFloat,
+                                      widthEnd: CGFloat,
+                                      tipMin: CGFloat,
+                                      taperPow: CGFloat,
+                                      samples: Int) -> (left: [CGPoint], right: [CGPoint]) {
+        let centerline = sampledPoints(from: start,
+                                       to: end,
+                                       seed: seed,
+                                       config: config,
+                                       anchor: anchor,
+                                       samples: samples)
+        guard centerline.count >= 2 else { return ([], []) }
+        var left: [CGPoint] = []
+        var right: [CGPoint] = []
+        left.reserveCapacity(centerline.count)
+        right.reserveCapacity(centerline.count)
+
+        for index in centerline.indices {
+            let t = CGFloat(index) / CGFloat(centerline.count - 1)
+            let eased = pow(t, taperPow)
+            let width = max(tipMin, widthStart + (widthEnd - widthStart) * eased)
+            let previous = centerline[max(centerline.startIndex, index - 1)]
+            let next = centerline[min(centerline.index(before: centerline.endIndex), index + 1)]
+            let tangent = CGVector(dx: next.x - previous.x, dy: next.y - previous.y)
+            let magnitude = max(0.001, hypot(tangent.dx, tangent.dy))
+            let unit = CGVector(dx: tangent.dx / magnitude, dy: tangent.dy / magnitude)
+            let normal = CGVector(dx: -unit.dy, dy: unit.dx)
+            let halfWidth = width / 2
+            let point = centerline[index]
+            left.append(CGPoint(x: point.x + normal.dx * halfWidth,
+                                y: point.y + normal.dy * halfWidth))
+            right.append(CGPoint(x: point.x - normal.dx * halfWidth,
+                                 y: point.y - normal.dy * halfWidth))
+        }
+        return (left, right)
+    }
+
+    internal static func ribbonPath(from start: CGPoint,
+                                    to end: CGPoint,
+                                    seed: UInt32,
+                                    config: GraphCurlConfig,
+                                    anchor: CGPoint?,
+                                    widthStart: CGFloat,
+                                    widthEnd: CGFloat,
+                                    tipMin: CGFloat,
+                                    taperPow: CGFloat,
+                                    samples: Int) -> CGMutablePath {
+        let ribbon = ribbonPoints(from: start,
+                                  to: end,
+                                  seed: seed,
+                                  config: config,
+                                  anchor: anchor,
+                                  widthStart: widthStart,
+                                  widthEnd: widthEnd,
+                                  tipMin: tipMin,
+                                  taperPow: taperPow,
+                                  samples: samples)
+        let path = CGMutablePath()
+        guard let first = ribbon.left.first else { return path }
+        path.move(to: first)
+        for point in ribbon.left.dropFirst() {
+            path.addLine(to: point)
+        }
+        for point in ribbon.right.reversed() {
+            path.addLine(to: point)
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    internal static func outwardArcSign(from start: CGPoint,
+                                        to end: CGPoint,
+                                        anchor: CGPoint,
+                                        fallbackSign: CGFloat = 1) -> CGFloat {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let distance = hypot(dx, dy)
+        guard distance > 0.1 else { return normalizedSign(fallbackSign) }
+        let unit = CGVector(dx: dx / distance, dy: dy / distance)
+        let normal = CGVector(dx: -unit.dy, dy: unit.dx)
+        let midpoint = CGPoint(x: (start.x + end.x) / 2,
+                               y: (start.y + end.y) / 2)
+        let anchorVector = CGVector(dx: midpoint.x - anchor.x,
+                                    dy: midpoint.y - anchor.y)
+        let dot = normal.dx * anchorVector.dx + normal.dy * anchorVector.dy
+        guard abs(dot) > 0.001 else { return normalizedSign(fallbackSign) }
+        return dot >= 0 ? 1 : -1
+    }
+
+    private static func cubicPoint(from start: CGPoint,
+                                   control1: CGPoint,
+                                   control2: CGPoint,
+                                   to end: CGPoint,
+                                   t: CGFloat) -> CGPoint {
+        let inverseT = 1 - t
+        let x = inverseT * inverseT * inverseT * start.x +
+            3 * inverseT * inverseT * t * control1.x +
+            3 * inverseT * t * t * control2.x +
+            t * t * t * end.x
+        let y = inverseT * inverseT * inverseT * start.y +
+            3 * inverseT * inverseT * t * control1.y +
+            3 * inverseT * t * t * control2.y +
+            t * t * t * end.y
+        return CGPoint(x: x, y: y)
+    }
+
+    private static func normalizedSign(_ value: CGFloat) -> CGFloat {
+        value >= 0 ? 1 : -1
     }
 
     private static func deterministicNoise(seed: UInt32, salt: UInt32) -> CGFloat {
