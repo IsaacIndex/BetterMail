@@ -11,7 +11,7 @@ internal struct GraphHoverCard: View {
                 metadataRow(primary: thread.mailboxPath, secondary: relativeTime(from: thread.lastUpdated))
                 Text(thread.subject)
                     .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
-                    .foregroundStyle(DesignTokens.Graph.ink)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
                     .lineLimit(2)
                 tagRow(thread.tags)
                 Text(String.localizedStringWithFormat(
@@ -21,20 +21,20 @@ internal struct GraphHoverCard: View {
                     thread.importance.localizedTitle
                 ))
                     .font(DesignTokens.font(size: 10.5, textScale: textScale))
-                    .foregroundStyle(DesignTokens.Graph.inkSecondary)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
                 Text(NSLocalizedString("graph.hover.thread.hint",
                                        comment: "Graph hover card thread interaction hint"))
                     .font(.system(size: 10.5 * textScale, design: .monospaced))
-                    .foregroundStyle(DesignTokens.Graph.inkTertiary)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
             case .message(let message, _):
                 metadataRow(primary: message.sender, secondary: relativeTime(from: message.date))
                 Text(message.subject)
                     .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
-                    .foregroundStyle(DesignTokens.Graph.inkSecondary)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
                     .lineLimit(2)
                 Text(messageHoverText(message))
                     .font(DesignTokens.font(size: 12.5, weight: .medium, textScale: textScale))
-                    .foregroundStyle(DesignTokens.Graph.ink)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
                     .lineLimit(4)
                 tagRow(message.tags)
             }
@@ -44,13 +44,13 @@ internal struct GraphHoverCard: View {
         .frame(width: 260, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(DesignTokens.Graph.panel)
+                .fill(DesignTokens.Graph.AppTheme.panel)
                 .shadow(color: Color.black.opacity(0.14), radius: 24, x: 0, y: 16)
                 .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DesignTokens.Graph.line, lineWidth: 1)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
         )
     }
 
@@ -74,7 +74,7 @@ internal struct GraphHoverCard: View {
                 .lineLimit(1)
         }
         .font(.system(size: 10.5 * textScale, design: .monospaced))
-        .foregroundStyle(DesignTokens.Graph.inkTertiary)
+        .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
     }
 
     @ViewBuilder
@@ -86,8 +86,8 @@ internal struct GraphHoverCard: View {
                         .font(DesignTokens.font(size: 10, weight: .medium, textScale: textScale))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(DesignTokens.Graph.accentSoft))
-                        .foregroundStyle(DesignTokens.Graph.accent)
+                        .background(Capsule().fill(DesignTokens.Graph.AppTheme.accentSoft))
+                        .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
                 }
             }
         }

@@ -10,7 +10,7 @@ internal struct GraphCompostRing: View {
             VStack(alignment: .trailing, spacing: 6) {
                 Text(NSLocalizedString("graph.compost.title", comment: "Graph compost panel title"))
                     .font(.system(size: 10.5 * textScale, design: .monospaced))
-                    .foregroundStyle(DesignTokens.Graph.inkTertiary)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
                 FlowLayout(items: entries) { entry in
                     Button {
                         onRestore(entry)
@@ -24,10 +24,10 @@ internal struct GraphCompostRing: View {
                         .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .foregroundStyle(entry.action == .snip ? DesignTokens.Graph.snip : DesignTokens.Graph.archive)
+                        .foregroundStyle(entry.action == .snip ? DesignTokens.Graph.AppTheme.snip : DesignTokens.Graph.AppTheme.archive)
                         .background(
                             Capsule()
-                                .fill(entry.action == .snip ? DesignTokens.Graph.snipSoft : DesignTokens.Graph.archiveSoft)
+                                .fill(entry.action == .snip ? DesignTokens.Graph.AppTheme.snipSoft : DesignTokens.Graph.AppTheme.archiveSoft)
                         )
                     }
                     .buttonStyle(.plain)
@@ -43,12 +43,12 @@ internal struct GraphCompostRing: View {
             .frame(maxWidth: 280, alignment: .trailing)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(DesignTokens.Graph.panel.opacity(0.96))
+                    .fill(DesignTokens.Graph.AppTheme.panel.opacity(0.96))
                     .shadow(color: Color.black.opacity(0.10), radius: 16, x: 0, y: 8)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(DesignTokens.Graph.line, lineWidth: 1)
+                    .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
             )
             .accessibilityIdentifier(AccessibilityID.graphCompostRing)
         }

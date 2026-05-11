@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BetterMail — Branch-style Edges Playground</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --panel: #16181d;
+    --panel-2: #1d2027;
+    --ink: #e8eaee;
+    --ink-2: #a8acb5;
+    --ink-3: #6f737c;
+    --accent: #c9b27a;
+    --line: #2a2d34;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  .app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+  .controls { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 16px; }
+  .pane { display: grid; grid-template-rows: 1fr auto; }
+  .canvas-wrap { position: relative; background: linear-gradient(180deg, #0d0e12, #101218); overflow: hidden; }
+  svg { width: 100%; height: 100%; display: block; }
+  .promptbar { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
+  .prompt { font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); white-space: pre-wrap; }
+  button { background: var(--accent); color: #1a1610; border: 0; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); }
+  .copied { background: #4a8a52 !important; color: white !important; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin: 18px 0 8px; }
+  h2:first-of-type { margin-top: 0; }
+  .row { display: grid; grid-template-columns: 1fr 50px; gap: 8px; align-items: center; margin: 8px 0; }
+  .row label { color: var(--ink-2); font-size: 12px; }
+  .row .val { font: 11px ui-monospace, monospace; color: var(--ink-3); text-align: right; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .toggle { display: flex; align-items: center; gap: 8px; margin: 8px 0; cursor: pointer; }
+  .toggle input { accent-color: var(--accent); }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .presets button { padding: 5px 10px; font-size: 11px; font-weight: 500; }
+  .legend { position: absolute; bottom: 10px; left: 12px; font: 11px ui-monospace, monospace; color: var(--ink-3); pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="controls">
+    <h2>Presets</h2>
+    <div class="presets">
+      <button class="secondary" data-preset="current">Current</button>
+      <button class="secondary" data-preset="subtle">Subtle Branch</button>
+      <button class="secondary" data-preset="organic">Organic Limb</button>
+      <button class="secondary" data-preset="bold">Bold Branch</button>
+    </div>
+
+    <h2>Taper (branch thickness)</h2>
+    <div class="row"><label>Trunk base width</label><input type="range" id="trunkBase" min="0.8" max="6" step="0.1"><span class="val" id="trunkBaseV"></span></div>
+    <div class="row"><label>Chain base width</label><input type="range" id="chainBase" min="0.6" max="5" step="0.1"><span class="val" id="chainBaseV"></span></div>
+    <div class="row"><label>Taper strength</label><input type="range" id="taper" min="0" max="1" step="0.01"><span class="val" id="taperV"></span></div>
+    <div class="row"><label>Tip min width</label><input type="range" id="tipMin" min="0.2" max="2" step="0.05"><span class="val" id="tipMinV"></span></div>
+    <div class="row"><label>Taper curve (1=linear, 2=ease)</label><input type="range" id="taperPow" min="0.5" max="3" step="0.05"><span class="val" id="taperPowV"></span></div>
+
+    <h2>Arc &amp; curl</h2>
+    <div class="row"><label>Arc amount (px)</label><input type="range" id="arc" min="0" max="40" step="0.5"><span class="val" id="arcV"></span></div>
+    <label class="toggle"><input type="checkbox" id="asymmetric"> Asymmetric arc (one-sided sweep)</label>
+    <div class="row"><label>Curl variability</label><input type="range" id="curlVar" min="0" max="1" step="0.02"><span class="val" id="curlVarV"></span></div>
+    <div class="row"><label>Spline tension</label><input type="range" id="tension" min="0" max="1" step="0.02"><span class="val" id="tensionV"></span></div>
+
+    <h2>Joint &amp; tip</h2>
+    <label class="toggle"><input type="checkbox" id="jointCap"> Joint cap at parent (small knob)</label>
+    <div class="row"><label>Joint cap radius</label><input type="range" id="jointR" min="0" max="4" step="0.1"><span class="val" id="jointRV"></span></div>
+    <label class="toggle"><input type="checkbox" id="roundCap"> Round line caps</label>
+
+    <h2>Color &amp; opacity</h2>
+    <div class="row"><label>Trunk opacity</label><input type="range" id="trunkOp" min="0.2" max="1" step="0.02"><span class="val" id="trunkOpV"></span></div>
+    <div class="row"><label>Chain opacity</label><input type="range" id="chainOp" min="0.2" max="1" step="0.02"><span class="val" id="chainOpV"></span></div>
+    <label class="toggle"><input type="checkbox" id="darkBg"> Dark background</label>
+  </aside>
+
+  <div class="pane">
+    <div class="canvas-wrap">
+      <svg id="svg" viewBox="0 0 900 620" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend">Mock graph: root → 3 threads → messages. Edge geometry mirrors GraphSpline.</div>
+    </div>
+    <div class="promptbar">
+      <div class="prompt" id="prompt"></div>
+      <button id="copy">Copy prompt</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const DEFAULTS = {
+  trunkBase: 1.4, chainBase: 1.0, taper: 0.0, tipMin: 0.6, taperPow: 1.0,
+  arc: 3, asymmetric: false, curlVar: 0.2, tension: 0.35,
+  jointCap: false, jointR: 1.6, roundCap: false,
+  trunkOp: 0.72, chainOp: 0.62, darkBg: true,
+};
+
+const PRESETS = {
+  current: { ...DEFAULTS },
+  subtle:  { ...DEFAULTS, trunkBase: 2.0, chainBase: 1.2, taper: 0.45, tipMin: 0.55, taperPow: 1.4, arc: 5, asymmetric: true, jointCap: true, jointR: 1.4, roundCap: true, trunkOp: 0.78, chainOp: 0.66 },
+  organic: { ...DEFAULTS, trunkBase: 2.6, chainBase: 1.6, taper: 0.6, tipMin: 0.5, taperPow: 1.8, arc: 9, asymmetric: true, curlVar: 0.35, tension: 0.4, jointCap: true, jointR: 1.8, roundCap: true, trunkOp: 0.82, chainOp: 0.68 },
+  bold:    { ...DEFAULTS, trunkBase: 3.6, chainBase: 2.0, taper: 0.8, tipMin: 0.45, taperPow: 2.2, arc: 14, asymmetric: true, curlVar: 0.4, tension: 0.45, jointCap: true, jointR: 2.4, roundCap: true, trunkOp: 0.9, chainOp: 0.72 },
+};
+
+const state = { ...DEFAULTS };
+
+// Mock graph data — root in the middle, threads fanning radially in all directions
+const CENTER_X = 450, CENTER_Y = 310;
+const root = { id: 'root', x: CENTER_X, y: CENTER_Y, r: 16, kind: 'center' };
+const THREAD_R = 170;
+const N_THREADS = 6;
+const threads = Array.from({ length: N_THREADS }, (_, i) => {
+  const a = (i / N_THREADS) * Math.PI * 2 - Math.PI / 2;
+  const jitter = (hash('t' + i) % 1000) / 1000 - 0.5;
+  const r = THREAD_R + jitter * 28;
+  return { id: 't' + i, x: CENTER_X + Math.cos(a) * r, y: CENTER_Y + Math.sin(a) * r, r: 10 + (i % 2), angle: a };
+});
+const messages = [];
+threads.forEach((t, ti) => {
+  const branches = 2 + (ti % 2);
+  for (let i = 0; i < branches; i++) {
+    const spread = ((i - (branches - 1) / 2) / branches) * 0.7;
+    const a = t.angle + spread;
+    const dist = 110 + (hash('m' + ti + '_' + i) % 40);
+    const mx = t.x + Math.cos(a) * dist;
+    const my = t.y + Math.sin(a) * dist;
+    const m = { id: 'm' + ti + '_' + i, parent: t.id, x: mx, y: my, r: 6, angle: a };
+    messages.push(m);
+    // some second-level
+    if (i === 0 && ti % 2 === 0) {
+      const a2 = a + 0.25;
+      messages.push({
+        id: 'm' + ti + '_' + i + '_a', parent: m.id,
+        x: mx + Math.cos(a2) * 95, y: my + Math.sin(a2) * 95, r: 5, angle: a2,
+      });
+    }
+  }
+});
+const nodeById = {};
+[root, ...threads, ...messages].forEach(n => nodeById[n.id] = n);
+
+const edges = [
+  ...threads.map(t => ({ src: 'root', dst: t.id, kind: 'trunk', seed: hash(t.id) })),
+  ...messages.map(m => ({ src: m.parent, dst: m.id, kind: 'chain', seed: hash(m.id) })),
+];
+
+function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = (h * 16777619) >>> 0; } return h >>> 0; }
+function noise(seed, salt) {
+  let v = (seed + salt * 0x9E3779B9) >>> 0;
+  v ^= v >>> 16; v = Math.imul(v, 0x7feb352d) >>> 0;
+  v ^= v >>> 15; v = Math.imul(v, 0x846ca68b) >>> 0;
+  v ^= v >>> 16;
+  return (v & 0xffff) / 0xffff;
+}
+
+// Build a list of points (start, 3 middle, end) like GraphSpline.points
+function splinePoints(start, end, seed, arc, asymmetric, variability, anchor) {
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 0.1 || arc <= 0) return [start, end];
+  const ux = dx / dist, uy = dy / dist;
+  const nx = -uy, ny = ux;
+  const falloff = Math.max(0.12, 1 - 0.45 * 0.7);
+  // For asymmetric arc, bias the curve to bend *away* from the anchor (the center node),
+  // so branches sweep outward radially in every direction instead of all curving the same way.
+  let outwardSign = 1;
+  if (asymmetric && anchor) {
+    const mx = (start.x + end.x) / 2, my = (start.y + end.y) / 2;
+    const ax = mx - anchor.x, ay = my - anchor.y;
+    // dot of normal with vector from anchor to midpoint
+    outwardSign = (nx * ax + ny * ay) >= 0 ? 1 : -1;
+  }
+  const ts = [0.25, 0.5, 0.75];
+  return [start, ...ts.map((t, i) => {
+    const n = noise(seed, i + 1);
+    const sign = asymmetric ? outwardSign : (n >= 0.5 ? 1 : -1);
+    const vary = 1 + (n * 2 - 1) * variability;
+    const taper = Math.pow(Math.max(0, Math.sin(Math.PI * t)), falloff);
+    const offset = arc * vary * taper * sign;
+    return { x: start.x + dx * t + nx * offset, y: start.y + dy * t + ny * offset };
+  }), end];
+}
+
+// Sample a Catmull–Rom spline from spline points into N segments for variable-width stroking
+function sampleSpline(pts, tension, samples) {
+  if (pts.length < 2) return [];
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const cp1 = { x: p1.x + (p2.x - p0.x) * tension / 6, y: p1.y + (p2.y - p0.y) * tension / 6 };
+    const cp2 = { x: p2.x - (p3.x - p1.x) * tension / 6, y: p2.y - (p3.y - p1.y) * tension / 6 };
+    const segSamples = Math.max(2, Math.round(samples / (pts.length - 1)));
+    for (let s = (i === 0 ? 0 : 1); s <= segSamples; s++) {
+      const t = s / segSamples;
+      const mt = 1 - t;
+      const x = mt*mt*mt*p1.x + 3*mt*mt*t*cp1.x + 3*mt*t*t*cp2.x + t*t*t*p2.x;
+      const y = mt*mt*mt*p1.y + 3*mt*mt*t*cp1.y + 3*mt*t*t*cp2.y + t*t*t*p2.y;
+      out.push({ x, y });
+    }
+  }
+  return out;
+}
+
+// Build a filled "ribbon" polygon between two widths along sampled centerline
+function ribbonPath(samples, wStart, wEnd, tipMin, taperPow) {
+  if (samples.length < 2) return '';
+  const N = samples.length;
+  const left = [], right = [];
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const eased = Math.pow(t, taperPow);
+    const w = Math.max(tipMin, wStart + (wEnd - wStart) * eased);
+    // tangent
+    const a = samples[Math.max(0, i - 1)], b = samples[Math.min(N - 1, i + 1)];
+    let tx = b.x - a.x, ty = b.y - a.y;
+    const m = Math.hypot(tx, ty) || 1; tx /= m; ty /= m;
+    const nx = -ty, ny = tx;
+    const half = w / 2;
+    left.push({ x: samples[i].x + nx * half, y: samples[i].y + ny * half });
+    right.push({ x: samples[i].x - nx * half, y: samples[i].y - ny * half });
+  }
+  let d = `M${left[0].x.toFixed(2)},${left[0].y.toFixed(2)}`;
+  for (let i = 1; i < left.length; i++) d += `L${left[i].x.toFixed(2)},${left[i].y.toFixed(2)}`;
+  for (let i = right.length - 1; i >= 0; i--) d += `L${right[i].x.toFixed(2)},${right[i].y.toFixed(2)}`;
+  d += 'Z';
+  return d;
+}
+
+function splinePathD(pts, tension) {
+  if (pts.length < 2) return '';
+  let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+  if (pts.length === 2) { d += `L${pts[1].x.toFixed(2)},${pts[1].y.toFixed(2)}`; return d; }
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const cp1 = { x: p1.x + (p2.x - p0.x) * tension / 6, y: p1.y + (p2.y - p0.y) * tension / 6 };
+    const cp2 = { x: p2.x - (p3.x - p1.x) * tension / 6, y: p2.y - (p3.y - p1.y) * tension / 6 };
+    d += `C${cp1.x.toFixed(2)},${cp1.y.toFixed(2)} ${cp2.x.toFixed(2)},${cp2.y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+  }
+  return d;
+}
+
+const svg = document.getElementById('svg');
+
+function render() {
+  document.documentElement.style.setProperty('--bg', state.darkBg ? '#0e0f12' : '#f5f4ee');
+  const inkTertiary = state.darkBg ? 'rgba(232,234,238,' : 'rgba(40,42,48,';
+  const inkQuat = state.darkBg ? 'rgba(168,172,181,' : 'rgba(80,84,94,';
+  const panel = state.darkBg ? '#1d2027' : '#ffffff';
+  const stroke = state.darkBg ? '#a8acb5' : '#4a4d55';
+
+  svg.innerHTML = '';
+  // background
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('width', '100%'); bg.setAttribute('height', '100%');
+  bg.setAttribute('fill', state.darkBg ? '#0e0f12' : '#f5f4ee');
+  svg.appendChild(bg);
+
+  // edges
+  for (const e of edges) {
+    const a = nodeById[e.src], b = nodeById[e.dst];
+    const base = e.kind === 'trunk' ? state.trunkBase : state.chainBase;
+    const op = e.kind === 'trunk' ? state.trunkOp : state.chainOp;
+    const color = e.kind === 'trunk' ? inkTertiary : inkQuat;
+    const pts = splinePoints(a, b, e.seed, state.arc, state.asymmetric, state.curlVar, root);
+
+    if (state.taper > 0.02) {
+      // variable width: fill ribbon
+      const samples = sampleSpline(pts, state.tension, 36);
+      const wStart = base;
+      const wEnd = Math.max(state.tipMin, base * (1 - state.taper));
+      const d = ribbonPath(samples, wStart, wEnd, state.tipMin, state.taperPow);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', color + op + ')');
+      path.setAttribute('stroke', 'none');
+      svg.appendChild(path);
+    } else {
+      const d = splinePathD(pts, state.tension);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', color + op + ')');
+      path.setAttribute('stroke-width', base);
+      if (state.roundCap) { path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round'); }
+      svg.appendChild(path);
+    }
+
+    if (state.jointCap && state.jointR > 0.1) {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', a.x); c.setAttribute('cy', a.y);
+      c.setAttribute('r', state.jointR);
+      c.setAttribute('fill', color + Math.min(1, op + 0.15) + ')');
+      svg.appendChild(c);
+    }
+  }
+
+  // nodes
+  for (const n of [root, ...threads, ...messages]) {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('cx', n.x); c.setAttribute('cy', n.y); c.setAttribute('r', n.r);
+    c.setAttribute('fill', panel); c.setAttribute('stroke', stroke); c.setAttribute('stroke-width', 1.2);
+    svg.appendChild(c);
+  }
+}
+
+function updatePrompt() {
+  const parts = [];
+  if (state.taper > 0.02) {
+    const strength = state.taper > 0.7 ? 'strong' : state.taper > 0.4 ? 'moderate' : 'gentle';
+    parts.push(`${strength} taper (${(state.taper*100|0)}% reduction, tip floor ${state.tipMin}pt, taper curve exponent ${state.taperPow.toFixed(2)})`);
+  }
+  if (state.trunkBase !== DEFAULTS.trunkBase || state.chainBase !== DEFAULTS.chainBase) {
+    parts.push(`base widths: trunk ${state.trunkBase.toFixed(1)}pt, chain ${state.chainBase.toFixed(1)}pt`);
+  }
+  if (state.arc !== DEFAULTS.arc) parts.push(`arc amount ${state.arc.toFixed(1)}px`);
+  if (state.asymmetric) parts.push('one-sided (asymmetric) arc bias so curves sweep like a limb instead of S-waving');
+  if (state.curlVar !== DEFAULTS.curlVar) parts.push(`curl variability ${state.curlVar.toFixed(2)}`);
+  if (state.tension !== DEFAULTS.tension) parts.push(`spline tension ${state.tension.toFixed(2)}`);
+  if (state.jointCap) parts.push(`small joint cap (filled circle, r=${state.jointR.toFixed(1)}pt) at the parent end of every edge`);
+  if (state.roundCap) parts.push('round line caps / joins');
+  if (state.trunkOp !== DEFAULTS.trunkOp || state.chainOp !== DEFAULTS.chainOp) {
+    parts.push(`opacity: trunk ${state.trunkOp.toFixed(2)}, chain ${state.chainOp.toFixed(2)}`);
+  }
+
+  const head = `In Sources/UI/Graph, make graph edges look more branch-like while staying on theme. Keep colors as inkTertiary (trunk) and inkQuaternary (chain).`;
+  const body = parts.length
+    ? `Apply: ${parts.join('; ')}.`
+    : `Keep edges as they are today.`;
+  const tail = state.taper > 0.02
+    ? ` Variable-width branches should be filled (not stroked) along the Catmull–Rom centerline so width can taper from parent to child; sample the spline densely enough to keep the silhouette smooth.`
+    : '';
+  document.getElementById('prompt').textContent = `${head}\n\n${body}${tail}`;
+}
+
+function bind(id, key, parse = parseFloat, fmt = v => (+v).toFixed(2)) {
+  const el = document.getElementById(id);
+  const val = document.getElementById(id + 'V');
+  el.addEventListener('input', () => { state[key] = parse(el.value); if (val) val.textContent = fmt(el.value); updateAll(); });
+}
+function bindToggle(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('change', () => { state[key] = el.checked; updateAll(); });
+}
+
+function syncControls() {
+  for (const [k, v] of Object.entries(state)) {
+    const el = document.getElementById(k);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!v;
+    else { el.value = v; const vEl = document.getElementById(k + 'V'); if (vEl) vEl.textContent = (+v).toFixed(2); }
+  }
+}
+
+function updateAll() { render(); updatePrompt(); }
+
+['trunkBase','chainBase','taper','tipMin','taperPow','arc','curlVar','tension','jointR','trunkOp','chainOp'].forEach(k => bind(k, k));
+['asymmetric','jointCap','roundCap','darkBg'].forEach(k => bindToggle(k, k));
+
+document.querySelectorAll('[data-preset]').forEach(b => {
+  b.addEventListener('click', () => {
+    Object.assign(state, PRESETS[b.dataset.preset]);
+    syncControls();
+    updateAll();
+  });
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(document.getElementById('prompt').textContent);
+  const btn = document.getElementById('copy');
+  const orig = btn.textContent;
+  btn.textContent = 'Copied!'; btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1100);
+});
+
+syncControls();
+updateAll();
+</script>
+</body>
+</html>

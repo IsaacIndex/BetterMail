@@ -18,18 +18,59 @@ internal struct GraphPhysicsNode: Identifiable, Hashable {
     internal var isPinned: Bool
 }
 
-internal struct GraphForceConstants {
-    internal static let centerPull: CGFloat = 0.012
-    internal static let edgeSpring: CGFloat = 0.045
-    internal static let repulsion: CGFloat = 4_600
-    internal static let damping: CGFloat = 0.82
-    internal static let sway: CGFloat = 0.0008
-    internal static let repulsionCutoffSquared: CGFloat = 160_000
-    internal static let branchStraightening: CGFloat = 0.009
-    internal static let branchOutward: CGFloat = 0.018
-    internal static let branchStartSpacing: CGFloat = 92
-    internal static let branchStepSpacing: CGFloat = 76
+internal struct GraphCurlConfig: Equatable {
+    internal let curl: CGFloat
+    internal let curlVariability: CGFloat
+    internal let splineTension: CGFloat
+    internal let curlFalloff: CGFloat
 }
+
+internal struct GraphForceConfig: Equatable {
+    internal let center: CGFloat
+    internal let repel: CGFloat
+    internal let repelCutoff: CGFloat
+    internal let linkSpring: CGFloat
+    internal let trunkLength: CGFloat
+    internal let chainLength: CGFloat
+    internal let damping: CGFloat
+    internal let breezeAmplitude: CGFloat
+    internal let curl: CGFloat
+    internal let curlVariability: CGFloat
+    internal let splineTension: CGFloat
+    internal let curlFalloff: CGFloat
+    internal let labelRepelOn: Bool
+    internal let labelRepelStrength: CGFloat
+
+    internal var repelCutoffSquared: CGFloat {
+        repelCutoff * repelCutoff
+    }
+
+    internal var curlConfig: GraphCurlConfig {
+        GraphCurlConfig(curl: curl,
+                        curlVariability: curlVariability,
+                        splineTension: splineTension,
+                        curlFalloff: curlFalloff)
+    }
+}
+
+internal enum GraphForceConstants {
+    internal static let defaults = GraphForceConfig(center: 0.006,
+                                                    repel: 4_200,
+                                                    repelCutoff: 360,
+                                                    linkSpring: 0.045,
+                                                    trunkLength: 210,
+                                                    chainLength: 104,
+                                                    damping: 0.86,
+                                                    breezeAmplitude: 0.7,
+                                                    curl: 3,
+                                                    curlVariability: 0.2,
+                                                    splineTension: 0.35,
+                                                    curlFalloff: 0.45,
+                                                    labelRepelOn: true,
+                                                    labelRepelStrength: 0.12)
+}
+
+internal typealias GraphLabelOccluderProvider = (GraphPhysicsNode) -> CGFloat
 
 internal struct GraphForceSimulator {
     internal private(set) var nodesByID: [String: GraphPhysicsNode] = [:]
@@ -101,7 +142,9 @@ internal struct GraphForceSimulator {
 
     internal mutating func step(deltaTime rawDeltaTime: TimeInterval,
                                 elapsedTime: TimeInterval,
-                                reduceMotion: Bool = false) {
+                                reduceMotion: Bool = false,
+                                config: GraphForceConfig = GraphForceConstants.defaults,
+                                labelOccluderRadius: GraphLabelOccluderProvider? = nil) {
         guard size.width > 0, size.height > 0 else { return }
         let dt = CGFloat(min(max(rawDeltaTime, 0), 0.032) / 0.016)
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -112,10 +155,13 @@ internal struct GraphForceSimulator {
         }
 
         var forces = Dictionary(uniqueKeysWithValues: nodesByID.keys.map { ($0, CGVector.zero) })
-        applyEdgeForces(into: &forces)
-        applyRepulsionForces(into: &forces)
-        applyBranchShapeForces(into: &forces, center: center)
-        applyCenterPullAndBreeze(into: &forces, center: center, elapsedTime: elapsedTime, reduceMotion: reduceMotion)
+        applyEdgeForces(into: &forces, config: config)
+        applyRepulsionForces(into: &forces, config: config, labelOccluderRadius: labelOccluderRadius)
+        applyCenterPullAndBreeze(into: &forces,
+                                 center: center,
+                                 elapsedTime: elapsedTime,
+                                 reduceMotion: reduceMotion,
+                                 config: config)
 
         for id in nodesByID.keys {
             guard var node = nodesByID[id] else { continue }
@@ -126,8 +172,8 @@ internal struct GraphForceSimulator {
                 continue
             }
             let force = forces[id] ?? .zero
-            node.velocity.dx = (node.velocity.dx + force.dx * dt) * GraphForceConstants.damping
-            node.velocity.dy = (node.velocity.dy + force.dy * dt) * GraphForceConstants.damping
+            node.velocity.dx = (node.velocity.dx + force.dx * dt) * config.damping
+            node.velocity.dy = (node.velocity.dy + force.dy * dt) * config.damping
             if abs(node.velocity.dx) < 0.05 { node.velocity.dx = 0 }
             if abs(node.velocity.dy) < 0.05 { node.velocity.dy = 0 }
             node.position.x += node.velocity.dx * dt
@@ -159,15 +205,17 @@ internal struct GraphForceSimulator {
         Dictionary(uniqueKeysWithValues: nodesByID.map { ($0.key, $0.value.position) })
     }
 
-    private mutating func applyEdgeForces(into forces: inout [String: CGVector]) {
+    private mutating func applyEdgeForces(into forces: inout [String: CGVector],
+                                          config: GraphForceConfig) {
         for edge in edges {
             guard let source = nodesByID[edge.sourceID],
                   let target = nodesByID[edge.targetID] else { continue }
             let dx = target.position.x - source.position.x
             let dy = target.position.y - source.position.y
             let distance = max(1, hypot(dx, dy))
-            let springK = GraphForceConstants.edgeSpring * (edge.kind == .trunk ? 1.0 : 1.2)
-            let force = (distance - edge.targetLength) * springK
+            let springK = config.linkSpring * (edge.kind == .trunk ? 1.0 : 1.2)
+            let targetLength = edge.kind == .trunk ? config.trunkLength : config.chainLength
+            let force = (distance - targetLength) * springK
             let fx = dx / distance * force
             let fy = dy / distance * force
             if !source.isPinned {
@@ -181,7 +229,9 @@ internal struct GraphForceSimulator {
         }
     }
 
-    private func applyRepulsionForces(into forces: inout [String: CGVector]) {
+    private func applyRepulsionForces(into forces: inout [String: CGVector],
+                                      config: GraphForceConfig,
+                                      labelOccluderRadius: GraphLabelOccluderProvider?) {
         let nodeValues = nodesByID.values.sorted { $0.id < $1.id }
         guard nodeValues.count > 1 else { return }
         for leftIndex in 0..<(nodeValues.count - 1) {
@@ -191,11 +241,16 @@ internal struct GraphForceSimulator {
                 let dx = right.position.x - left.position.x
                 let dy = right.position.y - left.position.y
                 let distanceSquared = dx * dx + dy * dy
-                guard distanceSquared < GraphForceConstants.repulsionCutoffSquared else { continue }
+                guard distanceSquared < config.repelCutoffSquared else { continue }
                 let distance = max(1, sqrt(distanceSquared))
+                let leftLabelRadius = config.labelRepelOn ? labelOccluderRadius?(left) ?? 0 : 0
+                let rightLabelRadius = config.labelRepelOn ? labelOccluderRadius?(right) ?? 0 : 0
+                let labelOverlap = max(0,
+                                       left.radius + leftLabelRadius + right.radius + rightLabelRadius - distance) *
+                    config.labelRepelStrength
                 let preferredDistance = left.radius + right.radius + (left.kind == .message || right.kind == .message ? 72 : 24)
-                let overlapForce = max(0, preferredDistance - distance) * 0.035
-                let force = GraphForceConstants.repulsion / (distanceSquared + 160) + overlapForce
+                let overlapForce = max(0, preferredDistance - distance) * 0.035 + labelOverlap
+                let force = config.repel / (distanceSquared + 160) + overlapForce
                 let fx = dx / distance * force
                 let fy = dy / distance * force
                 if !left.isPinned {
@@ -210,64 +265,17 @@ internal struct GraphForceSimulator {
         }
     }
 
-    private func applyBranchShapeForces(into forces: inout [String: CGVector], center: CGPoint) {
-        let depthsByMessageID = messageDepthsByID()
-        for node in nodesByID.values where node.kind == .message && !node.isPinned {
-            guard let threadID = node.threadID,
-                  let thread = nodesByID[threadID] else { continue }
-            let axisX = thread.position.x - center.x
-            let axisY = thread.position.y - center.y
-            let axisLength = max(1, hypot(axisX, axisY))
-            let unitX = axisX / axisLength
-            let unitY = axisY / axisLength
-            let relativeX = node.position.x - thread.position.x
-            let relativeY = node.position.y - thread.position.y
-            let projection = relativeX * unitX + relativeY * unitY
-            let projectedX = unitX * projection
-            let projectedY = unitY * projection
-            let perpendicularX = relativeX - projectedX
-            let perpendicularY = relativeY - projectedY
-            let depth = CGFloat(depthsByMessageID[node.id] ?? 0)
-            let desiredProjection = GraphForceConstants.branchStartSpacing +
-                depth * GraphForceConstants.branchStepSpacing
-            let outwardDeficit = max(0, desiredProjection - projection)
-            forces[node.id, default: .zero].dx -= perpendicularX * GraphForceConstants.branchStraightening
-            forces[node.id, default: .zero].dy -= perpendicularY * GraphForceConstants.branchStraightening
-            forces[node.id, default: .zero].dx += unitX * outwardDeficit * GraphForceConstants.branchOutward
-            forces[node.id, default: .zero].dy += unitY * outwardDeficit * GraphForceConstants.branchOutward
-        }
-    }
-
-    private func messageDepthsByID() -> [String: Int] {
-        var targetBySourceID: [String: String] = [:]
-        for edge in edges where edge.kind == .chain {
-            targetBySourceID[edge.sourceID] = edge.targetID
-        }
-        var depths: [String: Int] = [:]
-        for thread in nodesByID.values where thread.kind == .thread {
-            var depth = 0
-            var nextID = targetBySourceID[thread.id]
-            var visited: Set<String> = []
-            while let currentID = nextID,
-                  visited.insert(currentID).inserted {
-                depths[currentID] = depth
-                nextID = targetBySourceID[currentID]
-                depth += 1
-            }
-        }
-        return depths
-    }
-
     private func applyCenterPullAndBreeze(into forces: inout [String: CGVector],
                                           center: CGPoint,
                                           elapsedTime: TimeInterval,
-                                          reduceMotion: Bool) {
-        let breezeX = reduceMotion ? 0 : CGFloat(sin(elapsedTime * 0.0006) * 0.06)
-        let breezeY = reduceMotion ? 0 : CGFloat(cos(elapsedTime * 0.0009) * 0.04)
+                                          reduceMotion: Bool,
+                                          config: GraphForceConfig) {
+        let breezeX = reduceMotion ? 0 : CGFloat(sin(elapsedTime * 0.0006)) * config.breezeAmplitude * 0.085
+        let breezeY = reduceMotion ? 0 : CGFloat(cos(elapsedTime * 0.0009)) * config.breezeAmplitude * 0.057
         for node in nodesByID.values where !node.isPinned {
             let dx = center.x - node.position.x
             let dy = center.y - node.position.y
-            let centerWeight: CGFloat = node.kind == .thread ? 0.0006 : 0.0002
+            let centerWeight = config.center * (node.kind == .thread ? 0.1 : 0.034)
             let breezeWeight: CGFloat = node.kind == .message ? 1.2 : 0.4
             forces[node.id, default: .zero].dx += dx * centerWeight + breezeX * breezeWeight
             forces[node.id, default: .zero].dy += dy * centerWeight + breezeY * breezeWeight

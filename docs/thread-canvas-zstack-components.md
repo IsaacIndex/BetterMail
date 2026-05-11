@@ -9,6 +9,10 @@ Timeline layout work is cached in the view model and visible-range updates are t
 The live scroll position used for paging/minimap updates comes from the native `NSScrollView` bounds observer (`ScrollViewResolver`) rather than parent-level SwiftUI `@State`.
 During scrolling, the canvas renders only visible days, columns, and nodes (plus a small buffer) to reduce view work. Columns belonging to pinned folders are always rendered. In `All Folders`, folder-member nodes are kept visible regardless of day-window position; in other scopes, pinned out-of-range folders still keep header chrome visible.
 
+## Graph Sibling View
+
+`GraphCanvasView` is mounted as a sibling rendering mode rather than as another layer inside this timeline ZStack. Its SpriteKit scene now uses the Whisper four-force model, deterministic Catmull-Rom edge splines, AppTheme light/dark tokens, and separate per-message summary callouts that auto-place around message nodes. The graph viewport owns its native pan/zoom semantics independently: trackpad scroll pans without modifiers, command/control-scroll zooms around the cursor, pinch zooms through `GraphSKView`, and double-clicking empty canvas recenters the camera.
+
 ZStack draw order (back to front):
 1) `dayBands`
 2) `folderColumnBackgroundLayer`

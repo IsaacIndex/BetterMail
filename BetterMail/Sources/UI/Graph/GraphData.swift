@@ -153,10 +153,6 @@ internal struct GraphEdge: Identifiable, Codable, Hashable {
     internal var id: String {
         "\(sourceID)->\(targetID)"
     }
-
-    internal var targetLength: CGFloat {
-        kind == .trunk ? 210 : 104
-    }
 }
 
 internal struct GraphData: Codable, Hashable {

@@ -135,6 +135,90 @@ internal enum DesignTokens {
             internal static let highThreadStrokeNS = NSColor(hex: 0x4A5640)
         }
 
+        internal enum AppTheme {
+            internal struct Palette: Equatable {
+                internal let isDark: Bool
+
+                internal var backgroundNS: NSColor { isDark ? NSColor(hex: 0x15161A) : NSColor(hex: 0xFAFAF8) }
+                internal var panelNS: NSColor { isDark ? NSColor(hex: 0x202229) : NSColor(hex: 0xFFFFFF) }
+                internal var panelSecondaryNS: NSColor { isDark ? NSColor(hex: 0x2A2D35) : NSColor(hex: 0xF5F5F2) }
+                internal var lineNS: NSColor { isDark ? NSColor(hex: 0x3A3D45) : NSColor(hex: 0xECECE7) }
+                internal var inkNS: NSColor { isDark ? NSColor(hex: 0xF4F5F7) : NSColor(hex: 0x16181D) }
+                internal var inkSecondaryNS: NSColor { isDark ? NSColor(hex: 0xC4C8D0) : NSColor(hex: 0x5A5E68) }
+                internal var inkTertiaryNS: NSColor { isDark ? NSColor(hex: 0x969CA8) : NSColor(hex: 0x8C8F98) }
+                internal var inkQuaternaryNS: NSColor { isDark ? NSColor(hex: 0x707784) : NSColor(hex: 0xB8BAC0) }
+                internal var accentNS: NSColor { isDark ? NSColor(hex: 0x8B86FF) : NSColor(hex: 0x4F46E5) }
+                internal var accentSoftNS: NSColor { isDark ? NSColor(hex: 0x2D2B54) : NSColor(hex: 0xEEF0FF) }
+                internal var snipNS: NSColor { isDark ? NSColor(hex: 0xE09172) : NSColor(hex: 0xB45A3C) }
+                internal var snipSoftNS: NSColor { isDark ? NSColor(hex: 0x3A241F) : NSColor(hex: 0xFBEFE8) }
+                internal var archiveNS: NSColor { isDark ? NSColor(hex: 0xA8AFBA) : NSColor(hex: 0x6B7280) }
+                internal var archiveSoftNS: NSColor { isDark ? NSColor(hex: 0x2D3038) : NSColor(hex: 0xF1F2F4) }
+                internal var liveNS: NSColor { isDark ? NSColor(hex: 0x43D4D2) : NSColor(hex: 0x0EA5A4) }
+                internal var waterNS: NSColor { isDark ? NSColor(hex: 0x4BE0CF) : NSColor(hex: 0x14B8A6) }
+            }
+
+            internal static func palette(for colorScheme: ColorScheme) -> Palette {
+                Palette(isDark: colorScheme == .dark)
+            }
+
+            internal static var background: Color { Color(nsColor: backgroundNS) }
+            internal static var panel: Color { Color(nsColor: panelNS) }
+            internal static var panelSecondary: Color { Color(nsColor: panelSecondaryNS) }
+            internal static var line: Color { Color(nsColor: lineNS) }
+            internal static var ink: Color { Color(nsColor: inkNS) }
+            internal static var inkSecondary: Color { Color(nsColor: inkSecondaryNS) }
+            internal static var inkTertiary: Color { Color(nsColor: inkTertiaryNS) }
+            internal static var inkQuaternary: Color { Color(nsColor: inkQuaternaryNS) }
+            internal static var accent: Color { Color(nsColor: accentNS) }
+            internal static var accentSoft: Color { Color(nsColor: accentSoftNS) }
+            internal static var snip: Color { Color(nsColor: snipNS) }
+            internal static var snipSoft: Color { Color(nsColor: snipSoftNS) }
+            internal static var archive: Color { Color(nsColor: archiveNS) }
+            internal static var archiveSoft: Color { Color(nsColor: archiveSoftNS) }
+            internal static var live: Color { Color(nsColor: liveNS) }
+            internal static var water: Color { Color(nsColor: waterNS) }
+
+            internal static let backgroundNS = dynamicColor(light: NSColor(hex: 0xFAFAF8),
+                                                            dark: NSColor(hex: 0x15161A))
+            internal static let panelNS = dynamicColor(light: NSColor(hex: 0xFFFFFF),
+                                                       dark: NSColor(hex: 0x202229))
+            internal static let panelSecondaryNS = dynamicColor(light: NSColor(hex: 0xF5F5F2),
+                                                                dark: NSColor(hex: 0x2A2D35))
+            internal static let lineNS = dynamicColor(light: NSColor(hex: 0xECECE7),
+                                                      dark: NSColor(hex: 0x3A3D45))
+            internal static let inkNS = dynamicColor(light: NSColor(hex: 0x16181D),
+                                                     dark: NSColor(hex: 0xF4F5F7))
+            internal static let inkSecondaryNS = dynamicColor(light: NSColor(hex: 0x5A5E68),
+                                                              dark: NSColor(hex: 0xC4C8D0))
+            internal static let inkTertiaryNS = dynamicColor(light: NSColor(hex: 0x8C8F98),
+                                                             dark: NSColor(hex: 0x969CA8))
+            internal static let inkQuaternaryNS = dynamicColor(light: NSColor(hex: 0xB8BAC0),
+                                                               dark: NSColor(hex: 0x707784))
+            internal static let accentNS = dynamicColor(light: NSColor(hex: 0x4F46E5),
+                                                        dark: NSColor(hex: 0x8B86FF))
+            internal static let accentSoftNS = dynamicColor(light: NSColor(hex: 0xEEF0FF),
+                                                            dark: NSColor(hex: 0x2D2B54))
+            internal static let snipNS = dynamicColor(light: NSColor(hex: 0xB45A3C),
+                                                      dark: NSColor(hex: 0xE09172))
+            internal static let snipSoftNS = dynamicColor(light: NSColor(hex: 0xFBEFE8),
+                                                          dark: NSColor(hex: 0x3A241F))
+            internal static let archiveNS = dynamicColor(light: NSColor(hex: 0x6B7280),
+                                                         dark: NSColor(hex: 0xA8AFBA))
+            internal static let archiveSoftNS = dynamicColor(light: NSColor(hex: 0xF1F2F4),
+                                                             dark: NSColor(hex: 0x2D3038))
+            internal static let liveNS = dynamicColor(light: NSColor(hex: 0x0EA5A4),
+                                                      dark: NSColor(hex: 0x43D4D2))
+            internal static let waterNS = dynamicColor(light: NSColor(hex: 0x14B8A6),
+                                                       dark: NSColor(hex: 0x4BE0CF))
+
+            private static func dynamicColor(light: NSColor, dark: NSColor) -> NSColor {
+                NSColor(name: nil) { appearance in
+                    let match = appearance.bestMatch(from: [.darkAqua, .aqua])
+                    return match == .darkAqua ? dark : light
+                }
+            }
+        }
+
         internal static let backgroundNS = NSColor(hex: 0xFAFAF8)
         internal static let panelNS = NSColor(hex: 0xFFFFFF)
         internal static let lineNS = NSColor(hex: 0xECECE7)

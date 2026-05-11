@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>BetterMail · Graph Redesign Playground</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-2: #1d2230;
+    --line: #262b39;
+    --ink: #e7e9ef;
+    --ink-2: #aab0bf;
+    --ink-3: #7b8092;
+    --accent: #7c8cff;
+    --accent-soft: #2a2f55;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ui: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--ui); font-size: 13px; }
+  .app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 14px 14px 24px; }
+  .stage { display: grid; grid-template-rows: 1fr auto; min-width: 0; }
+  .preview { position: relative; overflow: hidden; background: radial-gradient(ellipse at center, #14181f 0%, #0c0e13 78%); }
+  canvas { display: block; width: 100%; height: 100%; }
+  .promptbar { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; }
+  .prompt { flex: 1; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--ink-2); white-space: pre-wrap; }
+  button.copy { background: var(--accent); color: white; border: 0; padding: 8px 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 12px; }
+  button.copy:hover { filter: brightness(1.08); }
+
+  h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin: 18px 0 8px; font-weight: 600; }
+  h3:first-child { margin-top: 4px; }
+  .row { display: grid; grid-template-columns: 1fr 50px; align-items: center; gap: 8px; margin: 8px 0; }
+  .row label { color: var(--ink-2); font-size: 12px; }
+  .row .val { text-align: right; font-family: var(--mono); font-size: 11px; color: var(--ink); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+  .presets button { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); padding: 5px 9px; border-radius: 6px; font-size: 11px; cursor: pointer; }
+  .presets button:hover { border-color: var(--accent); }
+  .toggles { display: flex; gap: 12px; flex-wrap: wrap; }
+  .toggles label { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 12px; cursor: pointer; }
+
+  .hud { position: absolute; top: 10px; left: 12px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); opacity: 0.75; pointer-events: none; }
+  .hud span { color: var(--ink-2); }
+  .legend { position: absolute; bottom: 10px; left: 12px; font-size: 11px; color: var(--ink-3); font-family: var(--mono); pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <h3>Presets</h3>
+    <div class="presets" id="presets"></div>
+
+    <h3>Center force</h3>
+    <div class="row"><label>strength</label><input type="range" id="center" min="0" max="0.05" step="0.001"><span class="val" id="centerV"></span></div>
+
+    <h3>Repel force</h3>
+    <div class="row"><label>strength</label><input type="range" id="repel" min="500" max="12000" step="100"><span class="val" id="repelV"></span></div>
+    <div class="row"><label>cutoff radius</label><input type="range" id="repelCutoff" min="100" max="600" step="10"><span class="val" id="repelCutoffV"></span></div>
+
+    <h3>Link force</h3>
+    <div class="row"><label>spring strength</label><input type="range" id="link" min="0.005" max="0.18" step="0.001"><span class="val" id="linkV"></span></div>
+    <div class="row"><label>trunk length</label><input type="range" id="trunkLen" min="80" max="320" step="2"><span class="val" id="trunkLenV"></span></div>
+    <div class="row"><label>chain length</label><input type="range" id="chainLen" min="40" max="200" step="2"><span class="val" id="chainLenV"></span></div>
+
+    <h3>Curl (render-only)</h3>
+    <div class="presets" id="curlPresets"></div>
+    <div class="row"><label>curl amount</label><input type="range" id="curl" min="0" max="60" step="0.5"><span class="val" id="curlV"></span></div>
+    <div class="row"><label>curl variability</label><input type="range" id="curlVar" min="0" max="1" step="0.01"><span class="val" id="curlVarV"></span></div>
+    <div class="row"><label>spline tension</label><input type="range" id="tension" min="0" max="1" step="0.01"><span class="val" id="tensionV"></span></div>
+    <div class="row"><label>curl falloff</label><input type="range" id="curlFalloff" min="0" max="1" step="0.01"><span class="val" id="curlFalloffV"></span></div>
+
+    <h3>Label repulsion</h3>
+    <div class="toggles">
+      <label><input type="checkbox" id="labelRepel"> labels repel each other</label>
+    </div>
+    <div class="row"><label>label repel strength</label><input type="range" id="labelRepelK" min="0" max="0.4" step="0.005"><span class="val" id="labelRepelKV"></span></div>
+
+    <h3>Breeze</h3>
+    <div class="row"><label>amplitude</label><input type="range" id="breeze" min="0" max="2" step="0.01"><span class="val" id="breezeV"></span></div>
+    <div class="row"><label>damping</label><input type="range" id="damp" min="0.7" max="0.98" step="0.005"><span class="val" id="dampV"></span></div>
+
+    <h3>Scene</h3>
+    <div class="row"><label>threads</label><input type="range" id="threads" min="3" max="24" step="1"><span class="val" id="threadsV"></span></div>
+    <div class="row"><label>avg messages/thread</label><input type="range" id="msgs" min="0" max="10" step="1"><span class="val" id="msgsV"></span></div>
+
+    <h3>Display</h3>
+    <div class="toggles">
+      <label><input type="checkbox" id="showSummaries"> per-message summaries</label>
+      <label><input type="checkbox" id="showLabels"> thread labels</label>
+      <label><input type="checkbox" id="showHud"> debug HUD</label>
+    </div>
+
+    <h3>Theme</h3>
+    <div class="presets" id="themes"></div>
+  </aside>
+
+  <section class="stage">
+    <div class="preview">
+      <canvas id="cv"></canvas>
+      <div class="hud" id="hud"></div>
+      <div class="legend">drag a node · scroll to pan · pinch / ⌘+scroll to zoom · double-click recenter</div>
+    </div>
+    <div class="promptbar">
+      <pre class="prompt" id="prompt"></pre>
+      <button class="copy" id="copy">Copy Prompt</button>
+    </div>
+  </section>
+</div>
+
+<script>
+// ---------- Defaults & presets ----------
+const DEFAULTS = {
+  center: 0.006,
+  repel: 4200,
+  repelCutoff: 360,
+  link: 0.05,
+  trunkLen: 210,
+  chainLen: 104,
+  curl: 8,
+  curlVar: 0.35,
+  tension: 0.45,
+  curlFalloff: 0.55,
+  breeze: 0.8,
+  damp: 0.86,
+  threads: 12,
+  msgs: 4,
+  showSummaries: true,
+  showLabels: true,
+  showHud: false,
+  labelRepel: true,
+  labelRepelK: 0.12,
+  theme: 'app'
+};
+const PRESETS = {
+  'Organic (recommended)': { center: 0.006, repel: 4200, repelCutoff: 360, link: 0.045, trunkLen: 210, chainLen: 104, curl: 8,  curlVar: 0.35, tension: 0.45, curlFalloff: 0.55, breeze: 0.7, damp: 0.86 },
+  'Almost straight':       { center: 0.008, repel: 3600, repelCutoff: 320, link: 0.06,  trunkLen: 200, chainLen: 100, curl: 2,  curlVar: 0.15, tension: 0.3,  curlFalloff: 0.4,  breeze: 0.4, damp: 0.88 },
+  'Wild & curly':          { center: 0.004, repel: 5400, repelCutoff: 420, link: 0.03,  trunkLen: 240, chainLen: 130, curl: 28, curlVar: 0.8,  tension: 0.7,  curlFalloff: 0.7,  breeze: 1.2, damp: 0.84 },
+  'Tight & calm':          { center: 0.012, repel: 3000, repelCutoff: 280, link: 0.09,  trunkLen: 170, chainLen: 80,  curl: 4,  curlVar: 0.2,  tension: 0.3,  curlFalloff: 0.4,  breeze: 0.3, damp: 0.9 },
+  'Sparse spokes':         { center: 0.003, repel: 7800, repelCutoff: 500, link: 0.06,  trunkLen: 280, chainLen: 110, curl: 6,  curlVar: 0.25, tension: 0.4,  curlFalloff: 0.5,  breeze: 0.5, damp: 0.88 },
+  'Crowded mesh':          { center: 0.009, repel: 2200, repelCutoff: 240, link: 0.07,  trunkLen: 160, chainLen: 70,  curl: 12, curlVar: 0.55, tension: 0.55, curlFalloff: 0.6,  breeze: 0.9, damp: 0.85 }
+};
+const CURL_PRESETS = {
+  'Off':      { curl: 0,  curlVar: 0,    tension: 0.2,  curlFalloff: 0.3 },
+  'Whisper':  { curl: 3,  curlVar: 0.2,  tension: 0.35, curlFalloff: 0.45 },
+  'Subtle':   { curl: 8,  curlVar: 0.35, tension: 0.45, curlFalloff: 0.55 },
+  'Moderate': { curl: 16, curlVar: 0.55, tension: 0.6,  curlFalloff: 0.6 },
+  'Lush':     { curl: 28, curlVar: 0.8,  tension: 0.7,  curlFalloff: 0.7 }
+};
+const THEMES = {
+  app:   { bg: '#FAFAF8', ink: '#16181D', ink2: '#5A5E68', ink3: '#8C8F98', edge: '#C9CDD6', trunk: '#7A8090', node: '#FFFFFF', nodeStroke: '#16181D', center: '#4F46E5', summary: '#FFFFFF', summaryInk: '#2A2D35', summaryLine: '#E6E8EE', label: '#FFFFFF', labelInk: '#16181D' },
+  dark:  { bg: '#0F1115', ink: '#E7E9EF', ink2: '#AAB0BF', ink3: '#7B8092', edge: '#3A4050', trunk: '#5A6173', node: '#1D2230', nodeStroke: '#E7E9EF', center: '#7C8CFF', summary: '#1B1F2B', summaryInk: '#D7DAE3', summaryLine: '#2B3142', label: '#1D2230', labelInk: '#E7E9EF' }
+};
+
+// ---------- State ----------
+const state = { ...DEFAULTS };
+
+// ---------- Wiring ----------
+const sliders = ['center','repel','repelCutoff','link','trunkLen','chainLen','curl','curlVar','tension','curlFalloff','breeze','damp','threads','msgs','labelRepelK'];
+sliders.forEach(k => {
+  const inp = document.getElementById(k);
+  inp.value = state[k];
+  document.getElementById(k+'V').textContent = fmt(state[k]);
+  inp.addEventListener('input', () => {
+    state[k] = parseFloat(inp.value);
+    document.getElementById(k+'V').textContent = fmt(state[k]);
+    if (k === 'threads' || k === 'msgs') rebuildGraph();
+    updatePrompt();
+  });
+});
+['showSummaries','showLabels','showHud','labelRepel'].forEach(k => {
+  const el = document.getElementById(k);
+  el.checked = state[k];
+  el.addEventListener('change', () => { state[k] = el.checked; updatePrompt(); });
+});
+
+const presetsEl = document.getElementById('presets');
+Object.keys(PRESETS).forEach(name => {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.onclick = () => { Object.assign(state, PRESETS[name]); syncControls(); rebuildGraph(); updatePrompt(); };
+  presetsEl.appendChild(b);
+});
+const curlPresetsEl = document.getElementById('curlPresets');
+Object.keys(CURL_PRESETS).forEach(name => {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.onclick = () => { Object.assign(state, CURL_PRESETS[name]); syncControls(); updatePrompt(); };
+  curlPresetsEl.appendChild(b);
+});
+const themesEl = document.getElementById('themes');
+Object.keys(THEMES).forEach(name => {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.onclick = () => { state.theme = name; updatePrompt(); };
+  themesEl.appendChild(b);
+});
+
+function syncControls() {
+  sliders.forEach(k => { const inp = document.getElementById(k); inp.value = state[k]; document.getElementById(k+'V').textContent = fmt(state[k]); });
+}
+function fmt(v) { return Number.isInteger(v) ? v : v.toFixed(v < 0.1 ? 3 : 2); }
+
+// ---------- Graph data ----------
+const SUBJECTS = ['Re: April newsletter','Q2 plan draft','Invoice #4421','Genso analytics','HVRC marketing','Standup notes','RSS digest','TechSprint schedule','Backfill status','GitHub alerts','PR review','Mar deployment','KOL picks','Spring campaign'];
+const SUMMARIES = ['Approved spend; needs Jane sign-off Thu.','Three blockers — see action items.','Vendor flagged late delivery; reroute via AWS-East.','Draft attached, awaiting copy edits.','Open question on attribution window.','No risks; ship Friday.','Weekly digest, 14 unread.','Slots fill quickly — register by Mon.','Backfill ~78% done; ETA tomorrow.','3 high-severity advisories.','LGTM with two nits.','Rollout paused; checking metrics.','Top 5 picks pending sign-off.','Need launch date by EOW.'];
+
+let nodes = []; let links = [];
+function rebuildGraph() {
+  nodes = []; links = [];
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  const cx = W/2, cy = H/2;
+  nodes.push({ id: 'you', kind: 'center', x: cx, y: cy, vx: 0, vy: 0, r: 26, pinned: true });
+  const T = Math.round(state.threads);
+  for (let i = 0; i < T; i++) {
+    const ang = i * (Math.PI * (3 - Math.sqrt(5))); // golden
+    const x = cx + Math.cos(ang) * (state.trunkLen);
+    const y = cy + Math.sin(ang) * (state.trunkLen);
+    const id = 't'+i;
+    nodes.push({ id, kind: 'thread', x, y, vx: 0, vy: 0, r: 12, subject: SUBJECTS[i % SUBJECTS.length] });
+    links.push({ s: 'you', t: id, len: state.trunkLen, kind: 'trunk', seed: hash(id+'-trunk') });
+    const m = Math.max(0, Math.round(state.msgs + (hash(id)%5 - 2)));
+    let prev = id;
+    for (let j = 0; j < m; j++) {
+      const mid = 'm'+i+'-'+j;
+      nodes.push({ id: mid, kind: 'msg', x: x + Math.cos(ang+0.05*j) * (40+j*30), y: y + Math.sin(ang+0.05*j) * (40+j*30), vx: 0, vy: 0, r: 6, summary: SUMMARIES[(i+j) % SUMMARIES.length] });
+      links.push({ s: prev, t: mid, len: state.chainLen, kind: 'chain', seed: hash(mid) });
+      prev = mid;
+    }
+  }
+}
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0); }
+
+// ---------- Physics ----------
+function labelRadius(n) {
+  if (n.kind === 'msg' && state.showSummaries) return 60;
+  if (n.kind === 'thread' && state.showLabels) return 34;
+  return 0;
+}
+function step(dt, t) {
+  const cx = canvas.clientWidth/2, cy = canvas.clientHeight/2;
+  const map = Object.fromEntries(nodes.map(n => [n.id, n]));
+  // edge spring
+  for (const e of links) {
+    const a = map[e.s], b = map[e.t];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const target = e.kind === 'trunk' ? state.trunkLen : state.chainLen;
+    const f = (d - target) * state.link;
+    const fx = dx/d*f, fy = dy/d*f;
+    if (!a.pinned) { a.vx += fx; a.vy += fy; }
+    if (!b.pinned) { b.vx -= fx; b.vy -= fy; }
+  }
+  // repulsion
+  const cutoffSq = state.repelCutoff * state.repelCutoff;
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i+1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 > cutoffSq || d2 < 0.01) continue;
+      const d = Math.sqrt(d2);
+      let f = state.repel / (d2 + 160);
+      if (state.labelRepel) {
+        const pref = a.r + b.r + labelRadius(a) + labelRadius(b);
+        const overlap = Math.max(0, pref - d);
+        f += overlap * state.labelRepelK;
+      }
+      const fx = dx/d*f, fy = dy/d*f;
+      if (!a.pinned) { a.vx -= fx; a.vy -= fy; }
+      if (!b.pinned) { b.vx += fx; b.vy += fy; }
+    }
+  }
+  // center pull + breeze
+  const bx = Math.sin(t*0.0006) * 0.06 * state.breeze;
+  const by = Math.cos(t*0.0009) * 0.04 * state.breeze;
+  for (const n of nodes) {
+    if (n.pinned) continue;
+    n.vx += (cx - n.x) * state.center * (n.kind === 'thread' ? 1 : 0.4);
+    n.vy += (cy - n.y) * state.center * (n.kind === 'thread' ? 1 : 0.4);
+    const w = n.kind === 'msg' ? 1.2 : 0.4;
+    n.vx += bx * w; n.vy += by * w;
+  }
+  // integrate + damp
+  for (const n of nodes) {
+    if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
+    n.vx *= state.damp; n.vy *= state.damp;
+    if (Math.abs(n.vx) < 0.04) n.vx = 0;
+    if (Math.abs(n.vy) < 0.04) n.vy = 0;
+    n.x += n.vx; n.y += n.vy;
+  }
+  // pin center
+  const you = map['you']; if (you) { you.x = cx; you.y = cy; }
+}
+
+// ---------- Rendering ----------
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+let dpr = window.devicePixelRatio || 1;
+let camera = { x: 0, y: 0, scale: 1 };
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  canvas.width = r.width * dpr; canvas.height = r.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+new ResizeObserver(resize).observe(canvas);
+
+function curlOffset(seed, frac) {
+  const a = ((seed % 1000) / 1000) * Math.PI * 2;
+  const phase = a + frac * Math.PI * (1 + ((seed >> 10) % 5) * 0.3);
+  // taper near endpoints so edges connect cleanly to nodes
+  const taper = Math.sin(Math.PI * frac); // 0 at ends, 1 at middle
+  const shaped = Math.pow(taper, 1 - state.curlFalloff * 0.7);
+  return Math.sin(phase) * state.curl * (0.4 + state.curlVar * (((seed >> 5) % 100) / 100)) * shaped;
+}
+
+function drawEdge(a, b, seed, weight) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1) return;
+  const nx = -dy / d, ny = dx / d;
+  // 3 control points along the line, perpendicular curl
+  const pts = [];
+  pts.push({ x: a.x, y: a.y });
+  const steps = 4;
+  for (let i = 1; i < steps; i++) {
+    const f = i / steps;
+    const t = f * d;
+    const off = curlOffset(seed + i * 13, f);
+    pts.push({ x: a.x + dx*f + nx*off, y: a.y + dy*f + ny*off });
+  }
+  pts.push({ x: b.x, y: b.y });
+  // catmull-rom -> bezier
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  const T = state.tension;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i-1)], p1 = pts[i], p2 = pts[i+1], p3 = pts[Math.min(pts.length-1, i+2)];
+    const c1x = p1.x + (p2.x - p0.x) * T / 3;
+    const c1y = p1.y + (p2.y - p0.y) * T / 3;
+    const c2x = p2.x - (p3.x - p1.x) * T / 3;
+    const c2y = p2.y - (p3.y - p1.y) * T / 3;
+    ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
+  }
+  ctx.lineWidth = weight;
+  ctx.stroke();
+}
+
+function render() {
+  const T = THEMES[state.theme];
+  document.body.style.background = T.bg;
+  ctx.fillStyle = T.bg;
+  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+  ctx.save();
+  ctx.translate(camera.x, camera.y);
+  ctx.scale(camera.scale, camera.scale);
+
+  // edges
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+  for (const e of links) {
+    const a = nodeMap[e.s], b = nodeMap[e.t];
+    if (!a || !b) continue;
+    ctx.strokeStyle = e.kind === 'trunk' ? T.trunk : T.edge;
+    drawEdge(a, b, e.seed, e.kind === 'trunk' ? 1.4 : 1.0);
+  }
+
+  // nodes
+  for (const n of nodes) {
+    if (n.kind === 'center') {
+      ctx.fillStyle = T.center;
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '600 12px ' + getComputedStyle(document.body).fontFamily;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('You', n.x, n.y);
+    } else if (n.kind === 'thread') {
+      ctx.fillStyle = T.node; ctx.strokeStyle = T.nodeStroke; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      if (state.showLabels) drawLabel(n.x, n.y + n.r + 10, n.subject, T, 11, 600, 14);
+    } else {
+      ctx.fillStyle = T.node; ctx.strokeStyle = T.nodeStroke; ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      if (state.showSummaries) drawSummary(n, T);
+    }
+  }
+  ctx.restore();
+
+  // HUD
+  const hud = document.getElementById('hud');
+  hud.style.display = state.showHud ? 'block' : 'none';
+  if (state.showHud) {
+    const ke = totalEnergy();
+    hud.innerHTML = `<span>nodes</span> ${nodes.length}  <span>edges</span> ${links.length}  <span>KE</span> ${ke.toFixed(1)}  <span>zoom</span> ${camera.scale.toFixed(2)}×`;
+  }
+}
+function totalEnergy() { let s = 0; for (const n of nodes) s += n.vx*n.vx + n.vy*n.vy; return s; }
+
+function drawLabel(x, y, text, T, size, weight, padH) {
+  ctx.font = weight + ' ' + size + 'px ' + getComputedStyle(document.body).fontFamily;
+  const w = ctx.measureText(text).width + padH;
+  const h = size + 8;
+  ctx.fillStyle = T.label; ctx.strokeStyle = T.summaryLine; ctx.lineWidth = 1;
+  roundRect(x - w/2, y, w, h, 4); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = T.labelInk; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y + h/2);
+}
+function pickLabelAngle(n) {
+  // sample 8 directions, score by distance to nearest other node
+  const dirs = [0, 45, 90, 135, 180, 225, 270, 315].map(d => d * Math.PI / 180);
+  let bestAng = n._lastAng ?? 0, bestScore = -Infinity;
+  for (const a of dirs) {
+    const px = n.x + Math.cos(a) * 70, py = n.y + Math.sin(a) * 70;
+    let near = Infinity;
+    for (const m of nodes) {
+      if (m === n) continue;
+      const dd = (m.x - px)*(m.x - px) + (m.y - py)*(m.y - py);
+      if (dd < near) near = dd;
+    }
+    // bias toward last angle to reduce flicker
+    const bias = n._lastAng != null ? Math.cos(a - n._lastAng) * 600 : 0;
+    const score = near + bias;
+    if (score > bestScore) { bestScore = score; bestAng = a; }
+  }
+  // smooth angle change
+  if (n._lastAng != null) {
+    let delta = ((bestAng - n._lastAng + Math.PI*3) % (Math.PI*2)) - Math.PI;
+    n._lastAng = n._lastAng + delta * 0.18;
+  } else n._lastAng = bestAng;
+  return n._lastAng;
+}
+function drawSummary(n, T) {
+  const text = n.summary || '';
+  ctx.font = '500 10.5px ' + getComputedStyle(document.body).fontFamily;
+  const maxW = 160;
+  const lines = wrap(text, maxW);
+  const lineH = 13;
+  const w = Math.min(maxW, Math.max(...lines.map(l => ctx.measureText(l).width))) + 14;
+  const h = lines.length * lineH + 10;
+  const ang = pickLabelAngle(n);
+  const dist = 14 + Math.max(w, h) * 0.35;
+  const cxn = n.x + Math.cos(ang) * dist;
+  const cyn = n.y + Math.sin(ang) * dist;
+  const ox = cxn - w/2, oy = cyn - h/2;
+  ctx.fillStyle = T.summary; ctx.strokeStyle = T.summaryLine; ctx.lineWidth = 1;
+  roundRect(ox, oy, w, h, 5); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = T.summaryInk; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  lines.forEach((l, i) => ctx.fillText(l, ox + 7, oy + 5 + i*lineH));
+  // tether from node edge to nearest box edge
+  ctx.strokeStyle = T.summaryLine; ctx.beginPath();
+  ctx.moveTo(n.x + Math.cos(ang) * n.r, n.y + Math.sin(ang) * n.r);
+  ctx.lineTo(cxn - Math.cos(ang) * (w/2 - 2), cyn - Math.sin(ang) * (h/2 - 2));
+  ctx.stroke();
+}
+function wrap(text, maxW) {
+  const words = text.split(/\s+/); const lines = []; let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; } else { cur = test; }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 2);
+}
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+// ---------- Loop ----------
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(32, now - last); last = now;
+  step(dt, now); render();
+  requestAnimationFrame(loop);
+}
+
+// ---------- Interaction ----------
+let drag = null;
+canvas.addEventListener('pointerdown', e => {
+  const p = toScene(e); const n = pick(p);
+  if (n && n.kind !== 'center') { drag = n; n.pinned = true; }
+});
+canvas.addEventListener('pointermove', e => { if (drag) { const p = toScene(e); drag.x = p.x; drag.y = p.y; drag.vx = drag.vy = 0; } });
+window.addEventListener('pointerup', () => { if (drag) { drag.pinned = false; drag = null; } });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const focus = toScene(e); const k = Math.exp(-e.deltaY * 0.005);
+    camera.scale *= k;
+    camera.x = e.offsetX - (e.offsetX - camera.x) * k;
+    camera.y = e.offsetY - (e.offsetY - camera.y) * k;
+  } else {
+    camera.x -= e.deltaX; camera.y -= e.deltaY;
+  }
+}, { passive: false });
+canvas.addEventListener('dblclick', () => { camera = { x: 0, y: 0, scale: 1 }; });
+function toScene(e) { return { x: (e.offsetX - camera.x) / camera.scale, y: (e.offsetY - camera.y) / camera.scale }; }
+function pick(p) {
+  for (let i = nodes.length-1; i >= 0; i--) { const n = nodes[i]; const dx = p.x-n.x, dy = p.y-n.y; if (dx*dx+dy*dy < (n.r+4)*(n.r+4)) return n; }
+  return null;
+}
+
+// ---------- Prompt ----------
+function updatePrompt() {
+  const p = [];
+  p.push(`Redesign the BetterMail graph view with these force settings:`);
+  p.push(`  • Center force ${fmt(state.center)}, Repel ${fmt(state.repel)} (cutoff ${state.repelCutoff}px), Link spring ${fmt(state.link)}, trunk link distance ${state.trunkLen}px, chain link distance ${state.chainLen}px.`);
+  p.push(`  • Damping ${fmt(state.damp)}; breeze amplitude ${fmt(state.breeze)} (3× weight on messages).`);
+  p.push(`  • Drop branch-straightening / radial outward forces entirely — branches curl emergently.`);
+  p.push(``);
+  p.push(`Edge rendering: Catmull–Rom spline through 3 perpendicular control points seeded deterministically per edge. Curl ${state.curl}px, variability ${fmt(state.curlVar)}, tension ${fmt(state.tension)}. Trunk weight 1.4px, chain 1.0px.`);
+  p.push(``);
+  p.push(`Per-message AI summary callouts: ${state.showSummaries ? 'enabled' : 'disabled'} — 2-line wrap at 160px max width, panel fill + 1px hairline, tethered to the message node from the right.`);
+  p.push(`Thread labels: ${state.showLabels ? 'enabled' : 'disabled'}.`);
+  p.push(``);
+  p.push(`Theme: "${state.theme}" — reuse main-app tokens (panel / ink / accent), not the retired v1 sage palette. Replace old palette references with the shared theme.`);
+  p.push(``);
+  p.push(`Scroll/zoom: native macOS — 2-finger pan without modifier keys, momentum-preserved; pinch + ⌘/ctrl-scroll zooms around the cursor; double-click empty canvas recenters.`);
+  document.getElementById('prompt').textContent = p.join('\n');
+}
+document.getElementById('copy').onclick = () => {
+  navigator.clipboard.writeText(document.getElementById('prompt').textContent);
+  const b = document.getElementById('copy'); const old = b.textContent;
+  b.textContent = 'Copied!'; setTimeout(() => b.textContent = old, 1200);
+};
+
+// ---------- Boot ----------
+resize(); rebuildGraph(); updatePrompt();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

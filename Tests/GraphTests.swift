@@ -51,53 +51,107 @@ final class GraphViewportTests: XCTestCase {
 }
 
 final class GraphForceSimulatorTests: XCTestCase {
-    func test_forceSimulator_withFixedFixture_losesEnergyAfterSettling() {
+    func test_forceSimulator_withFixedFixture_energyDecreasesAcrossSettlingWindow() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 6)],
                                    now: Date(timeIntervalSince1970: 10_000))
         var simulator = GraphForceSimulator()
         simulator.reset(data: graph, size: CGSize(width: 800, height: 600))
-        simulator.step(deltaTime: 0.016, elapsedTime: 16)
-        let earlyEnergy = simulator.totalEnergy()
 
-        for tick in 1...140 {
-            simulator.step(deltaTime: 0.016, elapsedTime: Double(tick) * 16)
+        for tick in 1...60 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true)
         }
 
-        XCTAssertLessThan(simulator.totalEnergy(), earlyEnergy)
+        var sampledEnergies: [CGFloat] = []
+        for tick in 61...185 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true)
+            if tick.isMultiple(of: 25) {
+                sampledEnergies.append(simulator.totalEnergy())
+            }
+        }
+
+        XCTAssertGreaterThanOrEqual(sampledEnergies.count, 4)
+        XCTAssertLessThan(sampledEnergies.last ?? .greatestFiniteMagnitude,
+                          sampledEnergies.first ?? 0)
+        for (previous, next) in zip(sampledEnergies, sampledEnergies.dropFirst()) {
+            XCTAssertLessThanOrEqual(next, previous * 1.05)
+        }
     }
 
-    func test_forceSimulator_withMessageChain_keepsMessagesOutsideThreadOrbit() {
-        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 8)],
+    func test_forceSimulator_whenLabelRepelIsOff_ignoresLabelProvider() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
                                    now: Date(timeIntervalSince1970: 10_000))
-        var simulator = GraphForceSimulator()
-        let size = CGSize(width: 800, height: 600)
-        simulator.reset(data: graph, size: size)
+        var baseline = GraphForceSimulator()
+        var labeled = GraphForceSimulator()
+        baseline.reset(data: graph, size: CGSize(width: 600, height: 420))
+        labeled.reset(data: graph, size: CGSize(width: 600, height: 420))
+        let config = GraphForceConfig(center: GraphForceConstants.defaults.center,
+                                      repel: GraphForceConstants.defaults.repel,
+                                      repelCutoff: GraphForceConstants.defaults.repelCutoff,
+                                      linkSpring: GraphForceConstants.defaults.linkSpring,
+                                      trunkLength: GraphForceConstants.defaults.trunkLength,
+                                      chainLength: GraphForceConstants.defaults.chainLength,
+                                      damping: GraphForceConstants.defaults.damping,
+                                      breezeAmplitude: GraphForceConstants.defaults.breezeAmplitude,
+                                      curl: GraphForceConstants.defaults.curl,
+                                      curlVariability: GraphForceConstants.defaults.curlVariability,
+                                      splineTension: GraphForceConstants.defaults.splineTension,
+                                      curlFalloff: GraphForceConstants.defaults.curlFalloff,
+                                      labelRepelOn: false,
+                                      labelRepelStrength: 0.4)
 
-        for tick in 1...180 {
-            simulator.step(deltaTime: 0.016, elapsedTime: Double(tick) * 16)
+        baseline.step(deltaTime: 0.016, elapsedTime: 16, reduceMotion: true, config: config)
+        labeled.step(deltaTime: 0.016,
+                     elapsedTime: 16,
+                     reduceMotion: true,
+                     config: config,
+                     labelOccluderRadius: { _ in 500 })
+
+        for id in graph.allNodeIDs {
+            assertPointsEqual(baseline.nodesByID[id]?.position, labeled.nodesByID[id]?.position)
+        }
+    }
+}
+
+final class GraphSplineTests: XCTestCase {
+    func test_splinePath_withCurl_startsAndEndsAtEdgeEndpointsAndStaysInEnvelope() {
+        let start = CGPoint(x: 10, y: 20)
+        let end = CGPoint(x: 210, y: 20)
+        let config = GraphCurlConfig(curl: 6, curlVariability: 0.2, splineTension: 0.35, curlFalloff: 0.45)
+
+        let points = GraphSpline.points(from: start, to: end, seed: 42, config: config)
+        assertPointsEqual(points.first, start)
+        assertPointsEqual(points.last, end)
+        for point in points {
+            XCTAssertLessThanOrEqual(abs(point.y - start.y), config.curl * (1 + config.curlVariability) + 4)
         }
 
-        let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let threadID = GraphData.threadNodeID(for: "root")
-        guard let thread = simulator.nodesByID[threadID] else {
-            XCTFail("Expected thread node")
-            return
-        }
-        let axisX = thread.position.x - center.x
-        let axisY = thread.position.y - center.y
-        let axisLength = max(1, hypot(axisX, axisY))
-        let unitX = axisX / axisLength
-        let unitY = axisY / axisLength
+        let path = splinePath(from: start, to: end, seed: 42, config: config)
+        assertPointsEqual(path.currentPoint, end)
+    }
+}
 
-        for message in graph.messages {
-            guard let node = simulator.nodesByID[message.id] else {
-                XCTFail("Expected message node \(message.id)")
-                return
-            }
-            let projection = (node.position.x - thread.position.x) * unitX +
-                (node.position.y - thread.position.y) * unitY
-            XCTAssertGreaterThan(projection, 0, "message \(message.id) should not curl back behind its thread")
-        }
+final class GraphSummaryPlacementTests: XCTestCase {
+    func test_autoPlacement_picksCardinalWithGreatestFreeSpace() {
+        let origin = CGPoint(x: 0, y: 0)
+        let boxSize = CGSize(width: 120, height: 40)
+        let occluders = [
+            GraphSummaryOccluder(id: "right", position: CGPoint(x: 56, y: 0), radius: 24),
+            GraphSummaryOccluder(id: "up", position: CGPoint(x: 0, y: 56), radius: 24),
+            GraphSummaryOccluder(id: "down", position: CGPoint(x: 0, y: -56), radius: 24),
+            GraphSummaryOccluder(id: "upper-right", position: CGPoint(x: 40, y: 40), radius: 24),
+            GraphSummaryOccluder(id: "lower-right", position: CGPoint(x: 40, y: -40), radius: 24)
+        ]
+
+        let angle = GraphSummaryPlacement.preferredAngle(origin: origin,
+                                                        boxSize: boxSize,
+                                                        occluders: occluders,
+                                                        previousAngle: nil)
+
+        XCTAssertEqual(angle, .pi, accuracy: 0.001)
     }
 }
 
@@ -144,6 +198,19 @@ final class GraphPruneStateMachineTests: XCTestCase {
         XCTAssertEqual(machine.send(.edgeClicked(threadID: "thread-1")), .settling(threadID: "thread-1"))
         XCTAssertEqual(machine.send(.cancel), .idle)
     }
+}
+
+private func assertPointsEqual(_ lhs: CGPoint?,
+                               _ rhs: CGPoint?,
+                               accuracy: CGFloat = 0.001,
+                               file: StaticString = #filePath,
+                               line: UInt = #line) {
+    guard let lhs, let rhs else {
+        XCTFail("Expected both points to be non-nil", file: file, line: line)
+        return
+    }
+    XCTAssertEqual(lhs.x, rhs.x, accuracy: accuracy, file: file, line: line)
+    XCTAssertEqual(lhs.y, rhs.y, accuracy: accuracy, file: file, line: line)
 }
 
 private func makeThread(rootID: String, messageCount: Int) -> ThreadNode {

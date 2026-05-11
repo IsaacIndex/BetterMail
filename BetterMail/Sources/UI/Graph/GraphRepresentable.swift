@@ -6,6 +6,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
     @ObservedObject internal var settings: GraphCanvasSettings
     internal let selectedNodeID: String?
     internal let reduceMotion: Bool
+    internal let colorScheme: ColorScheme
     internal let audio: GraphAudio
     internal let onSelectRootNode: (String?) -> Void
 
@@ -31,6 +32,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
 
     internal func updateNSView(_ nsView: GraphSKView, context: Context) {
         context.coordinator.parent = self
+        nsView.appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
         let scene = context.coordinator.scene ?? GraphScene(size: nsView.bounds.size)
         context.coordinator.scene = scene
         if nsView.scene !== scene {
@@ -75,6 +77,8 @@ internal struct GraphRepresentable: NSViewRepresentable {
                         wateredCounts: settings.wateredCounts,
                         reduceMotion: reduceMotion,
                         sproutingMessageIDs: graphViewModel.sproutingMessageIDs,
+                        forceConfig: settings.forceConfig,
+                        theme: DesignTokens.Graph.AppTheme.palette(for: colorScheme),
                         zoomScale: graphViewModel.zoomScale,
                         panOffset: graphViewModel.panOffset)
     }

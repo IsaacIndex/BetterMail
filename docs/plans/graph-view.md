@@ -1,5 +1,10 @@
 # BetterMail · Graph View — Implementation Plan
 
+> Superseded by `docs/plans/graph-redesign.md` (2026-05-11). Historical note:
+> the Botanical token table and v1 force model below are retained as original
+> implementation context only; live graph rendering now uses AppTheme tokens
+> and the Whisper four-force model.
+
 Reimagine the canvas as an Obsidian-style **force-directed graph view** that
 sits alongside the existing horizontal timeline. A "You" node anchors the
 center; threads radiate outward as branches; pruning is a tactile gesture
@@ -14,11 +19,11 @@ through physics, breath, sway, water, and sprout-on-arrival.
   - `graph.jsx` — force engine, rendering, prune logic, compost, hover card,
     toolbar (canonical reference for `FORCES`, layout radii, animations)
   - `reader.jsx` — inline reader spec (we reuse the app's inspector instead)
-  - `tweaks-panel.jsx` — variant toggles (we ship Botanical only)
+  - `tweaks-panel.jsx` — variant toggles (we ship legacy botanical only)
   - `sidebar.jsx` — app chrome (already present in BetterMail)
   - `data.jsx` — placeholder thread data (replaced with live `MessageStore`)
   - `styles.css` — token values and animation timings (canonical reference)
-- **Approved variant**: **Botanical** only (no Lines / Synaptic in v1).
+- **Approved variant**: **legacy botanical** only (no Lines / Synaptic in v1).
 - **Approved direction**: graph view is **opt-in via a top-bar segmented
   toggle**; default remains the timeline.
 
@@ -42,10 +47,10 @@ through physics, breath, sway, water, and sprout-on-arrival.
 | `bm-archive-soft` | `#F1F2F4` | settle fill |
 | `bm-live` | `#0EA5A4` | breath ring |
 | `bm-water` | `#14B8A6` | water pulse aura |
-| Botanical edge | `#A6B098` | (default) |
-| Botanical trunk | `#6B7A5C` (1.6 px) | thicker than non-trunk |
-| Botanical message | `#7A8F66` | sage dot |
-| Botanical thread (high) | `#4A5640` (1.6 px) | high-importance ring |
+| legacy botanical edge | `#A6B098` | (default) |
+| legacy botanical trunk | `#6B7A5C` (1.6 px) | thicker than non-trunk |
+| legacy botanical message | `#7A8F66` | sage dot |
+| legacy botanical thread (high) | `#4A5640` (1.6 px) | high-importance ring |
 
 Typography:
 - UI: **Inter** (`-apple-system` fallback), `13 px` body, `letter-spacing -0.005em`.
@@ -149,7 +154,7 @@ In:
 - Sprout pipeline: hook into the existing refresh callback in
   `ThreadCanvasViewModel` to detect new messages since last tick and emit
   sprout events to the scene.
-- Botanical token additions in `DesignTokens.swift`.
+- legacy botanical token additions in `DesignTokens.swift`.
 - Tests for `GraphForceSimulator` (deterministic seeds), nearest-neighbor
   selection, snip/archive state machine, sprout detection.
 
@@ -179,7 +184,7 @@ Out of scope:
    stores the prior folder so restore can move it back.
 4. **Archive = app-only**. Stored as a `ManualThreadGroup` overlay flag
    (`isArchivedInGraph`). No AppleScript side effects. Restore unsets flag.
-5. **Variant**: Botanical only.
+5. **Variant**: legacy botanical only.
 6. **Light mode only** for v1.
 7. **Reader**: reuse `ThreadInspectorView` (no new reader panel).
 8. **Aliveness**: all six (physics, sway, breath, water, sprout, sound).
@@ -242,7 +247,7 @@ composted ─(chip click)─> restoring ─(end)─> idle
 
 ## Milestones
 
-- [x] **M1: Botanical tokens + GraphCanvasSettings scaffold**
+- [x] **M1: legacy botanical tokens + GraphCanvasSettings scaffold**
   - **Intent**: Add the visual tokens and a settings object so the canvas can
     read variant + sound + snip parent mailbox.
   - **Files**: `Sources/UI/DesignTokens.swift`,
@@ -250,7 +255,7 @@ composted ─(chip click)─> restoring ─(end)─> idle
     `Sources/Settings/AppearanceSettings.swift` (extend if needed).
   - **Spec ref**: `styles.css` :12-43 (color tokens), :276-278 (botanical),
     :393-395 (botanical msg/thread).
-  - **Tokens to apply**: All values in the table above. Botanical edge
+  - **Tokens to apply**: All values in the table above. legacy botanical edge
     `#A6B098`, trunk `#6B7A5C`, msg `#7A8F66`, thread-high stroke `#4A5640`.
   - **Validation**: Build succeeds. Add a Snapshot/Preview rendering of a
     swatch grid in a #if DEBUG view; eyeball against `styles.css` values.
@@ -332,7 +337,7 @@ composted ─(chip click)─> restoring ─(end)─> idle
   - **Importance ring** stroke widths: low `1.0`, med `1.2`, high `1.6`.
   - **States**: `.is-hover` (`bm-accent` stroke 1.6 + drop-shadow), `.is-low`
     (`bm-ink-5` 1 px), `.is-med` (`bm-ink-3` 1.2 px), `.is-high` (`bm-ink`
-    1.6 px). Botanical overrides per token table.
+    1.6 px). legacy botanical overrides per token table.
   - **Validation**: Open the app, switch to Graph mode with a real inbox,
     confirm 60 fps in Instruments (`SKView.showsFPS = true` debug-only),
     drag works, pan via empty-space drag works, zoom via wheel works, and
@@ -608,7 +613,7 @@ composted ─(chip click)─> restoring ─(end)─> idle
 - All animations respect Reduce Motion.
 - VoiceOver reads thread/message labels; keyboard shortcuts `S/A/Esc/W/0`
   and arrow-keys/Return work.
-- Botanical token set is applied throughout (no Lines / Synaptic anywhere).
+- legacy botanical token set is applied throughout (no Lines / Synaptic anywhere).
 - 60 fps sustained on a 1000-node fixture in Instruments on Apple-silicon.
 
 ## Open Questions

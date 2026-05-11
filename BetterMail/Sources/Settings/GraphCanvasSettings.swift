@@ -50,6 +50,20 @@ internal final class GraphCanvasSettings: ObservableObject {
         static let reduceMotionOverride = "graphCanvasReduceMotionOverride"
         static let snipParentMailboxPath = "graphCanvasSnipParentMailboxPath"
         static let wateredCounts = "graphCanvasWateredCounts"
+        static let forceCenter = "graphCanvasForceCenter"
+        static let forceRepel = "graphCanvasForceRepel"
+        static let forceRepelCutoff = "graphCanvasForceRepelCutoff"
+        static let forceLinkSpring = "graphCanvasForceLinkSpring"
+        static let forceTrunkLength = "graphCanvasForceTrunkLength"
+        static let forceChainLength = "graphCanvasForceChainLength"
+        static let forceDamping = "graphCanvasForceDamping"
+        static let forceBreezeAmplitude = "graphCanvasForceBreezeAmplitude"
+        static let forceCurl = "graphCanvasForceCurl"
+        static let forceCurlVariability = "graphCanvasForceCurlVariability"
+        static let forceSplineTension = "graphCanvasForceSplineTension"
+        static let forceCurlFalloff = "graphCanvasForceCurlFalloff"
+        static let forceLabelRepelOn = "graphCanvasForceLabelRepelOn"
+        static let forceLabelRepelStrength = "graphCanvasForceLabelRepelStrength"
     }
 
     @AppStorage(StorageKey.mode) private var storedMode = GraphCanvasMode.timeline.rawValue
@@ -57,6 +71,20 @@ internal final class GraphCanvasSettings: ObservableObject {
     @AppStorage(StorageKey.soundOn) private var storedSoundOn = false
     @AppStorage(StorageKey.reduceMotionOverride) private var storedReduceMotionOverride = GraphReduceMotionOverride.system.rawValue
     @AppStorage(StorageKey.snipParentMailboxPath) private var storedSnipParentMailboxPath = "Unimportant"
+    @AppStorage(StorageKey.forceCenter) private var storedForceCenter = Double(GraphForceConstants.defaults.center)
+    @AppStorage(StorageKey.forceRepel) private var storedForceRepel = Double(GraphForceConstants.defaults.repel)
+    @AppStorage(StorageKey.forceRepelCutoff) private var storedForceRepelCutoff = Double(GraphForceConstants.defaults.repelCutoff)
+    @AppStorage(StorageKey.forceLinkSpring) private var storedForceLinkSpring = Double(GraphForceConstants.defaults.linkSpring)
+    @AppStorage(StorageKey.forceTrunkLength) private var storedForceTrunkLength = Double(GraphForceConstants.defaults.trunkLength)
+    @AppStorage(StorageKey.forceChainLength) private var storedForceChainLength = Double(GraphForceConstants.defaults.chainLength)
+    @AppStorage(StorageKey.forceDamping) private var storedForceDamping = Double(GraphForceConstants.defaults.damping)
+    @AppStorage(StorageKey.forceBreezeAmplitude) private var storedForceBreezeAmplitude = Double(GraphForceConstants.defaults.breezeAmplitude)
+    @AppStorage(StorageKey.forceCurl) private var storedForceCurl = Double(GraphForceConstants.defaults.curl)
+    @AppStorage(StorageKey.forceCurlVariability) private var storedForceCurlVariability = Double(GraphForceConstants.defaults.curlVariability)
+    @AppStorage(StorageKey.forceSplineTension) private var storedForceSplineTension = Double(GraphForceConstants.defaults.splineTension)
+    @AppStorage(StorageKey.forceCurlFalloff) private var storedForceCurlFalloff = Double(GraphForceConstants.defaults.curlFalloff)
+    @AppStorage(StorageKey.forceLabelRepelOn) private var storedForceLabelRepelOn = GraphForceConstants.defaults.labelRepelOn
+    @AppStorage(StorageKey.forceLabelRepelStrength) private var storedForceLabelRepelStrength = Double(GraphForceConstants.defaults.labelRepelStrength)
 
     @Published internal var mode: GraphCanvasMode = .timeline {
         didSet { storedMode = mode.rawValue }
@@ -73,6 +101,48 @@ internal final class GraphCanvasSettings: ObservableObject {
     @Published internal var snipParentMailboxPath: String = "Unimportant" {
         didSet { storedSnipParentMailboxPath = snipParentMailboxPath }
     }
+    @Published internal var forceCenter: CGFloat = GraphForceConstants.defaults.center {
+        didSet { storedForceCenter = Double(forceCenter) }
+    }
+    @Published internal var forceRepel: CGFloat = GraphForceConstants.defaults.repel {
+        didSet { storedForceRepel = Double(forceRepel) }
+    }
+    @Published internal var forceRepelCutoff: CGFloat = GraphForceConstants.defaults.repelCutoff {
+        didSet { storedForceRepelCutoff = Double(forceRepelCutoff) }
+    }
+    @Published internal var forceLinkSpring: CGFloat = GraphForceConstants.defaults.linkSpring {
+        didSet { storedForceLinkSpring = Double(forceLinkSpring) }
+    }
+    @Published internal var forceTrunkLength: CGFloat = GraphForceConstants.defaults.trunkLength {
+        didSet { storedForceTrunkLength = Double(forceTrunkLength) }
+    }
+    @Published internal var forceChainLength: CGFloat = GraphForceConstants.defaults.chainLength {
+        didSet { storedForceChainLength = Double(forceChainLength) }
+    }
+    @Published internal var forceDamping: CGFloat = GraphForceConstants.defaults.damping {
+        didSet { storedForceDamping = Double(forceDamping) }
+    }
+    @Published internal var forceBreezeAmplitude: CGFloat = GraphForceConstants.defaults.breezeAmplitude {
+        didSet { storedForceBreezeAmplitude = Double(forceBreezeAmplitude) }
+    }
+    @Published internal var forceCurl: CGFloat = GraphForceConstants.defaults.curl {
+        didSet { storedForceCurl = Double(forceCurl) }
+    }
+    @Published internal var forceCurlVariability: CGFloat = GraphForceConstants.defaults.curlVariability {
+        didSet { storedForceCurlVariability = Double(forceCurlVariability) }
+    }
+    @Published internal var forceSplineTension: CGFloat = GraphForceConstants.defaults.splineTension {
+        didSet { storedForceSplineTension = Double(forceSplineTension) }
+    }
+    @Published internal var forceCurlFalloff: CGFloat = GraphForceConstants.defaults.curlFalloff {
+        didSet { storedForceCurlFalloff = Double(forceCurlFalloff) }
+    }
+    @Published internal var forceLabelRepelOn: Bool = GraphForceConstants.defaults.labelRepelOn {
+        didSet { storedForceLabelRepelOn = forceLabelRepelOn }
+    }
+    @Published internal var forceLabelRepelStrength: CGFloat = GraphForceConstants.defaults.labelRepelStrength {
+        didSet { storedForceLabelRepelStrength = Double(forceLabelRepelStrength) }
+    }
     @Published internal private(set) var wateredCounts: [String: Int] = [:]
 
     private let userDefaults: UserDefaults
@@ -84,7 +154,38 @@ internal final class GraphCanvasSettings: ObservableObject {
         soundOn = storedSoundOn
         reduceMotionOverride = GraphReduceMotionOverride(rawValue: storedReduceMotionOverride) ?? .system
         snipParentMailboxPath = storedSnipParentMailboxPath
+        forceCenter = CGFloat(storedForceCenter)
+        forceRepel = CGFloat(storedForceRepel)
+        forceRepelCutoff = CGFloat(storedForceRepelCutoff)
+        forceLinkSpring = CGFloat(storedForceLinkSpring)
+        forceTrunkLength = CGFloat(storedForceTrunkLength)
+        forceChainLength = CGFloat(storedForceChainLength)
+        forceDamping = CGFloat(storedForceDamping)
+        forceBreezeAmplitude = CGFloat(storedForceBreezeAmplitude)
+        forceCurl = CGFloat(storedForceCurl)
+        forceCurlVariability = CGFloat(storedForceCurlVariability)
+        forceSplineTension = CGFloat(storedForceSplineTension)
+        forceCurlFalloff = CGFloat(storedForceCurlFalloff)
+        forceLabelRepelOn = storedForceLabelRepelOn
+        forceLabelRepelStrength = CGFloat(storedForceLabelRepelStrength)
         wateredCounts = Self.decodeWateredCounts(from: userDefaults.data(forKey: StorageKey.wateredCounts))
+    }
+
+    internal var forceConfig: GraphForceConfig {
+        GraphForceConfig(center: forceCenter,
+                         repel: forceRepel,
+                         repelCutoff: forceRepelCutoff,
+                         linkSpring: forceLinkSpring,
+                         trunkLength: forceTrunkLength,
+                         chainLength: forceChainLength,
+                         damping: forceDamping,
+                         breezeAmplitude: forceBreezeAmplitude,
+                         curl: forceCurl,
+                         curlVariability: forceCurlVariability,
+                         splineTension: forceSplineTension,
+                         curlFalloff: forceCurlFalloff,
+                         labelRepelOn: forceLabelRepelOn,
+                         labelRepelStrength: forceLabelRepelStrength)
     }
 
     internal func wateredCount(for threadID: String) -> Int {
@@ -105,6 +206,24 @@ internal final class GraphCanvasSettings: ObservableObject {
         case .full:
             return false
         }
+    }
+
+    internal func restoreWhisperDefaults() {
+        let defaults = GraphForceConstants.defaults
+        forceCenter = defaults.center
+        forceRepel = defaults.repel
+        forceRepelCutoff = defaults.repelCutoff
+        forceLinkSpring = defaults.linkSpring
+        forceTrunkLength = defaults.trunkLength
+        forceChainLength = defaults.chainLength
+        forceDamping = defaults.damping
+        forceBreezeAmplitude = defaults.breezeAmplitude
+        forceCurl = defaults.curl
+        forceCurlVariability = defaults.curlVariability
+        forceSplineTension = defaults.splineTension
+        forceCurlFalloff = defaults.curlFalloff
+        forceLabelRepelOn = defaults.labelRepelOn
+        forceLabelRepelStrength = defaults.labelRepelStrength
     }
 
     private func persistWateredCounts() {

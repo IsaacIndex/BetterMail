@@ -9,6 +9,7 @@ internal struct GraphCanvasView: View {
     internal let bottomChromeInset: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.colorScheme) private var colorScheme
     @State private var audio = GraphAudio()
 
     internal var body: some View {
@@ -18,10 +19,17 @@ internal struct GraphCanvasView: View {
                                    settings: graphSettings,
                                    selectedNodeID: threadViewModel.selectedNodeID,
                                    reduceMotion: reduceMotion,
+                                   colorScheme: colorScheme,
                                    audio: audio,
                                    onSelectRootNode: { nodeID in
                                        threadViewModel.selectNode(id: nodeID)
+                                       if nodeID == nil {
+                                           threadViewModel.selectFolder(id: nil)
+                                       }
                                    })
+                    .accessibilityIdentifier(AccessibilityID.graphCanvas)
+                    .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
+                                                          comment: "Accessibility label for graph canvas"))
                 graphDotGrid
                     .allowsHitTesting(false)
                 if let hoverItem = graphViewModel.hoverItem {
@@ -51,11 +59,8 @@ internal struct GraphCanvasView: View {
             }
         }
         .padding(.top, topInset)
-        .background(DesignTokens.Graph.background)
+        .background(DesignTokens.Graph.AppTheme.background)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .accessibilityIdentifier(AccessibilityID.graphCanvas)
-        .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
-                                              comment: "Accessibility label for graph canvas"))
         .onAppear {
             audio.warm()
             syncData()
