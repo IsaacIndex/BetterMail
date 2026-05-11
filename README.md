@@ -5,6 +5,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise; timeline overview scopes auto-fit to a readable default until the user manually changes zoom.
+- Opt-in Botanical Graph view renders the same threaded inbox as a SpriteKit force-directed canvas with a centered "You" node, per-email AI-summary callouts, wider zoom/pan navigation, hover cards, pruning modes, compost restore chips, keyboard navigation, and persisted graph preferences.
 - Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Emails` as the default landing scope.
 - Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
 - Mailbox sidebar folder expand/collapse state is persisted across launches and pruned against the latest Mail hierarchy so folders removed/moved in Mail are not retained as stale expansion entries.
@@ -61,6 +62,7 @@ xcodebuild \
 ```
 Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Core Data)
                                             ↘︎ JWZThreader → ThreadCanvasViewModel → SwiftUI ThreadListView/ThreadCanvasView/ThreadInspectorView
+                                                                                         ↘︎ GraphCanvasViewModel → SpriteKit GraphCanvasView
                                                                              ↘︎ FoundationModelsEmailSummaryProvider (Apple Intelligence)
 ```
 - `NSAppleScriptRunner` makes sure Mail is running, executes scripts, and logs failures.
@@ -68,6 +70,7 @@ Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Cor
 - `MessageStore` keeps everything off the main actor, exposes async fetch/upsert helpers, and maintains per-thread entities.
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
+- `GraphCanvasViewModel` maps the existing `ThreadNode` tree into graph-specific thread/message nodes, coordinates graph-only archive state, and forwards Mail-side snip moves through `MailAppleScriptClient`.
 - `EmailSummaryProviderFactory` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` provides AppleScript helpers for message targeting, move/create mailbox-folder actions, flagging, and search workflows.
 
@@ -194,6 +197,12 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 - Summaries are optional; if the model is unavailable, the UI falls back to status strings explaining what is required.
 - The per-message and folder summaries are wired into the UI. The inbox subject-line digest (`summarize(subjects:)`) is implemented but not currently shown in the UI.
 - The inbox subject-line digest API is deprecated.
+
+### Graph View
+- The top bar mode picker switches between the existing timeline canvas and the new graph canvas; the selected mode persists in `GraphCanvasSettings`.
+- The graph uses namespaced graph node IDs while preserving raw Mail message IDs for AppleScript moves, so thread nodes and root-message nodes cannot collide.
+- Snip mode is Mail-side: selected thread messages are moved through AppleScript after the user chooses a destination mailbox. Archive mode is app-only and persisted in Core Data as graph archive entries.
+- Graph interaction state stays separate from the timeline rendering, but selection continues to flow through `ThreadCanvasViewModel.selectedNodeID` so the existing inspector remains the reader surface.
 
 ## TechDocs
 - See `TechDocs/index.md` for architecture, module map, data flow/concurrency notes, MailKit helper summary, and migration log.
