@@ -22,3 +22,14 @@ Pruning has two paths:
 - Archive is app-only and persists `ArchivedInGraphEntry` rows through `MessageStore`, excluding archived threads from graph rendering until restored.
 
 Focused graph coverage lives in `Tests/GraphTests.swift`: graph mapping invariants, force settling, spline envelopes, summary auto-placement, label-repel gating, directional selection, and prune state-machine round trips.
+
+## Processing Activity Center
+
+`ProcessingActivityCenter` is the shared observable model for app-wide loading and processing state. Long-running operations register an activity when they begin, update optional detail/progress while they run, and finish with completed, failed, or cancelled state. This keeps user-visible work such as latest-mail refreshes, mailbox hierarchy loading, visible-range backfill, batch import, Apple Intelligence summaries/tags, and Re-GenAI in one activity timeline instead of scattered loading indicators.
+
+`BetterMailApp` owns a single activity center and passes it into `ContentView`, `ThreadCanvasViewModel`, and `AutoRefreshSettingsView`. The center is visible in two places:
+
+- a `MenuBarExtra` for system-level visibility while the main window is covered or inactive
+- `ProcessingActivityShelf` over the main app content for active/recent work in the current window
+
+Operation-specific views may still keep action buttons disabled or show detailed settings text, but the canonical visual status for active processing is the activity center.

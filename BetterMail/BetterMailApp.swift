@@ -14,6 +14,7 @@ internal struct BetterMailApp: App {
     @StateObject private var displaySettings = ThreadCanvasDisplaySettings()
     @StateObject private var pinnedFolderSettings = PinnedFolderSettings()
     @StateObject private var appearanceSettings = AppearanceSettings()
+    @StateObject private var activityCenter = ProcessingActivityCenter()
 
     @FocusedValue(\.canvasViewModel) private var focusedViewModel
     @FocusedValue(\.displaySettings) private var focusedDisplaySettings
@@ -23,7 +24,8 @@ internal struct BetterMailApp: App {
             ContentView(settings: settings,
                         inspectorSettings: inspectorSettings,
                         displaySettings: displaySettings,
-                        pinnedFolderSettings: pinnedFolderSettings)
+                        pinnedFolderSettings: pinnedFolderSettings,
+                        activityCenter: activityCenter)
                 .preferredColorScheme(appearanceSettings.preferredColorScheme)
         }
         .commands {
@@ -77,11 +79,23 @@ internal struct BetterMailApp: App {
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             }
         }
+        MenuBarExtra {
+            ProcessingActivityMenuContent(activityCenter: activityCenter)
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: activityCenter.hasActiveActivity ? "bolt.horizontal.circle.fill" : "checkmark.circle")
+                if activityCenter.activeCount > 0 {
+                    Text("\(activityCenter.activeCount)")
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
         Settings {
             AutoRefreshSettingsView(settings: settings,
                                     inspectorSettings: inspectorSettings,
                                     displaySettings: displaySettings,
-                                    appearanceSettings: appearanceSettings)
+                                    appearanceSettings: appearanceSettings,
+                                    activityCenter: activityCenter)
                 .preferredColorScheme(appearanceSettings.preferredColorScheme)
         }
     }

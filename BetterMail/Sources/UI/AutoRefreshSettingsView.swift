@@ -6,20 +6,24 @@ internal struct AutoRefreshSettingsView: View {
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @ObservedObject internal var appearanceSettings: AppearanceSettings
+    @ObservedObject internal var activityCenter: ProcessingActivityCenter
     @StateObject private var backfillViewModel: BatchBackfillSettingsViewModel
     @State private var isResetConfirmationPresented = false
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
                   displaySettings: ThreadCanvasDisplaySettings,
-                  appearanceSettings: AppearanceSettings) {
+                  appearanceSettings: AppearanceSettings,
+                  activityCenter: ProcessingActivityCenter) {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
         self.appearanceSettings = appearanceSettings
+        self.activityCenter = activityCenter
         _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
             snippetLineLimitProvider: { inspectorSettings.snippetLineLimit },
-            stopPhrasesProvider: { inspectorSettings.stopPhrases }
+            stopPhrasesProvider: { inspectorSettings.stopPhrases },
+            activityCenter: activityCenter
         ))
     }
 

@@ -4,6 +4,7 @@ internal enum AccessibilityID {
     internal static let contentRoot = "bettermail.content-root"
     internal static let sidebar = "bettermail.sidebar"
     internal static let detailContainer = "bettermail.detail-container"
+    internal static let processingActivityShelf = "bettermail.processing-activity.shelf"
 
     internal static let actionItemsView = "bettermail.action-items.view"
     internal static let actionItemsShowDoneButton = "bettermail.action-items.show-done"

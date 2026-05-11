@@ -73,16 +73,6 @@ internal struct MailboxSidebarView: View {
         }
         .overlay(alignment: .bottomLeading) {
             VStack(alignment: .leading, spacing: 8) {
-                if viewModel.isMailboxHierarchyLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(NSLocalizedString("mailbox.sidebar.loading", comment: "Mailbox hierarchy loading status"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
                 if activeDraggedFolderID != nil {
                     Label(NSLocalizedString("mailbox.sidebar.reorder.hint",
                                             comment: "Hint shown while dragging a mailbox folder to reorder"),

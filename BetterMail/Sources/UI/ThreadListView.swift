@@ -295,16 +295,6 @@ internal struct ThreadListView: View {
                     refreshTimingView
                 }
                 Spacer()
-                if viewModel.isRefreshing {
-                    if let progress = viewModel.refreshProgress {
-                        ProgressView(value: progress).controlSize(.small).frame(width: 60)
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-                if viewModel.isBackfilling {
-                    ProgressView().controlSize(.small)
-                }
                 graphModeSegmentedControl
                 if graphSettings.mode == .timeline {
                     viewModeToggle

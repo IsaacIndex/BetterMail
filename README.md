@@ -70,6 +70,7 @@ Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Cor
 - `MessageStore` keeps everything off the main actor, exposes async fetch/upsert helpers, and maintains per-thread entities.
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
+- `ProcessingActivityCenter` is the shared source of truth for visible loading/processing state across refreshes, mailbox folder loading, batch imports, visible-range backfill, Apple Intelligence generation, and Re-GenAI. The app surfaces it through a menu bar extra and a compact main-window activity shelf.
 - `GraphCanvasViewModel` maps the existing `ThreadNode` tree into graph-specific thread/message nodes, coordinates graph-only archive state, and forwards Mail-side snip moves through `MailAppleScriptClient`.
 - `EmailSummaryProviderFactory` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` provides AppleScript helpers for message targeting, move/create mailbox-folder actions, flagging, and search workflows.

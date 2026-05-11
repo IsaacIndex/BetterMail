@@ -742,6 +742,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let tagAvailabilityMessage: String
     private let settings: AutoRefreshSettings
     private let inspectorSettings: InspectorViewSettings
+    private let activityCenter: ProcessingActivityCenter?
     private let pinnedFolderSettings: PinnedFolderSettings
     private let mailboxFolderOrderSettings: MailboxFolderOrderSettings
     private let mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings
@@ -817,12 +818,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   backfillService: BatchBackfillServicing? = nil,
                   summaryCapability: EmailSummaryCapability? = nil,
                   tagCapability: EmailTagCapability? = nil,
+                  activityCenter: ProcessingActivityCenter? = nil,
                   folderSummaryDebounceInterval: TimeInterval = 30) {
         self.store = store
         self.client = client
         self.threader = threader
         self.settings = settings
         self.inspectorSettings = inspectorSettings
+        self.activityCenter = activityCenter
         self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
         self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
         self.mailboxFolderOrderSettings = mailboxFolderOrderSettings ?? MailboxFolderOrderSettings()
@@ -1132,11 +1135,41 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         errorMessage = nil
     }
 
+    private func beginActivity(id: ProcessingActivityID = UUID().uuidString,
+                               titleKey: String,
+                               detail: String? = nil,
+                               kind: ProcessingActivityKind,
+                               progress: Double? = nil) -> ProcessingActivityID? {
+        activityCenter?.begin(id: id,
+                              title: NSLocalizedString(titleKey, comment: "Processing activity title"),
+                              detail: detail,
+                              kind: kind,
+                              progress: progress)
+    }
+
+    private func updateActivity(_ id: ProcessingActivityID?,
+                                detail: String? = nil,
+                                progress: Double? = nil) {
+        guard let id else { return }
+        activityCenter?.update(id, detail: detail, progress: progress)
+    }
+
+    private func finishActivity(_ id: ProcessingActivityID?,
+                                state: ProcessingActivityState = .completed,
+                                detail: String? = nil) {
+        activityCenter?.finish(id, state: state, detail: detail)
+    }
+
     internal func refreshNow(limit: Int? = nil) {
         guard !isAnyRefreshRunning else {
             Log.refresh.debug("Refresh skipped because another refresh is in progress.")
             return
         }
+        let activityID = beginActivity(id: "refresh.latest",
+                                       titleKey: "activity.refresh.latest.title",
+                                       detail: NSLocalizedString("activity.refresh.latest.detail",
+                                                                 comment: "Refresh latest mail activity detail"),
+                                       kind: .refresh)
         let requestedLimit = max(1, limit ?? fetchLimit)
         let effectiveLimit = min(requestedLimit, Self.maximumRefreshFetchCount)
         isRefreshing = true
@@ -1178,9 +1211,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         NSLocalizedString("refresh.status.updated", comment: "Status after refresh completes"),
                         timestamp
                     )
+                    self.finishActivity(activityID, detail: self.status)
                 }
             } catch is CancellationError {
                 Log.refresh.debug("Refresh cancelled before completion.")
+                await MainActor.run {
+                    self.finishActivity(activityID,
+                                        state: .cancelled,
+                                        detail: NSLocalizedString("activity.state.cancelled",
+                                                                  comment: "Cancelled processing activity state"))
+                }
             } catch {
                 Log.refresh.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
@@ -1188,6 +1228,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.status = NSLocalizedString("refresh.status.mailbox_unavailable",
                                                         comment: "Status when selected mailbox scope cannot be resolved in Mail")
                         self.showError(self.status)
+                        self.finishActivity(activityID, state: .failed, detail: self.status)
                         return
                     }
                     self.status = String.localizedStringWithFormat(
@@ -1195,6 +1236,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         error.localizedDescription
                     )
                     self.showError(self.status)
+                    self.finishActivity(activityID, state: .failed, detail: self.status)
                 }
             }
             await MainActor.run {
@@ -1249,6 +1291,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         refreshingFolderThreadIDs.insert(folderID)
         status = NSLocalizedString("threadcanvas.folder.inspector.refresh_threads.status.running",
                                    comment: "Status when refreshing the selected folder threads begins")
+        let activityID = beginActivity(titleKey: "activity.refresh.folder.title",
+                                       detail: status,
+                                       kind: .refresh)
 
         let effectiveLimit = max(1, limit ?? fetchLimit)
         let snippetLineLimit = inspectorSettings.snippetLineLimit
@@ -1269,10 +1314,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         NSLocalizedString("refresh.status.updated", comment: "Status after refresh completes"),
                         timestamp
                     )
+                    self.finishActivity(activityID, detail: self.status)
                 }
             } catch is CancellationError {
                 await MainActor.run {
                     self.refreshingFolderThreadIDs.remove(folderID)
+                    self.finishActivity(activityID,
+                                        state: .cancelled,
+                                        detail: NSLocalizedString("activity.state.cancelled",
+                                                                  comment: "Cancelled processing activity state"))
                 }
             } catch {
                 Log.refresh.error("Folder refresh failed. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -1283,6 +1333,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         error.localizedDescription
                     )
                     self.showError(self.status)
+                    self.finishActivity(activityID, state: .failed, detail: self.status)
                 }
             }
         }
@@ -1351,8 +1402,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
 
         isRethreadRunning = true
+        let activityID = beginActivity(id: "thread.rebuild",
+                                       titleKey: "activity.thread.rebuild.title",
+                                       detail: NSLocalizedString("activity.thread.rebuild.detail",
+                                                                 comment: "Thread rebuild processing activity detail"),
+                                       kind: .maintenance)
+        var activityState = ProcessingActivityState.completed
+        var activityDetail: String?
         defer {
             isRethreadRunning = false
+            finishActivity(activityID, state: activityState, detail: activityDetail)
             if hasQueuedRethread {
                 hasQueuedRethread = false
                 scheduleRethread(delay: 0)
@@ -1421,6 +1480,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public) needsAttention=\(self.needsAttentionCount, privacy: .public)")
+            activityDetail = String.localizedStringWithFormat(
+                NSLocalizedString("activity.thread.rebuild.completed", comment: "Thread rebuild completed detail"),
+                rethreadResult.threadCount
+            )
             await runPendingManualAttachmentMailboxMoveIfNeeded()
             scheduleMailboxThreadAutoMovePass()
         } catch {
@@ -1430,6 +1493,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 error.localizedDescription
             )
             showError(status)
+            activityState = .failed
+            activityDetail = status
         }
     }
 
@@ -1583,9 +1648,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let stopPhrases = inspectorSettings.stopPhrases
 
         let taskToken = UUID()
+        let activityID = beginActivity(titleKey: "activity.summary.node.title",
+                                       detail: Self.node(matching: nodeID, in: roots)?.message.subject,
+                                       kind: .generation)
         nodeSummaryTaskTokens[nodeID] = taskToken
         nodeSummaryTasks[nodeID] = Task { [weak self] in
             guard let self else { return }
+            var finalActivityState = ProcessingActivityState.completed
+            var finalActivityDetail = NSLocalizedString("activity.summary.node.completed",
+                                                        comment: "Message summary generation completed detail")
             let inputsByNodeID = await worker.nodeSummaryInputs(for: rootsSnapshot,
                                                                 manualAttachmentMessageIDs: manualAttachmentSnapshot,
                                                                 snippetLineLimit: snippetLineLimit,
@@ -1594,6 +1665,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.finishSummary(for: nodeID, in: \.nodeSummaries)
                     self.clearNodeSummaryTask(for: nodeID, token: taskToken)
+                    self.finishActivity(activityID,
+                                        detail: NSLocalizedString("activity.summary.node.completed",
+                                                                  comment: "Message summary generation completed detail"))
                 }
                 return
             }
@@ -1629,6 +1703,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.finishSummary(for: nodeID, in: \.nodeSummaries)
                 }
+                finalActivityState = .cancelled
+                finalActivityDetail = NSLocalizedString("activity.state.cancelled",
+                                                        comment: "Cancelled processing activity state")
             } catch {
                 await MainActor.run {
                     self.updateSummary(for: nodeID,
@@ -1638,8 +1715,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        in: \.nodeSummaries)
                     self.showError(error.localizedDescription)
                 }
+                finalActivityState = .failed
+                finalActivityDetail = error.localizedDescription
             }
             await MainActor.run {
+                self.finishActivity(activityID,
+                                    state: finalActivityState,
+                                    detail: finalActivityDetail)
                 self.clearNodeSummaryTask(for: nodeID, token: taskToken)
             }
         }
@@ -1661,14 +1743,23 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                        isSummarizing: true)
 
         let taskToken = UUID()
+        let activityID = beginActivity(titleKey: "activity.summary.folder.title",
+                                       detail: threadFolders.first(where: { $0.id == folderID })?.title,
+                                       kind: .generation)
         folderSummaryTaskTokens[folderID] = taskToken
         folderSummaryTasks[folderID] = Task { [weak self] in
             guard let self else { return }
+            var finalActivityState = ProcessingActivityState.completed
+            var finalActivityDetail = NSLocalizedString("activity.summary.folder.completed",
+                                                        comment: "Folder summary generation completed detail")
             do {
                 guard let input = try await self.folderSummaryInput(for: folderID) else {
                     await MainActor.run {
                         self.finishSummary(for: folderID, in: \.folderSummaries)
                         self.clearFolderSummaryTask(for: folderID, token: taskToken)
+                        self.finishActivity(activityID,
+                                            detail: NSLocalizedString("activity.summary.folder.completed",
+                                                                      comment: "Folder summary generation completed detail"))
                     }
                     return
                 }
@@ -1681,6 +1772,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                            isSummarizing: false,
                                            in: \.folderSummaries)
                         self.clearFolderSummaryTask(for: folderID, token: taskToken)
+                        self.finishActivity(activityID,
+                                            detail: NSLocalizedString("activity.summary.folder.waiting",
+                                                                      comment: "Folder summary waiting for message summaries detail"))
                     }
                     return
                 }
@@ -1714,6 +1808,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.finishSummary(for: folderID, in: \.folderSummaries)
                 }
+                finalActivityState = .cancelled
+                finalActivityDetail = NSLocalizedString("activity.state.cancelled",
+                                                        comment: "Cancelled processing activity state")
             } catch {
                 await MainActor.run {
                     self.updateSummary(for: folderID,
@@ -1723,8 +1820,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        in: \.folderSummaries)
                     self.showError(error.localizedDescription)
                 }
+                finalActivityState = .failed
+                finalActivityDetail = error.localizedDescription
             }
             await MainActor.run {
+                self.finishActivity(activityID,
+                                    state: finalActivityState,
+                                    detail: finalActivityDetail)
                 self.clearFolderSummaryTask(for: folderID, token: taskToken)
             }
         }
@@ -1874,9 +1976,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
             cancelNodeSummaryTask(for: input.nodeID)
             let taskToken = UUID()
+            let activityID = beginActivity(titleKey: "activity.summary.node.title",
+                                           detail: input.subject,
+                                           kind: .generation)
             nodeSummaryTaskTokens[input.nodeID] = taskToken
             nodeSummaryTasks[input.nodeID] = Task { [weak self] in
                 guard let self else { return }
+                var finalActivityState = ProcessingActivityState.completed
+                var finalActivityDetail = NSLocalizedString("activity.summary.node.completed",
+                                                            comment: "Message summary generation completed detail")
                 do {
                     let request = EmailSummaryRequest(subject: input.subject,
                                                       body: input.body,
@@ -1909,6 +2017,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     await MainActor.run {
                         self.finishSummary(for: input.nodeID, in: \.nodeSummaries)
                     }
+                    finalActivityState = .cancelled
+                    finalActivityDetail = NSLocalizedString("activity.state.cancelled",
+                                                            comment: "Cancelled processing activity state")
                 } catch {
                     await MainActor.run {
                         if let cachedEntry {
@@ -1927,8 +2038,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                in: \.nodeSummaries)
                         }
                     }
+                    finalActivityState = .failed
+                    finalActivityDetail = error.localizedDescription
                 }
                 await MainActor.run {
+                    self.finishActivity(activityID,
+                                        state: finalActivityState,
+                                        detail: finalActivityDetail)
                     self.clearNodeSummaryTask(for: input.nodeID, token: taskToken)
                 }
             }
@@ -2133,9 +2249,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
             cancelFolderSummaryTask(for: input.folderID)
             let taskToken = UUID()
+            let activityID = beginActivity(titleKey: "activity.summary.folder.title",
+                                           detail: input.title,
+                                           kind: .generation)
             folderSummaryTaskTokens[input.folderID] = taskToken
             folderSummaryTasks[input.folderID] = Task { [weak self] in
                 guard let self else { return }
+                var finalActivityState = ProcessingActivityState.completed
+                var finalActivityDetail = NSLocalizedString("activity.summary.folder.completed",
+                                                            comment: "Folder summary generation completed detail")
                 do {
                     if debounceInterval > 0 {
                         try await Task.sleep(nanoseconds: UInt64(debounceInterval * 1_000_000_000))
@@ -2170,6 +2292,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     await MainActor.run {
                         self.finishSummary(for: input.folderID, in: \.folderSummaries)
                     }
+                    finalActivityState = .cancelled
+                    finalActivityDetail = NSLocalizedString("activity.state.cancelled",
+                                                            comment: "Cancelled processing activity state")
                 } catch {
                     await MainActor.run {
                         if let cachedEntry {
@@ -2188,8 +2313,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                in: \.folderSummaries)
                         }
                     }
+                    finalActivityState = .failed
+                    finalActivityDetail = error.localizedDescription
                 }
                 await MainActor.run {
+                    self.finishActivity(activityID,
+                                        state: finalActivityState,
+                                        detail: finalActivityDetail)
                     self.clearFolderSummaryTask(for: input.folderID, token: taskToken)
                 }
             }
@@ -2534,6 +2664,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
         guard !isMailboxHierarchyLoading else { return }
         isMailboxHierarchyLoading = true
+        let activityID = beginActivity(id: "mailbox.hierarchy",
+                                       titleKey: "activity.mailbox.hierarchy.title",
+                                       detail: NSLocalizedString("activity.mailbox.hierarchy.detail",
+                                                                 comment: "Mailbox hierarchy activity detail"),
+                                       kind: .mailbox)
         Task { [weak self] in
             guard let self else { return }
             defer {
@@ -2547,6 +2682,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 Self.logMailboxHierarchyDebug(folders: folders, accounts: accounts)
                 await MainActor.run {
                     self.applyMailboxHierarchy(accounts)
+                    self.finishActivity(activityID,
+                                        detail: String.localizedStringWithFormat(
+                                            NSLocalizedString("activity.mailbox.hierarchy.completed",
+                                                              comment: "Mailbox hierarchy completed activity detail"),
+                                            accounts.count
+                                        ))
                 }
             } catch {
                 Log.appleScript.error("Failed to fetch mailbox hierarchy: \(error.localizedDescription, privacy: .public)")
@@ -2555,6 +2696,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         NSLocalizedString("mailbox.hierarchy.error", comment: "Error when mailbox hierarchy cannot be loaded"),
                         error.localizedDescription
                     )
+                    self.finishActivity(activityID,
+                                        state: .failed,
+                                        detail: self.mailboxActionStatusMessage)
                 }
             }
         }
@@ -3298,6 +3442,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let attemptID = UUID()
         openInMailAttemptID = attemptID
         setOpenInMailState(.searchingFilteredFallback, messageKey: messageKey, attemptID: attemptID)
+        let activityID = beginActivity(titleKey: "activity.open_mail.title",
+                                       detail: node.message.subject,
+                                       kind: .mailbox)
         let metadata = MailControl.OpenMessageMetadata(subject: node.message.subject,
                                                        sender: node.message.from,
                                                        date: node.message.date,
@@ -3314,11 +3461,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.setOpenInMailState(.opened(.filteredFallback),
                                                 messageKey: messageKey,
                                                 attemptID: attemptID)
+                        self.finishActivity(activityID,
+                                            detail: NSLocalizedString("activity.open_mail.completed",
+                                                                      comment: "Open in Mail completed activity detail"))
                     }
                 case .notFound:
                     Log.appleScript.info("Open in Mail filtered fallback found no match. messageKey=\(messageKey, privacy: .public)")
                     await MainActor.run {
                         self.setOpenInMailState(.notFound, messageKey: messageKey, attemptID: attemptID)
+                        self.finishActivity(activityID,
+                                            state: .failed,
+                                            detail: NSLocalizedString("threadcanvas.inspector.open_in_mail.status.no_match",
+                                                                      comment: "Status when Mail search finds no matching message"))
                     }
                 }
             } catch {
@@ -3327,6 +3481,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.setOpenInMailState(.failed(error.localizedDescription),
                                             messageKey: messageKey,
                                             attemptID: attemptID)
+                    self.finishActivity(activityID,
+                                        state: .failed,
+                                        detail: error.localizedDescription)
                 }
             }
         }
@@ -3486,8 +3643,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                       snippet: input.snippet)
         guard request.hasContent else { return }
 
+        let activityID = beginActivity(titleKey: "activity.tags.node.title",
+                                       detail: input.subject,
+                                       kind: .generation)
         timelineTagTasks[node.id] = Task { [weak self] in
             guard let self else { return }
+            var finalActivityState = ProcessingActivityState.completed
+            var finalActivityDetail = NSLocalizedString("activity.tags.node.completed",
+                                                        comment: "Timeline tag generation completed detail")
             do {
                 let tags = try await tagProvider.generateTags(request)
                 let entry = SummaryCacheEntry(scope: .emailTag,
@@ -3505,6 +3668,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.timelineTagsByNodeID[node.id] = tags
                     self.timelineTagCacheByNodeID[node.id] = entry
                 }
+            } catch is CancellationError {
+                finalActivityState = .cancelled
+                finalActivityDetail = NSLocalizedString("activity.state.cancelled",
+                                                        comment: "Cancelled processing activity state")
             } catch {
                 await MainActor.run {
                     if let cachedEntry {
@@ -3518,8 +3685,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.timelineTagsByNodeID[node.id] = []
                     }
                 }
+                finalActivityState = .failed
+                finalActivityDetail = error.localizedDescription
             }
             await MainActor.run {
+                self.finishActivity(activityID,
+                                    state: finalActivityState,
+                                    detail: finalActivityDetail)
                 self.timelineTagTasks[node.id] = nil
             }
         }
@@ -3803,6 +3975,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard !ranges.isEmpty else { return }
         isBackfilling = true
         status = NSLocalizedString("threadlist.backfill.status.fetching", comment: "Status when backfill begins")
+        let activityID = beginActivity(titleKey: "activity.backfill.visible.title",
+                                       detail: status,
+                                       kind: .importing)
         let limit = max(1, limitOverride ?? fetchLimit)
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         let mailboxTarget = activeMailboxFetchTarget
@@ -3821,7 +3996,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                        account: mailboxTarget.account,
                                                                        preferredBatchSize: limit,
                                                                        totalExpected: total,
-                                                                       snippetLineLimit: snippetLineLimit) { _ in }
+                                                                       snippetLineLimit: snippetLineLimit) { progress in
+                        Task { @MainActor [weak self] in
+                            let detail = String.localizedStringWithFormat(
+                                NSLocalizedString("activity.backfill.visible.progress",
+                                                  comment: "Visible backfill processing progress detail"),
+                                progress.completed,
+                                progress.total
+                            )
+                            self?.updateActivity(activityID,
+                                                 detail: detail,
+                                                 progress: progress.total > 0 ? Double(progress.completed) / Double(progress.total) : nil)
+                        }
+                    }
                     fetchedCount += result.fetched
                 }
                 await MainActor.run {
@@ -3834,10 +4021,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     if fetchedCount > 0 {
                         self.scheduleRethread()
                     }
+                    self.finishActivity(activityID, detail: self.status)
                 }
             } catch is CancellationError {
                 await MainActor.run {
                     self.isBackfilling = false
+                    self.finishActivity(activityID,
+                                        state: .cancelled,
+                                        detail: NSLocalizedString("activity.state.cancelled",
+                                                                  comment: "Cancelled processing activity state"))
                 }
             } catch {
                 await MainActor.run {
@@ -3848,6 +4040,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         error.localizedDescription
                     )
                     self.showError(self.status)
+                    self.finishActivity(activityID, state: .failed, detail: self.status)
                 }
             }
         }
