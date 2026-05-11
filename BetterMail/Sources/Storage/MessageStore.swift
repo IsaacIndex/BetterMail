@@ -22,6 +22,7 @@ internal final class MessageStore {
     private let summaryCacheMigrationKey = "MessageStore.threadSummaryCacheMigrationV1"
     private let scopedSummaryCacheMigrationKey = "MessageStore.scopedSummaryCacheMigrationV1"
     private let logger = Log.refresh
+    private static let messageFetchBatchSize = 128
 
     internal var lastSyncDate: Date? {
         get { userDefaults.object(forKey: lastSyncKey) as? Date }
@@ -60,6 +61,10 @@ internal final class MessageStore {
             await self?.migrateSummaryCacheIfNeeded()
             await self?.migrateScopedSummaryCacheIfNeeded()
         }
+    }
+
+    private static func configureMessageWindowFetch(_ request: NSFetchRequest<MessageEntity>) {
+        request.fetchBatchSize = messageFetchBatchSize
     }
 
     internal func upsert(messages: [EmailMessage]) async throws {
@@ -113,6 +118,7 @@ internal final class MessageStore {
                                 includeAllInboxesAliases: Bool = false) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            Self.configureMessageWindowFetch(request)
             request.sortDescriptors = [
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
@@ -134,7 +140,9 @@ internal final class MessageStore {
             }
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
-            return entities.compactMap { $0.toModel() }
+            return autoreleasepool {
+                entities.compactMap { $0.toModel() }
+            }
         }
     }
 
@@ -190,6 +198,7 @@ internal final class MessageStore {
                                 offset: Int = 0) async throws -> [EmailMessage] {
         try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            Self.configureMessageWindowFetch(request)
             request.sortDescriptors = [
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
@@ -212,7 +221,9 @@ internal final class MessageStore {
             }
             request.fetchOffset = max(0, offset)
             let entities = try context.fetch(request)
-            return entities.compactMap { $0.toModel() }
+            return autoreleasepool {
+                entities.compactMap { $0.toModel() }
+            }
         }
     }
 
@@ -220,6 +231,7 @@ internal final class MessageStore {
         guard !threadIDs.isEmpty else { return [] }
         return try await container.performBackgroundTask { context in
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            Self.configureMessageWindowFetch(request)
             request.sortDescriptors = [
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
@@ -227,7 +239,9 @@ internal final class MessageStore {
             request.predicate = NSPredicate(format: "threadID IN %@", Array(threadIDs))
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
-            return entities.compactMap { $0.toModel() }
+            return autoreleasepool {
+                entities.compactMap { $0.toModel() }
+            }
         }
     }
 

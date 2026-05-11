@@ -19,7 +19,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
         view.allowsTransparency = false
         view.ignoresSiblingOrder = true
         view.shouldCullNonVisibleNodes = true
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = GraphScene.activeFramesPerSecond
 #if DEBUG
         view.showsFPS = true
         view.showsNodeCount = true
@@ -70,6 +70,9 @@ internal struct GraphRepresentable: NSViewRepresentable {
         scene.onPositionsChanged = { positions in
             graphViewModel.setNodePositions(positions)
         }
+        scene.onFrameRatePreferenceChanged = { [weak nsView] framesPerSecond in
+            nsView?.preferredFramesPerSecond = framesPerSecond
+        }
         scene.configure(data: graphViewModel.data,
                         selectedGraphNodeID: graphViewModel.selectedGraphNodeID(for: selectedNodeID),
                         pruneMode: graphViewModel.pruneMode,
@@ -81,6 +84,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
                         theme: DesignTokens.Graph.AppTheme.palette(for: colorScheme),
                         zoomScale: graphViewModel.zoomScale,
                         panOffset: graphViewModel.panOffset)
+        nsView.preferredFramesPerSecond = scene.preferredFramesPerSecond
     }
 
     internal final class Coordinator {

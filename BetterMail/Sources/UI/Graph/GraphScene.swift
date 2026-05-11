@@ -10,6 +10,8 @@ internal final class GraphScene: SKScene {
     private static let ribbonEdgeBudget = 420
     private static let layoutSettlingFrameLimit = 120
     private static let layoutSettledEnergyPerNodeThreshold: CGFloat = 0.04
+    internal static let activeFramesPerSecond = 30
+    internal static let idleFramesPerSecond = 5
 
     internal var onSelectGraphNode: ((String?) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
@@ -17,6 +19,11 @@ internal final class GraphScene: SKScene {
     internal var onPruneThread: ((String) -> Void)?
     internal var onViewportChanged: ((CGFloat, CGPoint) -> Void)?
     internal var onPositionsChanged: (([String: CGPoint]) -> Void)?
+    internal var onFrameRatePreferenceChanged: ((Int) -> Void)?
+
+    internal var preferredFramesPerSecond: Int {
+        needsActiveFrameRate ? Self.activeFramesPerSecond : Self.idleFramesPerSecond
+    }
 
     private var graphData: GraphData = .empty
     private var simulator = GraphForceSimulator()
@@ -46,6 +53,7 @@ internal final class GraphScene: SKScene {
     private var draggedNodeID: String?
     private var isPanning = false
     private var lastPositionReportTime: TimeInterval = 0
+    private var publishedFramesPerSecond = GraphScene.activeFramesPerSecond
     private let cameraNode = SKCameraNode()
 
     override init(size: CGSize) {
@@ -91,6 +99,7 @@ internal final class GraphScene: SKScene {
             resetLayoutSettling()
         }
         applyVisualState()
+        publishFrameRatePreferenceIfNeeded()
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
@@ -109,8 +118,8 @@ internal final class GraphScene: SKScene {
                            config: forceConfig,
                            labelOccluderRadius: labelOccluderRadius(for:))
             updateLayoutSettlingState()
+            renderFromSimulator(elapsedTime: currentTime * 1_000)
         }
-        renderFromSimulator(elapsedTime: currentTime * 1_000)
         if shouldReportPositions(),
            currentTime - lastPositionReportTime > 0.2 {
             lastPositionReportTime = currentTime
@@ -119,6 +128,7 @@ internal final class GraphScene: SKScene {
                 layoutSettledPositionsReported = true
             }
         }
+        publishFrameRatePreferenceIfNeeded()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -135,9 +145,11 @@ internal final class GraphScene: SKScene {
                 onWaterThread?(threadID)
                 graphNodesByID[nodeID]?.runWaterPulse(wateredCount: wateredCounts[threadID, default: 0] + 1,
                                                        reduceMotion: reduceMotion)
+                publishFrameRatePreferenceIfNeeded()
             } else {
                 onSelectGraphNode?(nodeID)
                 draggedNodeID = nodeID == GraphCenter.you.id ? nil : nodeID
+                publishFrameRatePreferenceIfNeeded()
             }
         } else {
             onSelectGraphNode?(nil)
@@ -147,6 +159,7 @@ internal final class GraphScene: SKScene {
                 return
             }
             isPanning = true
+            publishFrameRatePreferenceIfNeeded()
         }
     }
 
@@ -154,6 +167,7 @@ internal final class GraphScene: SKScene {
         let location = event.location(in: self)
         if let draggedNodeID {
             simulator.setPosition(location, for: draggedNodeID, pinned: true)
+            renderFromSimulator(elapsedTime: (lastUpdateTime ?? 0) * 1_000)
             return
         }
         guard isPanning else { return }
@@ -163,6 +177,7 @@ internal final class GraphScene: SKScene {
 
     override func rightMouseDown(with event: NSEvent) {
         isPanning = true
+        publishFrameRatePreferenceIfNeeded()
     }
 
     override func rightMouseDragged(with event: NSEvent) {
@@ -178,10 +193,12 @@ internal final class GraphScene: SKScene {
         }
         draggedNodeID = nil
         isPanning = false
+        publishFrameRatePreferenceIfNeeded()
     }
 
     override func rightMouseUp(with event: NSEvent) {
         isPanning = false
+        publishFrameRatePreferenceIfNeeded()
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -313,6 +330,7 @@ internal final class GraphScene: SKScene {
         guard hypot(constrained.x - cameraNode.position.x, constrained.y - cameraNode.position.y) > 0.5 else { return }
         cameraNode.removeAction(forKey: "graph-camera-settle")
         cameraNode.run(.move(to: constrained, duration: 0.18), withKey: "graph-camera-settle")
+        publishFrameRatePreferenceIfNeeded()
     }
 
     private func recenterCamera(animated: Bool) {
@@ -328,8 +346,12 @@ internal final class GraphScene: SKScene {
                 .move(to: center, duration: 0.24),
                 .scale(to: 1, duration: 0.24)
             ]),
-            .run { [weak self] in self?.publishViewport() }
+            .run { [weak self] in
+                self?.publishViewport()
+                self?.publishFrameRatePreferenceIfNeeded()
+            }
         ]), withKey: "graph-camera-recenter")
+        publishFrameRatePreferenceIfNeeded()
     }
 
     private func publishViewport() {
@@ -648,6 +670,7 @@ internal final class GraphScene: SKScene {
         layoutSettlingFrames = 0
         layoutIsSettled = false
         layoutSettledPositionsReported = false
+        publishFrameRatePreferenceIfNeeded()
     }
 
     private func updateLayoutSettlingState() {
@@ -662,6 +685,22 @@ internal final class GraphScene: SKScene {
 
     private func shouldReportPositions() -> Bool {
         !layoutIsSettled || !layoutSettledPositionsReported
+    }
+
+    private var needsActiveFrameRate: Bool {
+        !layoutIsSettled ||
+        draggedNodeID != nil ||
+        isPanning ||
+        cameraNode.hasActions() ||
+        graphNodesByID.values.contains { $0.hasActions() } ||
+        summaryCalloutsByID.values.contains { $0.hasActions() }
+    }
+
+    private func publishFrameRatePreferenceIfNeeded() {
+        let nextFramesPerSecond = preferredFramesPerSecond
+        guard nextFramesPerSecond != publishedFramesPerSecond else { return }
+        publishedFramesPerSecond = nextFramesPerSecond
+        onFrameRatePreferenceChanged?(nextFramesPerSecond)
     }
 
     private func appendEdge(edge: GraphEdge,

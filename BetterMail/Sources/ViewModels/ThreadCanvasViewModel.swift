@@ -753,6 +753,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var autoRefreshTask: Task<Void, Never>?
     private var nodeSummaryTasks: [String: Task<Void, Never>] = [:]
     private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
+    private var nodeSummaryTaskTokens: [String: UUID] = [:]
+    private var folderSummaryTaskTokens: [String: UUID] = [:]
     private var timelineTagTasks: [String: Task<Void, Never>] = [:]
     private var timelineTagCacheByNodeID: [String: SummaryCacheEntry] = [:]
     private var nodeSummaryRefreshGeneration = 0
@@ -870,6 +872,30 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         bottomBarMailboxActionStatusExpiryTask?.cancel()
         canvasScrollStateResetTask?.cancel()
         allFoldersScrollStateResetTask?.cancel()
+    }
+
+    private func cancelNodeSummaryTask(for nodeID: String) {
+        nodeSummaryTasks[nodeID]?.cancel()
+        nodeSummaryTasks.removeValue(forKey: nodeID)
+        nodeSummaryTaskTokens.removeValue(forKey: nodeID)
+    }
+
+    private func cancelFolderSummaryTask(for folderID: String) {
+        folderSummaryTasks[folderID]?.cancel()
+        folderSummaryTasks.removeValue(forKey: folderID)
+        folderSummaryTaskTokens.removeValue(forKey: folderID)
+    }
+
+    private func clearNodeSummaryTask(for nodeID: String, token: UUID) {
+        guard nodeSummaryTaskTokens[nodeID] == token else { return }
+        nodeSummaryTasks.removeValue(forKey: nodeID)
+        nodeSummaryTaskTokens.removeValue(forKey: nodeID)
+    }
+
+    private func clearFolderSummaryTask(for folderID: String, token: UUID) {
+        guard folderSummaryTaskTokens[folderID] == token else { return }
+        folderSummaryTasks.removeValue(forKey: folderID)
+        folderSummaryTaskTokens.removeValue(forKey: folderID)
     }
 
     internal func layoutProfilingSnapshot() -> LayoutProfilingSnapshot {
@@ -1276,9 +1302,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         autoRefreshTask?.cancel()
         nextRefreshDate = Date().addingTimeInterval(clampedInterval)
         autoRefreshTask = Task { [weak self] in
-            while let self {
+            while !Task.isCancelled {
+                guard self != nil else { break }
                 let nextDate = Date().addingTimeInterval(clampedInterval)
-                await self.updateNextRefreshDate(nextDate)
+                await self?.updateNextRefreshDate(nextDate)
                 do {
                     try await Task.sleep(nanoseconds: UInt64(clampedInterval * 1_000_000_000))
                     try Task.checkCancellation()
@@ -1289,7 +1316,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     Log.refresh.error("Auto refresh wait failed: \(error.localizedDescription, privacy: .public)")
                     continue
                 }
-                await self.refreshNow()
+                guard self != nil else { break }
+                await self?.refreshNow()
             }
         }
     }
@@ -1544,7 +1572,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return
         }
 
-        nodeSummaryTasks[nodeID]?.cancel()
+        cancelNodeSummaryTask(for: nodeID)
         nodeSummaries[nodeID] = ThreadSummaryState(text: nodeSummaries[nodeID]?.text ?? "",
                                                    statusMessage: "Summarizing…",
                                                    isSummarizing: true)
@@ -1554,6 +1582,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         let stopPhrases = inspectorSettings.stopPhrases
 
+        let taskToken = UUID()
+        nodeSummaryTaskTokens[nodeID] = taskToken
         nodeSummaryTasks[nodeID] = Task { [weak self] in
             guard let self else { return }
             let inputsByNodeID = await worker.nodeSummaryInputs(for: rootsSnapshot,
@@ -1563,6 +1593,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             guard let input = inputsByNodeID[nodeID] else {
                 await MainActor.run {
                     self.finishSummary(for: nodeID, in: \.nodeSummaries)
+                    self.clearNodeSummaryTask(for: nodeID, token: taskToken)
                 }
                 return
             }
@@ -1608,6 +1639,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.showError(error.localizedDescription)
                 }
             }
+            await MainActor.run {
+                self.clearNodeSummaryTask(for: nodeID, token: taskToken)
+            }
         }
     }
 
@@ -1621,17 +1655,20 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return
         }
 
-        folderSummaryTasks[folderID]?.cancel()
+        cancelFolderSummaryTask(for: folderID)
         folderSummaries[folderID] = ThreadSummaryState(text: folderSummaries[folderID]?.text ?? "",
                                                        statusMessage: "Summarizing…",
                                                        isSummarizing: true)
 
+        let taskToken = UUID()
+        folderSummaryTaskTokens[folderID] = taskToken
         folderSummaryTasks[folderID] = Task { [weak self] in
             guard let self else { return }
             do {
                 guard let input = try await self.folderSummaryInput(for: folderID) else {
                     await MainActor.run {
                         self.finishSummary(for: folderID, in: \.folderSummaries)
+                        self.clearFolderSummaryTask(for: folderID, token: taskToken)
                     }
                     return
                 }
@@ -1643,6 +1680,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                            status: "Waiting for email summaries",
                                            isSummarizing: false,
                                            in: \.folderSummaries)
+                        self.clearFolderSummaryTask(for: folderID, token: taskToken)
                     }
                     return
                 }
@@ -1685,6 +1723,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        in: \.folderSummaries)
                     self.showError(error.localizedDescription)
                 }
+            }
+            await MainActor.run {
+                self.clearFolderSummaryTask(for: folderID, token: taskToken)
             }
         }
     }
@@ -1785,6 +1826,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         for (id, task) in nodeSummaryTasks where !validNodeIDs.contains(id) {
             task.cancel()
             nodeSummaryTasks.removeValue(forKey: id)
+            nodeSummaryTaskTokens.removeValue(forKey: id)
             nodeSummaries.removeValue(forKey: id)
             expandedSummaryIDs.remove(id)
         }
@@ -1792,8 +1834,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         for input in inputsByNodeID.values {
             guard !input.subject.isEmpty || !input.body.isEmpty else {
                 nodeSummaries.removeValue(forKey: input.nodeID)
-                nodeSummaryTasks[input.nodeID]?.cancel()
-                nodeSummaryTasks.removeValue(forKey: input.nodeID)
+                cancelNodeSummaryTask(for: input.nodeID)
                 expandedSummaryIDs.remove(input.nodeID)
                 continue
             }
@@ -1803,8 +1844,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let isProviderAvailable = summaryProvider != nil
 
             if let cachedEntry, hasFreshCache {
-                nodeSummaryTasks[input.nodeID]?.cancel()
-                nodeSummaryTasks.removeValue(forKey: input.nodeID)
+                cancelNodeSummaryTask(for: input.nodeID)
                 nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                  statusMessage: cachedStatusMessage(for: cachedEntry,
                                                                                                     prefix: "Updated"),
@@ -1813,8 +1853,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
 
             if !isProviderAvailable {
-                nodeSummaryTasks[input.nodeID]?.cancel()
-                nodeSummaryTasks.removeValue(forKey: input.nodeID)
+                cancelNodeSummaryTask(for: input.nodeID)
                 if let cachedEntry {
                     nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                      statusMessage: cachedStatusMessage(for: cachedEntry,
@@ -1827,16 +1866,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 continue
             }
 
+            guard let summaryProvider else { continue }
             let placeholderText = cachedEntry?.summaryText ?? nodeSummaries[input.nodeID]?.text ?? ""
             nodeSummaries[input.nodeID] = ThreadSummaryState(text: placeholderText,
                                                              statusMessage: "Summarizing…",
                                                              isSummarizing: true)
 
-            nodeSummaryTasks[input.nodeID]?.cancel()
+            cancelNodeSummaryTask(for: input.nodeID)
+            let taskToken = UUID()
+            nodeSummaryTaskTokens[input.nodeID] = taskToken
             nodeSummaryTasks[input.nodeID] = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    guard let summaryProvider else { return }
                     let request = EmailSummaryRequest(subject: input.subject,
                                                       body: input.body,
                                                       priorMessages: input.priorMessages)
@@ -1886,6 +1927,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                in: \.nodeSummaries)
                         }
                     }
+                }
+                await MainActor.run {
+                    self.clearNodeSummaryTask(for: input.nodeID, token: taskToken)
                 }
             }
         }
@@ -2029,13 +2073,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         for (id, task) in folderSummaryTasks where !validFolderIDs.contains(id) {
             task.cancel()
             folderSummaryTasks.removeValue(forKey: id)
+            folderSummaryTaskTokens.removeValue(forKey: id)
             folderSummaries.removeValue(forKey: id)
         }
 
         for folder in folders {
             guard let input = inputsByFolderID[folder.id] else {
-                folderSummaryTasks[folder.id]?.cancel()
-                folderSummaryTasks.removeValue(forKey: folder.id)
+                cancelFolderSummaryTask(for: folder.id)
                 folderSummaries.removeValue(forKey: folder.id)
                 continue
             }
@@ -2045,8 +2089,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let isProviderAvailable = summaryProvider != nil
 
             if input.summaryTexts.isEmpty {
-                folderSummaryTasks[input.folderID]?.cancel()
-                folderSummaryTasks.removeValue(forKey: input.folderID)
+                cancelFolderSummaryTask(for: input.folderID)
                 if let cachedEntry {
                     folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                          statusMessage: cachedStatusMessage(for: cachedEntry,
@@ -2060,8 +2103,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
 
             if let cachedEntry, hasFreshCache {
-                folderSummaryTasks[input.folderID]?.cancel()
-                folderSummaryTasks.removeValue(forKey: input.folderID)
+                cancelFolderSummaryTask(for: input.folderID)
                 folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                      statusMessage: cachedStatusMessage(for: cachedEntry,
                                                                                                         prefix: "Updated"),
@@ -2070,8 +2112,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
 
             if !isProviderAvailable {
-                folderSummaryTasks[input.folderID]?.cancel()
-                folderSummaryTasks.removeValue(forKey: input.folderID)
+                cancelFolderSummaryTask(for: input.folderID)
                 if let cachedEntry {
                     folderSummaries[input.folderID] = ThreadSummaryState(text: cachedEntry.summaryText,
                                                                          statusMessage: cachedStatusMessage(for: cachedEntry,
@@ -2084,12 +2125,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 continue
             }
 
+            guard let summaryProvider else { continue }
             let placeholderText = cachedEntry?.summaryText ?? folderSummaries[input.folderID]?.text ?? ""
             folderSummaries[input.folderID] = ThreadSummaryState(text: placeholderText,
                                                                  statusMessage: "Summarizing…",
                                                                  isSummarizing: true)
 
-            folderSummaryTasks[input.folderID]?.cancel()
+            cancelFolderSummaryTask(for: input.folderID)
+            let taskToken = UUID()
+            folderSummaryTaskTokens[input.folderID] = taskToken
             folderSummaryTasks[input.folderID] = Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -2097,7 +2141,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         try await Task.sleep(nanoseconds: UInt64(debounceInterval * 1_000_000_000))
                         try Task.checkCancellation()
                     }
-                    guard let summaryProvider else { return }
                     let request = FolderSummaryRequest(title: input.title,
                                                        messageSummaries: input.summaryTexts)
                     let text = try await summaryProvider.summarizeFolder(request)
@@ -2145,6 +2188,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                in: \.folderSummaries)
                         }
                     }
+                }
+                await MainActor.run {
+                    self.clearFolderSummaryTask(for: input.folderID, token: taskToken)
                 }
             }
         }
