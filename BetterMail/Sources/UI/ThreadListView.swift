@@ -18,6 +18,8 @@ internal struct ThreadListView: View {
     @State private var isInspectorVisible = false
     @State private var isShowingMailboxMoveSheet = false
     @State private var isSearchFieldVisible = false
+    @FocusState private var isSearchFieldFocused: Bool
+    @State private var searchEscapeMonitor: Any?
 
     private let navCornerRadius: CGFloat = 18
     private let navHorizontalPadding: CGFloat = 16
@@ -43,9 +45,19 @@ internal struct ThreadListView: View {
             .onKeyPress("+") { handleGraphKey(.zoomIn) }
             .onKeyPress("-") { handleGraphKey(.zoomOut) }
             .onKeyPress("0") { handleGraphKey(.reset) }
-            .onKeyPress(.escape) { handleGraphKey(.escape) }
+            .onKeyPress(.escape) {
+                if isSearchFieldVisible {
+                    hideSearchField()
+                    return .handled
+                }
+                return handleGraphKey(.escape)
+            }
             .onAppear {
                 isInspectorVisible = viewModel.selectedNodeID != nil || viewModel.selectedFolderID != nil
+                installSearchEscapeMonitor()
+            }
+            .onDisappear {
+                removeSearchEscapeMonitor()
             }
             .onChange(of: viewModel.selectedNodeID) { _, newValue in
                 withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
@@ -62,6 +74,13 @@ internal struct ThreadListView: View {
             }
             .onChange(of: settings.interval) { _, _ in
                 viewModel.applyAutoRefreshSettings()
+            }
+            .onChange(of: isSearchFieldVisible) { _, isVisible in
+                if isVisible {
+                    focusSearchFieldSoon()
+                } else {
+                    isSearchFieldFocused = false
+                }
             }
             .sheet(isPresented: $isShowingBackfillConfirmation) {
                 BackfillConfirmationSheet(
@@ -285,29 +304,9 @@ internal struct ThreadListView: View {
 
     private var navBarContent: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Threads")
-                        .font(DesignTokens.font(size: 13, weight: .semibold, textScale: displaySettings.textScale))
-                    Text(statusText)
-                        .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
-                        .foregroundStyle(navSecondaryForegroundStyle)
-                    refreshTimingView
-                }
-                Spacer()
-                graphModeSegmentedControl
-                if graphSettings.mode == .timeline {
-                    viewModeToggle
-                    zoomControls
-                }
-                searchBar
-                HStack(spacing: 6) {
-                    Text("Limit")
-                        .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
-                        .foregroundStyle(navSecondaryForegroundStyle)
-                    limitField
-                }
-                refreshButton
+            ViewThatFits(in: .horizontal) {
+                wideNavigationRow
+                compactNavigationRows
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -339,6 +338,61 @@ internal struct ThreadListView: View {
                                               comment: "Accessibility label for the thread list navigation bar"))
     }
 
+    private var wideNavigationRow: some View {
+        HStack {
+            navigationStatusBlock
+            Spacer()
+            graphModeSegmentedControl
+            if graphSettings.mode == .timeline {
+                viewModeToggle
+                zoomControls
+            }
+            searchBar
+            limitControl
+            refreshButton
+        }
+    }
+
+    private var compactNavigationRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                navigationStatusBlock
+                Spacer()
+                refreshButton
+            }
+            HStack {
+                graphModeSegmentedControl
+                if graphSettings.mode == .timeline {
+                    viewModeToggle
+                    zoomControls
+                }
+                Spacer(minLength: 8)
+                searchBar
+                limitControl
+            }
+        }
+    }
+
+    private var navigationStatusBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(NSLocalizedString("threadlist.title", comment: "Thread list navigation title"))
+                .font(DesignTokens.font(size: 13, weight: .semibold, textScale: displaySettings.textScale))
+            Text(statusText)
+                .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
+                .foregroundStyle(navSecondaryForegroundStyle)
+            refreshTimingView
+        }
+    }
+
+    private var limitControl: some View {
+        HStack(spacing: 6) {
+            Text(NSLocalizedString("threadlist.limit.label", comment: "Fetch limit label"))
+                .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
+                .foregroundStyle(navSecondaryForegroundStyle)
+            limitField
+        }
+    }
+
     private func errorBanner(message: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -368,12 +422,7 @@ internal struct ThreadListView: View {
     private var searchBar: some View {
         HStack(spacing: 4) {
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isSearchFieldVisible.toggle()
-                    if !isSearchFieldVisible {
-                        viewModel.searchQuery = ""
-                    }
-                }
+                toggleSearchField()
             } label: {
                 Image(systemName: "magnifyingglass")
                     .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
@@ -381,7 +430,7 @@ internal struct ThreadListView: View {
                                             textScale: displaySettings.textScale))
             }
             .buttonStyle(.borderless)
-            .help("Search threads")
+            .help(NSLocalizedString("threadlist.search.help", comment: "Tooltip for showing or hiding thread search"))
             .accessibilityIdentifier(AccessibilityID.searchButton)
             .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.button",
                                                   comment: "Accessibility label for the thread search button"))
@@ -389,16 +438,7 @@ internal struct ThreadListView: View {
                                                 comment: "Accessibility hint for the thread search button"))
 
             if isSearchFieldVisible {
-                TextField("Search threads…",
-                          text: $viewModel.searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
-                                            textScale: displaySettings.textScale))
-                    .frame(width: 140)
-                    .accessibilityIdentifier(AccessibilityID.searchField)
-                    .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.field",
-                                                          comment: "Accessibility label for the thread search field"))
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                searchFieldControl
 
                 if let count = viewModel.searchResultCount {
                     Text("\(count)")
@@ -407,7 +447,103 @@ internal struct ThreadListView: View {
                         .foregroundStyle(navSecondaryForegroundStyle)
                         .transition(.opacity)
                 }
+
             }
+        }
+    }
+
+    private var searchFieldControl: some View {
+        TextField(NSLocalizedString("threadlist.search.placeholder",
+                                    comment: "Thread search field placeholder"),
+                  text: $viewModel.searchQuery)
+            .textFieldStyle(.roundedBorder)
+            .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
+                                    textScale: displaySettings.textScale))
+            .frame(width: 156)
+            .overlay(alignment: .trailing) {
+                searchClearButton
+                    .padding(.trailing, 6)
+            }
+            .focused($isSearchFieldFocused)
+            .onKeyPress(.escape) {
+                hideSearchField()
+                return .handled
+            }
+            .accessibilityIdentifier(AccessibilityID.searchField)
+            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.field",
+                                                  comment: "Accessibility label for the thread search field"))
+            .onAppear {
+                focusSearchFieldSoon()
+            }
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+    }
+
+    private var searchClearButton: some View {
+        Button {
+            if viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                hideSearchField()
+            } else {
+                viewModel.searchQuery = ""
+                focusSearchFieldSoon()
+            }
+        } label: {
+            Image(systemName: viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  ? "xmark"
+                  : "xmark.circle.fill")
+            .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
+                                    weight: .medium,
+                                    textScale: displaySettings.textScale))
+        }
+        .buttonStyle(.plain)
+        .help(viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              ? NSLocalizedString("threadlist.search.close", comment: "Tooltip for closing search")
+              : NSLocalizedString("threadlist.search.clear", comment: "Tooltip for clearing search"))
+        .accessibilityLabel(viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? NSLocalizedString("accessibility.threadlist.search.close",
+                                                comment: "Accessibility label for closing search")
+                            : NSLocalizedString("accessibility.threadlist.search.clear",
+                                                comment: "Accessibility label for clearing search"))
+    }
+
+    private func toggleSearchField() {
+        if isSearchFieldVisible {
+            hideSearchField()
+        } else {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isSearchFieldVisible = true
+            }
+        }
+    }
+
+    private func hideSearchField() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isSearchFieldVisible = false
+            viewModel.searchQuery = ""
+        }
+    }
+
+    private func focusSearchFieldSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            isSearchFieldFocused = true
+        }
+    }
+
+    private func installSearchEscapeMonitor() {
+        guard searchEscapeMonitor == nil else { return }
+
+        searchEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53, isSearchFieldVisible {
+                hideSearchField()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeSearchEscapeMonitor() {
+        if let monitor = searchEscapeMonitor {
+            NSEvent.removeMonitor(monitor)
+            searchEscapeMonitor = nil
         }
     }
 

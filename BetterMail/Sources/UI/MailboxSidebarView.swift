@@ -108,11 +108,13 @@ internal struct MailboxSidebarView: View {
             .tag(scope)
 
         if activatesExplicitly {
-            row
+            Button {
+                select(scope)
+            } label: {
+                row
+            }
+                .buttonStyle(.plain)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    select(scope)
-                }
                 .accessibilityAction {
                     select(scope)
                 }
@@ -129,33 +131,45 @@ internal struct MailboxSidebarView: View {
     private func folderSidebarRow(folder: MailboxFolderNode, depth: Int) -> some View {
         let isExpanded = expansionSettings.expandedFolderIDs.contains(folder.id)
         let hasChildren = !folder.children.isEmpty
+        let scope = MailboxScope.mailboxFolder(account: folder.account, path: folder.path)
 
         return HStack(spacing: 6) {
             Group {
                 if hasChildren {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            expansionSettings.toggle(folder.id)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isExpanded
+                                        ? NSLocalizedString("accessibility.sidebar.folder.collapse",
+                                                            comment: "Accessibility label for collapsing a mailbox folder")
+                                        : NSLocalizedString("accessibility.sidebar.folder.expand",
+                                                            comment: "Accessibility label for expanding a mailbox folder"))
                 } else {
                     Color.clear
                 }
             }
             .frame(width: 22, height: 22)
             .contentShape(Rectangle())
-            .onTapGesture {
-                guard hasChildren else { return }
-                withAnimation(.easeOut(duration: 0.18)) {
-                    expansionSettings.toggle(folder.id)
-                }
-            }
 
-            sidebarRow(scope: .mailboxFolder(account: folder.account, path: folder.path),
+            sidebarRow(scope: scope,
                        title: folder.name,
                        systemImage: "folder",
-                       activatesExplicitly: false)
+                       activatesExplicitly: true)
         }
+            .tag(scope)
+            .contentShape(Rectangle())
             .padding(.leading, CGFloat(depth) * 14)
+            .accessibilityAction {
+                select(scope)
+            }
             .accessibilityIdentifier(AccessibilityID.sidebarMailboxFolder(folder.id))
             .accessibilityLabel(folderAccessibilityLabel(folder))
             .accessibilityHint(hasChildren

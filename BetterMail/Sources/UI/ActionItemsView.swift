@@ -106,8 +106,9 @@ internal struct ActionItemsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
-            Button("View Canvas") {
-                viewModel.selectMailboxScope(.allFolders)
+            Button(NSLocalizedString("action_items.empty.view_all_emails",
+                                     comment: "Button title for leaving an empty action items list and viewing all email threads")) {
+                viewModel.selectMailboxScope(.allEmails)
             }
             .controlSize(.small)
             .buttonStyle(.bordered)

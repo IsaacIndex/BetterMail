@@ -607,7 +607,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var errorMessage: String?
     private var errorDismissTask: Task<Void, Never>?
     @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
-    @Published internal private(set) var activeMailboxScope: MailboxScope = .actionItems
+    @Published internal private(set) var activeMailboxScope: MailboxScope = .allEmails
     @Published internal private(set) var isMailboxHierarchyLoading = false
     @Published internal private(set) var mailboxActionStatusMessage: String?
     @Published internal private(set) var bottomBarMailboxActionStatusMessage: String?
