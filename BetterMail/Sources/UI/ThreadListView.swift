@@ -642,7 +642,7 @@ internal struct ThreadListView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .focusable()
+                .focusEffectDisabled()
                 .accessibilityIdentifier(AccessibilityID.canvasViewModeSegment(mode.rawValue))
                 .accessibilityLabel(mode.localizedTitle)
             }

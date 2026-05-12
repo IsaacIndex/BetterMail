@@ -104,11 +104,21 @@ internal struct MailboxSidebarView: View {
     private func sidebarRow(scope: MailboxScope,
                             title: String,
                             systemImage: String,
-                            activatesExplicitly: Bool = true) -> some View {
-        let row = Label(title, systemImage: systemImage)
+                            activatesExplicitly: Bool = true,
+                            showsSelectionChrome: Bool = true) -> some View {
+        let isSelected = selectedScope == scope
+        let row = sidebarRowContent(title: title,
+                                    systemImage: systemImage,
+                                    isSelected: isSelected)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if showsSelectionChrome {
+                    SidebarSelectionBackground(isSelected: isSelected)
+                }
+            }
             .accessibilityIdentifier(AccessibilityID.sidebarScope(scope))
             .accessibilityLabel(title)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
             .tag(scope)
 
         if activatesExplicitly {
@@ -119,12 +129,29 @@ internal struct MailboxSidebarView: View {
             }
                 .buttonStyle(.plain)
                 .contentShape(Rectangle())
+                .animation(.easeInOut(duration: 0.14), value: isSelected)
                 .accessibilityAction {
                     select(scope)
                 }
         } else {
             row
         }
+    }
+
+    private func sidebarRowContent(title: String,
+                                   systemImage: String,
+                                   isSelected: Bool) -> some View {
+        Label {
+            Text(title)
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: systemImage)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
     private func select(_ scope: MailboxScope) {
@@ -166,11 +193,17 @@ internal struct MailboxSidebarView: View {
             sidebarRow(scope: scope,
                        title: folder.name,
                        systemImage: "folder",
-                       activatesExplicitly: true)
+                       activatesExplicitly: true,
+                       showsSelectionChrome: false)
         }
             .tag(scope)
             .contentShape(Rectangle())
             .padding(.leading, CGFloat(depth) * 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                SidebarSelectionBackground(isSelected: selectedScope == scope)
+            }
+            .animation(.easeInOut(duration: 0.14), value: selectedScope == scope)
             .accessibilityAction {
                 select(scope)
             }
@@ -291,6 +324,31 @@ internal struct MailboxSidebarView: View {
         }
         let midpointY = (currentFrame.maxY + nextFrame.minY) / 2
         return midpointY - currentFrame.maxY
+    }
+}
+
+private struct SidebarSelectionBackground: View {
+    let isSelected: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: 3)
+                        .clipShape(Capsule())
+                        .padding(.vertical, 5)
+                        .padding(.leading, 3)
+                }
+            }
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Color.accentColor.opacity(0.28), lineWidth: 0.6)
+                }
+            }
     }
 }
 
