@@ -1,6 +1,27 @@
 import AppKit
 import SwiftUI
 
+private enum ThreadListCanvasViewMode: String, CaseIterable, Identifiable {
+    case `default`
+    case timeline
+    case graph
+
+    var id: String { rawValue }
+
+    var localizedTitle: String {
+        switch self {
+        case .default:
+            return NSLocalizedString("threadlist.viewmode.default.segment",
+                                     comment: "Default thread canvas view mode segment")
+        case .timeline:
+            return NSLocalizedString("threadlist.viewmode.timeline.segment",
+                                     comment: "Timeline thread canvas view mode segment")
+        case .graph:
+            return NSLocalizedString("graph.mode.graph", comment: "Graph graph mode segment")
+        }
+    }
+}
+
 internal struct ThreadListView: View {
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
     @ObservedObject internal var settings: AutoRefreshSettings
@@ -342,9 +363,8 @@ internal struct ThreadListView: View {
         HStack {
             navigationStatusBlock
             Spacer()
-            graphModeSegmentedControl
-            if graphSettings.mode == .timeline {
-                viewModeToggle
+            canvasViewModeSegmentedControl
+            if isThreadCanvasSelected {
                 zoomControls
             }
             searchBar
@@ -361,9 +381,8 @@ internal struct ThreadListView: View {
                 refreshButton
             }
             HStack {
-                graphModeSegmentedControl
-                if graphSettings.mode == .timeline {
-                    viewModeToggle
+                canvasViewModeSegmentedControl
+                if isThreadCanvasSelected {
                     zoomControls
                 }
                 Spacer(minLength: 8)
@@ -598,25 +617,25 @@ internal struct ThreadListView: View {
         )
     }
 
-    private var graphModeSegmentedControl: some View {
+    private var canvasViewModeSegmentedControl: some View {
         HStack(spacing: 2) {
-            ForEach(GraphCanvasMode.allCases) { mode in
+            ForEach(ThreadListCanvasViewMode.allCases) { mode in
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
-                        graphSettings.mode = mode
+                        selectCanvasViewMode(mode)
                     }
                 } label: {
                     Text(mode.localizedTitle)
                         .font(DesignTokens.font(size: 12,
-                                                weight: graphSettings.mode == mode ? .semibold : .medium,
+                                                weight: selectedCanvasViewMode == mode ? .semibold : .medium,
                                                 textScale: displaySettings.textScale))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
-                        .foregroundStyle(graphSettings.mode == mode ? DesignTokens.Graph.ink : navSecondaryForegroundStyle)
+                        .foregroundStyle(selectedCanvasViewMode == mode ? DesignTokens.Graph.ink : navSecondaryForegroundStyle)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(graphSettings.mode == mode ? DesignTokens.Graph.panel : Color.clear)
-                                .shadow(color: Color.black.opacity(graphSettings.mode == mode ? 0.08 : 0),
+                                .fill(selectedCanvasViewMode == mode ? DesignTokens.Graph.panel : Color.clear)
+                                .shadow(color: Color.black.opacity(selectedCanvasViewMode == mode ? 0.08 : 0),
                                         radius: 1,
                                         x: 0,
                                         y: 1)
@@ -624,7 +643,7 @@ internal struct ThreadListView: View {
                 }
                 .buttonStyle(.plain)
                 .focusable()
-                .accessibilityIdentifier(AccessibilityID.graphModeSegment(mode))
+                .accessibilityIdentifier(AccessibilityID.canvasViewModeSegment(mode.rawValue))
                 .accessibilityLabel(mode.localizedTitle)
             }
         }
@@ -637,41 +656,41 @@ internal struct ThreadListView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(DesignTokens.Graph.line, lineWidth: 1)
         )
-        .accessibilityIdentifier(AccessibilityID.graphModeToggle)
-        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.graphmode.toggle",
-                                              comment: "Accessibility label for graph mode picker"))
-        .accessibilityHint(NSLocalizedString("accessibility.threadlist.graphmode.hint",
-                                            comment: "Accessibility hint for graph mode picker"))
+        .accessibilityIdentifier(AccessibilityID.canvasViewModeControl)
+        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.canvasviewmode.control",
+                                              comment: "Accessibility label for canvas view mode picker"))
+        .accessibilityHint(NSLocalizedString("accessibility.threadlist.canvasviewmode.hint",
+                                            comment: "Accessibility hint for canvas view mode picker"))
     }
 
-    private var viewModeToggle: some View {
-        Toggle(isOn: viewModeToggleBinding) {
-            Text(viewModeLabel)
-                .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
+    private var selectedCanvasViewMode: ThreadListCanvasViewMode {
+        if graphSettings.mode == .graph {
+            return .graph
         }
-        .toggleStyle(.switch)
-        .tint(.green)
-        .accessibilityIdentifier(AccessibilityID.viewModeToggle)
-        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.viewmode.toggle",
-                                              comment: "Accessibility label for the thread view mode toggle"))
-        .accessibilityHint(NSLocalizedString("accessibility.threadlist.viewmode.hint",
-                                            comment: "Accessibility hint for the thread view mode toggle"))
-    }
 
-    private var viewModeLabel: String {
         switch displaySettings.viewMode {
         case .default:
-            return NSLocalizedString("threadlist.viewmode.default", comment: "Default thread canvas view label")
+            return .default
         case .timeline:
-            return NSLocalizedString("threadlist.viewmode.timeline", comment: "Timeline thread canvas view label")
+            return .timeline
         }
     }
 
-    private var viewModeToggleBinding: Binding<Bool> {
-        Binding(
-            get: { displaySettings.viewMode == .timeline },
-            set: { displaySettings.viewMode = $0 ? .timeline : .default }
-        )
+    private var isThreadCanvasSelected: Bool {
+        graphSettings.mode == .timeline
+    }
+
+    private func selectCanvasViewMode(_ mode: ThreadListCanvasViewMode) {
+        switch mode {
+        case .default:
+            graphSettings.mode = .timeline
+            displaySettings.viewMode = .default
+        case .timeline:
+            graphSettings.mode = .timeline
+            displaySettings.viewMode = .timeline
+        case .graph:
+            graphSettings.mode = .graph
+        }
     }
 
     private var statusText: String {

@@ -163,3 +163,39 @@ tail -n 200 /tmp/xcodebuild.log
 grep -n "error:" /tmp/xcodebuild.log || true
 grep -n "BUILD FAILED" /tmp/xcodebuild.log || echo "BUILD SUCCEEDED"
 ```
+
+## Local Raycast / Spotlight Bundle
+
+Raycast, Spotlight, and Dock launch the installed local bundle at:
+
+```bash
+/Users/isaacibm/Applications/BetterMail.app
+```
+
+The repo-local Xcode build product is not the same bundle. When a change should be visible from Raycast, Spotlight, or Dock, agents must rebuild and install the app bundle after the normal validation build succeeds:
+
+```bash
+xcodebuild \
+  -project BetterMail.xcodeproj \
+  -scheme BetterMail \
+  -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath DerivedData \
+  CODE_SIGN_STYLE=Manual \
+  CODE_SIGN_IDENTITY=- \
+  DEVELOPMENT_TEAM= \
+  PROVISIONING_PROFILE_SPECIFIER= \
+  clean build \
+  > /tmp/xcodebuild.log 2>&1
+
+ditto \
+  DerivedData/Build/Products/Debug/BetterMail.app \
+  /Users/isaacibm/Applications/BetterMail.app
+
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+  -f /Users/isaacibm/Applications/BetterMail.app
+
+mdimport /Users/isaacibm/Applications/BetterMail.app
+```
+
+Use the ad-hoc signing override above only for this local install path; do not commit signing, entitlement, bundle identifier, or provisioning changes for it. If an app icon or other bundle metadata changed and Raycast/Dock still shows stale data, reset caches with `qlmanage -r cache`, restart Raycast, and restart Dock only after verifying the installed bundle contains the expected resources.

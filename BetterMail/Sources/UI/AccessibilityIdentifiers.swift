@@ -13,6 +13,7 @@ internal enum AccessibilityID {
 
     internal static let threadList = "bettermail.thread-list"
     internal static let threadListNavigationBar = "bettermail.thread-list.navigation-bar"
+    internal static let canvasViewModeControl = "bettermail.thread-list.canvas-view-mode-control"
     internal static let viewModeToggle = "bettermail.thread-list.view-mode-toggle"
     internal static let graphModeToggle = "bettermail.thread-list.graph-mode-toggle"
     internal static let searchButton = "bettermail.thread-list.search-button"
@@ -125,6 +126,10 @@ internal enum AccessibilityID {
 
     internal static func graphModeSegment(_ mode: GraphCanvasMode) -> String {
         "bettermail.thread-list.graph-mode.\(stable(mode.rawValue))"
+    }
+
+    internal static func canvasViewModeSegment(_ rawValue: String) -> String {
+        "bettermail.thread-list.canvas-view-mode.\(stable(rawValue))"
     }
 
     private static func stable(_ rawValue: String) -> String {

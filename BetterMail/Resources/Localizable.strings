@@ -7,6 +7,8 @@
 "threadlist.status.needs_attention" = "Needs attention: %d - %@";
 "threadlist.viewmode.default" = "Default View";
 "threadlist.viewmode.timeline" = "Timeline View";
+"threadlist.viewmode.default.segment" = "Default";
+"threadlist.viewmode.timeline.segment" = "Timeline";
 "threadlist.title" = "Threads";
 "threadlist.limit.label" = "Limit";
 "threadlist.search.placeholder" = "Search threads...";
@@ -174,6 +176,8 @@
 "accessibility.threadlist.search.field" = "Thread search field";
 "accessibility.threadlist.search.clear" = "Clear thread search";
 "accessibility.threadlist.search.close" = "Close thread search";
+"accessibility.threadlist.canvasviewmode.control" = "Thread canvas view mode";
+"accessibility.threadlist.canvasviewmode.hint" = "Switches between default, timeline, and graph views.";
 "accessibility.threadlist.viewmode.toggle" = "Thread canvas view mode";
 "accessibility.threadlist.viewmode.hint" = "Switches between timeline and default canvas views.";
 "accessibility.threadlist.graphmode.toggle" = "Thread canvas graph mode";
