@@ -1599,6 +1599,8 @@ internal struct ThreadCanvasView: View {
                 return "allFolders"
             case .allInboxes:
                 return "allInboxes"
+            case .graphArchive:
+                return "graphArchive"
             case .mailboxFolder(let account, let path):
                 return "mailboxFolder:\(account):\(path)"
             }

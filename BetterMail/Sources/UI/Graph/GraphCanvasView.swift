@@ -67,6 +67,7 @@ internal struct GraphCanvasView: View {
         }
         .onReceive(threadViewModel.$roots) { _ in syncData() }
         .onReceive(threadViewModel.$searchQuery) { _ in syncData() }
+        .onReceive(threadViewModel.$activeMailboxScope) { _ in syncData() }
         .onReceive(threadViewModel.$timelineTagsByNodeID) { _ in syncData() }
         .onReceive(threadViewModel.$nodeSummaries) { _ in syncData() }
         .sheet(item: $graphViewModel.snipMoveRequest) { request in
@@ -138,10 +139,14 @@ internal struct GraphCanvasView: View {
     }
 
     private func syncData() {
+        graphViewModel.onArchiveStateChanged = { [weak threadViewModel] in
+            threadViewModel?.refreshGraphArchiveVisibility()
+        }
         graphViewModel.update(roots: threadViewModel.roots,
                               searchQuery: threadViewModel.searchQuery,
                               tagsByNodeID: threadViewModel.timelineTagsByNodeID,
-                              summariesByNodeID: threadViewModel.nodeSummaries)
+                              summariesByNodeID: threadViewModel.nodeSummaries,
+                              showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive)
     }
 
     private func hoverPosition(for item: GraphHoverItem, in size: CGSize) -> CGPoint {

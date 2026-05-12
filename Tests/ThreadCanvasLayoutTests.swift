@@ -78,6 +78,65 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.id), ["first", "second"])
     }
 
+    func testMailboxScope_graphArchiveDefaultsToInternalInboxFetchPath() {
+        XCTAssertEqual(MailboxScope.graphArchive.mailboxPath, "inbox")
+        XCTAssertNil(MailboxScope.graphArchive.accountName)
+        XCTAssertFalse(MailboxScope.graphArchive.usesAllInboxAliases)
+        XCTAssertEqual(AccessibilityID.sidebarScope(.graphArchive), "bettermail.sidebar.scope.graph-archive")
+    }
+
+    func testRootsForMailboxScope_normalScopesExcludeGraphArchivedThreads() {
+        let first = ThreadNode(message: makeMessage(id: "first", date: Date()))
+        let second = ThreadNode(message: makeMessage(id: "second", date: Date().addingTimeInterval(-60)))
+        let archivedIDs: Set<String> = ["thread:thread-second"]
+
+        let filtered = ThreadCanvasViewModel.rootsForMailboxScope([first, second],
+                                                                   scope: .allEmails,
+                                                                   folders: [],
+                                                                   manualGroupByMessageKey: [:],
+                                                                   jwzThreadMap: [:],
+                                                                   archivedGraphThreadIDs: archivedIDs)
+
+        XCTAssertEqual(filtered.map(\.id), ["first"])
+    }
+
+    func testRootsForMailboxScope_graphArchiveIncludesOnlyArchivedThreads() {
+        let first = ThreadNode(message: makeMessage(id: "first", date: Date()))
+        let second = ThreadNode(message: makeMessage(id: "second", date: Date().addingTimeInterval(-60)))
+        let archivedIDs: Set<String> = ["thread:thread-second"]
+
+        let filtered = ThreadCanvasViewModel.rootsForMailboxScope([first, second],
+                                                                   scope: .graphArchive,
+                                                                   folders: [],
+                                                                   manualGroupByMessageKey: [:],
+                                                                   jwzThreadMap: [:],
+                                                                   archivedGraphThreadIDs: archivedIDs)
+
+        XCTAssertEqual(filtered.map(\.id), ["second"])
+    }
+
+    func testRootsForMailboxScope_allFoldersExcludesGraphArchivedThreads() {
+        let first = ThreadNode(message: makeMessage(id: "first", date: Date()))
+        let second = ThreadNode(message: makeMessage(id: "second", date: Date().addingTimeInterval(-60)))
+        let folders = [
+            ThreadFolder(id: "folder-a",
+                         title: "Folder A",
+                         color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                         threadIDs: ["thread-first", "thread-second"],
+                         parentID: nil)
+        ]
+        let archivedIDs: Set<String> = ["thread:thread-second"]
+
+        let filtered = ThreadCanvasViewModel.rootsForMailboxScope([first, second],
+                                                                   scope: .allFolders,
+                                                                   folders: folders,
+                                                                   manualGroupByMessageKey: [:],
+                                                                   jwzThreadMap: [:],
+                                                                   archivedGraphThreadIDs: archivedIDs)
+
+        XCTAssertEqual(filtered.map(\.id), ["first"])
+    }
+
     func testCanvasLayout_whenDayAxisHidden_columnsShiftLeftByDayAxisWidth() {
         let calendar = Calendar(identifier: .gregorian)
         let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!

@@ -1424,12 +1424,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let previousFolderIDs = Set(self.threadFolders.map(\.id))
             let cutoffDate = cachedMessageCutoffDate()
             let storeFilter = activeMailboxStoreFilter
+            let archivedGraphThreadIDs = try await archivedGraphThreadIDsForRethread()
             let includePinnedThreadIDs = try await pinnedThreadIDsToIncludeForRethread()
+            let includeThreadIDs = includePinnedThreadIDs
+                .union(Self.rawThreadIDs(fromGraphThreadIDs: archivedGraphThreadIDs))
             let rethreadResult = try await worker.performRethread(cutoffDate: cutoffDate,
                                                                   mailbox: storeFilter.mailbox,
                                                                   account: storeFilter.account,
                                                                   includeAllInboxesAliases: storeFilter.includeAllInboxesAliases,
-                                                                  includeThreadIDs: includePinnedThreadIDs)
+                                                                  includeThreadIDs: includeThreadIDs)
             self.manualGroupByMessageKey = rethreadResult.manualGroupByMessageKey
             self.manualAttachmentMessageIDs = rethreadResult.manualAttachmentMessageIDs
             self.manualGroups = rethreadResult.manualGroups
@@ -1440,7 +1443,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                         scope: activeMailboxScope,
                                                         folders: rethreadResult.folders,
                                                         manualGroupByMessageKey: rethreadResult.manualGroupByMessageKey,
-                                                        jwzThreadMap: rethreadResult.jwzThreadMap)
+                                                        jwzThreadMap: rethreadResult.jwzThreadMap,
+                                                        archivedGraphThreadIDs: archivedGraphThreadIDs)
             self.roots = scopedRoots
             self.unreadTotal = Self.flatten(nodes: scopedRoots).reduce(0) { partial, node in
                 partial + (node.message.isUnread ? 1 : 0)
@@ -2549,6 +2553,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         activeMailboxScope = scope
         mailboxActionStatusMessage = nil
         bottomBarMailboxActionStatusMessage = nil
+        scheduleRethread(delay: 0)
+    }
+
+    internal func refreshGraphArchiveVisibility() {
         scheduleRethread(delay: 0)
     }
 
@@ -4843,7 +4851,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         case .mailboxFolder(let scopedAccount, _):
             let trimmedScopedAccount = scopedAccount.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedScopedAccount.isEmpty ? nil : trimmedScopedAccount
-        case .actionItems, .allEmails, .allFolders, .allInboxes:
+        case .actionItems, .allEmails, .allFolders, .allInboxes, .graphArchive:
             return nil
         }
     }
@@ -4946,7 +4954,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private var activeMailboxFetchTarget: (mailbox: String, account: String?) {
         switch activeMailboxScope {
-        case .actionItems, .allEmails, .allFolders, .allInboxes:
+        case .actionItems, .allEmails, .allFolders, .allInboxes, .graphArchive:
             return (mailbox: "inbox", account: nil)
         case .mailboxFolder(let account, let path):
             return (mailbox: path, account: account)
@@ -4955,7 +4963,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private var activeMailboxStoreFilter: (mailbox: String?, account: String?, includeAllInboxesAliases: Bool) {
         switch activeMailboxScope {
-        case .actionItems, .allEmails, .allFolders:
+        case .actionItems, .allEmails, .allFolders, .graphArchive:
             return (mailbox: nil, account: nil, includeAllInboxesAliases: false)
         case .allInboxes:
             return (mailbox: "inbox", account: nil, includeAllInboxesAliases: true)
@@ -5245,15 +5253,30 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return included
     }
 
+    private func archivedGraphThreadIDsForRethread() async throws -> Set<String> {
+        let entries = try await store.fetchArchivedInGraphEntries()
+        return Set(entries.map(\.threadID))
+    }
+
     internal static func rootsForMailboxScope(_ roots: [ThreadNode],
                                               scope: MailboxScope,
                                               folders: [ThreadFolder],
                                               manualGroupByMessageKey: [String: String],
-                                              jwzThreadMap: [String: String]) -> [ThreadNode] {
-        guard scope == .allFolders else { return roots }
+                                              jwzThreadMap: [String: String],
+                                              archivedGraphThreadIDs: Set<String> = []) -> [ThreadNode] {
+        let archivedRootIDs = archivedGraphThreadIDs.isEmpty
+            ? []
+            : Set(roots.filter { archivedGraphThreadIDs.contains(graphThreadID(for: $0)) }.map(\.id))
+        if scope == .graphArchive {
+            return roots.filter { archivedRootIDs.contains($0.id) }
+        }
+        let visibleRoots = archivedRootIDs.isEmpty
+            ? roots
+            : roots.filter { !archivedRootIDs.contains($0.id) }
+        guard scope == .allFolders else { return visibleRoots }
         let folderThreadIDs = Set(folderThreadIDsByFolder(folders: folders).values.flatMap(\.self))
         guard !folderThreadIDs.isEmpty else { return [] }
-        return roots.filter { root in
+        return visibleRoots.filter { root in
             guard let threadID = effectiveThreadID(for: root,
                                                    manualGroupByMessageKey: manualGroupByMessageKey,
                                                    jwzThreadMap: jwzThreadMap) else {
@@ -5261,6 +5284,24 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
             return folderThreadIDs.contains(threadID)
         }
+    }
+
+    private static func graphThreadID(for root: ThreadNode) -> String {
+        let trimmedThreadID = root.message.threadID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rawThreadID = trimmedThreadID.isEmpty ? root.id : trimmedThreadID
+        return "thread:\(rawThreadID)"
+    }
+
+    private static func rawThreadIDs(fromGraphThreadIDs graphThreadIDs: Set<String>) -> Set<String> {
+        Set(graphThreadIDs.compactMap { graphThreadID in
+            if graphThreadID.hasPrefix("thread:") {
+                let rawID = String(graphThreadID.dropFirst("thread:".count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return rawID.isEmpty ? nil : rawID
+            }
+            let trimmed = graphThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        })
     }
 
     private func removeManualGroupMembership(removalsByGroupID: [String: (jwzThreadIDs: Set<String>, messageKeys: Set<String>)]) async throws {

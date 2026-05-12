@@ -91,6 +91,8 @@ internal enum AccessibilityID {
             return "bettermail.sidebar.scope.all-folders"
         case .allInboxes:
             return "bettermail.sidebar.scope.all-inboxes"
+        case .graphArchive:
+            return "bettermail.sidebar.scope.graph-archive"
         case .mailboxFolder(let account, let path):
             return "bettermail.sidebar.scope.mailbox.\(stable(account)).\(stable(path))"
         }

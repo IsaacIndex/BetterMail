@@ -162,6 +162,7 @@
 "mailbox.sidebar.all_emails" = "All Emails";
 "mailbox.sidebar.all_folders" = "All Folders";
 "mailbox.sidebar.all_inboxes" = "All Inboxes";
+"mailbox.sidebar.graph_archive" = "Graph Archive";
 "mailbox.sidebar.loading" = "Loading mailboxes...";
 "mailbox.sidebar.reorder.hint" = "Drag folders and release at the blue line to reorder (same level).";
 "accessibility.sidebar.label" = "Mailbox sidebar";

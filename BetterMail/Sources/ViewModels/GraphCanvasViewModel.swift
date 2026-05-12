@@ -36,11 +36,13 @@ internal final class GraphCanvasViewModel: ObservableObject {
     @Published internal private(set) var sproutingMessageIDs: Set<String> = []
     @Published internal private(set) var archivedThreadIDs: Set<String> = []
     @Published internal private(set) var nodePositions: [String: CGPoint] = [:]
+    internal var onArchiveStateChanged: (() -> Void)?
 
     private var sourceRoots: [ThreadNode] = []
     private var currentSearchQuery = ""
     private var currentTagsByNodeID: [String: [String]] = [:]
     private var currentSummariesByNodeID: [String: GraphMessageSummary] = [:]
+    private var showsArchivedThreads = false
     private var previousMessageIDs: Set<String> = []
     private var archivedEntriesByThreadID: [String: ArchivedInGraphEntry] = [:]
     private var pruneStateMachine = GraphPruneStateMachine()
@@ -65,10 +67,12 @@ internal final class GraphCanvasViewModel: ObservableObject {
     internal func update(roots: [ThreadNode],
                          searchQuery: String,
                          tagsByNodeID: [String: [String]],
-                         summariesByNodeID: [String: ThreadSummaryState]) {
+                         summariesByNodeID: [String: ThreadSummaryState],
+                         showsArchivedThreads: Bool = false) {
         sourceRoots = roots
         currentSearchQuery = searchQuery
         currentTagsByNodeID = tagsByNodeID
+        self.showsArchivedThreads = showsArchivedThreads
         currentSummariesByNodeID = summariesByNodeID.mapValues {
             GraphMessageSummary(text: $0.text,
                                 statusMessage: $0.statusMessage,
@@ -165,6 +169,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
             _ = pruneStateMachine.send(.animationFinished)
             pruneMode = .idle
             rebuildData()
+            onArchiveStateChanged?()
         } catch {
             pruneMode = .idle
         }
@@ -187,6 +192,9 @@ internal final class GraphCanvasViewModel: ObservableObject {
         compostEntries.removeAll { $0.id == entry.id }
         _ = pruneStateMachine.send(.restoreFinished)
         rebuildData()
+        if entry.action == .archive {
+            onArchiveStateChanged?()
+        }
     }
 
     internal func zoomIn() {
@@ -274,8 +282,9 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     private func rebuildData() {
+        let hiddenArchivedThreadIDs = showsArchivedThreads ? [] : archivedThreadIDs
         let rebuilt = GraphData.make(roots: sourceRoots,
-                                     archivedThreadIDs: archivedThreadIDs,
+                                     archivedThreadIDs: hiddenArchivedThreadIDs,
                                      tagsByNodeID: currentTagsByNodeID,
                                      summariesByNodeID: currentSummariesByNodeID)
         let nextMessageIDs = Set(rebuilt.messages.map(\.id))
@@ -289,6 +298,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     private func syncArchivedCompostEntries() {
+        guard showsArchivedThreads else {
+            compostEntries.removeAll { $0.action == .archive }
+            return
+        }
         let existingArchiveIDs = Set(compostEntries.filter { $0.action == .archive }.map(\.threadID))
         let rootsData = GraphData.make(roots: sourceRoots, archivedThreadIDs: [], tagsByNodeID: currentTagsByNodeID)
         for threadID in archivedThreadIDs.subtracting(existingArchiveIDs) {

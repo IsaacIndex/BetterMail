@@ -44,6 +44,10 @@ internal struct MailboxSidebarView: View {
                        title: NSLocalizedString("mailbox.sidebar.all_inboxes",
                                                 comment: "All Inboxes sidebar entry"),
                        systemImage: "tray.full")
+            sidebarRow(scope: .graphArchive,
+                       title: NSLocalizedString("mailbox.sidebar.graph_archive",
+                                                comment: "Graph Archive sidebar entry"),
+                       systemImage: "archivebox")
 
             ForEach(viewModel.mailboxAccounts) { account in
                 Section(account.name) {

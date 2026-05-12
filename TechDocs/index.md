@@ -19,7 +19,7 @@ Viewport state is centralized through `GraphViewport` and shared by the SwiftUI 
 Pruning has two paths:
 
 - Snip moves all raw message IDs in the thread to a Mail mailbox via `MailAppleScriptClient.moveMessages(messageIDs:toMailboxPath:)`, then adds a temporary compost chip with the previous mailbox for restore.
-- Archive is app-only and persists `ArchivedInGraphEntry` rows through `MessageStore`, excluding archived threads from graph rendering until restored.
+- Archive is app-only and persists `ArchivedInGraphEntry` rows through `MessageStore`. Normal sidebar scopes exclude those archived threads across Default, Timeline, and Graph views; the `Graph Archive` sidebar item shows only the archived set until a compost restore removes the archive row.
 
 Focused graph coverage lives in `Tests/GraphTests.swift`: graph mapping invariants, force settling, spline envelopes, summary auto-placement, label-repel gating, directional selection, and prune state-machine round trips.
 

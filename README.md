@@ -6,7 +6,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise; timeline overview scopes auto-fit to a readable default until the user manually changes zoom.
 - Opt-in Botanical Graph view renders the same threaded inbox as a SpriteKit force-directed canvas with a centered "You" node, per-email AI-summary callouts, wider zoom/pan navigation, hover cards, pruning modes, compost restore chips, keyboard navigation, and persisted graph preferences.
-- Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), and `All Emails` as the default landing scope.
+- Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), `Graph Archive` (BetterMail's internal graph archive), and `All Emails` as the default landing scope.
 - Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
 - Mailbox sidebar folder expand/collapse state is persisted across launches and pruned against the latest Mail hierarchy so folders removed/moved in Mail are not retained as stale expansion entries.
 - Folder headers support pin/unpin actions to keep important folders at the top of the list with a pin indicator, and pinned folder headers remain visible even when their messages fall outside the current day window.
@@ -71,7 +71,7 @@ Mail.app ⇄ NSAppleScriptRunner → MailAppleScriptClient → MessageStore (Cor
 - `JWZThreader` normalizes message IDs, builds parent/child containers, and annotates unread counts for the UI plus the store.
 - `ThreadCanvasViewModel` orchestrates refreshes, auto-refresh timers, summary tasks, and selection state for the SwiftUI hierarchy.
 - `ProcessingActivityCenter` is the shared source of truth for visible loading/processing state across refreshes, mailbox folder loading, batch imports, visible-range backfill, Apple Intelligence generation, and Re-GenAI. The app surfaces it through a menu bar extra and a compact main-window activity shelf.
-- `GraphCanvasViewModel` maps the existing `ThreadNode` tree into graph-specific thread/message nodes, coordinates graph-only archive state, and forwards Mail-side snip moves through `MailAppleScriptClient`.
+- `GraphCanvasViewModel` maps the existing `ThreadNode` tree into graph-specific thread/message nodes, coordinates graph-only archive state, asks the thread view model to re-scope normal views after archive/restore, and forwards Mail-side snip moves through `MailAppleScriptClient`.
 - `EmailSummaryProviderFactory` lazily instantiates a Foundation Models `SystemLanguageModel` session when the platform supports Apple Intelligence to generate short digests of recent subjects.
 - `MailControl` provides AppleScript helpers for message targeting, move/create mailbox-folder actions, flagging, and search workflows.
 
