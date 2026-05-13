@@ -38,12 +38,14 @@ internal enum GraphImportance: String, Codable, Hashable {
 internal enum GraphNodeKind: String, Codable, Hashable {
     case center
     case thread
+    case remaining
     case message
 }
 
 internal enum GraphEdgeKind: String, Codable, Hashable {
     case trunk
     case chain
+    case remaining
 }
 
 internal struct GraphCenter: Codable, Hashable {
@@ -91,6 +93,44 @@ internal struct GraphThread: Identifiable, Codable, Hashable {
             NSLocalizedString("graph.accessibility.thread.value",
                               comment: "VoiceOver value for graph thread node unread count"),
             unreadCount
+        )
+    }
+}
+
+internal struct GraphRemainingBranch: Identifiable, Codable, Hashable {
+    internal static let graphID = "remaining:threads"
+
+    internal let id: String
+    internal let hiddenThreadCount: Int
+    internal let nextBatchCount: Int
+    internal let angle: Double
+
+    internal init(hiddenThreadCount: Int,
+                  nextBatchCount: Int,
+                  angle: Double) {
+        self.id = Self.graphID
+        self.hiddenThreadCount = hiddenThreadCount
+        self.nextBatchCount = nextBatchCount
+        self.angle = angle
+    }
+
+    internal var radius: CGFloat {
+        22 + CGFloat(min(hiddenThreadCount, 80)) * 0.18
+    }
+
+    internal var title: String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("graph.remaining.title", comment: "Remaining graph branches node title"),
+            hiddenThreadCount
+        )
+    }
+
+    internal var accessibilityLabel: String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("graph.remaining.accessibility",
+                              comment: "VoiceOver label for expanding remaining graph branches"),
+            hiddenThreadCount,
+            nextBatchCount
         )
     }
 }
@@ -158,13 +198,18 @@ internal struct GraphEdge: Identifiable, Codable, Hashable {
 internal struct GraphData: Codable, Hashable {
     internal let center: GraphCenter
     internal let threads: [GraphThread]
+    internal let remainingBranch: GraphRemainingBranch?
     internal let messages: [GraphMessage]
     internal let edges: [GraphEdge]
 
-    internal static let empty = GraphData(center: .you, threads: [], messages: [], edges: [])
+    internal static let empty = GraphData(center: .you, threads: [], remainingBranch: nil, messages: [], edges: [])
 
     internal static func threadNodeID(for rawThreadID: String) -> String {
         "thread:\(rawThreadID)"
+    }
+
+    internal static func rawThreadID(for root: ThreadNode) -> String {
+        root.message.threadID?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? root.id
     }
 
     internal static func messageNodeID(for rawMessageID: String) -> String {
@@ -180,13 +225,20 @@ internal struct GraphData: Codable, Hashable {
     }
 
     internal var allNodeIDs: Set<String> {
-        Set([center.id] + threads.map(\.id) + messages.map(\.id))
+        var ids = Set([center.id] + threads.map(\.id) + messages.map(\.id))
+        if let remainingBranch {
+            ids.insert(remainingBranch.id)
+        }
+        return ids
     }
 
     internal func matchingNodeIDs(query rawQuery: String) -> Set<String> {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return allNodeIDs }
         var matches: Set<String> = [center.id]
+        if let remainingBranch {
+            matches.insert(remainingBranch.id)
+        }
         for thread in threads where thread.matches(query: query) {
             matches.insert(thread.id)
             for message in messages where message.threadID == thread.id {
@@ -204,18 +256,38 @@ internal struct GraphData: Codable, Hashable {
                               archivedThreadIDs: Set<String> = [],
                               tagsByNodeID: [String: [String]] = [:],
                               summariesByNodeID: [String: GraphMessageSummary] = [:],
+                              branchLimit: Int? = nil,
+                              branchBatchSize: Int = 10,
+                              messageLimitPerBranch: Int? = nil,
                               now: Date = Date()) -> GraphData {
         var threads: [GraphThread] = []
         var messages: [GraphMessage] = []
         var edges: [GraphEdge] = []
         let liveCutoff = now.addingTimeInterval(-24 * 60 * 60)
 
-        for (index, root) in roots.enumerated() {
-            let rawThreadID = root.message.threadID?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? root.id
+        let candidates = roots.enumerated().compactMap { index, root -> (index: Int, root: ThreadNode, rawThreadID: String, threadID: String)? in
+            let rawThreadID = rawThreadID(for: root)
             let threadID = threadNodeID(for: rawThreadID)
+            guard !archivedThreadIDs.contains(threadID) else { return nil }
+            return (index, root, rawThreadID, threadID)
+        }
+        let visibleLimit = branchLimit.map { max(0, $0) } ?? candidates.count
+        let visibleCandidates = candidates.prefix(visibleLimit)
+
+        for candidate in visibleCandidates {
+            let index = candidate.index
+            let root = candidate.root
+            let rawThreadID = candidate.rawThreadID
+            let threadID = candidate.threadID
             let flattened = flatten(root)
-            guard !archivedThreadIDs.contains(threadID) else { continue }
-            let sortedMessages = flattened.enumerated().map { messageIndex, node in
+            let allMessageIDs = flattened.map(\.id)
+            let visibleFlattened: [ThreadNode]
+            if let messageLimitPerBranch {
+                visibleFlattened = Array(flattened.prefix(max(1, messageLimitPerBranch)))
+            } else {
+                visibleFlattened = flattened
+            }
+            let visibleMessages = visibleFlattened.enumerated().map { messageIndex, node in
                 let summary = summariesByNodeID[node.id] ?? summariesByNodeID[messageNodeID(for: node.id)]
                 return GraphMessage(id: messageNodeID(for: node.id),
                                     rawMessageID: node.id,
@@ -237,7 +309,9 @@ internal struct GraphData: Codable, Hashable {
             let unreadCount = flattened.filter(\.message.isUnread).count
             let messageCount = flattened.count
             let angle = fmod(Double(index) * 137.5, 360)
-            let tags = Array(Set(sortedMessages.flatMap(\.tags))).sorted()
+            let tags = Array(Set(flattened.flatMap { node in
+                tagsByNodeID[node.id] ?? tagsByNodeID[messageNodeID(for: node.id)] ?? []
+            })).sorted()
             let thread = GraphThread(id: threadID,
                                      rawThreadID: rawThreadID,
                                      rootNodeID: root.id,
@@ -253,15 +327,15 @@ internal struct GraphData: Codable, Hashable {
                                      isLive: lastUpdated > liveCutoff,
                                      angle: angle,
                                      tags: tags,
-                                     messageIDs: sortedMessages.map(\.rawMessageID))
+                                     messageIDs: allMessageIDs)
             threads.append(thread)
-            messages.append(contentsOf: sortedMessages)
+            messages.append(contentsOf: visibleMessages)
             edges.append(GraphEdge(sourceID: GraphCenter.you.id,
                                    targetID: threadID,
                                    threadID: threadID,
                                    kind: .trunk))
             var previousID = threadID
-            for message in sortedMessages {
+            for message in visibleMessages {
                 edges.append(GraphEdge(sourceID: previousID,
                                        targetID: message.id,
                                        threadID: threadID,
@@ -270,8 +344,26 @@ internal struct GraphData: Codable, Hashable {
             }
         }
 
+        let hiddenCount = max(0, candidates.count - visibleCandidates.count)
+        let remainingBranch: GraphRemainingBranch?
+        if hiddenCount > 0 {
+            let nextBatchCount = min(max(1, branchBatchSize), hiddenCount)
+            let angle = fmod(Double(visibleCandidates.count) * 137.5, 360)
+            let branch = GraphRemainingBranch(hiddenThreadCount: hiddenCount,
+                                              nextBatchCount: nextBatchCount,
+                                              angle: angle)
+            remainingBranch = branch
+            edges.append(GraphEdge(sourceID: GraphCenter.you.id,
+                                   targetID: branch.id,
+                                   threadID: branch.id,
+                                   kind: .remaining))
+        } else {
+            remainingBranch = nil
+        }
+
         return GraphData(center: .you,
                          threads: threads,
+                         remainingBranch: remainingBranch,
                          messages: messages,
                          edges: edges)
     }

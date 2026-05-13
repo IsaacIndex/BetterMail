@@ -26,6 +26,18 @@ internal struct GraphHoverCard: View {
                                        comment: "Graph hover card thread interaction hint"))
                     .font(.system(size: 10.5 * textScale, design: .monospaced))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+            case .remaining(let remainingBranch, _):
+                Text(remainingBranch.title)
+                    .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                    .lineLimit(2)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("graph.hover.remaining.detail",
+                                      comment: "Graph hover card remaining branches detail"),
+                    remainingBranch.nextBatchCount
+                ))
+                    .font(DesignTokens.font(size: 11, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
             case .message(let message, _):
                 metadataRow(primary: message.sender, secondary: relativeTime(from: message.date))
                 Text(message.subject)

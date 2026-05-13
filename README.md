@@ -5,7 +5,7 @@ BetterMail is a macOS SwiftUI companion for Apple Mail that pulls your inbox ove
 ## Highlights
 - Native SwiftUI thread canvas backed by `ThreadCanvasViewModel`, live unread counts, manual grouping/ungrouping, manual limits, and background auto-refresh.
 - Thread canvas readability modes keep compact zoom nodes title-only to reduce visual noise; timeline overview scopes auto-fit to a readable default until the user manually changes zoom.
-- Opt-in Botanical Graph view renders the same threaded inbox as a SpriteKit force-directed canvas with a centered "You" node, per-email AI-summary callouts, wider zoom/pan navigation, hover cards, pruning modes, compost restore chips, keyboard navigation, and persisted graph preferences.
+- Opt-in Botanical Graph view renders the same threaded inbox as a SpriteKit force-directed canvas with a centered "You" node, paged branch expansion for large mailboxes, per-email AI-summary callouts, wider zoom/pan navigation, hover cards, pruning modes, compost restore chips, keyboard navigation, and persisted graph preferences.
 - Account-aware mailbox sidebar with nested Apple Mail folders, `All Emails` (cached superset), `All Folders` (foldered threads only, date axis hidden), `Graph Archive` (BetterMail's internal graph archive), and `All Emails` as the default landing scope.
 - Mailbox folder order can be customized in the sidebar via drag-and-drop; that app-only order is persisted across launches and reused in the mailbox move-folder sheet.
 - Mailbox sidebar folder expand/collapse state is persisted across launches and pruned against the latest Mail hierarchy so folders removed/moved in Mail are not retained as stale expansion entries.
@@ -203,6 +203,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 ### Graph View
 - The top bar mode picker switches between the existing timeline canvas and the new graph canvas; the selected mode persists in `GraphCanvasSettings`.
 - The graph uses namespaced graph node IDs while preserving raw Mail message IDs for AppleScript moves, so thread nodes and root-message nodes cannot collide.
+- To reduce first-render cost, the graph initially maps 10 thread branches, caps visible message leaves per branch, and groups additional roots under a hollow remaining hub that expands 10 more branches per click.
 - Snip mode is Mail-side: selected thread messages are moved through AppleScript after the user chooses a destination mailbox. Archive mode is app-only and persisted in Core Data as graph archive entries.
 - Graph interaction state stays separate from the timeline rendering, but selection continues to flow through `ThreadCanvasViewModel.selectedNodeID` so the existing inspector remains the reader surface.
 

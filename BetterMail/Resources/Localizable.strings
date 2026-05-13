@@ -21,6 +21,8 @@
 "graph.importance.medium" = "medium";
 "graph.importance.high" = "high";
 "graph.center.you" = "You";
+"graph.remaining.title" = "%d remaining...";
+"graph.remaining.accessibility" = "%d remaining graph branches. Click to show %d more.";
 "graph.accessibility.canvas" = "Graph canvas";
 "graph.accessibility.thread.label" = "Thread %@, %d messages, %@ importance";
 "graph.accessibility.thread.value" = "%d unread";
@@ -66,6 +68,7 @@
 "graph.hover.mailbox.fallback" = "Mailbox";
 "graph.hover.thread.detail" = "%d messages · %@ importance";
 "graph.hover.thread.hint" = "click open · dbl water";
+"graph.hover.remaining.detail" = "Click to show %d more branches.";
 "graph.hover.time.minutes" = "%dm ago";
 "graph.hover.time.hours" = "%dh ago";
 "graph.hover.time.days" = "%dd ago";

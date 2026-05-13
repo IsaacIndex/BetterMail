@@ -41,6 +41,9 @@ internal struct GraphRepresentable: NSViewRepresentable {
         scene.onSelectGraphNode = { graphNodeID in
             onSelectRootNode(graphViewModel.rootNodeID(forGraphNodeID: graphNodeID))
         }
+        scene.onExpandRemainingBranches = {
+            graphViewModel.expandRemainingBranches()
+        }
         scene.onHoverItem = { item in
             graphViewModel.setHoverItem(item)
             if item != nil {
@@ -112,5 +115,13 @@ internal final class GraphSKView: SKView {
         }
         let viewPoint = convert(event.locationInWindow, from: nil)
         graphScene.magnify(by: event.magnification, at: viewPoint, in: self)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let graphScene = scene as? GraphScene else {
+            super.scrollWheel(with: event)
+            return
+        }
+        graphScene.scrollWheel(with: event)
     }
 }

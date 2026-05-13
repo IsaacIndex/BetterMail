@@ -14,6 +14,7 @@ internal enum GraphViewport {
 
 internal enum GraphHoverItem: Equatable {
     case thread(GraphThread, CGPoint)
+    case remaining(GraphRemainingBranch, CGPoint)
     case message(GraphMessage, CGPoint)
 }
 
@@ -25,6 +26,9 @@ internal struct SnipMoveRequest: Identifiable, Equatable {
 
 @MainActor
 internal final class GraphCanvasViewModel: ObservableObject {
+    private static let branchPageSize = 10
+    private static let messagePreviewLimitPerBranch = 10
+
     @Published internal private(set) var data: GraphData = .empty
     @Published internal var hoverItem: GraphHoverItem?
     @Published internal var pruneMode: GraphPruneMode = .idle
@@ -43,6 +47,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var currentTagsByNodeID: [String: [String]] = [:]
     private var currentSummariesByNodeID: [String: GraphMessageSummary] = [:]
     private var showsArchivedThreads = false
+    private var visibleBranchLimit = GraphCanvasViewModel.branchPageSize
+    private var sourceThreadIDs: [String] = []
     private var previousMessageIDs: Set<String> = []
     private var archivedEntriesByThreadID: [String: ArchivedInGraphEntry] = [:]
     private var pruneStateMachine = GraphPruneStateMachine()
@@ -69,6 +75,11 @@ internal final class GraphCanvasViewModel: ObservableObject {
                          tagsByNodeID: [String: [String]],
                          summariesByNodeID: [String: ThreadSummaryState],
                          showsArchivedThreads: Bool = false) {
+        let nextSourceThreadIDs = roots.map { GraphData.threadNodeID(for: GraphData.rawThreadID(for: $0)) }
+        if nextSourceThreadIDs != sourceThreadIDs || showsArchivedThreads != self.showsArchivedThreads {
+            visibleBranchLimit = Self.branchPageSize
+            sourceThreadIDs = nextSourceThreadIDs
+        }
         sourceRoots = roots
         currentSearchQuery = searchQuery
         currentTagsByNodeID = tagsByNodeID
@@ -78,6 +89,12 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                 statusMessage: $0.statusMessage,
                                 isSummarizing: $0.isSummarizing)
         }
+        rebuildData()
+    }
+
+    internal func expandRemainingBranches() {
+        guard data.remainingBranch != nil else { return }
+        visibleBranchLimit += Self.branchPageSize
         rebuildData()
     }
 
@@ -286,7 +303,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
         let rebuilt = GraphData.make(roots: sourceRoots,
                                      archivedThreadIDs: hiddenArchivedThreadIDs,
                                      tagsByNodeID: currentTagsByNodeID,
-                                     summariesByNodeID: currentSummariesByNodeID)
+                                     summariesByNodeID: currentSummariesByNodeID,
+                                     branchLimit: visibleBranchLimit,
+                                     branchBatchSize: Self.branchPageSize,
+                                     messageLimitPerBranch: Self.messagePreviewLimitPerBranch)
         let nextMessageIDs = Set(rebuilt.messages.map(\.id))
         let newMessageIDs = nextMessageIDs.subtracting(previousMessageIDs)
         if !previousMessageIDs.isEmpty {

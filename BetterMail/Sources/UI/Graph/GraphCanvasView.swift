@@ -152,7 +152,7 @@ internal struct GraphCanvasView: View {
     private func hoverPosition(for item: GraphHoverItem, in size: CGSize) -> CGPoint {
         let rawPoint: CGPoint
         switch item {
-        case .thread(_, let point), .message(_, let point):
+        case .thread(_, let point), .remaining(_, let point), .message(_, let point):
             rawPoint = point
         }
         let x = min(max(rawPoint.x + 150, 140), max(140, size.width - 140))

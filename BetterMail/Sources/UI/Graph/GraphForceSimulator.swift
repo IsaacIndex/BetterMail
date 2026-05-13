@@ -63,7 +63,7 @@ internal struct GraphBranchConfig: Equatable {
 
     internal func baseWidth(for edgeKind: GraphEdgeKind) -> CGFloat {
         switch edgeKind {
-        case .trunk:
+        case .trunk, .remaining:
             return trunkWidth
         case .chain:
             return chainWidth
@@ -76,7 +76,7 @@ internal struct GraphBranchConfig: Equatable {
 
     internal func jointRadius(for edgeKind: GraphEdgeKind) -> CGFloat {
         switch edgeKind {
-        case .trunk:
+        case .trunk, .remaining:
             return jointRadiusTrunk
         case .chain:
             return jointRadiusChain
@@ -197,6 +197,19 @@ internal struct GraphForceSimulator {
                                                          isPinned: false)
             }
         }
+        if let remainingBranch = data.remainingBranch {
+            let radians = remainingBranch.angle * .pi / 180
+            let orbitRadius: CGFloat = 260
+            let defaultPosition = CGPoint(x: center.x + cos(radians) * orbitRadius,
+                                          y: center.y + sin(radians) * orbitRadius)
+            nextNodes[remainingBranch.id] = GraphPhysicsNode(id: remainingBranch.id,
+                                                             kind: .remaining,
+                                                             threadID: nil,
+                                                             position: existingPositions[remainingBranch.id] ?? defaultPosition,
+                                                             velocity: nodesByID[remainingBranch.id]?.velocity ?? .zero,
+                                                             radius: remainingBranch.radius,
+                                                             isPinned: false)
+        }
 
         nodesByID = nextNodes
     }
@@ -284,8 +297,9 @@ internal struct GraphForceSimulator {
             let dx = target.position.x - source.position.x
             let dy = target.position.y - source.position.y
             let distance = max(1, hypot(dx, dy))
-            let springK = config.linkSpring * (edge.kind == .trunk ? 1.0 : 1.2)
-            let targetLength = edge.kind == .trunk ? config.trunkLength : config.chainLength
+            let usesTrunkPhysics = edge.kind == .trunk || edge.kind == .remaining
+            let springK = config.linkSpring * (usesTrunkPhysics ? 1.0 : 1.2)
+            let targetLength = usesTrunkPhysics ? config.trunkLength : config.chainLength
             let force = (distance - targetLength) * springK
             let fx = dx / distance * force
             let fy = dy / distance * force
@@ -346,7 +360,7 @@ internal struct GraphForceSimulator {
         for node in nodesByID.values where !node.isPinned {
             let dx = center.x - node.position.x
             let dy = center.y - node.position.y
-            let centerWeight = config.center * (node.kind == .thread ? 0.1 : 0.034)
+            let centerWeight = config.center * (node.kind == .thread || node.kind == .remaining ? 0.1 : 0.034)
             let breezeWeight: CGFloat = node.kind == .message ? 1.2 : 0.4
             forces[node.id, default: .zero].dx += dx * centerWeight + breezeX * breezeWeight
             forces[node.id, default: .zero].dy += dy * centerWeight + breezeY * breezeWeight

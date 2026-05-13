@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreData
 import XCTest
 @testable import BetterMail
 
@@ -39,6 +40,84 @@ final class GraphMappingTests: XCTestCase {
         let message = graph.messages.first { $0.rawMessageID == "root-msg-1" }
         XCTAssertEqual(message?.summaryPreviewText, "Confirm the deployment window and owner handoff.")
         XCTAssertTrue(graph.matchingNodeIDs(query: "deployment").contains(GraphData.messageNodeID(for: "root-msg-1")))
+    }
+
+    func test_mapping_whenBranchLimitIsSmallerThanThreadCount_addsRemainingBranch() {
+        let roots = (0..<25).map { index in
+            makeThread(rootID: "root-\(index)", messageCount: 1)
+        }
+
+        let graph = GraphData.make(roots: roots,
+                                   branchLimit: 10,
+                                   branchBatchSize: 10,
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        XCTAssertEqual(graph.threads.count, 10)
+        XCTAssertEqual(graph.messages.count, 10)
+        XCTAssertEqual(graph.remainingBranch?.hiddenThreadCount, 15)
+        XCTAssertEqual(graph.remainingBranch?.nextBatchCount, 10)
+        XCTAssertTrue(graph.allNodeIDs.contains(GraphRemainingBranch.graphID))
+        let remainingEdges = graph.edges.filter { $0.targetID == GraphRemainingBranch.graphID }
+        XCTAssertEqual(remainingEdges.count, 1)
+        XCTAssertEqual(remainingEdges.first?.kind, .remaining)
+    }
+
+    func test_mapping_whenFinalRemainingPageIsSmaller_reportsFinalBatchCount() {
+        let roots = (0..<25).map { index in
+            makeThread(rootID: "root-\(index)", messageCount: 1)
+        }
+
+        let graph = GraphData.make(roots: roots,
+                                   branchLimit: 20,
+                                   branchBatchSize: 10,
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        XCTAssertEqual(graph.threads.count, 20)
+        XCTAssertEqual(graph.remainingBranch?.hiddenThreadCount, 5)
+        XCTAssertEqual(graph.remainingBranch?.nextBatchCount, 5)
+    }
+
+    func test_mapping_whenMessageLimitIsSet_capsRenderedMessagesButKeepsThreadActionsComplete() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 25)],
+                                   branchLimit: 10,
+                                   messageLimitPerBranch: 10,
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        XCTAssertEqual(graph.threads.first?.messageCount, 25)
+        XCTAssertEqual(graph.threads.first?.messageIDs.count, 25)
+        XCTAssertEqual(graph.messages.count, 10)
+        XCTAssertEqual(graph.edges.count, 11)
+    }
+}
+
+final class GraphBranchPagingTests: XCTestCase {
+    func test_expandRemainingBranches_revealsNextTenAtATime() async {
+        await MainActor.run {
+            let suiteName = "GraphBranchPagingTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+            let roots = (0..<25).map { index in
+                makeThread(rootID: "root-\(index)", messageCount: 1)
+            }
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:])
+
+            XCTAssertEqual(viewModel.data.threads.count, 10)
+            XCTAssertEqual(viewModel.data.remainingBranch?.hiddenThreadCount, 15)
+
+            viewModel.expandRemainingBranches()
+            XCTAssertEqual(viewModel.data.threads.count, 20)
+            XCTAssertEqual(viewModel.data.remainingBranch?.hiddenThreadCount, 5)
+
+            viewModel.expandRemainingBranches()
+            XCTAssertEqual(viewModel.data.threads.count, 25)
+            XCTAssertNil(viewModel.data.remainingBranch)
+        }
     }
 }
 

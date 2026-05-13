@@ -15,6 +15,8 @@ internal final class GraphSceneNode: SKNode {
     private let disc: SKShapeNode
     private let ring: SKShapeNode
     private let messageDetail: SKShapeNode?
+    private let remainingDashRing: SKShapeNode?
+    private let remainingPlus: SKShapeNode?
     private let labelContainer: SKNode?
     private let labelBackground: SKShapeNode?
     private var theme: DesignTokens.Graph.AppTheme.Palette
@@ -43,13 +45,22 @@ internal final class GraphSceneNode: SKNode {
         } else {
             messageDetail = nil
         }
+        if kind == .remaining {
+            remainingDashRing = SKShapeNode(path: Self.dashedCirclePath(radius: radius + 5,
+                                                                        segmentCount: 16,
+                                                                        segmentFraction: 0.56))
+            remainingPlus = SKShapeNode(path: Self.plusPath(radius: max(8, radius * 0.34)))
+        } else {
+            remainingDashRing = nil
+            remainingPlus = nil
+        }
         if showsLabel, let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let labelNodes: LabelNodes
             switch kind {
             case .message:
                 labelNodes = Self.makeMessageSummaryLabel(title, radius: radius, theme: theme)
-            case .center, .thread:
-                labelNodes = Self.makeThreadLabel(title, radius: radius, theme: theme)
+            case .center, .thread, .remaining:
+                labelNodes = Self.makeThreadLabel(title, radius: radius, kind: kind, theme: theme)
             }
             labelContainer = labelNodes.container
             labelBackground = labelNodes.background
@@ -76,6 +87,24 @@ internal final class GraphSceneNode: SKNode {
             messageDetail.zPosition = 3
             shapeContainer.addChild(messageDetail)
         }
+        if let remainingDashRing {
+            remainingDashRing.fillColor = .clear
+            remainingDashRing.strokeColor = theme.archiveNS.withAlphaComponent(0.72)
+            remainingDashRing.lineWidth = 1.4
+            remainingDashRing.lineCap = .round
+            remainingDashRing.lineJoin = .round
+            remainingDashRing.zPosition = 4
+            shapeContainer.addChild(remainingDashRing)
+        }
+        if let remainingPlus {
+            remainingPlus.fillColor = .clear
+            remainingPlus.strokeColor = theme.archiveNS.withAlphaComponent(0.86)
+            remainingPlus.lineWidth = 1.8
+            remainingPlus.lineCap = .round
+            remainingPlus.lineJoin = .round
+            remainingPlus.zPosition = 5
+            shapeContainer.addChild(remainingPlus)
+        }
         addChild(shapeContainer)
         if let labelContainer {
             addChild(labelContainer)
@@ -89,6 +118,22 @@ internal final class GraphSceneNode: SKNode {
 
     internal func applySelection(isSelected: Bool, isHovered: Bool, isDimmed: Bool) {
         alpha = isDimmed ? 0.22 : 1
+        if kind == .remaining {
+            let isEmphasized = isSelected || isHovered
+            let emphasisColor = isEmphasized ? theme.accentNS : theme.archiveNS
+            disc.fillColor = theme.panelSecondaryNS.withAlphaComponent(0.34)
+            disc.strokeColor = .clear
+            disc.lineWidth = 0
+            ring.strokeColor = .clear
+            ring.lineWidth = 0
+            remainingDashRing?.strokeColor = emphasisColor.withAlphaComponent(isEmphasized ? 0.95 : 0.72)
+            remainingDashRing?.lineWidth = isSelected ? 2.2 : isHovered ? 2.0 : 1.4
+            remainingPlus?.strokeColor = emphasisColor.withAlphaComponent(isEmphasized ? 0.98 : 0.82)
+            remainingPlus?.lineWidth = isSelected ? 2.2 : 1.8
+            labelBackground?.strokeColor = emphasisColor.withAlphaComponent(isEmphasized ? 0.48 : 0.28)
+            labelBackground?.lineWidth = isEmphasized ? 1 : 0.8
+            return
+        }
         if isSelected {
             disc.fillColor = theme.accentSoftNS
             disc.strokeColor = theme.accentNS
@@ -115,8 +160,16 @@ internal final class GraphSceneNode: SKNode {
                                theme: DesignTokens.Graph.AppTheme.Palette) {
         self.theme = theme
         disc.fillColor = fillColor
-        disc.strokeColor = strokeColor
-        disc.lineWidth = strokeWidth
+        if kind == .remaining {
+            disc.strokeColor = .clear
+            disc.lineWidth = 0
+            remainingDashRing?.strokeColor = strokeColor.withAlphaComponent(0.72)
+            remainingDashRing?.lineWidth = strokeWidth
+            remainingPlus?.strokeColor = strokeColor.withAlphaComponent(0.86)
+        } else {
+            disc.strokeColor = strokeColor
+            disc.lineWidth = strokeWidth
+        }
         messageDetail?.strokeColor = theme.panelNS.withAlphaComponent(0.72)
     }
 
@@ -214,7 +267,7 @@ internal final class GraphSceneNode: SKNode {
 
     private static func nodePath(kind: GraphNodeKind, radius: CGFloat) -> CGPath {
         switch kind {
-        case .center, .thread:
+        case .center, .thread, .remaining:
             return CGPath(ellipseIn: CGRect(x: -radius,
                                             y: -radius,
                                             width: radius * 2,
@@ -253,10 +306,41 @@ internal final class GraphSceneNode: SKNode {
         return path
     }
 
+    private static func dashedCirclePath(radius: CGFloat,
+                                         segmentCount: Int,
+                                         segmentFraction: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        let count = max(3, segmentCount)
+        let fraction = min(max(segmentFraction, 0.1), 0.92)
+        let step = CGFloat.pi * 2 / CGFloat(count)
+        for index in 0..<count {
+            let startAngle = CGFloat(index) * step
+            let endAngle = startAngle + step * fraction
+            path.move(to: CGPoint(x: cos(startAngle) * radius,
+                                  y: sin(startAngle) * radius))
+            path.addArc(center: .zero,
+                        radius: radius,
+                        startAngle: startAngle,
+                        endAngle: endAngle,
+                        clockwise: false)
+        }
+        return path
+    }
+
+    private static func plusPath(radius: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: -radius, y: 0))
+        path.addLine(to: CGPoint(x: radius, y: 0))
+        path.move(to: CGPoint(x: 0, y: -radius))
+        path.addLine(to: CGPoint(x: 0, y: radius))
+        return path
+    }
+
     private static func makeThreadLabel(_ title: String,
                                         radius: CGFloat,
+                                        kind: GraphNodeKind,
                                         theme: DesignTokens.Graph.AppTheme.Palette) -> LabelNodes {
-        let isCenterNode = radius > 34
+        let isCenterNode = kind == .center
         let lines = isCenterNode
             ? [readableLabelText(title, maxCharacters: 18)]
             : wrappedLines(for: readableLabelText(title, maxCharacters: 116),
@@ -268,7 +352,7 @@ internal final class GraphSceneNode: SKNode {
         let verticalPadding: CGFloat = isCenterNode ? 5 : 8
         let lineNodes = lines.map { line -> SKLabelNode in
             let labelNode = SKLabelNode(text: line)
-            labelNode.fontName = "HelveticaNeue-Semibold"
+            labelNode.fontName = "HelveticaNeue-Medium"
             labelNode.fontSize = fontSize
             labelNode.fontColor = theme.inkNS
             labelNode.verticalAlignmentMode = .center
