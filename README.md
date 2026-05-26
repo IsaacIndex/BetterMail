@@ -87,7 +87,8 @@ To keep the Liquid Glass look without losing nav bar legibility, the glass conta
 ### Refresh & Summary Concurrency (Non-Blocking)
 - Heavy work stays off `@MainActor`: AppleScript fetch, Core Data upserts, JWZ threading, subject gathering, and Apple Intelligence summaries all run on a dedicated serial actor (`SidebarBackgroundWorker`), with AppleScript executed by `NSAppleScriptRunner`.
 - Normal refreshes are reliability-biased: each AppleScript fetch is capped to 4 messages, skips `content of m`, and retries Mail timeout `-1712` failures before surfacing an error.
-- Long-running app sessions avoid idle churn: auto-refresh does not retain the view model while sleeping, completed summary task handles are released after completion, Core Data message-window reads use bounded fetch batches, and the SpriteKit graph drops to a low idle frame rate after its layout settles.
+- Long-running app sessions avoid idle churn: auto-refresh does not retain the view model while sleeping, completed summary task handles are released after completion, Core Data message-window reads use bounded fetch batches, graph audio only starts when sound is enabled, and the SpriteKit graph drops to a low idle frame rate after its layout settles.
+- Instruments traces for the graph user flow should watch for three recurring pain points: AppleScript refresh time on background threads, SwiftUI/AttributeGraph main-thread stalls during large view transactions, and SpriteKit edge path generation while the force layout is still settling. The graph renderer caches edge paths across selection/hover-only updates and uses lower ribbon sampling during active settling before switching to higher-quality settled paths.
 - The main actor only applies UI state (`roots`, unread totals, summary text/status, `isRefreshing`), so the SwiftUI sidebar remains responsive during refreshes and summaries.
 - Sequence diagram (source at `openspec/changes/refactor-refresh-concurrency/refresh-flow.mmd`):
 

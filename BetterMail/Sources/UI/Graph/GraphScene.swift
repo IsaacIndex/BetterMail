@@ -2,12 +2,14 @@ import AppKit
 import SpriteKit
 
 internal final class GraphScene: SKScene {
-    private enum EdgeRenderingMode {
+    private enum EdgeRenderingMode: Equatable {
         case ribbon
         case stroke
     }
 
     private static let ribbonEdgeBudget = 420
+    private static let settledRibbonSamples = 72
+    private static let edgeViewportBucketSize: CGFloat = 80
     private static let layoutSettlingFrameLimit = 120
     private static let layoutSettledEnergyPerNodeThreshold: CGFloat = 0.04
     private static let interactionActiveFrameWindow: TimeInterval = 1.2
@@ -25,6 +27,16 @@ internal final class GraphScene: SKScene {
 
     internal var preferredFramesPerSecond: Int {
         needsActiveFrameRate ? Self.activeFramesPerSecond : Self.idleFramesPerSecond
+    }
+
+    private struct EdgeRenderState: Equatable {
+        let mode: EdgeRenderingMode
+        let filteredNodeIDs: Set<String>
+        let viewportMinXBucket: Int
+        let viewportMinYBucket: Int
+        let viewportMaxXBucket: Int
+        let viewportMaxYBucket: Int
+        let settled: Bool
     }
 
     private var graphData: GraphData = .empty
@@ -59,6 +71,7 @@ internal final class GraphScene: SKScene {
     private var lastInteractionTime: TimeInterval?
     private var lastPositionReportTime: TimeInterval = 0
     private var publishedFramesPerSecond = GraphScene.activeFramesPerSecond
+    private var lastRenderedEdgeState: EdgeRenderState?
     private let cameraNode = SKCameraNode()
 
     override init(size: CGSize) {
@@ -312,6 +325,7 @@ internal final class GraphScene: SKScene {
             node.zPosition = -10
             node.lineCap = .round
             node.lineJoin = .round
+            node.isAntialiased = true
             if node.parent == nil {
                 addChild(node)
             }
@@ -327,6 +341,7 @@ internal final class GraphScene: SKScene {
             node.zPosition = -9
             node.lineCap = .round
             node.lineJoin = .round
+            node.isAntialiased = true
             if node.parent == nil {
                 addChild(node)
             }
@@ -400,6 +415,7 @@ internal final class GraphScene: SKScene {
     }
 
     private func rebuildGraph() {
+        lastRenderedEdgeState = nil
         resetLayoutSettling()
         let existingPositions = simulator.positionsByID()
         simulator.reset(data: graphData, size: size, preserving: existingPositions)
@@ -504,7 +520,7 @@ internal final class GraphScene: SKScene {
             }
         }
         updateSummaryCallouts()
-        renderEdges(skipCoalescedChains: edgeRenderFrame % 2 != 0)
+        renderEdges(skipCoalescedChains: !layoutIsSettled && edgeRenderFrame % 2 != 0)
     }
 
     private func updateSummaryCallouts() {
@@ -615,6 +631,37 @@ internal final class GraphScene: SKScene {
         if let dimmedChainPath {
             dimmedChainEdgeNode.path = dimmedChainPath
         }
+        if !shouldSkipChains {
+            lastRenderedEdgeState = edgeRenderState(mode: renderingMode,
+                                                    visibleRect: visibleRect)
+        }
+    }
+
+    private func renderEdgesIfNeeded() {
+        let visibleRect = cameraVisibleRect().insetBy(dx: -120, dy: -120)
+        let renderingMode = edgeRenderingMode()
+        let nextState = edgeRenderState(mode: renderingMode,
+                                        visibleRect: visibleRect)
+        guard nextState != lastRenderedEdgeState ||
+              appliedEdgeRenderingMode != renderingMode else {
+            return
+        }
+        renderEdges()
+    }
+
+    private func edgeRenderState(mode: EdgeRenderingMode,
+                                 visibleRect: CGRect) -> EdgeRenderState {
+        EdgeRenderState(mode: mode,
+                        filteredNodeIDs: filteredNodeIDs,
+                        viewportMinXBucket: edgeViewportBucket(for: visibleRect.minX),
+                        viewportMinYBucket: edgeViewportBucket(for: visibleRect.minY),
+                        viewportMaxXBucket: edgeViewportBucket(for: visibleRect.maxX),
+                        viewportMaxYBucket: edgeViewportBucket(for: visibleRect.maxY),
+                        settled: layoutIsSettled)
+    }
+
+    private func edgeViewportBucket(for value: CGFloat) -> Int {
+        Int((value / Self.edgeViewportBucketSize).rounded(.down))
     }
 
     private func applyVisualState() {
@@ -645,7 +692,7 @@ internal final class GraphScene: SKScene {
         for (id, callout) in summaryCalloutsByID {
             callout.applyDimmed(!filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(id))
         }
-        renderEdges()
+        renderEdgesIfNeeded()
     }
 
     private func isEdgeDimmed(_ edge: GraphEdge) -> Bool {
@@ -818,13 +865,18 @@ internal final class GraphScene: SKScene {
                                             widthEnd: branchConfig.tipWidth(for: edge.kind),
                                             tipMin: branchConfig.tipMin,
                                             taperPow: branchConfig.taperPow,
-                                            samples: branchConfig.ribbonSamples))
+                                            samples: ribbonSamples(for: branchConfig)))
         let jointRadius = branchConfig.jointRadius(for: edge.kind)
         guard jointRadius > 0 else { return }
         path.addEllipse(in: CGRect(x: source.x - jointRadius,
                                    y: source.y - jointRadius,
                                    width: jointRadius * 2,
                                    height: jointRadius * 2))
+    }
+
+    private func ribbonSamples(for branchConfig: GraphBranchConfig) -> Int {
+        guard layoutIsSettled else { return branchConfig.ribbonSamples }
+        return max(branchConfig.ribbonSamples, Self.settledRibbonSamples)
     }
 
     private func appendDashedEdge(source: GraphPhysicsNode,
