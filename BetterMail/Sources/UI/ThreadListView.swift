@@ -108,7 +108,6 @@ internal struct ThreadListView: View {
                     startDate: $backfillStartDate,
                     endDate: $backfillEndDate,
                     limit: $backfillLimit,
-                    intervalDescription: backfillIntervalDescription ?? "",
                     onConfirm: confirmBackfillWithOverrides,
                     onCancel: { isShowingBackfillConfirmation = false }
                 )
@@ -943,12 +942,6 @@ internal struct ThreadListView: View {
             .accessibilityLabel(NSLocalizedString(accessibilityKey, comment: "Selection action button"))
     }
 
-    private var backfillIntervalDescription: String? {
-        guard let mergedInterval = mergedVisibleEmptyInterval else { return nil }
-        return Self.backfillIntervalFormatter.string(from: mergedInterval.start,
-                                                     to: mergedInterval.end)
-    }
-
     private var mergedVisibleEmptyInterval: DateInterval? {
         guard let first = viewModel.visibleEmptyDayIntervals.min(by: { $0.start < $1.start }),
               let last = viewModel.visibleEmptyDayIntervals.max(by: { $0.end < $1.end }) else {
@@ -1014,7 +1007,6 @@ private struct BackfillConfirmationSheet: View {
     @Binding var startDate: Date
     @Binding var endDate: Date
     @Binding var limit: Int
-    let intervalDescription: String
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
@@ -1060,6 +1052,24 @@ private struct BackfillConfirmationSheet: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private var intervalDescription: String {
+        let range = orderedRange
+        return Self.intervalFormatter.string(from: range.start, to: range.end)
+    }
+
+    private var orderedRange: (start: Date, end: Date) {
+        startDate <= endDate
+            ? (startDate, endDate)
+            : (endDate, startDate)
+    }
+
+    private static let intervalFormatter: DateIntervalFormatter = {
+        let formatter = DateIntervalFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 }
 
 private struct MailboxFolderMoveSheet: View {
@@ -1556,10 +1566,4 @@ private extension ThreadListView {
         return .handled
     }
 
-    static var backfillIntervalFormatter: DateIntervalFormatter = {
-        let formatter = DateIntervalFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter
-    }()
 }

@@ -112,6 +112,10 @@ The system SHALL expose a toolbar action when any visible day band has no cached
 - **WHEN** the user triggers the backfill action
 - **THEN** the system fetches messages for only the visible day range and updates the cache before rethreading
 
+#### Scenario: Backfill confirmation preview
+- **WHEN** the user changes the start or end date in the backfill confirmation sheet
+- **THEN** the confirmation subtitle updates to show the selected date range before the user starts backfill
+
 ### Requirement: Custom Thread Drag (Canvas)
 The system SHALL provide a custom drag interaction for single-thread drags on the thread canvas using DragGesture (not system drag), rendering a floating preview that follows the pointer without the system lift animation.
 
