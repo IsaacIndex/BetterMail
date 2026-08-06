@@ -9,7 +9,7 @@ internal struct SnipMoveSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedAccount = ""
-    @State private var selectedPath = ""
+    @State private var selectedPath: String?
     @State private var searchQuery = ""
 
     internal var body: some View {
@@ -30,21 +30,28 @@ internal struct SnipMoveSheet: View {
             TextField(NSLocalizedString("graph.snip.search", comment: "Graph snip mailbox search"),
                       text: $searchQuery)
                 .textFieldStyle(.roundedBorder)
-            List(filteredRows, id: \.id) { row in
-                Button {
-                    selectedPath = row.path
-                } label: {
-                    HStack {
-                        Text(String(repeating: "  ", count: row.depth) + row.name)
-                        Spacer()
-                        if selectedPath == row.path {
-                            Image(systemName: "checkmark")
+            if filteredRows.isEmpty {
+                ContentUnavailableView(
+                    NSLocalizedString("graph.snip.no_folders", comment: "Empty graph snip mailbox list"),
+                    systemImage: "folder.badge.questionmark"
+                )
+                .frame(maxWidth: .infinity, minHeight: 220)
+            } else {
+                List(selection: $selectedPath) {
+                    ForEach(filteredRows) { row in
+                        HStack {
+                            Text(String(repeating: "  ", count: row.depth) + row.name)
+                            Spacer()
+                            if selectedPath == row.path {
+                                Image(systemName: "checkmark")
+                            }
                         }
+                        .contentShape(Rectangle())
+                        .tag(row.path)
                     }
                 }
-                .buttonStyle(.plain)
+                .frame(minHeight: 220)
             }
-            .frame(minHeight: 220)
             HStack {
                 Spacer()
                 Button(NSLocalizedString("graph.snip.cancel", comment: "Cancel graph snip")) {
@@ -53,10 +60,11 @@ internal struct SnipMoveSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 Button(NSLocalizedString("graph.snip.move", comment: "Confirm graph snip move")) {
+                    guard let selectedPath else { return }
                     onConfirm(selectedPath, selectedAccount.isEmpty ? nil : selectedAccount)
                     dismiss()
                 }
-                .disabled(selectedPath.isEmpty)
+                .disabled(selectedPath == nil)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -64,20 +72,23 @@ internal struct SnipMoveSheet: View {
         .frame(minWidth: 420, minHeight: 360)
         .onAppear(perform: selectDefaults)
         .onChange(of: selectedAccount) { _, _ in
-            selectedPath = filteredRows.first?.path ?? ""
+            selectedPath = filteredRows.first?.path
+        }
+        .onChange(of: mailboxAccounts) { _, _ in
+            selectDefaults()
         }
     }
 
     private var selectedMailboxAccount: MailboxAccount? {
-        mailboxAccounts.first { $0.name == selectedAccount } ?? mailboxAccounts.first
+        MailboxHierarchyBuilder.account(matching: selectedAccount, in: mailboxAccounts)
     }
 
     private var rows: [FolderRow] {
         guard let selectedMailboxAccount else { return [] }
-        let parent = settings.snipParentMailboxPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nodes = parent.isEmpty
-            ? selectedMailboxAccount.folders
-            : MailboxHierarchyBuilder.filterFolderTree(selectedMailboxAccount.folders, query: parent)
+        let nodes = MailboxHierarchyBuilder.folderTree(
+            selectedMailboxAccount.folders,
+            preferredParentPath: settings.snipParentMailboxPath
+        )
         return Self.flattenRows(nodes: nodes)
     }
 
@@ -88,8 +99,9 @@ internal struct SnipMoveSheet: View {
     }
 
     private func selectDefaults() {
-        selectedAccount = request.thread.accountName.isEmpty ? (mailboxAccounts.first?.name ?? "") : request.thread.accountName
-        selectedPath = filteredRows.first?.path ?? ""
+        selectedAccount = MailboxHierarchyBuilder.account(matching: request.thread.accountName,
+                                                           in: mailboxAccounts)?.name ?? ""
+        selectedPath = filteredRows.first?.path
     }
 
     private static func flattenRows(nodes: [MailboxFolderNode], depth: Int = 0) -> [FolderRow] {

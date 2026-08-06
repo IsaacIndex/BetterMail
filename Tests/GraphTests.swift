@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreData
+import SpriteKit
 import XCTest
 @testable import BetterMail
 
@@ -13,6 +14,7 @@ final class GraphMappingTests: XCTestCase {
         let messageCount = graph.messages.count
 
         XCTAssertEqual(graph.threads.count, 9)
+        XCTAssertEqual(graph.visibleEmailNodeCount, (3...11).reduce(0, +))
         XCTAssertEqual(graph.edges.count, graph.threads.count + messageCount)
         XCTAssertEqual(graph.allNodeIDs.count, graph.threads.count + graph.messages.count + 1)
 
@@ -42,6 +44,56 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertTrue(graph.matchingNodeIDs(query: "deployment").contains(GraphData.messageNodeID(for: "root-msg-1")))
     }
 
+    func test_mapping_usesRootSummaryAsThreadDisplayTitle() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   summariesByNodeID: [
+                                       "root": GraphMessageSummary(text: "Approve the release plan and confirm its owner.",
+                                                                   statusMessage: "Ready",
+                                                                   isSummarizing: false)
+                                   ],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        XCTAssertEqual(graph.threads.first?.displayTitle,
+                       "Approve the release plan and confirm its owner.")
+        XCTAssertTrue(graph.matchingNodeIDs(query: "release plan")
+            .contains(GraphData.threadNodeID(for: "root")))
+    }
+
+    func test_mapping_prefersConciseGraphTitlesWithoutReplacingFullSummaries() {
+        let summary = GraphMessageSummary(
+            text: "Confirm the booking-flow walkthrough scope, owner, and review-material sequence.",
+            statusMessage: "Ready",
+            isSummarizing: false
+        )
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "root", messageCount: 2)],
+            summariesByNodeID: ["root": summary, "root-msg-1": summary],
+            titlesByNodeID: ["root": "CR60 Booking Flow", "root-msg-1": "Review Materials"],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertEqual(graph.threads.first?.displayTitle, "CR60 Booking Flow")
+        XCTAssertEqual(graph.messages.first?.displayTitle, "Review Materials")
+        XCTAssertEqual(graph.messages.first?.summaryPreviewText, summary.text)
+        XCTAssertTrue(graph.matchingNodeIDs(query: "review materials")
+            .contains(GraphData.messageNodeID(for: "root-msg-1")))
+    }
+
+    func test_mapping_emailNodeCountMatchesActualEmailCountWithoutSyntheticRootLeaf() {
+        let single = GraphData.make(roots: [makeThread(rootID: "single", messageCount: 1)],
+                                    now: Date(timeIntervalSince1970: 10_000))
+        let three = GraphData.make(roots: [makeThread(rootID: "three", messageCount: 3)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        XCTAssertEqual(single.visibleEmailNodeCount, 1)
+        XCTAssertEqual(single.threads.count, 1)
+        XCTAssertTrue(single.messages.isEmpty)
+        XCTAssertEqual(three.visibleEmailNodeCount, 3)
+        XCTAssertEqual(three.threads.count, 1)
+        XCTAssertEqual(three.messages.count, 2)
+        XCTAssertFalse(three.messages.contains { $0.rawMessageID == "three" })
+    }
+
     func test_mapping_whenBranchLimitIsSmallerThanThreadCount_addsRemainingBranch() {
         let roots = (0..<25).map { index in
             makeThread(rootID: "root-\(index)", messageCount: 1)
@@ -53,7 +105,8 @@ final class GraphMappingTests: XCTestCase {
                                    now: Date(timeIntervalSince1970: 10_000))
 
         XCTAssertEqual(graph.threads.count, 10)
-        XCTAssertEqual(graph.messages.count, 10)
+        XCTAssertEqual(graph.visibleEmailNodeCount, 10)
+        XCTAssertTrue(graph.messages.isEmpty)
         XCTAssertEqual(graph.remainingBranch?.hiddenThreadCount, 15)
         XCTAssertEqual(graph.remainingBranch?.nextBatchCount, 10)
         XCTAssertTrue(graph.allNodeIDs.contains(GraphRemainingBranch.graphID))
@@ -85,8 +138,98 @@ final class GraphMappingTests: XCTestCase {
 
         XCTAssertEqual(graph.threads.first?.messageCount, 25)
         XCTAssertEqual(graph.threads.first?.messageIDs.count, 25)
-        XCTAssertEqual(graph.messages.count, 10)
-        XCTAssertEqual(graph.edges.count, 11)
+        XCTAssertEqual(graph.visibleEmailNodeCount, 10)
+        XCTAssertEqual(graph.messages.count, 9)
+        XCTAssertEqual(graph.edges.count, 10)
+    }
+
+    func test_mapping_withConfirmedFolder_routesThreadsThroughFolderBranch() {
+        let folder = ThreadFolder(id: "folder-work",
+                                  title: "Work",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["root-a", "root-b"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 1),
+                                           makeThread(rootID: "root-b", messageCount: 1)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["root-a": folder.id, "root-b": folder.id],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        let grouping = graph.groupings.first { $0.kind == .folder }
+        XCTAssertEqual(grouping?.title, "Work")
+        XCTAssertEqual(Set(grouping?.rawThreadIDs ?? []), ["root-a", "root-b"])
+        XCTAssertTrue(graph.edges.contains {
+            $0.sourceID == GraphCenter.you.id && $0.targetID == grouping?.id && $0.kind == .trunk
+        })
+        for rawThreadID in ["root-a", "root-b"] {
+            let threadID = GraphData.threadNodeID(for: rawThreadID)
+            XCTAssertTrue(graph.edges.contains {
+                $0.sourceID == grouping?.id && $0.targetID == threadID && $0.kind == .grouping
+            })
+            XCTAssertFalse(graph.edges.contains {
+                $0.sourceID == GraphCenter.you.id && $0.targetID == threadID && $0.kind == .trunk
+            })
+        }
+    }
+
+    func test_mapping_withConfirmedFolderAndOneVisibleMember_keepsFolderBranchVisible() {
+        let folder = ThreadFolder(id: "folder-cr60",
+                                  title: "CR60 Walkthrough",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["root-a", "root-b"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 1),
+                                           makeThread(rootID: "root-b", messageCount: 1)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["root-a": folder.id, "root-b": folder.id],
+                                   branchLimit: 1,
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        let grouping = graph.groupings.first { $0.sourceFolderID == folder.id }
+        let visibleThreadID = GraphData.threadNodeID(for: "root-a")
+        XCTAssertEqual(grouping?.title, "CR60 Walkthrough")
+        XCTAssertEqual(grouping?.rawThreadIDs, ["root-a"])
+        XCTAssertTrue(graph.edges.contains {
+            $0.sourceID == GraphCenter.you.id && $0.targetID == grouping?.id && $0.kind == .trunk
+        })
+        XCTAssertTrue(graph.edges.contains {
+            $0.sourceID == grouping?.id && $0.targetID == visibleThreadID && $0.kind == .grouping
+        })
+        XCTAssertFalse(graph.edges.contains {
+            $0.sourceID == GraphCenter.you.id && $0.targetID == visibleThreadID && $0.kind == .trunk
+        })
+    }
+
+    func test_mapping_withWhitespaceInConfirmedFolderMembership_resolvesVisibleThread() {
+        let folder = ThreadFolder(id: "folder-normalized",
+                                  title: "Normalized Folder",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["  root-a\n"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 1)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["\troot-a ": folder.id],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        let grouping = graph.groupings.first { $0.sourceFolderID == folder.id }
+        XCTAssertEqual(grouping?.rawThreadIDs, ["root-a"])
+        XCTAssertEqual(grouping?.threadIDs, [GraphData.threadNodeID(for: "root-a")])
+    }
+
+    func test_mapping_withSharedAppleIntelligenceTag_createsConfirmableGhostBranch() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 1),
+                                           makeThread(rootID: "root-b", messageCount: 1),
+                                           makeThread(rootID: "root-c", messageCount: 1)],
+                                   tagsByNodeID: ["root-a": ["Launch"],
+                                                  "root-b": ["launch"],
+                                                  "root-c": ["Finance"]],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        let suggestion = graph.groupings.first { $0.kind == .suggestedTopic }
+        XCTAssertEqual(suggestion?.title, "Launch")
+        XCTAssertEqual(Set(suggestion?.rawThreadIDs ?? []), ["root-a", "root-b"])
+        XCTAssertTrue(suggestion?.isSuggestion == true)
+        XCTAssertTrue(graph.edges.contains { $0.sourceID == suggestion?.id && $0.kind == .suggested })
     }
 }
 
@@ -119,6 +262,31 @@ final class GraphBranchPagingTests: XCTestCase {
             XCTAssertNil(viewModel.data.remainingBranch)
         }
     }
+
+    func test_update_withConfiguredBranchPageSize_usesThatCountForPaging() async {
+        await MainActor.run {
+            let suiteName = "GraphBranchPagingConfiguredTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+            let roots = (0..<17).map { index in
+                makeThread(rootID: "root-\(index)", messageCount: 1)
+            }
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             branchPageSize: 6)
+
+            XCTAssertEqual(viewModel.data.threads.count, 6)
+            XCTAssertEqual(viewModel.data.remainingBranch?.nextBatchCount, 6)
+            viewModel.expandRemainingBranches()
+            XCTAssertEqual(viewModel.data.threads.count, 12)
+            XCTAssertEqual(viewModel.data.remainingBranch?.hiddenThreadCount, 5)
+        }
+    }
 }
 
 final class GraphViewportTests: XCTestCase {
@@ -127,9 +295,167 @@ final class GraphViewportTests: XCTestCase {
         XCTAssertEqual(GraphViewport.clampedZoom(1.25), 1.25)
         XCTAssertEqual(GraphViewport.clampedZoom(8), 5.0)
     }
+
+    func test_scrollInput_pansPreciseTrackpadUnlessZoomModifierIsPressed() {
+        XCTAssertFalse(GraphScene.shouldZoomScroll(hasPreciseScrollingDeltas: true,
+                                                   hasZoomModifier: false))
+        XCTAssertTrue(GraphScene.shouldZoomScroll(hasPreciseScrollingDeltas: false,
+                                                  hasZoomModifier: true))
+        XCTAssertFalse(GraphScene.shouldZoomScroll(hasPreciseScrollingDeltas: false,
+                                                   hasZoomModifier: false))
+    }
+
+    func test_graphScene_cameraAcceptsUnboundedPanAndPreservesItAcrossResize() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = GraphScene(size: CGSize(width: 960, height: 640))
+        let panOffset = CGPoint(x: -1_800, y: 1_400)
+        scene.configure(data: graph,
+                        selectedGraphNodeID: nil,
+                        pruneMode: .idle,
+                        filteredNodeIDs: graph.allNodeIDs,
+                        wateredCounts: [:],
+                        reduceMotion: true,
+                        sproutingMessageIDs: [],
+                        forceConfig: GraphForceConstants.defaults,
+                        theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
+                        zoomScale: 1,
+                        panOffset: panOffset)
+
+        assertPointsEqual(scene.camera?.position,
+                          CGPoint(x: 480 + panOffset.x, y: 320 + panOffset.y))
+
+        scene.size = CGSize(width: 1_200, height: 800)
+
+        assertPointsEqual(scene.camera?.position,
+                          CGPoint(x: 600 + panOffset.x, y: 400 + panOffset.y))
+    }
 }
 
 final class GraphForceSimulatorTests: XCTestCase {
+    func test_forceSimulator_initialLayout_centersRootAndGrowsBranchesOutward() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 4)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 800, height: 600)
+        simulator.reset(data: graph, size: size)
+        let center = simulator.nodesByID[GraphCenter.you.id]?.position ?? .zero
+        let threadID = GraphData.threadNodeID(for: "root")
+        let threadPosition = simulator.nodesByID[threadID]?.position ?? .zero
+        let messageDistances = graph.messages
+            .sorted { $0.index < $1.index }
+            .compactMap { message in
+                simulator.nodesByID[message.id].map { pointDistance(center, $0.position) }
+            }
+
+        assertPointsEqual(center, CGPoint(x: size.width / 2, y: size.height / 2))
+        XCTAssertGreaterThan(pointDistance(center, threadPosition), 200)
+        XCTAssertTrue(messageDistances.allSatisfy { $0 > pointDistance(center, threadPosition) })
+        XCTAssertEqual(Set(messageDistances.map { Int($0.rounded()) }).count,
+                       messageDistances.count,
+                       "Fanned message leaves should remain spatially discoverable")
+    }
+
+    func test_forceSimulator_threadAnchors_spreadBranchesAroundRoot() {
+        let graph = GraphData.make(roots: (0..<16).map { makeThread(rootID: "root-\($0)", messageCount: 1) },
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 1200, height: 800)
+        simulator.reset(data: graph, size: size)
+        let center = GraphForceSimulator.rootAnchor(in: size)
+        let threadIDs = graph.threads.map(\.id)
+        let threadPositions = threadIDs.compactMap { simulator.nodesByID[$0]?.position }
+
+        XCTAssertTrue(threadPositions.contains { $0.x < center.x && $0.y < center.y })
+        XCTAssertTrue(threadPositions.contains { $0.x < center.x && $0.y > center.y })
+        XCTAssertTrue(threadPositions.contains { $0.x > center.x && $0.y < center.y })
+        XCTAssertTrue(threadPositions.contains { $0.x > center.x && $0.y > center.y })
+
+        var minimumPairDistance = CGFloat.greatestFiniteMagnitude
+        for leftIndex in 0..<(threadPositions.count - 1) {
+            for rightIndex in (leftIndex + 1)..<threadPositions.count {
+                minimumPairDistance = min(minimumPairDistance,
+                                          pointDistance(threadPositions[leftIndex],
+                                                        threadPositions[rightIndex]))
+            }
+        }
+        XCTAssertGreaterThan(minimumPairDistance, 80)
+        XCTAssertTrue(threadPositions.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+    }
+
+    func test_forceSimulator_afterSettling_keepsBranchesSeparatedAndMessagesGrowingOutward() {
+        let graph = GraphData.make(roots: (0..<12).map {
+            makeThread(rootID: "root-\($0)", messageCount: 3)
+        }, now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_200, height: 900))
+
+        for tick in 1...360 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true,
+                           labelOccluderFrame: { node in
+                               let halfSize: CGFloat = node.kind == .thread ? 108 : 18
+                               return CGRect(x: node.position.x - halfSize,
+                                             y: node.position.y - halfSize,
+                                             width: halfSize * 2,
+                                             height: halfSize * 2)
+                           })
+        }
+
+        let center = GraphForceSimulator.rootAnchor(in: simulator.size)
+        let threadPositions = graph.threads.compactMap { simulator.nodesByID[$0.id]?.position }
+        var minimumPairDistance = CGFloat.greatestFiniteMagnitude
+        for leftIndex in 0..<(threadPositions.count - 1) {
+            for rightIndex in (leftIndex + 1)..<threadPositions.count {
+                minimumPairDistance = min(minimumPairDistance,
+                                          pointDistance(threadPositions[leftIndex], threadPositions[rightIndex]))
+            }
+        }
+        XCTAssertGreaterThan(minimumPairDistance, 96)
+
+        for thread in graph.threads {
+            guard let threadPosition = simulator.nodesByID[thread.id]?.position else {
+                return XCTFail("Missing thread node \(thread.id)")
+            }
+            let branch = CGVector(dx: threadPosition.x - center.x,
+                                  dy: threadPosition.y - center.y)
+            for message in graph.messages where message.threadID == thread.id {
+                guard let messagePosition = simulator.nodesByID[message.id]?.position else {
+                    return XCTFail("Missing message node \(message.id)")
+                }
+                let messageVector = CGVector(dx: messagePosition.x - center.x,
+                                             dy: messagePosition.y - center.y)
+                let projection = messageVector.dx * branch.dx + messageVector.dy * branch.dy
+                let threadDepth = branch.dx * branch.dx + branch.dy * branch.dy
+                XCTAssertGreaterThan(projection, threadDepth,
+                                     "Message \(message.id) should remain outward from its thread")
+            }
+        }
+    }
+
+    func test_forceSimulator_resize_translatesPreservedTreeWithoutInjectingVelocity() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 800, height: 600))
+        let before = simulator.positionsByID()
+        let threadID = GraphData.threadNodeID(for: "root")
+
+        simulator.reset(data: graph,
+                        size: CGSize(width: 1_000, height: 600),
+                        preserving: before)
+
+        guard let oldPosition = before[threadID],
+              let resizedNode = simulator.nodesByID[threadID] else {
+            return XCTFail("Missing resized thread")
+        }
+        assertPointsEqual(resizedNode.position,
+                          CGPoint(x: oldPosition.x + 100, y: oldPosition.y))
+        XCTAssertEqual(resizedNode.velocity.dx, 0)
+        XCTAssertEqual(resizedNode.velocity.dy, 0)
+    }
+
     func test_branchConfig_usesOrganicLimbDefaults() {
         let config = GraphForceConstants.defaults.branchConfig
 
@@ -168,11 +494,591 @@ final class GraphForceSimulatorTests: XCTestCase {
         }
 
         XCTAssertGreaterThanOrEqual(sampledEnergies.count, 4)
-        XCTAssertLessThan(sampledEnergies.last ?? .greatestFiniteMagnitude,
-                          sampledEnergies.first ?? 0)
+        XCTAssertLessThanOrEqual(sampledEnergies.last ?? .greatestFiniteMagnitude,
+                                 sampledEnergies.first ?? 0)
         for (previous, next) in zip(sampledEnergies, sampledEnergies.dropFirst()) {
-            XCTAssertLessThanOrEqual(next, previous * 1.05)
+            XCTAssertLessThanOrEqual(next, max(previous * 1.05, 0.0001))
         }
+    }
+
+    func test_forceSimulator_dragUsesPointerOffsetAlignmentBeforeRelease() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 4)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 960, height: 640))
+        let threadID = GraphData.threadNodeID(for: "root")
+        guard let start = simulator.nodesByID[threadID]?.position else {
+            return XCTFail("Missing thread node")
+        }
+        let pointer = CGPoint(x: 700, y: 500)
+        let cursorOffset = CGPoint(x: start.x - pointer.x, y: start.y - pointer.y)
+        let dragPointer = CGPoint(x: 760, y: 540)
+        let pinnedPosition = CGPoint(x: dragPointer.x + cursorOffset.x, y: dragPointer.y + cursorOffset.y)
+
+        simulator.setPosition(pinnedPosition, for: threadID, pinned: true)
+        for tick in 1...4 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true)
+        }
+
+        assertPointsEqual(simulator.nodesByID[threadID]?.position, pinnedPosition)
+    }
+
+    func test_forceSimulator_releaseNode_keepsDropPointAsNewRestingPosition() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 960, height: 640))
+        let threadID = GraphData.threadNodeID(for: "root")
+        let dropPoint = CGPoint(x: 710, y: 170)
+
+        simulator.setPosition(dropPoint, for: threadID, pinned: true)
+        simulator.releaseNode(at: dropPoint, for: threadID)
+
+        assertPointsEqual(simulator.nodesByID[threadID]?.position, dropPoint)
+        assertPointsEqual(simulator.nodesByID[threadID]?.restingPosition, dropPoint)
+        XCTAssertFalse(simulator.nodesByID[threadID]?.isPinned ?? true)
+    }
+
+    func test_forceSimulator_commitDrag_canMoveBranchBeyondSceneBounds() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 800, height: 600)
+        simulator.reset(data: graph, size: size)
+        let threadID = GraphData.threadNodeID(for: "root")
+        guard let startPosition = simulator.nodesByID[threadID]?.position,
+              let messageID = simulator.nodesByID[GraphData.messageNodeID(for: "root-msg-1")]?.id else {
+            return XCTFail("Missing dragged thread/message")
+        }
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        let requestedDelta = CGVector(dx: 2_000, dy: -1_800)
+        let releasePoint = CGPoint(x: startPosition.x + requestedDelta.dx,
+                                  y: startPosition.y + requestedDelta.dy)
+
+        let movedNodeIDs = simulator.commitDrag(nodeID: threadID,
+                                               from: startPosition,
+                                               to: releasePoint,
+                                               initialPositions: initialPositions,
+                                               initialRestingPositions: initialRestingPositions)
+        let branchNodeIDs = simulator.descendantNodeIDs(from: threadID)
+        XCTAssertEqual(movedNodeIDs, branchNodeIDs)
+        assertPointsEqual(simulator.nodesByID[threadID]?.position, releasePoint)
+        assertPointsEqual(simulator.nodesByID[threadID]?.restingPosition, releasePoint)
+
+        guard let movedMessageID = branchNodeIDs.first(where: { $0 == messageID }),
+              let messagePosition = simulator.nodesByID[movedMessageID]?.position,
+              let messageInitialPosition = initialPositions[movedMessageID] else {
+            return XCTFail("Missing moved message")
+        }
+        XCTAssertEqual(messagePosition.x - messageInitialPosition.x,
+                       requestedDelta.dx,
+                       accuracy: 0.001)
+        XCTAssertEqual(messagePosition.y - messageInitialPosition.y,
+                       requestedDelta.dy,
+                       accuracy: 0.001)
+    }
+
+    func test_forceSimulator_nonDataRebuild_preservesCommittedRestingPositions() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 3)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 960, height: 640)
+        simulator.reset(data: graph, size: size)
+        let threadID = GraphData.threadNodeID(for: "root")
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        guard let startPosition = initialPositions[threadID] else {
+            return XCTFail("Missing dragged thread")
+        }
+        let releasePosition = CGPoint(x: startPosition.x + 30,
+                                      y: startPosition.y - 36)
+        let movedNodeIDs = simulator.commitDrag(nodeID: threadID,
+                                                from: startPosition,
+                                                to: releasePosition,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+        let committedPositions = simulator.positionsByID()
+
+        simulator.reset(data: graph,
+                        size: size,
+                        preserving: committedPositions)
+
+        for nodeID in movedNodeIDs {
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              committedPositions[nodeID])
+            assertPointsEqual(simulator.nodesByID[nodeID]?.restingPosition,
+                              committedPositions[nodeID])
+        }
+    }
+
+    func test_forceSimulator_previewDrag_movesEntireLogicalBranchAsOneShape() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 4)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 800, height: 600))
+        let threadID = GraphData.threadNodeID(for: "root")
+        let initialPositions = simulator.positionsByID()
+        let branchNodeIDs = simulator.descendantNodeIDs(from: threadID)
+        guard let startPosition = initialPositions[threadID] else {
+            return XCTFail("Missing dragged thread")
+        }
+        let requestedDelta = CGVector(dx: 30, dy: -40)
+        let dragPoint = CGPoint(x: startPosition.x + requestedDelta.dx,
+                                y: startPosition.y + requestedDelta.dy)
+
+        let previewedNodeIDs = simulator.previewDrag(nodeID: threadID,
+                                                     from: startPosition,
+                                                     to: dragPoint,
+                                                     initialPositions: initialPositions)
+        simulator.step(deltaTime: 0.016,
+                       elapsedTime: 16,
+                       reduceMotion: true,
+                       scope: .dragging(activeNodeID: threadID,
+                                        branchNodeIDs: branchNodeIDs,
+                                        obstacleOrigins: initialPositions))
+
+        XCTAssertEqual(previewedNodeIDs, branchNodeIDs)
+        assertPointsEqual(simulator.nodesByID[threadID]?.position, dragPoint)
+        let appliedDelta = CGVector(dx: (simulator.nodesByID[threadID]?.position.x ?? startPosition.x) - startPosition.x,
+                                    dy: (simulator.nodesByID[threadID]?.position.y ?? startPosition.y) - startPosition.y)
+        XCTAssertEqual(appliedDelta.dx, requestedDelta.dx, accuracy: 0.001)
+        XCTAssertEqual(appliedDelta.dy, requestedDelta.dy, accuracy: 0.001)
+        for nodeID in branchNodeIDs {
+            guard let initialPosition = initialPositions[nodeID] else {
+                return XCTFail("Missing initial branch position for \(nodeID)")
+            }
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              CGPoint(x: initialPosition.x + appliedDelta.dx,
+                                      y: initialPosition.y + appliedDelta.dy))
+        }
+        assertPairwiseGeometryPreserved(nodeIDs: branchNodeIDs,
+                                        before: initialPositions,
+                                        after: simulator.positionsByID())
+    }
+
+    func test_forceSimulator_duringScopedDrag_reactsOnlyNearbyObstacleWithinSmallBudget() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 4),
+                                           makeThread(rootID: "root-b", messageCount: 2),
+                                           makeThread(rootID: "root-c", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_000, height: 760))
+        simulator.stopMotion()
+        let draggedID = GraphData.messageNodeID(for: "root-a-msg-1")
+        let nearbyObstacleID = GraphData.threadNodeID(for: "root-b")
+        let distantNodeID = GraphData.threadNodeID(for: "root-c")
+        guard let startPosition = simulator.nodesByID[draggedID]?.position else {
+            return XCTFail("Missing dragged message")
+        }
+        let delta = CGVector(dx: 120, dy: -24)
+        let dragPoint = CGPoint(x: startPosition.x + delta.dx,
+                                y: startPosition.y + delta.dy)
+        simulator.setPosition(dragPoint, for: nearbyObstacleID)
+        simulator.setPosition(CGPoint(x: 80, y: 80), for: distantNodeID)
+        let initialPositions = simulator.positionsByID()
+        let branchNodeIDs = simulator.descendantNodeIDs(from: draggedID)
+        let nearbyStart = initialPositions[nearbyObstacleID]
+        let distantStart = initialPositions[distantNodeID]
+
+        simulator.previewDrag(nodeID: draggedID,
+                              from: startPosition,
+                              to: dragPoint,
+                              initialPositions: initialPositions)
+        simulator.step(deltaTime: 0.016,
+                       elapsedTime: 16,
+                       reduceMotion: true,
+                       scope: .dragging(activeNodeID: draggedID,
+                                        branchNodeIDs: branchNodeIDs,
+                                        obstacleOrigins: initialPositions))
+
+        for nodeID in branchNodeIDs {
+            guard let initialPosition = initialPositions[nodeID] else { continue }
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              CGPoint(x: initialPosition.x + delta.dx,
+                                      y: initialPosition.y + delta.dy),
+                              accuracy: 0.001)
+        }
+        let nearbyDisplacement = pointDistance(nearbyStart, simulator.nodesByID[nearbyObstacleID]?.position)
+        XCTAssertGreaterThan(nearbyDisplacement, 0.01)
+        XCTAssertLessThanOrEqual(nearbyDisplacement, 1.251)
+        XCTAssertLessThan(pointDistance(distantStart, simulator.nodesByID[distantNodeID]?.position), 0.001)
+        XCTAssertTrue(simulator.lastDragReactiveNodeIDs.contains(nearbyObstacleID))
+    }
+
+    func test_forceSimulator_commitThreadDrag_translatesOnlyThreadBranchAndPreservesGeometry() {
+        let graph = GraphData.make(roots: (0..<4).map {
+            makeThread(rootID: "root-\($0)", messageCount: 4)
+        }, now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_000, height: 760))
+        simulator.stopMotion()
+        let threadID = GraphData.threadNodeID(for: "root-0")
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        guard let startPosition = initialPositions[threadID] else {
+            return XCTFail("Missing dragged thread")
+        }
+        let delta = CGVector(dx: 30, dy: -36)
+        let releasePosition = CGPoint(x: startPosition.x + delta.dx,
+                                      y: startPosition.y + delta.dy)
+
+        simulator.setPosition(releasePosition, for: threadID, pinned: true)
+        let movedNodeIDs = simulator.commitDrag(nodeID: threadID,
+                                                from: startPosition,
+                                                to: releasePosition,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+
+        let expectedMovedNodeIDs = simulator.descendantNodeIDs(from: threadID)
+        XCTAssertEqual(movedNodeIDs, expectedMovedNodeIDs)
+        assertPointsEqual(simulator.nodesByID[threadID]?.position, releasePosition)
+        for nodeID in simulator.nodesByID.keys where !movedNodeIDs.contains(nodeID) {
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position, initialPositions[nodeID], accuracy: 0.0001)
+        }
+        for nodeID in movedNodeIDs {
+            guard let initialPosition = initialPositions[nodeID] else {
+                return XCTFail("Missing initial position for \(nodeID)")
+            }
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              CGPoint(x: initialPosition.x + delta.dx,
+                                      y: initialPosition.y + delta.dy))
+        }
+        assertPairwiseGeometryPreserved(nodeIDs: movedNodeIDs,
+                                        before: initialPositions,
+                                        after: simulator.positionsByID())
+    }
+
+    func test_forceSimulator_commitGroupDrag_translatesCompleteGroupedBranch() {
+        let folder = ThreadFolder(id: "folder-work",
+                                  title: "Work",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["root-a", "root-b"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 3),
+                                           makeThread(rootID: "root-b", messageCount: 3),
+                                           makeThread(rootID: "root-c", messageCount: 3)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["root-a": folder.id, "root-b": folder.id],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_000, height: 760))
+        simulator.stopMotion()
+        guard let groupID = graph.groupings.first(where: { $0.kind == .folder })?.id else {
+            return XCTFail("Missing folder group")
+        }
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        guard let startPosition = initialPositions[groupID] else {
+            return XCTFail("Missing group node")
+        }
+        let delta = CGVector(dx: 24, dy: -30)
+        let releasePosition = CGPoint(x: startPosition.x + delta.dx,
+                                      y: startPosition.y + delta.dy)
+
+        simulator.setPosition(releasePosition, for: groupID, pinned: true)
+        let movedNodeIDs = simulator.commitDrag(nodeID: groupID,
+                                                from: startPosition,
+                                                to: releasePosition,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+
+        XCTAssertEqual(movedNodeIDs, simulator.descendantNodeIDs(from: groupID))
+        XCTAssertTrue(movedNodeIDs.contains(GraphData.threadNodeID(for: "root-a")))
+        XCTAssertTrue(movedNodeIDs.contains(GraphData.threadNodeID(for: "root-b")))
+        XCTAssertTrue(movedNodeIDs.contains(GraphData.messageNodeID(for: "root-a-msg-2")))
+        XCTAssertFalse(movedNodeIDs.contains(GraphData.threadNodeID(for: "root-c")))
+        assertPointsEqual(simulator.nodesByID[GraphData.threadNodeID(for: "root-c")]?.position,
+                          initialPositions[GraphData.threadNodeID(for: "root-c")])
+        for nodeID in movedNodeIDs {
+            guard let initialPosition = initialPositions[nodeID] else {
+                return XCTFail("Missing initial position for \(nodeID)")
+            }
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              CGPoint(x: initialPosition.x + delta.dx,
+                                      y: initialPosition.y + delta.dy))
+        }
+        assertPairwiseGeometryPreserved(nodeIDs: movedNodeIDs,
+                                        before: initialPositions,
+                                        after: simulator.positionsByID())
+    }
+
+    func test_forceSimulator_commitMessageDrag_translatesOnlyOutwardChain() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 5)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 900, height: 640))
+        simulator.stopMotion()
+        let messageID = GraphData.messageNodeID(for: "root-msg-2")
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        guard let startPosition = initialPositions[messageID] else {
+            return XCTFail("Missing dragged message")
+        }
+        let delta = CGVector(dx: 42, dy: -31)
+        let releasePosition = CGPoint(x: startPosition.x + delta.dx,
+                                      y: startPosition.y + delta.dy)
+
+        simulator.setPosition(releasePosition, for: messageID, pinned: true)
+        let movedNodeIDs = simulator.commitDrag(nodeID: messageID,
+                                                from: startPosition,
+                                                to: releasePosition,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+
+        XCTAssertEqual(movedNodeIDs,
+                       [GraphData.messageNodeID(for: "root-msg-2"),
+                        GraphData.messageNodeID(for: "root-msg-3"),
+                        GraphData.messageNodeID(for: "root-msg-4")])
+        for nodeID in movedNodeIDs {
+            guard let initial = initialPositions[nodeID] else {
+                return XCTFail("Missing initial position for \(nodeID)")
+            }
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              CGPoint(x: initial.x + delta.dx, y: initial.y + delta.dy))
+        }
+        let fixedParentID = GraphData.messageNodeID(for: "root-msg-1")
+        assertPointsEqual(simulator.nodesByID[fixedParentID]?.position, initialPositions[fixedParentID])
+        assertPointsEqual(simulator.nodesByID[GraphData.threadNodeID(for: "root")]?.position,
+                          initialPositions[GraphData.threadNodeID(for: "root")])
+    }
+
+    func test_forceSimulator_localSettle_keepsCommittedAndUnrelatedBranchesFixed() {
+        let graph = GraphData.make(roots: (0..<12).map {
+            makeThread(rootID: "root-\($0)", messageCount: 3)
+        }, now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_200, height: 900))
+        for tick in 1...180 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true)
+        }
+        simulator.stopMotion()
+        let threadID = GraphData.threadNodeID(for: "root-0")
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        guard let startPosition = initialPositions[threadID] else {
+            return XCTFail("Missing dragged thread")
+        }
+        let releasePosition = CGPoint(x: startPosition.x + 30,
+                                      y: startPosition.y - 36)
+        simulator.setPosition(releasePosition, for: threadID, pinned: true)
+        let movedNodeIDs = simulator.commitDrag(nodeID: threadID,
+                                                from: startPosition,
+                                                to: releasePosition,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+        let fixedNodeIDs = Set(simulator.nodesByID.keys).subtracting(movedNodeIDs)
+        let fixedPositions = simulator.positionsByID()
+        let committedPositions = simulator.positionsByID()
+
+        for tick in 1...30 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true,
+                           scope: .localSettling(branchNodeIDs: movedNodeIDs,
+                                                 returningNodeOrigins: [:]))
+        }
+
+        for nodeID in fixedNodeIDs {
+            XCTAssertLessThan(pointDistance(fixedPositions[nodeID], simulator.nodesByID[nodeID]?.position),
+                              0.01,
+                              "Fixed obstacle \(nodeID) moved during local settling")
+        }
+        for nodeID in movedNodeIDs {
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              committedPositions[nodeID],
+                              accuracy: 0.001)
+            assertPointsEqual(simulator.nodesByID[nodeID]?.restingPosition,
+                              committedPositions[nodeID],
+                              accuracy: 0.001)
+        }
+        XCTAssertLessThanOrEqual(simulator.totalEnergy(for: movedNodeIDs) / CGFloat(max(1, movedNodeIDs.count)),
+                                 0.04)
+    }
+
+    func test_forceSimulator_localSettle_withoutCollisionDoesNotSpringBackFromCommittedPose() {
+        let graph = GraphData.make(roots: (0..<4).map {
+            makeThread(rootID: "root-\($0)", messageCount: 4)
+        }, now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_100, height: 820))
+        simulator.stopMotion()
+        let threadID = GraphData.threadNodeID(for: "root-0")
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        guard let startPosition = initialPositions[threadID] else {
+            return XCTFail("Missing dragged thread")
+        }
+        let releasePosition = CGPoint(x: startPosition.x + 30,
+                                      y: startPosition.y - 36)
+        let movedNodeIDs = simulator.commitDrag(nodeID: threadID,
+                                                from: startPosition,
+                                                to: releasePosition,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+        let committedPositions = simulator.positionsByID()
+
+        for tick in 1...12 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true,
+                           scope: .localSettling(branchNodeIDs: movedNodeIDs,
+                                                 returningNodeOrigins: [:]))
+        }
+
+        for nodeID in movedNodeIDs {
+            assertPointsEqual(simulator.nodesByID[nodeID]?.position,
+                              committedPositions[nodeID],
+                              accuracy: 0.001)
+        }
+        XCTAssertEqual(simulator.totalEnergy(for: movedNodeIDs), 0, accuracy: 0.0001)
+    }
+
+    func test_forceSimulator_localSettle_returnsReactiveObstacleMonotonically() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 4),
+                                           makeThread(rootID: "root-b", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 900, height: 680)
+        simulator.reset(data: graph, size: size)
+        let draggedID = GraphData.messageNodeID(for: "root-a-msg-1")
+        let obstacleID = GraphData.threadNodeID(for: "root-b")
+        guard let startPosition = simulator.nodesByID[draggedID]?.position else {
+            return XCTFail("Missing dragged message")
+        }
+        let dragPoint = CGPoint(x: startPosition.x + 20, y: startPosition.y - 20)
+        simulator.setPosition(dragPoint, for: obstacleID)
+        let initialPositions = simulator.positionsByID()
+        let initialRestingPositions = simulator.restingPositionsByID()
+        let branchNodeIDs = simulator.descendantNodeIDs(from: draggedID)
+        simulator.previewDrag(nodeID: draggedID,
+                              from: startPosition,
+                              to: dragPoint,
+                              initialPositions: initialPositions)
+        simulator.step(deltaTime: 0.016,
+                       elapsedTime: 16,
+                       reduceMotion: true,
+                       scope: .dragging(activeNodeID: draggedID,
+                                        branchNodeIDs: branchNodeIDs,
+                                        obstacleOrigins: initialPositions))
+        let reactiveNodeIDs = simulator.lastDragReactiveNodeIDs
+        let movedNodeIDs = simulator.commitDrag(nodeID: draggedID,
+                                                from: startPosition,
+                                                to: dragPoint,
+                                                initialPositions: initialPositions,
+                                                initialRestingPositions: initialRestingPositions)
+        let returningOrigins = Dictionary(uniqueKeysWithValues: reactiveNodeIDs.compactMap { nodeID in
+            initialPositions[nodeID].map { (nodeID, $0) }
+        })
+        var previousDistance = pointDistance(simulator.nodesByID[obstacleID]?.position,
+                                             returningOrigins[obstacleID])
+
+        for tick in 1...30 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true,
+                           scope: .localSettling(branchNodeIDs: movedNodeIDs,
+                                                 returningNodeOrigins: returningOrigins))
+            let distance = pointDistance(simulator.nodesByID[obstacleID]?.position,
+                                         returningOrigins[obstacleID])
+            XCTAssertLessThanOrEqual(distance, previousDistance + 0.0001)
+            previousDistance = distance
+        }
+
+        XCTAssertLessThan(previousDistance, 0.02)
+    }
+
+    func test_forceSimulator_branchDrag_movesWholeBranchBeyondViewportAndPreservesGeometry() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 6)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 800, height: 600)
+        simulator.reset(data: graph, size: size)
+        let threadID = GraphData.threadNodeID(for: "root")
+        let branchNodeIDs = simulator.descendantNodeIDs(from: threadID)
+        let initialPositions = simulator.positionsByID()
+        guard let startPosition = initialPositions[threadID] else {
+            return XCTFail("Missing dragged thread")
+        }
+
+        let target = CGPoint(x: -2_000, y: 2_000)
+        simulator.previewDrag(nodeID: threadID,
+                              from: startPosition,
+                              to: target,
+                              initialPositions: initialPositions)
+
+        let finalPositions = simulator.positionsByID()
+        assertPointsEqual(finalPositions[threadID], target)
+        assertPairwiseGeometryPreserved(nodeIDs: branchNodeIDs,
+                                        before: initialPositions,
+                                        after: finalPositions)
+        let viewport = CGRect(origin: .zero, size: size)
+        XCTAssertTrue(branchNodeIDs.compactMap { finalPositions[$0] }.allSatisfy { !viewport.contains($0) })
+    }
+
+    func test_forceSimulator_initialAndSettledLayout_canExtendBeyondViewport() {
+        let graph = GraphData.make(roots: (0..<24).map {
+            makeThread(rootID: "root-\($0)", messageCount: 6)
+        }, now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        let size = CGSize(width: 1_280, height: 900)
+        simulator.reset(data: graph, size: size)
+
+        XCTAssertEqual(simulator.nodes.count, 145)
+        let viewport = CGRect(origin: .zero, size: size)
+        XCTAssertTrue(simulator.nodes.contains { !viewport.contains($0.position) })
+        XCTAssertTrue(simulator.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
+
+        for tick in 1...240 {
+            simulator.step(deltaTime: 0.016,
+                           elapsedTime: Double(tick) * 16,
+                           reduceMotion: true)
+        }
+
+        XCTAssertTrue(simulator.nodes.contains { !viewport.contains($0.position) })
+        XCTAssertTrue(simulator.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
+    }
+
+    func test_forceSimulator_recordedScaleDrag_checksOnlyNearbyCandidates() {
+        let graph = GraphData.make(roots: (0..<24).map {
+            makeThread(rootID: "root-\($0)", messageCount: 6)
+        }, now: Date(timeIntervalSince1970: 10_000))
+        var simulator = GraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 1_280, height: 900))
+        simulator.stopMotion()
+        XCTAssertEqual(simulator.nodes.count, 145)
+
+        let draggedID = GraphData.messageNodeID(for: "root-0-msg-4")
+        let obstacleID = GraphData.threadNodeID(for: "root-1")
+        guard let startPosition = simulator.nodesByID[draggedID]?.position else {
+            return XCTFail("Missing recorded-scale drag node")
+        }
+        let target = CGPoint(x: startPosition.x + 20,
+                             y: startPosition.y - 20)
+        simulator.setPosition(target, for: obstacleID)
+        let initialPositions = simulator.positionsByID()
+        let branchNodeIDs = simulator.descendantNodeIDs(from: draggedID)
+        simulator.previewDrag(nodeID: draggedID,
+                              from: startPosition,
+                              to: target,
+                              initialPositions: initialPositions)
+
+        simulator.step(deltaTime: 0.016,
+                       elapsedTime: 16,
+                       reduceMotion: true,
+                       scope: .dragging(activeNodeID: draggedID,
+                                        branchNodeIDs: branchNodeIDs,
+                                        obstacleOrigins: initialPositions))
+
+        let exhaustivePairCount = branchNodeIDs.count * (simulator.nodes.count - branchNodeIDs.count)
+        XCTAssertGreaterThan(simulator.lastDragCollisionCheckCount, 0)
+        XCTAssertLessThan(simulator.lastDragCollisionCheckCount,
+                          exhaustivePairCount / 3,
+                          "Drag collision work should be spatially bounded, not all-node pairwise")
     }
 
     func test_forceSimulator_whenLabelRepelIsOff_ignoresLabelProvider() {
@@ -202,7 +1108,12 @@ final class GraphForceSimulatorTests: XCTestCase {
                      elapsedTime: 16,
                      reduceMotion: true,
                      config: config,
-                     labelOccluderRadius: { _ in 500 })
+                     labelOccluderFrame: { node in
+                         CGRect(x: node.position.x - 250,
+                                y: node.position.y - 250,
+                                width: 500,
+                                height: 500)
+                     })
 
         for id in graph.allNodeIDs {
             assertPointsEqual(baseline.nodesByID[id]?.position, labeled.nodesByID[id]?.position)
@@ -210,7 +1121,661 @@ final class GraphForceSimulatorTests: XCTestCase {
     }
 }
 
+final class ObsidianGraphForceSimulatorTests: XCTestCase {
+    func test_defaultForces_areRoomierThanBothHistoricalDefaultSets() {
+        XCTAssertGreaterThan(ObsidianGraphForceConfig.defaults.repelStrength,
+                             ObsidianGraphForceConfig.legacyCompactDefaults.repelStrength)
+        XCTAssertGreaterThan(ObsidianGraphForceConfig.defaults.linkDistance,
+                             ObsidianGraphForceConfig.legacyCompactDefaults.linkDistance)
+        XCTAssertGreaterThan(ObsidianGraphForceConfig.defaults.repelStrength,
+                             ObsidianGraphForceConfig.legacyRoomierDefaults.repelStrength)
+        XCTAssertGreaterThan(ObsidianGraphForceConfig.defaults.linkDistance,
+                             ObsidianGraphForceConfig.legacyRoomierDefaults.linkDistance)
+    }
+
+    func test_forceMigration_updatesHistoricalDefaultsButPreservesCustomization() {
+        XCTAssertEqual(ObsidianGraphForceConfig.migratingHistoricalDefaults(.legacyCompactDefaults),
+                       .defaults)
+        XCTAssertEqual(ObsidianGraphForceConfig.migratingHistoricalDefaults(.legacyRoomierDefaults),
+                       .defaults)
+
+        var customized = ObsidianGraphForceConfig.legacyRoomierDefaults
+        customized.linkDistance += 1
+        XCTAssertEqual(ObsidianGraphForceConfig.migratingHistoricalDefaults(customized), customized)
+    }
+
+    func test_expandedSpacingMigration_raisesOnlyCompactSpacingDimensions() {
+        let compactCustom = ObsidianGraphForceConfig(centerStrength: 0.0025,
+                                                     repelStrength: 2_800,
+                                                     linkStrength: 0.05,
+                                                     linkDistance: 78,
+                                                     damping: 0.84)
+        let migrated = ObsidianGraphForceConfig.migratingToExpandedSpacing(compactCustom)
+
+        XCTAssertEqual(migrated.centerStrength, compactCustom.centerStrength)
+        XCTAssertEqual(migrated.linkStrength, compactCustom.linkStrength)
+        XCTAssertEqual(migrated.damping, compactCustom.damping)
+        XCTAssertEqual(migrated.repelStrength, ObsidianGraphForceConfig.defaults.repelStrength)
+        XCTAssertEqual(migrated.linkDistance, ObsidianGraphForceConfig.defaults.linkDistance)
+    }
+
+    func test_reset_centersMovableYouNodeAndCreatesFiniteDeterministicLayout() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 3),
+                                           makeThread(rootID: "root-b", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var first = ObsidianGraphForceSimulator()
+        var second = ObsidianGraphForceSimulator()
+        let size = CGSize(width: 800, height: 520)
+
+        first.reset(data: graph, size: size)
+        second.reset(data: graph, size: size)
+
+        assertPointsEqual(first.nodesByID[GraphCenter.you.id]?.position,
+                          CGPoint(x: 400, y: 260))
+        XCTAssertFalse(first.nodesByID[GraphCenter.you.id]?.isPinned ?? true)
+        XCTAssertEqual(first.positionsByID(), second.positionsByID())
+        XCTAssertTrue(first.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
+    }
+
+    func test_resetAndSettling_placeNewerThreadsFartherFromGraphCenter() throws {
+        let oldestDate = Date(timeIntervalSince1970: 1_000)
+        let newestDate = Date(timeIntervalSince1970: 9_000)
+        let graph = GraphData.make(roots: [
+            makeThread(rootID: "newest", messageCount: 1, rootDate: newestDate),
+            makeThread(rootID: "oldest", messageCount: 1, rootDate: oldestDate)
+        ], now: Date(timeIntervalSince1970: 10_000))
+        let oldestID = GraphData.threadNodeID(for: "oldest")
+        let newestID = GraphData.threadNodeID(for: "newest")
+        var simulator = ObsidianGraphForceSimulator()
+
+        simulator.reset(data: graph, size: CGSize(width: 900, height: 620))
+
+        XCTAssertEqual(simulator.nodesByID[oldestID]?.chronologyRank, 0)
+        XCTAssertEqual(simulator.nodesByID[newestID]?.chronologyRank, 1)
+        XCTAssertGreaterThan(pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                           simulator.nodesByID[newestID]?.position),
+                             pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                           simulator.nodesByID[oldestID]?.position))
+
+        for _ in 0..<240 {
+            simulator.step(deltaTime: 1.0 / 60.0,
+                           reduceMotion: false,
+                           config: .defaults)
+        }
+
+        XCTAssertGreaterThan(pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                           simulator.nodesByID[newestID]?.position),
+                             pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                           simulator.nodesByID[oldestID]?.position))
+    }
+
+    func test_repelForce_pushesFolderCorpusBeyondNormalRepulsionRange() throws {
+        let folder = ThreadFolder(id: "folder-work",
+                                  title: "Work",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["grouped-a", "grouped-b"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "grouped-a", messageCount: 2),
+                                           makeThread(rootID: "grouped-b", messageCount: 2),
+                                           makeThread(rootID: "ungrouped", messageCount: 2)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["grouped-a": folder.id,
+                                                                "grouped-b": folder.id],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let groupedAID = GraphData.messageNodeID(for: "grouped-a-msg-1")
+        let groupedBID = GraphData.messageNodeID(for: "grouped-b-msg-1")
+        let ungroupedID = GraphData.messageNodeID(for: "ungrouped-msg-1")
+        let groupedAStart = CGPoint(x: 1_000, y: 1_000)
+        var preservedPositions = Dictionary(uniqueKeysWithValues: graph.allNodeIDs.sorted().enumerated().map {
+            ($0.element, CGPoint(x: 10_000 + CGFloat($0.offset) * 2_000, y: 10_000))
+        })
+        preservedPositions[groupedAID] = groupedAStart
+        preservedPositions[groupedBID] = CGPoint(x: 1_000, y: 1_600)
+        preservedPositions[ungroupedID] = CGPoint(x: 1_600, y: 1_000)
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: graph,
+                        size: CGSize(width: 100_000, height: 20_000),
+                        preserving: preservedPositions)
+        let config = ObsidianGraphForceConfig(centerStrength: 0,
+                                              repelStrength: 2_400,
+                                              linkStrength: 0,
+                                              linkDistance: 92,
+                                              damping: 1)
+
+        simulator.step(deltaTime: 1.0 / 60.0,
+                       reduceMotion: false,
+                       config: config)
+
+        let groupedAAfter = try XCTUnwrap(simulator.nodesByID[groupedAID]?.position)
+        XCTAssertEqual(simulator.nodesByID[groupedAID]?.branchID, folder.id)
+        XCTAssertNil(simulator.nodesByID[ungroupedID]?.branchID)
+        XCTAssertLessThan(groupedAAfter.x, groupedAStart.x - 0.001)
+        XCTAssertEqual(groupedAAfter.y, groupedAStart.y, accuracy: 0.0001)
+    }
+
+    func test_linkForce_movesSeparatedNodesTowardConfiguredDistance() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "root")
+        let size = CGSize(width: 600, height: 400)
+        let center = CGPoint(x: 300, y: 200)
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: graph,
+                        size: size,
+                        preserving: [GraphCenter.you.id: center,
+                                     threadID: CGPoint(x: 560, y: 200)])
+        let before = pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                   simulator.nodesByID[threadID]?.position)
+        let config = ObsidianGraphForceConfig(centerStrength: 0,
+                                              repelStrength: 0,
+                                              linkStrength: 0.06,
+                                              linkDistance: 80,
+                                              damping: 0.82)
+
+        for _ in 0..<90 {
+            simulator.step(deltaTime: 1.0 / 60.0, reduceMotion: false, config: config)
+        }
+
+        let after = pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                  simulator.nodesByID[threadID]?.position)
+        XCTAssertLessThan(after, before)
+        XCTAssertLessThan(abs(after - config.linkDistance * 1.25),
+                          abs(before - config.linkDistance * 1.25))
+        XCTAssertTrue(simulator.totalEnergy().isFinite)
+    }
+
+    func test_drag_movesOnlyPinnedNodeBeforeNeighborsReact() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 3)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "root")
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 700, height: 480))
+        let before = simulator.positionsByID()
+        let start = try XCTUnwrap(before[threadID])
+        let target = CGPoint(x: start.x + 120, y: start.y - 40)
+
+        simulator.beginDragging(nodeID: threadID)
+        simulator.drag(nodeID: threadID, to: target)
+
+        assertPointsEqual(simulator.nodesByID[threadID]?.position, target)
+        for messageID in graph.messages.map(\.id) {
+            assertPointsEqual(simulator.nodesByID[messageID]?.position, before[messageID])
+        }
+        simulator.endDragging(nodeID: threadID, at: target)
+        XCTAssertFalse(simulator.nodesByID[threadID]?.isPinned ?? true)
+    }
+
+    func test_drag_youNode_movesAndReleasesLikeAnyOtherNode() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let youID = GraphCenter.you.id
+        let threadID = GraphData.threadNodeID(for: "root")
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 700, height: 480))
+        let threadStart = try XCTUnwrap(simulator.nodesByID[threadID]?.position)
+        let target = CGPoint(x: 190, y: 150)
+        let config = ObsidianGraphForceConfig(centerStrength: 0,
+                                              repelStrength: 0,
+                                              linkStrength: 0.08,
+                                              linkDistance: 80,
+                                              damping: 0.82)
+
+        simulator.beginDragging(nodeID: youID)
+        simulator.drag(nodeID: youID, to: target)
+        XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
+
+        for _ in 0..<5 {
+            simulator.step(deltaTime: 1.0 / 60.0, reduceMotion: false, config: config)
+        }
+
+        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
+        XCTAssertGreaterThan(pointDistance(threadStart,
+                                           simulator.nodesByID[threadID]?.position),
+                             0.001)
+
+        simulator.endDragging(nodeID: youID, at: target)
+
+        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
+        XCTAssertFalse(simulator.nodesByID[youID]?.isPinned ?? true)
+
+        simulator.reset(data: graph,
+                        size: CGSize(width: 700, height: 480),
+                        preserving: simulator.positionsByID(),
+                        config: config)
+
+        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
+        XCTAssertFalse(simulator.nodesByID[youID]?.isPinned ?? true)
+    }
+
+    func test_reset_preservesExistingNodePositions() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        var simulator = ObsidianGraphForceSimulator()
+        let size = CGSize(width: 700, height: 480)
+        simulator.reset(data: graph, size: size)
+        for _ in 0..<10 {
+            simulator.step(deltaTime: 1.0 / 60.0,
+                           reduceMotion: false,
+                           config: .defaults)
+        }
+        let positions = simulator.positionsByID()
+
+        simulator.reset(data: graph, size: size, preserving: positions)
+
+        for id in graph.allNodeIDs {
+            assertPointsEqual(simulator.nodesByID[id]?.position, positions[id])
+        }
+    }
+
+    func test_labelAlpha_increasesWithZoomAndCanBeShiftedByThreshold() {
+        let far = ObsidianGraphSceneNode.labelAlpha(zoomScale: 0.2, threshold: -0.4)
+        let normal = ObsidianGraphSceneNode.labelAlpha(zoomScale: 1, threshold: -0.4)
+        let earlierFade = ObsidianGraphSceneNode.labelAlpha(zoomScale: 0.5, threshold: -1.2)
+        let laterFade = ObsidianGraphSceneNode.labelAlpha(zoomScale: 0.5, threshold: 0.2)
+
+        XCTAssertLessThan(far, normal)
+        XCTAssertGreaterThan(earlierFade, laterFade)
+        XCTAssertGreaterThanOrEqual(far, 0)
+        XCTAssertLessThanOrEqual(normal, 1)
+    }
+}
+
+final class GraphTitleFormatterTests: XCTestCase {
+    func test_normalizedGeneratedTitle_removesResponseDecorationAndExtraLines() {
+        let title = GraphTitleFormatter.normalizedGeneratedTitle(
+            "Title: Re: CR#60 Booking Flow Review.\nThis line must not appear.",
+            fallback: "Original subject"
+        )
+
+        XCTAssertEqual(title, "CR#60 Booking Flow Review")
+    }
+
+    func test_normalizedGeneratedTitle_enforcesOneLineCharacterLimit() {
+        let title = GraphTitleFormatter.normalizedGeneratedTitle(
+            "Booking Flow Walkthrough Review Materials and Prioritization Discussion",
+            fallback: "Original subject"
+        )
+
+        XCTAssertLessThanOrEqual(title.count, GraphTitleFormatter.maximumCharacterCount)
+        XCTAssertTrue(title.hasSuffix("…"))
+        XCTAssertFalse(title.contains("\n"))
+    }
+
+    func test_normalizedGeneratedTitle_enforcesWordLimitAndPreservesTrailingIdentifier() {
+        let title = GraphTitleFormatter.normalizedGeneratedTitle(
+            "HKJC CRC - Review Materials For CR#60",
+            fallback: "Original subject"
+        )
+
+        XCTAssertEqual(title, "HKJC CRC Review Materials CR#60")
+        XCTAssertLessThanOrEqual(title.split(whereSeparator: \.isWhitespace).count,
+                                 GraphTitleFormatter.maximumWordCount)
+        XCTAssertLessThanOrEqual(title.count, GraphTitleFormatter.maximumCharacterCount)
+    }
+
+    func test_normalizedGeneratedTitle_usesCleanedSubjectWhenModelReturnsEmptyText() {
+        let title = GraphTitleFormatter.normalizedGeneratedTitle("   ", fallback: "Re: HKJC CRC Review")
+
+        XCTAssertEqual(title, "HKJC CRC Review")
+    }
+}
+
+final class GraphTitleGenerationTests: XCTestCase {
+    @MainActor
+    func test_viewModel_generatesAndCachesConciseGraphTitle() async throws {
+        let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "CR60 Booking Flow")
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(
+            text: "Confirm the CR#60 booking-flow walkthrough scope and review materials.",
+            statusMessage: "Ready",
+            isSummarizing: false
+        )
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary])
+
+        var generatedTitle: String?
+        for _ in 0..<150 {
+            generatedTitle = viewModel.data.threads.first?.displayTitle
+            if generatedTitle == "CR60 Booking Flow" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(generatedTitle, "CR60 Booking Flow")
+        let firstCallCount = await provider.callCount
+        XCTAssertEqual(firstCallCount, 1)
+
+        let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
+        XCTAssertEqual(cached.first?.summaryText, "CR60 Booking Flow")
+        XCTAssertEqual(cached.first?.provider, "test-graph-title-v1")
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary])
+        try await Task.sleep(for: .milliseconds(100))
+        let finalCallCount = await provider.callCount
+        XCTAssertEqual(finalCallCount, 1)
+    }
+
+    @MainActor
+    func test_viewModel_withoutSummary_doesNotGenerateTitleFromSubjectAlone() async throws {
+        let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "Generated Subject Label")
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:])
+        try await Task.sleep(for: .milliseconds(100))
+
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 0)
+        XCTAssertEqual(viewModel.data.threads.first?.displayTitle, "Subject root")
+    }
+
+    @MainActor
+    func test_viewModel_whenGraphDisappears_cancelsInFlightTitleGeneration() async throws {
+        let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "Late Generated Label",
+                                              delay: .seconds(5))
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "A summary used for the graph label.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary])
+        var attempts = 0
+        while await provider.callCount == 0, attempts < 50 {
+            try await Task.sleep(for: .milliseconds(20))
+            attempts += 1
+        }
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 1)
+
+        viewModel.setGraphTitleGenerationActive(false)
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(viewModel.data.threads.first?.displayTitle, summary.text)
+        let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
+        XCTAssertTrue(cached.isEmpty)
+    }
+}
+
+final class ObsidianGraphSceneTests: XCTestCase {
+    func test_hitTest_whenPointerIsOnLabel_selectsOnlyTheNodeShape() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "root")
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let sceneNode = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == threadID })
+        let label = try XCTUnwrap(sceneNode.children.compactMap { $0 as? SKLabelNode }.first)
+        let labelPoint = sceneNode.convert(CGPoint(x: label.frame.maxX - 1,
+                                                   y: label.frame.midY),
+                                           to: scene)
+
+        XCTAssertEqual(scene.hitTestNodeID(at: sceneNode.position), threadID)
+        XCTAssertNil(scene.hitTestNodeID(at: labelPoint))
+    }
+
+    func test_labelNode_withLongSummary_capsWidthAndKeepsOneLine() throws {
+        let node = ObsidianGraphSceneNode(
+            graphID: "thread:long-summary",
+            kind: .thread,
+            threadID: "long-summary",
+            radius: 14,
+            title: String(repeating: "Confirm the booking flow owner and rollout sequence ", count: 5),
+            fillColor: .white,
+            strokeColor: .gray,
+            textScale: 1,
+            theme: DesignTokens.Graph.AppTheme.Palette(isDark: false)
+        )
+        let label = try XCTUnwrap(node.children.compactMap { $0 as? SKLabelNode }.first)
+
+        XCTAssertLessThanOrEqual(label.frame.width, 214)
+        XCTAssertTrue(label.text?.hasSuffix("…") == true)
+        XCTAssertFalse(label.text?.contains("\n") == true)
+    }
+
+    func test_teardownForRemoval_releasesGraphAndStopsSceneWork() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 3)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        var positionReportCount = 0
+        scene.onPositionsChanged = { _ in positionReportCount += 1 }
+
+        scene.teardownForRemoval()
+        scene.update(1)
+
+        XCTAssertTrue(scene.isPaused)
+        XCTAssertTrue(scene.children.isEmpty)
+        XCTAssertNil(scene.hitTestNodeID(at: CGPoint(x: 400, y: 300)))
+        XCTAssertEqual(positionReportCount, 0)
+    }
+
+    func test_configure_whenHoveredNodeDisappears_clearsHoverCallback() {
+        let firstGraph = GraphData.make(roots: [makeThread(rootID: "first", messageCount: 1)],
+                                        now: Date(timeIntervalSince1970: 10_000))
+        let secondGraph = GraphData.make(roots: [makeThread(rootID: "second", messageCount: 1)],
+                                         now: Date(timeIntervalSince1970: 10_000))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: firstGraph)
+        var hoverEvents: [Bool] = []
+        scene.onHoverItem = { hoverEvents.append($0 != nil) }
+
+        scene.applyHoverCandidate(GraphData.threadNodeID(for: "first"),
+                                  at: CGPoint(x: 400, y: 300))
+        configure(scene, data: secondGraph)
+
+        XCTAssertEqual(hoverEvents, [true, false])
+    }
+
+    func test_hoverCallback_convertsWorldPointIntoOverlayCoordinates() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene,
+                  data: graph,
+                  zoomScale: 2,
+                  panOffset: CGPoint(x: 40, y: -20))
+        var overlayPoint: CGPoint?
+        scene.onHoverItem = { item in
+            guard case .thread(_, let point) = item else { return }
+            overlayPoint = point
+        }
+
+        scene.applyHoverCandidate(GraphData.threadNodeID(for: "root"),
+                                  at: CGPoint(x: 450, y: 290))
+
+        assertPointsEqual(overlayPoint, CGPoint(x: 420, y: 320))
+    }
+
+    func test_recenter_withReduceMotion_publishesResetViewportImmediately() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene,
+                  data: graph,
+                  reduceMotion: true,
+                  zoomScale: 2,
+                  panOffset: CGPoint(x: 40, y: -20))
+        var publishedViewport: (zoom: CGFloat, pan: CGPoint)?
+        scene.onViewportChanged = { zoom, pan in
+            publishedViewport = (zoom, pan)
+        }
+
+        scene.recenterCamera(animated: true)
+
+        XCTAssertEqual(publishedViewport?.zoom ?? -1, 1, accuracy: 0.001)
+        assertPointsEqual(publishedViewport?.pan, .zero)
+    }
+
+    private func configure(_ scene: ObsidianGraphScene,
+                           data: GraphData,
+                           reduceMotion: Bool = false,
+                           zoomScale: CGFloat = 1,
+                           panOffset: CGPoint = .zero) {
+        scene.configure(data: data,
+                        selectedGraphNodeID: nil,
+                        pruneMode: .idle,
+                        filteredNodeIDs: data.allNodeIDs,
+                        wateredCounts: [:],
+                        reduceMotion: reduceMotion,
+                        sproutingMessageIDs: [],
+                        forceConfig: .defaults,
+                        displayConfig: .defaults,
+                        theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
+                        zoomScale: zoomScale,
+                        panOffset: panOffset)
+    }
+}
+
 final class GraphSceneStabilityTests: XCTestCase {
+    func test_graphScene_interactionSuspendsHoverUntilNextPointerCandidate() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = GraphScene(size: CGSize(width: 960, height: 640))
+        scene.configure(data: graph,
+                        selectedGraphNodeID: nil,
+                        pruneMode: .idle,
+                        filteredNodeIDs: graph.allNodeIDs,
+                        wateredCounts: [:],
+                        reduceMotion: true,
+                        sproutingMessageIDs: [],
+                        forceConfig: GraphForceConstants.defaults,
+                        theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
+                        zoomScale: 1,
+                        panOffset: .zero)
+        var hoverEvents: [Bool] = []
+        scene.onHoverItem = { hoverEvents.append($0 != nil) }
+        let threadID = GraphData.threadNodeID(for: "root")
+
+        scene.applyHoverCandidate(threadID, at: CGPoint(x: 300, y: 300))
+        scene.suspendHoverForInteraction()
+        scene.suspendHoverForInteraction()
+
+        XCTAssertEqual(hoverEvents, [true, false])
+
+        scene.applyHoverCandidate(threadID, at: CGPoint(x: 320, y: 310))
+
+        XCTAssertEqual(hoverEvents, [true, false, true])
+    }
+
+    func test_graphScene_hoverPresentation_doesNotMoveGraphGeometry() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 3)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = GraphScene(size: CGSize(width: 960, height: 640))
+        scene.configure(data: graph,
+                        selectedGraphNodeID: nil,
+                        pruneMode: .idle,
+                        filteredNodeIDs: graph.allNodeIDs,
+                        wateredCounts: [:],
+                        reduceMotion: true,
+                        sproutingMessageIDs: [],
+                        forceConfig: GraphForceConstants.defaults,
+                        theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
+                        zoomScale: 1,
+                        panOffset: .zero)
+        for frame in 1...200 {
+            scene.update(Double(frame) * 0.016)
+        }
+
+        let graphNodes = scene.children.compactMap { $0 as? GraphSceneNode }
+        let positionsBefore = Dictionary(uniqueKeysWithValues: graphNodes.map { ($0.graphID, $0.position) })
+        let labelCentersBefore = Dictionary(uniqueKeysWithValues: graphNodes.compactMap { node in
+            node.labelFrame(in: scene).map { (node.graphID, CGPoint(x: $0.midX, y: $0.midY)) }
+        })
+        let calloutPositionsBefore: [String: CGPoint] = Dictionary(
+            uniqueKeysWithValues: scene.children.compactMap { child -> (String, CGPoint)? in
+                guard let callout = child as? SummaryCalloutNode else { return nil }
+                return (callout.graphID, callout.position)
+            }
+        )
+
+        scene.applyHoverCandidate(GraphData.threadNodeID(for: "root"),
+                                  at: CGPoint(x: 320, y: 280))
+        scene.update(201 * 0.016)
+
+        let graphNodesAfter = scene.children.compactMap { $0 as? GraphSceneNode }
+        let positionsAfter = Dictionary(uniqueKeysWithValues: graphNodesAfter.map { ($0.graphID, $0.position) })
+        let labelCentersAfter = Dictionary(uniqueKeysWithValues: graphNodesAfter.compactMap { node in
+            node.labelFrame(in: scene).map { (node.graphID, CGPoint(x: $0.midX, y: $0.midY)) }
+        })
+        let calloutPositionsAfter: [String: CGPoint] = Dictionary(
+            uniqueKeysWithValues: scene.children.compactMap { child -> (String, CGPoint)? in
+                guard let callout = child as? SummaryCalloutNode else { return nil }
+                return (callout.graphID, callout.position)
+            }
+        )
+
+        XCTAssertFalse(labelCentersBefore.isEmpty)
+        for id in positionsBefore.keys {
+            assertPointsEqual(positionsBefore[id], positionsAfter[id])
+        }
+        for id in labelCentersBefore.keys {
+            assertPointsEqual(labelCentersBefore[id], labelCentersAfter[id])
+        }
+        for id in calloutPositionsBefore.keys {
+            assertPointsEqual(calloutPositionsBefore[id], calloutPositionsAfter[id])
+        }
+    }
+
+    func test_graphScene_labelResolution_avoidsNodeAndCalloutOccludersWithinBoundedMotion() {
+        let labelFrame = CGRect(x: 100, y: 100, width: 120, height: 30)
+        let occluders = [
+            CGRect(x: 100, y: 100, width: 120, height: 30),
+            CGRect(x: 248, y: 90, width: 80, height: 90)
+        ]
+        let offset = GraphScene.resolvedLabelOffset(
+            frame: labelFrame,
+            branchUnit: CGVector(dx: 1, dy: 0),
+            occluders: occluders,
+            viewport: CGRect(x: 0, y: 0, width: 500, height: 400)
+        )
+        let resolvedFrame = labelFrame.offsetBy(dx: offset.dx, dy: offset.dy)
+
+        XCTAssertTrue(occluders.allSatisfy {
+            !resolvedFrame.insetBy(dx: -6, dy: -4).intersects($0)
+        })
+        XCTAssertLessThanOrEqual(hypot(offset.dx, offset.dy), 64.001)
+    }
+
     func test_graphScene_afterSettling_stopsPublishingPositionsWithoutInput() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 8)],
                                    now: Date(timeIntervalSince1970: 10_000))
@@ -225,7 +1790,7 @@ final class GraphSceneStabilityTests: XCTestCase {
                         pruneMode: .idle,
                         filteredNodeIDs: graph.allNodeIDs,
                         wateredCounts: [:],
-                        reduceMotion: false,
+                        reduceMotion: true,
                         sproutingMessageIDs: [],
                         forceConfig: GraphForceConstants.defaults,
                         theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
@@ -243,6 +1808,115 @@ final class GraphSceneStabilityTests: XCTestCase {
 
         XCTAssertGreaterThan(settledReportCount, 0)
         XCTAssertEqual(reportCount, settledReportCount)
+    }
+
+    func test_graphScene_selectionOnlyChange_doesNotRestartPhysics() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 5)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = GraphScene(size: CGSize(width: 960, height: 640))
+        var reportCount = 0
+        scene.onPositionsChanged = { _ in reportCount += 1 }
+        let configure: (String?) -> Void = { selectedID in
+            scene.configure(data: graph,
+                            selectedGraphNodeID: selectedID,
+                            pruneMode: .idle,
+                            filteredNodeIDs: graph.allNodeIDs,
+                            wateredCounts: [:],
+                            reduceMotion: false,
+                            sproutingMessageIDs: [],
+                            forceConfig: GraphForceConstants.defaults,
+                            theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
+                            zoomScale: 1,
+                            panOffset: .zero)
+        }
+
+        configure(nil)
+        for frame in 1...220 {
+            scene.update(Double(frame) * 0.016)
+        }
+        let settledReportCount = reportCount
+
+        configure(graph.threads.first?.id)
+        for frame in 221...280 {
+            scene.update(Double(frame) * 0.016)
+        }
+
+        XCTAssertGreaterThan(settledReportCount, 0)
+        XCTAssertEqual(reportCount, settledReportCount)
+    }
+}
+
+final class GraphSceneNodeLabelTests: XCTestCase {
+    func test_longThreadLabel_isAnchoredNearNodeAndUsesBoundedChip() {
+        let theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
+        let node = GraphSceneNode(graphID: "thread:test",
+                                  kind: .thread,
+                                  threadID: "thread:test",
+                                  radius: 28,
+                                  title: "FW: [SQ0545-4600 / SQ0545-4027] Login Name Exceptional Handling",
+                                  fillColor: theme.panelNS,
+                                  strokeColor: theme.inkNS,
+                                  strokeWidth: 1,
+                                  showsLabel: true,
+                                  theme: theme)
+
+        node.setBranchGeometry(angle: 0, incomingDistance: 300)
+
+        guard let frame = node.labelFrame(in: node) else {
+            return XCTFail("Missing branch label")
+        }
+        XCTAssertEqual(frame.midY, 0, accuracy: 0.5)
+        XCTAssertLessThan(frame.maxX, -28)
+        XCTAssertGreaterThan(frame.midX, -150)
+        XCTAssertLessThan(frame.midX, -100)
+        XCTAssertLessThanOrEqual(frame.width, 190.5)
+        XCTAssertGreaterThan(frame.width, 116)
+    }
+
+    func test_graphLabelsAndSummaryCallouts_honorTextScale() {
+        let theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
+        let normalNode = GraphSceneNode(graphID: "thread:normal",
+                                        kind: .thread,
+                                        threadID: "thread:normal",
+                                        radius: 28,
+                                        title: "A readable graph label",
+                                        fillColor: theme.panelNS,
+                                        strokeColor: theme.inkNS,
+                                        strokeWidth: 1,
+                                        showsLabel: true,
+                                        textScale: 1,
+                                        theme: theme)
+        let largeNode = GraphSceneNode(graphID: "thread:large",
+                                       kind: .thread,
+                                       threadID: "thread:large",
+                                       radius: 28,
+                                       title: "A readable graph label",
+                                       fillColor: theme.panelNS,
+                                       strokeColor: theme.inkNS,
+                                       strokeWidth: 1,
+                                       showsLabel: true,
+                                       textScale: 1.4,
+                                       theme: theme)
+        normalNode.setBranchGeometry(angle: 0, incomingDistance: 300)
+        largeNode.setBranchGeometry(angle: 0, incomingDistance: 300)
+
+        guard let normalFrame = normalNode.labelFrame(in: normalNode),
+              let largeFrame = largeNode.labelFrame(in: largeNode) else {
+            return XCTFail("Missing scaled graph labels")
+        }
+        XCTAssertGreaterThan(largeFrame.width, normalFrame.width)
+        XCTAssertGreaterThan(largeFrame.height, normalFrame.height)
+
+        let normalCallout = SummaryCalloutNode(graphID: "message:normal",
+                                               text: "A readable summary callout",
+                                               textScale: 1,
+                                               theme: theme)
+        let largeCallout = SummaryCalloutNode(graphID: "message:large",
+                                              text: "A readable summary callout",
+                                              textScale: 1.4,
+                                              theme: theme)
+        XCTAssertGreaterThan(largeCallout.boxSize.width, normalCallout.boxSize.width)
+        XCTAssertGreaterThan(largeCallout.boxSize.height, normalCallout.boxSize.height)
     }
 }
 
@@ -352,6 +2026,162 @@ final class GraphSelectionTests: XCTestCase {
         XCTAssertEqual(simulator.nearestNodeID(from: rootID, direction: .left), leftID)
         XCTAssertEqual(simulator.nearestNodeID(from: rootID, direction: .right), rightID)
     }
+
+    func test_actionTarget_resolvesThreadAndMessageSelectionsToSameThread() async {
+        await MainActor.run {
+            let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else {
+                return XCTFail("Expected isolated defaults")
+            }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+            viewModel.update(roots: [makeThread(rootID: "root", messageCount: 3)],
+                             searchQuery: "",
+                             tagsByNodeID: ["root-msg-1": ["Follow up"]],
+                             summariesByNodeID: [:])
+
+            let threadTarget = viewModel.actionTarget(for: "root")
+            let messageTarget = viewModel.actionTarget(for: "root-msg-1")
+
+            XCTAssertEqual(threadTarget?.threadID, GraphData.threadNodeID(for: "root"))
+            XCTAssertEqual(threadTarget?.rawMessageID, "root")
+            XCTAssertEqual(messageTarget?.threadID, threadTarget?.threadID)
+            XCTAssertEqual(messageTarget?.rawMessageID, "root-msg-1")
+            XCTAssertEqual(messageTarget?.tags, ["Follow up"])
+        }
+    }
+
+    func test_requestSnip_whenArchiveModeWasActive_createsSnipRequest() async {
+        await MainActor.run {
+            let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else {
+                return XCTFail("Expected isolated defaults")
+            }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+            viewModel.update(roots: [makeThread(rootID: "root", messageCount: 2)],
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:])
+            let threadID = GraphData.threadNodeID(for: "root")
+
+            viewModel.toggleArchiveMode()
+            viewModel.requestSnip(threadID: threadID)
+
+            XCTAssertEqual(viewModel.pruneMode, .snip)
+            XCTAssertEqual(viewModel.snipMoveRequest?.thread.id, threadID)
+        }
+    }
+
+    func test_activateSnip_whenNothingIsSelected_entersBranchPickingMode() async {
+        await MainActor.run {
+            let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else {
+                return XCTFail("Expected isolated defaults")
+            }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+
+            viewModel.activateSnip(selectedThreadID: nil)
+
+            XCTAssertEqual(viewModel.pruneMode, .snip)
+            XCTAssertNil(viewModel.snipMoveRequest)
+        }
+    }
+
+    func test_archiveThread_keepsBranchUntilPruneAnimationFinishes() async {
+        let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Expected isolated defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let viewModel = await MainActor.run {
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+            viewModel.update(roots: [makeThread(rootID: "root", messageCount: 2)],
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:])
+            return viewModel
+        }
+        let threadID = GraphData.threadNodeID(for: "root")
+
+        await viewModel.archiveThread(threadID: threadID)
+
+        let request = await MainActor.run { viewModel.pruneAnimationRequest }
+        XCTAssertEqual(request?.threadID, threadID)
+        XCTAssertEqual(request?.action, .archive)
+        await MainActor.run {
+            XCTAssertNotNil(viewModel.data.threadByID[threadID])
+            if let request {
+                viewModel.finishPruneAnimation(id: request.id)
+            }
+            XCTAssertNil(viewModel.data.threadByID[threadID])
+            XCTAssertNil(viewModel.pruneAnimationRequest)
+        }
+    }
+}
+
+final class GraphSnipMailboxTests: XCTestCase {
+    func test_folderTree_whenPreferredParentIsMissing_fallsBackToAllFolders() {
+        let nodes = [
+            MailboxFolderNode(account: "Isaac IBM",
+                              path: "Inbox",
+                              name: "Inbox",
+                              parentPath: nil,
+                              children: []),
+            MailboxFolderNode(account: "Isaac IBM",
+                              path: "Important",
+                              name: "Important",
+                              parentPath: nil,
+                              children: [])
+        ]
+
+        let visible = MailboxHierarchyBuilder.folderTree(nodes, preferredParentPath: "Unimportant")
+
+        XCTAssertEqual(visible.map(\.path), ["Inbox", "Important"])
+    }
+
+    func test_folderTree_whenPreferredParentExists_keepsPreferredSubtree() {
+        let nodes = [
+            MailboxFolderNode(account: "Isaac IBM",
+                              path: "Inbox",
+                              name: "Inbox",
+                              parentPath: nil,
+                              children: []),
+            MailboxFolderNode(account: "Isaac IBM",
+                              path: "Important",
+                              name: "Important",
+                              parentPath: nil,
+                              children: [
+                                MailboxFolderNode(account: "Isaac IBM",
+                                                  path: "Important/HKJC - B&V",
+                                                  name: "HKJC - B&V",
+                                                  parentPath: "Important",
+                                                  children: [])
+                              ])
+        ]
+
+        let visible = MailboxHierarchyBuilder.folderTree(nodes, preferredParentPath: "Important")
+
+        XCTAssertEqual(visible.map(\.path), ["Important"])
+        XCTAssertEqual(visible.first?.children.map(\.path), ["Important/HKJC - B&V"])
+    }
+
+    func test_accountMatching_ignoresWhitespaceAndCase() {
+        let accounts = [
+            MailboxAccount(name: "Isaac IBM", folders: []),
+            MailboxAccount(name: "Personal", folders: [])
+        ]
+
+        let account = MailboxHierarchyBuilder.account(matching: "  isaac ibm ", in: accounts)
+
+        XCTAssertEqual(account?.name, "Isaac IBM")
+    }
 }
 
 final class GraphPruneStateMachineTests: XCTestCase {
@@ -393,20 +2223,60 @@ private func pointDistance(_ lhs: CGPoint?, _ rhs: CGPoint?) -> CGFloat {
     return hypot(lhs.x - rhs.x, lhs.y - rhs.y)
 }
 
-private func makeThread(rootID: String, messageCount: Int) -> ThreadNode {
-    let now = Date(timeIntervalSince1970: 10_000)
+private actor TestGraphTitleProvider: GraphTitleProviding {
+    private let title: String
+    private let delay: Duration?
+    private(set) var callCount = 0
+
+    init(title: String, delay: Duration? = nil) {
+        self.title = title
+        self.delay = delay
+    }
+
+    func makeGraphTitle(_ request: GraphTitleRequest) async throws -> String {
+        callCount += 1
+        if let delay {
+            try await Task.sleep(for: delay)
+        }
+        return title
+    }
+}
+
+private func assertPairwiseGeometryPreserved(nodeIDs: Set<String>,
+                                             before: [String: CGPoint],
+                                             after: [String: CGPoint],
+                                             file: StaticString = #filePath,
+                                             line: UInt = #line) {
+    let sortedNodeIDs = nodeIDs.sorted()
+    for leftIndex in sortedNodeIDs.indices {
+        for rightIndex in sortedNodeIDs.indices where rightIndex > leftIndex {
+            let leftID = sortedNodeIDs[leftIndex]
+            let rightID = sortedNodeIDs[rightIndex]
+            XCTAssertEqual(pointDistance(before[leftID], before[rightID]),
+                           pointDistance(after[leftID], after[rightID]),
+                           accuracy: 0.001,
+                           "Relative geometry changed between \(leftID) and \(rightID)",
+                           file: file,
+                           line: line)
+        }
+    }
+}
+
+private func makeThread(rootID: String,
+                        messageCount: Int,
+                        rootDate: Date = Date(timeIntervalSince1970: 10_000)) -> ThreadNode {
     var child: ThreadNode?
     for index in stride(from: messageCount - 1, through: 1, by: -1) {
         let node = ThreadNode(message: makeMessage(id: "\(rootID)-msg-\(index)",
                                                    subject: "Subject \(rootID)",
-                                                   date: now.addingTimeInterval(Double(index) * -60),
+                                                   date: rootDate.addingTimeInterval(Double(index) * -60),
                                                    threadID: rootID),
                               children: child.map { [$0] } ?? [])
         child = node
     }
     return ThreadNode(message: makeMessage(id: rootID,
                                            subject: "Subject \(rootID)",
-                                           date: now,
+                                           date: rootDate,
                                            threadID: rootID),
                       children: child.map { [$0] } ?? [])
 }

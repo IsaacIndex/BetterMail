@@ -10,7 +10,6 @@ internal final class GraphSceneNode: SKNode {
     internal let graphID: String
     internal let kind: GraphNodeKind
     internal let threadID: String?
-    private let labelSide: CGFloat
     private let shapeContainer = SKNode()
     private let disc: SKShapeNode
     private let ring: SKShapeNode
@@ -21,6 +20,7 @@ internal final class GraphSceneNode: SKNode {
     private let labelBackground: SKShapeNode?
     private var theme: DesignTokens.Graph.AppTheme.Palette
     private var breathRing: SKShapeNode?
+    private var labelCollisionOffset = CGVector.zero
 
     internal init(graphID: String,
                   kind: GraphNodeKind,
@@ -31,12 +31,11 @@ internal final class GraphSceneNode: SKNode {
                   strokeColor: NSColor,
                   strokeWidth: CGFloat,
                   showsLabel: Bool,
-                  theme: DesignTokens.Graph.AppTheme.Palette,
-                  labelSide: CGFloat = 1) {
+                  textScale: CGFloat = 1,
+                  theme: DesignTokens.Graph.AppTheme.Palette) {
         self.graphID = graphID
         self.kind = kind
         self.threadID = threadID
-        self.labelSide = labelSide
         self.theme = theme
         disc = SKShapeNode(path: Self.nodePath(kind: kind, radius: radius))
         ring = SKShapeNode(path: Self.nodePath(kind: kind, radius: radius + 2))
@@ -45,7 +44,7 @@ internal final class GraphSceneNode: SKNode {
         } else {
             messageDetail = nil
         }
-        if kind == .remaining {
+        if kind == .remaining || kind == .ghostGroup {
             remainingDashRing = SKShapeNode(path: Self.dashedCirclePath(radius: radius + 5,
                                                                         segmentCount: 16,
                                                                         segmentFraction: 0.56))
@@ -58,9 +57,16 @@ internal final class GraphSceneNode: SKNode {
             let labelNodes: LabelNodes
             switch kind {
             case .message:
-                labelNodes = Self.makeMessageSummaryLabel(title, radius: radius, theme: theme)
-            case .center, .thread, .remaining:
-                labelNodes = Self.makeThreadLabel(title, radius: radius, kind: kind, theme: theme)
+                labelNodes = Self.makeMessageSummaryLabel(title,
+                                                          radius: radius,
+                                                          textScale: textScale,
+                                                          theme: theme)
+            case .center, .folderGroup, .ghostGroup, .thread, .remaining:
+                labelNodes = Self.makeThreadLabel(title,
+                                                  radius: radius,
+                                                  kind: kind,
+                                                  textScale: textScale,
+                                                  theme: theme)
             }
             labelContainer = labelNodes.container
             labelBackground = labelNodes.background
@@ -81,7 +87,7 @@ internal final class GraphSceneNode: SKNode {
         shapeContainer.addChild(disc)
         if let messageDetail {
             messageDetail.strokeColor = theme.panelNS.withAlphaComponent(0.72)
-            messageDetail.lineWidth = 1.0
+            messageDetail.lineWidth = 1.2
             messageDetail.lineCap = .round
             messageDetail.lineJoin = .round
             messageDetail.zPosition = 3
@@ -118,9 +124,10 @@ internal final class GraphSceneNode: SKNode {
 
     internal func applySelection(isSelected: Bool, isHovered: Bool, isDimmed: Bool) {
         alpha = isDimmed ? 0.22 : 1
-        if kind == .remaining {
+        if kind == .remaining || kind == .ghostGroup {
             let isEmphasized = isSelected || isHovered
-            let emphasisColor = isEmphasized ? theme.accentNS : theme.archiveNS
+            let baseColor = kind == .ghostGroup ? theme.accentNS : theme.archiveNS
+            let emphasisColor = isEmphasized ? theme.accentNS : baseColor
             disc.fillColor = theme.panelSecondaryNS.withAlphaComponent(0.34)
             disc.strokeColor = .clear
             disc.lineWidth = 0
@@ -160,7 +167,7 @@ internal final class GraphSceneNode: SKNode {
                                theme: DesignTokens.Graph.AppTheme.Palette) {
         self.theme = theme
         disc.fillColor = fillColor
-        if kind == .remaining {
+        if kind == .remaining || kind == .ghostGroup {
             disc.strokeColor = .clear
             disc.lineWidth = 0
             remainingDashRing?.strokeColor = strokeColor.withAlphaComponent(0.72)
@@ -173,13 +180,61 @@ internal final class GraphSceneNode: SKNode {
         messageDetail?.strokeColor = theme.panelNS.withAlphaComponent(0.72)
     }
 
-    internal func setBranchAngle(_ angle: CGFloat) {
-        guard kind == .message else { return }
-        shapeContainer.zRotation = angle
+    internal func setBranchGeometry(angle: CGFloat, incomingDistance: CGFloat) {
         let forward = CGVector(dx: cos(angle), dy: sin(angle))
-        let normal = CGVector(dx: -sin(angle), dy: cos(angle))
-        labelContainer?.position = CGPoint(x: forward.dx * 132 + normal.dx * labelSide * 68,
-                                           y: forward.dy * 132 + normal.dy * labelSide * 68)
+        switch kind {
+        case .message:
+            shapeContainer.zRotation = angle
+            labelContainer?.position = CGPoint(x: -forward.dx * 132 + labelCollisionOffset.dx,
+                                               y: -forward.dy * 132 + labelCollisionOffset.dy)
+        case .folderGroup, .ghostGroup, .thread, .remaining:
+            shapeContainer.zRotation = 0
+            let shapeRadius = max(disc.frame.width, disc.frame.height) / 2
+            let labelHalfWidth = (labelBackground?.frame.width ?? 116) / 2
+            let labelHalfHeight = (labelBackground?.frame.height ?? 30) / 2
+            let projectedLabelRadius = abs(forward.dx) * labelHalfWidth +
+                abs(forward.dy) * labelHalfHeight
+            let minimumDistance = shapeRadius + projectedLabelRadius + 5
+            let sourceClearance = projectedLabelRadius + 30
+            let maximumDistance = max(minimumDistance, incomingDistance - sourceClearance)
+            let labelDistance = min(minimumDistance + 6, maximumDistance)
+            labelContainer?.position = CGPoint(x: -forward.dx * labelDistance + labelCollisionOffset.dx,
+                                               y: -forward.dy * labelDistance + labelCollisionOffset.dy)
+        case .center:
+            break
+        }
+    }
+
+    internal func labelFrame(in targetNode: SKNode) -> CGRect? {
+        guard let labelContainer else { return nil }
+        let frame = labelContainer.calculateAccumulatedFrame()
+        let corners = [
+            CGPoint(x: frame.minX, y: frame.minY),
+            CGPoint(x: frame.maxX, y: frame.minY),
+            CGPoint(x: frame.maxX, y: frame.maxY),
+            CGPoint(x: frame.minX, y: frame.maxY)
+        ].map { targetNode.convert($0, from: self) }
+        guard let first = corners.first else { return nil }
+        return corners.dropFirst().reduce(CGRect(origin: first, size: .zero)) { result, point in
+            result.union(CGRect(origin: point, size: .zero))
+        }
+    }
+
+    internal func offsetLabel(by offset: CGVector) {
+        labelCollisionOffset.dx += offset.dx
+        labelCollisionOffset.dy += offset.dy
+        guard let labelContainer else { return }
+        labelContainer.position = CGPoint(x: labelContainer.position.x + offset.dx,
+                                          y: labelContainer.position.y + offset.dy)
+    }
+
+    internal func setLabelCollisionOffset(_ offset: CGVector) {
+        guard let labelContainer else { return }
+        let delta = CGVector(dx: offset.dx - labelCollisionOffset.dx,
+                             dy: offset.dy - labelCollisionOffset.dy)
+        labelCollisionOffset = offset
+        labelContainer.position = CGPoint(x: labelContainer.position.x + delta.dx,
+                                          y: labelContainer.position.y + delta.dy)
     }
 
     internal func updateBreath(elapsedTime: TimeInterval, phase: Double, reduceMotion: Bool) {
@@ -267,7 +322,7 @@ internal final class GraphSceneNode: SKNode {
 
     private static func nodePath(kind: GraphNodeKind, radius: CGFloat) -> CGPath {
         switch kind {
-        case .center, .thread, .remaining:
+        case .center, .folderGroup, .ghostGroup, .thread, .remaining:
             return CGPath(ellipseIn: CGRect(x: -radius,
                                             y: -radius,
                                             width: radius * 2,
@@ -339,17 +394,19 @@ internal final class GraphSceneNode: SKNode {
     private static func makeThreadLabel(_ title: String,
                                         radius: CGFloat,
                                         kind: GraphNodeKind,
+                                        textScale rawTextScale: CGFloat,
                                         theme: DesignTokens.Graph.AppTheme.Palette) -> LabelNodes {
+        let textScale = min(max(rawTextScale, 0.85), 1.6)
         let isCenterNode = kind == .center
         let lines = isCenterNode
             ? [readableLabelText(title, maxCharacters: 18)]
-            : wrappedLines(for: readableLabelText(title, maxCharacters: 116),
-                           maxLineLength: 30,
-                           maxLines: 3)
-        let fontSize: CGFloat = isCenterNode ? 11 : 10.4
-        let lineHeight: CGFloat = isCenterNode ? 13.5 : 12.6
-        let horizontalPadding: CGFloat = isCenterNode ? 12 : 14
-        let verticalPadding: CGFloat = isCenterNode ? 5 : 8
+            : wrappedLines(for: readableLabelText(title, maxCharacters: 72),
+                           maxLineLength: 26,
+                           maxLines: 2)
+        let fontSize: CGFloat = (isCenterNode ? 11 : 10.4) * textScale
+        let lineHeight: CGFloat = (isCenterNode ? 13.5 : 12.6) * textScale
+        let horizontalPadding: CGFloat = 12 * textScale
+        let verticalPadding: CGFloat = (isCenterNode ? 5 : 7) * textScale
         let lineNodes = lines.map { line -> SKLabelNode in
             let labelNode = SKLabelNode(text: line)
             labelNode.fontName = "HelveticaNeue-Medium"
@@ -361,16 +418,18 @@ internal final class GraphSceneNode: SKNode {
             return labelNode
         }
         let measuredWidth = lineNodes.map(\.frame.width).max() ?? 0
-        let labelSize = CGSize(width: min(max(measuredWidth + horizontalPadding * 2, isCenterNode ? 58 : 132), isCenterNode ? 92 : 224),
+        let labelSize = CGSize(width: min(max(measuredWidth + horizontalPadding * 2,
+                                             (isCenterNode ? 58 : 116) * textScale),
+                                         (isCenterNode ? 92 : 190) * textScale),
                                height: CGFloat(lineNodes.count) * lineHeight + verticalPadding * 2)
-        let background = SKShapeNode(rectOf: labelSize, cornerRadius: 8)
-        background.fillColor = theme.backgroundNS.withAlphaComponent(0.9)
-        background.strokeColor = theme.lineNS.withAlphaComponent(0.85)
-        background.lineWidth = 0.8
+        let background = SKShapeNode(rectOf: labelSize, cornerRadius: 8 * textScale)
+        background.fillColor = theme.backgroundNS.withAlphaComponent(0.97)
+        background.strokeColor = theme.lineNS.withAlphaComponent(0.92)
+        background.lineWidth = 0.9
         background.zPosition = 1
         let container = SKNode()
         container.position = CGPoint(x: 0,
-                                     y: -radius - labelSize.height / 2 - (isCenterNode ? 8 : 11))
+                                     y: -radius - labelSize.height / 2 - (isCenterNode ? 8 : 11) * textScale)
         container.zPosition = 4
         container.addChild(background)
         let firstY = CGFloat(lineNodes.count - 1) * lineHeight / 2
@@ -383,37 +442,41 @@ internal final class GraphSceneNode: SKNode {
 
     private static func makeMessageSummaryLabel(_ text: String,
                                                 radius: CGFloat,
+                                                textScale rawTextScale: CGFloat,
                                                 theme: DesignTokens.Graph.AppTheme.Palette) -> LabelNodes {
-        let cardSize = CGSize(width: 230, height: 58)
-        let background = SKShapeNode(rectOf: cardSize, cornerRadius: 8)
+        let textScale = min(max(rawTextScale, 0.85), 1.6)
+        let cardSize = CGSize(width: 230 * textScale, height: 58 * textScale)
+        let background = SKShapeNode(rectOf: cardSize, cornerRadius: 8 * textScale)
         background.fillColor = theme.panelNS.withAlphaComponent(0.94)
         background.strokeColor = theme.lineNS.withAlphaComponent(0.9)
         background.lineWidth = 0.9
         background.zPosition = 1
 
-        let accent = SKShapeNode(rectOf: CGSize(width: 3, height: cardSize.height - 16), cornerRadius: 1.5)
+        let accent = SKShapeNode(rectOf: CGSize(width: 3 * textScale,
+                                                height: cardSize.height - 16 * textScale),
+                                 cornerRadius: 1.5 * textScale)
         accent.fillColor = theme.accentNS.withAlphaComponent(0.8)
         accent.strokeColor = .clear
-        accent.position = CGPoint(x: -cardSize.width / 2 + 10, y: 0)
+        accent.position = CGPoint(x: -cardSize.width / 2 + 10 * textScale, y: 0)
         accent.zPosition = 2
 
         let container = SKNode()
-        container.position = CGPoint(x: 0, y: -radius - 56)
+        container.position = CGPoint(x: 0, y: -radius - 56 * textScale)
         container.zPosition = 6
         container.addChild(background)
         container.addChild(accent)
 
         let lines = wrappedLines(for: readableSummaryText(text), maxLineLength: 38, maxLines: 3)
-        let lineHeight: CGFloat = 13.2
+        let lineHeight: CGFloat = 13.2 * textScale
         let firstY = CGFloat(lines.count - 1) * lineHeight / 2
         for (index, line) in lines.enumerated() {
             let labelNode = SKLabelNode(text: line)
             labelNode.fontName = "HelveticaNeue-Medium"
-            labelNode.fontSize = 10.2
+            labelNode.fontSize = 10.2 * textScale
             labelNode.fontColor = theme.inkSecondaryNS
             labelNode.verticalAlignmentMode = .center
             labelNode.horizontalAlignmentMode = .left
-            labelNode.position = CGPoint(x: -cardSize.width / 2 + 20,
+            labelNode.position = CGPoint(x: -cardSize.width / 2 + 20 * textScale,
                                          y: firstY - CGFloat(index) * lineHeight)
             labelNode.zPosition = 3
             container.addChild(labelNode)
@@ -570,15 +633,18 @@ internal final class SummaryCalloutNode: SKNode {
     private let background = SKShapeNode()
     private let tether = SKShapeNode()
     private let theme: DesignTokens.Graph.AppTheme.Palette
+    private let textScale: CGFloat
     private var labelNodes: [SKLabelNode] = []
     private var displayedText = ""
     internal private(set) var boxSize = CGSize(width: 120, height: 40)
 
     internal init(graphID: String,
                   text: String,
+                  textScale rawTextScale: CGFloat = 1,
                   theme: DesignTokens.Graph.AppTheme.Palette) {
         self.graphID = graphID
         self.theme = theme
+        textScale = min(max(rawTextScale, 0.85), 1.6)
         super.init()
         isUserInteractionEnabled = false
         zPosition = 8
@@ -640,8 +706,8 @@ internal final class SummaryCalloutNode: SKNode {
         labelNodes = []
 
         let lines = Self.wrappedLines(for: cleaned, maxLineLength: 28, maxLines: 2)
-        let fontSize: CGFloat = 10.5
-        let lineHeight: CGFloat = 13.4
+        let fontSize: CGFloat = 10.5 * textScale
+        let lineHeight: CGFloat = 13.4 * textScale
         let labels = lines.map { line -> SKLabelNode in
             let label = SKLabelNode(text: line)
             label.fontName = "HelveticaNeue-Medium"
@@ -652,19 +718,21 @@ internal final class SummaryCalloutNode: SKNode {
             label.zPosition = 2
             return label
         }
-        let measuredWidth = min(160, max(70, (labels.map(\.frame.width).max() ?? 0) + 22))
+        let measuredWidth = min(160 * textScale,
+                                max(70 * textScale,
+                                    (labels.map(\.frame.width).max() ?? 0) + 22 * textScale))
         boxSize = CGSize(width: measuredWidth,
-                         height: CGFloat(labels.count) * lineHeight + 14)
+                         height: CGFloat(labels.count) * lineHeight + 14 * textScale)
         background.path = CGPath(roundedRect: CGRect(x: -boxSize.width / 2,
                                                      y: -boxSize.height / 2,
                                                      width: boxSize.width,
                                                      height: boxSize.height),
-                                 cornerWidth: 5,
-                                 cornerHeight: 5,
+                                 cornerWidth: 5 * textScale,
+                                 cornerHeight: 5 * textScale,
                                  transform: nil)
         let firstY = CGFloat(labels.count - 1) * lineHeight / 2
         for (index, label) in labels.enumerated() {
-            label.position = CGPoint(x: -boxSize.width / 2 + 11,
+            label.position = CGPoint(x: -boxSize.width / 2 + 11 * textScale,
                                      y: firstY - CGFloat(index) * lineHeight)
             labelNodes.append(label)
             addChild(label)

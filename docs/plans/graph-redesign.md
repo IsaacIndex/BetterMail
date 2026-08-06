@@ -1,5 +1,25 @@
 # BetterMail · Graph View Redesign — Implementation Plan
 
+> 2026-08-06 replacement: the mounted runtime is now the Swift-native
+> Obsidian-style adapter documented in `README.md` and `TechDocs/index.md`.
+> `GraphRepresentable` mounts `ObsidianGraphScene` /
+> `ObsidianGraphForceSimulator` rather than the radial/ribbon `GraphScene`.
+> BetterMail's `GraphData`, grouping confirmation, paging, selection, triage,
+> prune, and persistence contracts are unchanged. The renderer boundary follows
+> the same preserve-the-model/replace-the-view strategy established in Codex
+> task `019fb780-ef94-7fd2-8134-2872ce095627`. This plan remains historical
+> context for the retired renderer and its regression coverage.
+>
+> 2026-07-27 follow-up: the shipped four-force canvas now has a centered,
+> full-circle tree layer, persisted folder branches, confirmable Apple
+> Intelligence ghost branches, frame-timed live-neighbor response during
+> fixed-node drag, and canopy-pressure feedback. This latest centered-root
+> direction supersedes both this plan's original flat layout and the interim
+> bottom-rooted layout, as well as its static-neighbor drag and "aliveness
+> extras out of scope" boundaries.
+> The current runtime contract is documented in `README.md` and
+> `TechDocs/index.md`.
+
 A second-pass redesign of the existing graph canvas
 ([`Sources/UI/Graph/`](../../BetterMail/Sources/UI/Graph)). The first version
 shipped (see [graph-view.md](graph-view.md)); this redesign replaces the

@@ -4,6 +4,7 @@ internal enum SummaryScope: String, Hashable {
     case emailNode = "email-node"
     case folder = "folder"
     case emailTag = "email-tag"
+    case graphTitle = "graph-title"
 }
 
 internal struct SummaryCacheEntry: Hashable {

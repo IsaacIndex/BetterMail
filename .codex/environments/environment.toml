@@ -9,8 +9,7 @@ script = ""
 name = "Run"
 icon = "run"
 command = '''
-xcodebuild -project BetterMail.xcodeproj -scheme BetterMail -configuration Debug -derivedDataPath ./DerivedData -destination 'platform=macOS' build && \
-open ./DerivedData/Build/Products/Debug/BetterMail.app
+./script/build_and_run.sh
 '''
 
 [[actions]]
@@ -28,6 +27,7 @@ xcodebuild \
   CODE_SIGN_IDENTITY=- \
   DEVELOPMENT_TEAM= \
   PROVISIONING_PROFILE_SPECIFIER= \
+  SWIFT_ACTIVE_COMPILATION_CONDITIONS='DEBUG BETTERMAIL_DISABLE_PREVIEWS' \
   clean build \
   > /tmp/xcodebuild.log 2>&1
 

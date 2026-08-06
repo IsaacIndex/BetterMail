@@ -4,6 +4,7 @@ internal struct GraphToolbar: View {
     @ObservedObject internal var viewModel: GraphCanvasViewModel
     @ObservedObject internal var settings: GraphCanvasSettings
     internal let textScale: CGFloat
+    internal let selectedThreadID: String?
 
     internal var body: some View {
         HStack(spacing: 6) {
@@ -12,13 +13,23 @@ internal struct GraphToolbar: View {
                           isOn: viewModel.pruneMode == .snip,
                           tint: DesignTokens.Graph.AppTheme.snip,
                           accessibilityID: AccessibilityID.graphToolbarSnip,
-                          action: viewModel.toggleSnipMode)
+                          help: selectedThreadID == nil
+                          ? NSLocalizedString("graph.toolbar.snip.help.mode",
+                                              comment: "Help for entering graph branch snip mode")
+                          : NSLocalizedString("graph.toolbar.snip.help.selected",
+                                              comment: "Help for snipping the selected graph thread"),
+                          action: performSnip)
             toolbarButton(title: NSLocalizedString("graph.toolbar.archive", comment: "Graph archive mode"),
                           systemImage: "archivebox",
                           isOn: viewModel.pruneMode == .archive,
                           tint: DesignTokens.Graph.AppTheme.archive,
                           accessibilityID: AccessibilityID.graphToolbarArchive,
-                          action: viewModel.toggleArchiveMode)
+                          help: selectedThreadID == nil
+                          ? NSLocalizedString("graph.toolbar.archive.help.mode",
+                                              comment: "Help for entering graph branch archive mode")
+                          : NSLocalizedString("graph.toolbar.archive.help.selected",
+                                              comment: "Help for archiving the selected graph thread"),
+                          action: performArchive)
             Divider()
                 .frame(height: 22)
             plainButton(systemImage: "minus.magnifyingglass",
@@ -61,11 +72,13 @@ internal struct GraphToolbar: View {
                                isOn: Bool,
                                tint: Color,
                                accessibilityID: String,
+                               help: String,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .labelStyle(.titleAndIcon)
                 .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
+                .frame(minWidth: 84, minHeight: 30)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .foregroundStyle(isOn ? Color.white : DesignTokens.Graph.AppTheme.inkSecondary)
@@ -73,12 +86,22 @@ internal struct GraphToolbar: View {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(isOn ? tint : Color.clear)
                 )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable()
+        .focusEffectDisabled()
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityID)
-        .help(title)
+        .help(help)
+    }
+
+    private func performSnip() {
+        viewModel.activateSnip(selectedThreadID: selectedThreadID)
+    }
+
+    private func performArchive() {
+        viewModel.activateArchive(selectedThreadID: selectedThreadID)
     }
 
     private func plainButton(systemImage: String,
@@ -89,6 +112,7 @@ internal struct GraphToolbar: View {
             Image(systemName: systemImage)
                 .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
                 .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
                 .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -97,6 +121,7 @@ internal struct GraphToolbar: View {
         }
         .buttonStyle(.plain)
         .focusable()
+        .focusEffectDisabled()
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityID)
         .help(title)

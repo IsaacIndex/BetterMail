@@ -37,6 +37,8 @@ internal enum GraphImportance: String, Codable, Hashable {
 
 internal enum GraphNodeKind: String, Codable, Hashable {
     case center
+    case folderGroup
+    case ghostGroup
     case thread
     case remaining
     case message
@@ -44,8 +46,63 @@ internal enum GraphNodeKind: String, Codable, Hashable {
 
 internal enum GraphEdgeKind: String, Codable, Hashable {
     case trunk
+    case grouping
+    case suggested
     case chain
     case remaining
+}
+
+internal enum GraphGroupingKind: String, Codable, Hashable {
+    case folder
+    case suggestedTopic
+}
+
+internal enum GraphFolderSuggestionError: LocalizedError {
+    case invalidSuggestion
+
+    internal var errorDescription: String? {
+        NSLocalizedString("graph.group.error.invalid",
+                          comment: "Error when a graph topic suggestion cannot form a folder")
+    }
+}
+
+internal struct GraphGrouping: Identifiable, Codable, Hashable {
+    internal let id: String
+    internal let title: String
+    internal let kind: GraphGroupingKind
+    internal let threadIDs: [String]
+    internal let rawThreadIDs: [String]
+    internal let sourceFolderID: String?
+    internal let sourceTag: String?
+
+    internal var isSuggestion: Bool {
+        kind == .suggestedTopic
+    }
+
+    internal var nodeKind: GraphNodeKind {
+        isSuggestion ? .ghostGroup : .folderGroup
+    }
+
+    internal var radius: CGFloat {
+        18 + CGFloat(min(threadIDs.count, 8)) * 1.4
+    }
+
+    internal var accessibilityLabel: String {
+        let key = isSuggestion
+            ? "graph.accessibility.group.suggestion"
+            : "graph.accessibility.group.folder"
+        return String.localizedStringWithFormat(
+            NSLocalizedString(key, comment: "VoiceOver label for graph grouping node"),
+            title,
+            threadIDs.count
+        )
+    }
+}
+
+private struct GraphTopicCandidate {
+    let normalizedTag: String
+    let displayTag: String
+    let threads: [GraphThread]
 }
 
 internal struct GraphCenter: Codable, Hashable {
@@ -61,6 +118,7 @@ internal struct GraphThread: Identifiable, Codable, Hashable {
     internal let rawThreadID: String
     internal let rootNodeID: String
     internal let subject: String
+    internal let displayTitle: String
     internal let snippet: String
     internal let sender: String
     internal let mailboxPath: String
@@ -82,7 +140,7 @@ internal struct GraphThread: Identifiable, Codable, Hashable {
         String.localizedStringWithFormat(
             NSLocalizedString("graph.accessibility.thread.label",
                               comment: "VoiceOver label for graph thread node"),
-            subject,
+            displayTitle,
             messageCount,
             importance.localizedTitle
         )
@@ -156,6 +214,7 @@ internal struct GraphMessage: Identifiable, Codable, Hashable {
     internal let rawThreadID: String
     internal let index: Int
     internal let subject: String
+    internal let displayTitle: String
     internal let snippet: String
     internal let sender: String
     internal let mailboxPath: String
@@ -178,7 +237,7 @@ internal struct GraphMessage: Identifiable, Codable, Hashable {
         String.localizedStringWithFormat(
             NSLocalizedString("graph.accessibility.message.label",
                               comment: "VoiceOver label for graph message node"),
-            subject,
+            displayTitle,
             sender
         )
     }
@@ -197,12 +256,18 @@ internal struct GraphEdge: Identifiable, Codable, Hashable {
 
 internal struct GraphData: Codable, Hashable {
     internal let center: GraphCenter
+    internal let groupings: [GraphGrouping]
     internal let threads: [GraphThread]
     internal let remainingBranch: GraphRemainingBranch?
     internal let messages: [GraphMessage]
     internal let edges: [GraphEdge]
 
-    internal static let empty = GraphData(center: .you, threads: [], remainingBranch: nil, messages: [], edges: [])
+    internal static let empty = GraphData(center: .you,
+                                          groupings: [],
+                                          threads: [],
+                                          remainingBranch: nil,
+                                          messages: [],
+                                          edges: [])
 
     internal static func threadNodeID(for rawThreadID: String) -> String {
         "thread:\(rawThreadID)"
@@ -220,16 +285,26 @@ internal struct GraphData: Codable, Hashable {
         Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
     }
 
+    internal var groupingByID: [String: GraphGrouping] {
+        Dictionary(uniqueKeysWithValues: groupings.map { ($0.id, $0) })
+    }
+
     internal var messageByID: [String: GraphMessage] {
         Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
     }
 
     internal var allNodeIDs: Set<String> {
-        var ids = Set([center.id] + threads.map(\.id) + messages.map(\.id))
+        var ids = Set([center.id] + groupings.map(\.id) + threads.map(\.id) + messages.map(\.id))
         if let remainingBranch {
             ids.insert(remainingBranch.id)
         }
         return ids
+    }
+
+    /// The number of rendered nodes that represent real emails. A thread node
+    /// represents its root email; `messages` contains only the visible replies.
+    internal var visibleEmailNodeCount: Int {
+        threads.count + messages.count
     }
 
     internal func matchingNodeIDs(query rawQuery: String) -> Set<String> {
@@ -238,6 +313,10 @@ internal struct GraphData: Codable, Hashable {
         var matches: Set<String> = [center.id]
         if let remainingBranch {
             matches.insert(remainingBranch.id)
+        }
+        for grouping in groupings where grouping.title.lowercased().contains(query) {
+            matches.insert(grouping.id)
+            matches.formUnion(grouping.threadIDs)
         }
         for thread in threads where thread.matches(query: query) {
             matches.insert(thread.id)
@@ -252,10 +331,13 @@ internal struct GraphData: Codable, Hashable {
         return matches
     }
 
-    internal static func make(roots: [ThreadNode],
+internal static func make(roots: [ThreadNode],
                               archivedThreadIDs: Set<String> = [],
                               tagsByNodeID: [String: [String]] = [:],
                               summariesByNodeID: [String: GraphMessageSummary] = [:],
+                              titlesByNodeID: [String: String] = [:],
+                              folders: [ThreadFolder] = [],
+                              folderMembershipByThreadID: [String: String] = [:],
                               branchLimit: Int? = nil,
                               branchBatchSize: Int = 10,
                               messageLimitPerBranch: Int? = nil,
@@ -281,20 +363,28 @@ internal struct GraphData: Codable, Hashable {
             let threadID = candidate.threadID
             let flattened = flatten(root)
             let allMessageIDs = flattened.map(\.id)
-            let visibleFlattened: [ThreadNode]
-            if let messageLimitPerBranch {
-                visibleFlattened = Array(flattened.prefix(max(1, messageLimitPerBranch)))
+            let visibleEmails: [ThreadNode] = if let messageLimitPerBranch {
+                Array(flattened.prefix(max(1, messageLimitPerBranch)))
             } else {
-                visibleFlattened = flattened
+                flattened
             }
-            let visibleMessages = visibleFlattened.enumerated().map { messageIndex, node in
+            let visibleMessages = visibleEmails.dropFirst().enumerated().map { offset, node in
                 let summary = summariesByNodeID[node.id] ?? summariesByNodeID[messageNodeID(for: node.id)]
+                let generatedTitle = (titlesByNodeID[node.id]
+                    ?? titlesByNodeID[messageNodeID(for: node.id)] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let summaryTitle = summary?.previewText
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let subjectTitle = node.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayTitle = [generatedTitle, summaryTitle, subjectTitle, node.message.from]
+                    .first { !$0.isEmpty } ?? ""
                 return GraphMessage(id: messageNodeID(for: node.id),
                                     rawMessageID: node.id,
                                     threadID: threadID,
                                     rawThreadID: rawThreadID,
-                                    index: messageIndex,
+                                    index: offset + 1,
                                     subject: node.message.subject,
+                                    displayTitle: displayTitle,
                                     snippet: node.message.snippet,
                                     sender: node.message.from,
                                     mailboxPath: node.message.mailboxID,
@@ -312,10 +402,20 @@ internal struct GraphData: Codable, Hashable {
             let tags = Array(Set(flattened.flatMap { node in
                 tagsByNodeID[node.id] ?? tagsByNodeID[messageNodeID(for: node.id)] ?? []
             })).sorted()
+            let fallbackTitle = root.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rootSummary = (summariesByNodeID[root.id]
+                ?? summariesByNodeID[messageNodeID(for: root.id)])?.previewText
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let generatedTitle = (titlesByNodeID[root.id]
+                ?? titlesByNodeID[messageNodeID(for: root.id)] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayTitle = [generatedTitle, rootSummary, fallbackTitle, root.message.from]
+                .first { !$0.isEmpty } ?? ""
             let thread = GraphThread(id: threadID,
                                      rawThreadID: rawThreadID,
                                      rootNodeID: root.id,
                                      subject: root.message.subject,
+                                     displayTitle: displayTitle,
                                      snippet: root.message.snippet,
                                      sender: root.message.from,
                                      mailboxPath: root.message.mailboxID,
@@ -330,10 +430,6 @@ internal struct GraphData: Codable, Hashable {
                                      messageIDs: allMessageIDs)
             threads.append(thread)
             messages.append(contentsOf: visibleMessages)
-            edges.append(GraphEdge(sourceID: GraphCenter.you.id,
-                                   targetID: threadID,
-                                   threadID: threadID,
-                                   kind: .trunk))
             var previousID = threadID
             for message in visibleMessages {
                 edges.append(GraphEdge(sourceID: previousID,
@@ -341,6 +437,44 @@ internal struct GraphData: Codable, Hashable {
                                        threadID: threadID,
                                        kind: .chain))
                 previousID = message.id
+            }
+        }
+
+        let groupings = makeGroupings(threads: threads,
+                                      folders: folders,
+                                      folderMembershipByThreadID: folderMembershipByThreadID)
+        let folderGroupings = groupings.filter { $0.kind == .folder }
+        let groupedThreadIDs = Set(folderGroupings.flatMap(\.threadIDs))
+
+        for grouping in folderGroupings {
+            edges.append(GraphEdge(sourceID: GraphCenter.you.id,
+                                   targetID: grouping.id,
+                                   threadID: grouping.id,
+                                   kind: .trunk))
+            for threadID in grouping.threadIDs {
+                edges.append(GraphEdge(sourceID: grouping.id,
+                                       targetID: threadID,
+                                       threadID: threadID,
+                                       kind: .grouping))
+            }
+        }
+        for thread in threads where !groupedThreadIDs.contains(thread.id) {
+            edges.append(GraphEdge(sourceID: GraphCenter.you.id,
+                                   targetID: thread.id,
+                                   threadID: thread.id,
+                                   kind: .trunk))
+        }
+
+        for grouping in groupings where grouping.kind == .suggestedTopic {
+            edges.append(GraphEdge(sourceID: GraphCenter.you.id,
+                                   targetID: grouping.id,
+                                   threadID: grouping.id,
+                                   kind: .suggested))
+            for threadID in grouping.threadIDs {
+                edges.append(GraphEdge(sourceID: grouping.id,
+                                       targetID: threadID,
+                                       threadID: threadID,
+                                       kind: .suggested))
             }
         }
 
@@ -362,10 +496,106 @@ internal struct GraphData: Codable, Hashable {
         }
 
         return GraphData(center: .you,
+                         groupings: groupings,
                          threads: threads,
                          remainingBranch: remainingBranch,
                          messages: messages,
                          edges: edges)
+    }
+
+    private static func makeGroupings(threads: [GraphThread],
+                                      folders: [ThreadFolder],
+                                      folderMembershipByThreadID: [String: String]) -> [GraphGrouping] {
+        let threadByRawID = threads.reduce(into: [String: GraphThread]()) { result, thread in
+            guard let normalizedID = normalizedThreadID(thread.rawThreadID) else { return }
+            result[normalizedID] = thread
+        }
+        let sortedFolders = folders.sorted {
+            let titleComparison = $0.title.localizedCaseInsensitiveCompare($1.title)
+            return titleComparison == .orderedSame ? $0.id < $1.id : titleComparison == .orderedAscending
+        }
+        var confirmed: [GraphGrouping] = []
+        var folderIDByGraphThreadID: [String: String] = [:]
+
+        for folder in sortedFolders {
+            let rawThreadIDs = Set(folder.threadIDs.compactMap(normalizedThreadID)).union(
+                folderMembershipByThreadID.compactMap { rawThreadID, folderID -> String? in
+                    guard folderID == folder.id else { return nil }
+                    return normalizedThreadID(rawThreadID)
+                }
+            )
+            let members = rawThreadIDs.compactMap { threadByRawID[$0] }.sorted { $0.id < $1.id }
+            guard !members.isEmpty else { continue }
+            for thread in members {
+                folderIDByGraphThreadID[thread.id] = folder.id
+            }
+            confirmed.append(GraphGrouping(id: "folder:\(folder.id)",
+                                           title: folder.title,
+                                           kind: .folder,
+                                           threadIDs: members.map(\.id),
+                                           rawThreadIDs: members.map(\.rawThreadID),
+                                           sourceFolderID: folder.id,
+                                           sourceTag: nil))
+        }
+
+        var displayTagByNormalized: [String: String] = [:]
+        var threadIDsByNormalizedTag: [String: Set<String>] = [:]
+        for thread in threads {
+            for tag in thread.tags {
+                let normalized = normalizeTag(tag)
+                guard !normalized.isEmpty else { continue }
+                displayTagByNormalized[normalized] = displayTagByNormalized[normalized] ?? tag
+                threadIDsByNormalizedTag[normalized, default: []].insert(thread.id)
+            }
+        }
+        let threadByID = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        let candidates = threadIDsByNormalizedTag.compactMap { normalizedTag, threadIDs -> GraphTopicCandidate? in
+            let members = threadIDs.compactMap { threadByID[$0] }.sorted { $0.id < $1.id }
+            guard members.count >= 2 else { return nil }
+            let existingFolderIDs = Set(members.compactMap { folderIDByGraphThreadID[$0.id] })
+            guard existingFolderIDs.count != 1 || members.contains(where: { folderIDByGraphThreadID[$0.id] == nil }) else {
+                return nil
+            }
+            return GraphTopicCandidate(normalizedTag: normalizedTag,
+                                       displayTag: displayTagByNormalized[normalizedTag] ?? normalizedTag,
+                                       threads: members)
+        }.sorted {
+            if $0.threads.count != $1.threads.count { return $0.threads.count > $1.threads.count }
+            return $0.normalizedTag < $1.normalizedTag
+        }
+
+        var seenThreadSets: Set<String> = []
+        var suggestions: [GraphGrouping] = []
+        for candidate in candidates {
+            let threadSetKey = candidate.threads.map(\.id).joined(separator: "|")
+            guard seenThreadSets.insert(threadSetKey).inserted else { continue }
+            suggestions.append(GraphGrouping(id: "suggestion:\(identifierComponent(candidate.normalizedTag))",
+                                             title: candidate.displayTag,
+                                             kind: .suggestedTopic,
+                                             threadIDs: candidate.threads.map(\.id),
+                                             rawThreadIDs: candidate.threads.map(\.rawThreadID),
+                                             sourceFolderID: nil,
+                                             sourceTag: candidate.displayTag))
+            if suggestions.count == 3 { break }
+        }
+        return confirmed + suggestions
+    }
+
+    private static func normalizedThreadID(_ rawThreadID: String) -> String? {
+        rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    }
+
+    private static func normalizeTag(_ tag: String) -> String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+    }
+
+    private static func identifierComponent(_ value: String) -> String {
+        let component = value.unicodeScalars
+            .map { String($0.value, radix: 16) }
+            .joined(separator: "-")
+        return component.isEmpty ? "topic" : component
     }
 
     private static func flatten(_ node: ThreadNode) -> [ThreadNode] {
@@ -458,6 +688,7 @@ internal struct GraphPruneStateMachine {
 
 internal extension GraphThread {
     func matches(query: String) -> Bool {
+        displayTitle.lowercased().contains(query) ||
         subject.lowercased().contains(query) ||
         snippet.lowercased().contains(query) ||
         sender.lowercased().contains(query) ||
@@ -467,6 +698,7 @@ internal extension GraphThread {
 
 internal extension GraphMessage {
     func matches(query: String) -> Bool {
+        displayTitle.lowercased().contains(query) ||
         subject.lowercased().contains(query) ||
         snippet.lowercased().contains(query) ||
         summaryPreviewText.lowercased().contains(query) ||

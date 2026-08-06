@@ -115,6 +115,20 @@ internal enum MailboxPathResolution: Equatable {
 }
 
 internal enum MailboxHierarchyBuilder {
+    internal static func account(matching name: String, in accounts: [MailboxAccount]) -> MailboxAccount? {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { return accounts.first }
+        return accounts.first {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalizedName) == .orderedSame
+        } ?? accounts.first
+    }
+
+    internal static func folderTree(_ nodes: [MailboxFolderNode], preferredParentPath: String) -> [MailboxFolderNode] {
+        let preferredTree = filterFolderTree(nodes, query: preferredParentPath)
+        return preferredTree.isEmpty ? nodes : preferredTree
+    }
+
     internal static func buildAccounts(from folders: [MailboxFolder]) -> [MailboxAccount] {
         var accountOrder: [String] = []
         var foldersByAccount: [String: [MailboxFolder]] = [:]

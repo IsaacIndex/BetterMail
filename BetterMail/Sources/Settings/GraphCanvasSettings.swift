@@ -43,6 +43,9 @@ internal enum GraphReduceMotionOverride: String, CaseIterable, Identifiable {
 
 @MainActor
 internal final class GraphCanvasSettings: ObservableObject {
+    internal static let visibleBranchCountRange = 4...24
+    internal static let defaultVisibleBranchCount = 10
+
     private enum StorageKey {
         static let mode = "graphCanvasMode"
         static let variant = "graphCanvasVariant"
@@ -64,6 +67,17 @@ internal final class GraphCanvasSettings: ObservableObject {
         static let forceCurlFalloff = "graphCanvasForceCurlFalloff"
         static let forceLabelRepelOn = "graphCanvasForceLabelRepelOn"
         static let forceLabelRepelStrength = "graphCanvasForceLabelRepelStrength"
+        static let obsidianCenterStrength = "graphCanvasObsidianCenterStrength"
+        static let obsidianRepelStrength = "graphCanvasObsidianRepelStrength"
+        static let obsidianLinkStrength = "graphCanvasObsidianLinkStrength"
+        static let obsidianLinkDistance = "graphCanvasObsidianLinkDistance"
+        static let obsidianDamping = "graphCanvasObsidianDamping"
+        static let obsidianShowsArrows = "graphCanvasObsidianShowsArrows"
+        static let obsidianTextFadeThreshold = "graphCanvasObsidianTextFadeThreshold"
+        static let obsidianNodeSize = "graphCanvasObsidianNodeSize"
+        static let obsidianLinkThickness = "graphCanvasObsidianLinkThickness"
+        static let visibleBranchCount = "graphCanvasVisibleBranchCount"
+        static let obsidianExpandedSpacingMigration = "graphCanvasObsidianExpandedSpacingMigrationV1"
     }
 
     @AppStorage(StorageKey.mode) private var storedMode = GraphCanvasMode.timeline.rawValue
@@ -85,6 +99,15 @@ internal final class GraphCanvasSettings: ObservableObject {
     @AppStorage(StorageKey.forceCurlFalloff) private var storedForceCurlFalloff = Double(GraphForceConstants.defaults.curlFalloff)
     @AppStorage(StorageKey.forceLabelRepelOn) private var storedForceLabelRepelOn = GraphForceConstants.defaults.labelRepelOn
     @AppStorage(StorageKey.forceLabelRepelStrength) private var storedForceLabelRepelStrength = Double(GraphForceConstants.defaults.labelRepelStrength)
+    @AppStorage(StorageKey.obsidianCenterStrength) private var storedObsidianCenterStrength = Double(ObsidianGraphForceConfig.defaults.centerStrength)
+    @AppStorage(StorageKey.obsidianRepelStrength) private var storedObsidianRepelStrength = Double(ObsidianGraphForceConfig.defaults.repelStrength)
+    @AppStorage(StorageKey.obsidianLinkStrength) private var storedObsidianLinkStrength = Double(ObsidianGraphForceConfig.defaults.linkStrength)
+    @AppStorage(StorageKey.obsidianLinkDistance) private var storedObsidianLinkDistance = Double(ObsidianGraphForceConfig.defaults.linkDistance)
+    @AppStorage(StorageKey.obsidianDamping) private var storedObsidianDamping = Double(ObsidianGraphForceConfig.defaults.damping)
+    @AppStorage(StorageKey.obsidianShowsArrows) private var storedObsidianShowsArrows = ObsidianGraphDisplayConfig.defaults.showsArrows
+    @AppStorage(StorageKey.obsidianTextFadeThreshold) private var storedObsidianTextFadeThreshold = Double(ObsidianGraphDisplayConfig.defaults.textFadeThreshold)
+    @AppStorage(StorageKey.obsidianNodeSize) private var storedObsidianNodeSize = Double(ObsidianGraphDisplayConfig.defaults.nodeSize)
+    @AppStorage(StorageKey.obsidianLinkThickness) private var storedObsidianLinkThickness = Double(ObsidianGraphDisplayConfig.defaults.linkThickness)
 
     @Published internal var mode: GraphCanvasMode = .timeline {
         didSet { storedMode = mode.rawValue }
@@ -100,6 +123,9 @@ internal final class GraphCanvasSettings: ObservableObject {
     }
     @Published internal var snipParentMailboxPath: String = "Unimportant" {
         didSet { storedSnipParentMailboxPath = snipParentMailboxPath }
+    }
+    @Published internal var visibleBranchCount = GraphCanvasSettings.defaultVisibleBranchCount {
+        didSet { userDefaults.set(visibleBranchCount, forKey: StorageKey.visibleBranchCount) }
     }
     @Published internal var forceCenter: CGFloat = GraphForceConstants.defaults.center {
         didSet { storedForceCenter = Double(forceCenter) }
@@ -143,6 +169,33 @@ internal final class GraphCanvasSettings: ObservableObject {
     @Published internal var forceLabelRepelStrength: CGFloat = GraphForceConstants.defaults.labelRepelStrength {
         didSet { storedForceLabelRepelStrength = Double(forceLabelRepelStrength) }
     }
+    @Published internal var obsidianCenterStrength: CGFloat = ObsidianGraphForceConfig.defaults.centerStrength {
+        didSet { storedObsidianCenterStrength = Double(obsidianCenterStrength) }
+    }
+    @Published internal var obsidianRepelStrength: CGFloat = ObsidianGraphForceConfig.defaults.repelStrength {
+        didSet { storedObsidianRepelStrength = Double(obsidianRepelStrength) }
+    }
+    @Published internal var obsidianLinkStrength: CGFloat = ObsidianGraphForceConfig.defaults.linkStrength {
+        didSet { storedObsidianLinkStrength = Double(obsidianLinkStrength) }
+    }
+    @Published internal var obsidianLinkDistance: CGFloat = ObsidianGraphForceConfig.defaults.linkDistance {
+        didSet { storedObsidianLinkDistance = Double(obsidianLinkDistance) }
+    }
+    @Published internal var obsidianDamping: CGFloat = ObsidianGraphForceConfig.defaults.damping {
+        didSet { storedObsidianDamping = Double(obsidianDamping) }
+    }
+    @Published internal var obsidianShowsArrows = ObsidianGraphDisplayConfig.defaults.showsArrows {
+        didSet { storedObsidianShowsArrows = obsidianShowsArrows }
+    }
+    @Published internal var obsidianTextFadeThreshold: CGFloat = ObsidianGraphDisplayConfig.defaults.textFadeThreshold {
+        didSet { storedObsidianTextFadeThreshold = Double(obsidianTextFadeThreshold) }
+    }
+    @Published internal var obsidianNodeSize: CGFloat = ObsidianGraphDisplayConfig.defaults.nodeSize {
+        didSet { storedObsidianNodeSize = Double(obsidianNodeSize) }
+    }
+    @Published internal var obsidianLinkThickness: CGFloat = ObsidianGraphDisplayConfig.defaults.linkThickness {
+        didSet { storedObsidianLinkThickness = Double(obsidianLinkThickness) }
+    }
     @Published internal private(set) var wateredCounts: [String: Int] = [:]
 
     private let userDefaults: UserDefaults
@@ -154,20 +207,45 @@ internal final class GraphCanvasSettings: ObservableObject {
         soundOn = storedSoundOn
         reduceMotionOverride = GraphReduceMotionOverride(rawValue: storedReduceMotionOverride) ?? .system
         snipParentMailboxPath = storedSnipParentMailboxPath
-        forceCenter = CGFloat(storedForceCenter)
-        forceRepel = CGFloat(storedForceRepel)
-        forceRepelCutoff = CGFloat(storedForceRepelCutoff)
-        forceLinkSpring = CGFloat(storedForceLinkSpring)
-        forceTrunkLength = CGFloat(storedForceTrunkLength)
-        forceChainLength = CGFloat(storedForceChainLength)
-        forceDamping = CGFloat(storedForceDamping)
-        forceBreezeAmplitude = CGFloat(storedForceBreezeAmplitude)
-        forceCurl = CGFloat(storedForceCurl)
-        forceCurlVariability = CGFloat(storedForceCurlVariability)
-        forceSplineTension = CGFloat(storedForceSplineTension)
-        forceCurlFalloff = CGFloat(storedForceCurlFalloff)
-        forceLabelRepelOn = storedForceLabelRepelOn
-        forceLabelRepelStrength = CGFloat(storedForceLabelRepelStrength)
+        let storedVisibleBranchCount = userDefaults.object(forKey: StorageKey.visibleBranchCount) as? Int
+        visibleBranchCount = Self.clampedVisibleBranchCount(storedVisibleBranchCount ?? Self.defaultVisibleBranchCount)
+        let storedForceConfig = GraphForceConfig(center: CGFloat(storedForceCenter),
+                                                 repel: CGFloat(storedForceRepel),
+                                                 repelCutoff: CGFloat(storedForceRepelCutoff),
+                                                 linkSpring: CGFloat(storedForceLinkSpring),
+                                                 trunkLength: CGFloat(storedForceTrunkLength),
+                                                 chainLength: CGFloat(storedForceChainLength),
+                                                 damping: CGFloat(storedForceDamping),
+                                                 breezeAmplitude: CGFloat(storedForceBreezeAmplitude),
+                                                 curl: CGFloat(storedForceCurl),
+                                                 curlVariability: CGFloat(storedForceCurlVariability),
+                                                 splineTension: CGFloat(storedForceSplineTension),
+                                                 curlFalloff: CGFloat(storedForceCurlFalloff),
+                                                 labelRepelOn: storedForceLabelRepelOn,
+                                                 labelRepelStrength: CGFloat(storedForceLabelRepelStrength))
+        let resolvedForceConfig = storedForceConfig == GraphForceConstants.legacySpringDefaults
+            ? GraphForceConstants.defaults
+            : storedForceConfig
+        applyForceConfig(resolvedForceConfig)
+        let storedObsidianForceConfig = ObsidianGraphForceConfig(
+            centerStrength: CGFloat(storedObsidianCenterStrength),
+            repelStrength: CGFloat(storedObsidianRepelStrength),
+            linkStrength: CGFloat(storedObsidianLinkStrength),
+            linkDistance: CGFloat(storedObsidianLinkDistance),
+            damping: CGFloat(storedObsidianDamping)
+        )
+        var resolvedObsidianForceConfig = ObsidianGraphForceConfig
+            .migratingHistoricalDefaults(storedObsidianForceConfig)
+        if !userDefaults.bool(forKey: StorageKey.obsidianExpandedSpacingMigration) {
+            resolvedObsidianForceConfig = ObsidianGraphForceConfig
+                .migratingToExpandedSpacing(resolvedObsidianForceConfig)
+            userDefaults.set(true, forKey: StorageKey.obsidianExpandedSpacingMigration)
+        }
+        applyObsidianForceConfig(resolvedObsidianForceConfig)
+        applyObsidianDisplayConfig(ObsidianGraphDisplayConfig(showsArrows: storedObsidianShowsArrows,
+                                                             textFadeThreshold: CGFloat(storedObsidianTextFadeThreshold),
+                                                             nodeSize: CGFloat(storedObsidianNodeSize),
+                                                             linkThickness: CGFloat(storedObsidianLinkThickness)))
         wateredCounts = Self.decodeWateredCounts(from: userDefaults.data(forKey: StorageKey.wateredCounts))
     }
 
@@ -186,6 +264,21 @@ internal final class GraphCanvasSettings: ObservableObject {
                          curlFalloff: forceCurlFalloff,
                          labelRepelOn: forceLabelRepelOn,
                          labelRepelStrength: forceLabelRepelStrength)
+    }
+
+    internal var obsidianForceConfig: ObsidianGraphForceConfig {
+        ObsidianGraphForceConfig(centerStrength: obsidianCenterStrength,
+                                 repelStrength: obsidianRepelStrength,
+                                 linkStrength: obsidianLinkStrength,
+                                 linkDistance: obsidianLinkDistance,
+                                 damping: obsidianDamping)
+    }
+
+    internal var obsidianDisplayConfig: ObsidianGraphDisplayConfig {
+        ObsidianGraphDisplayConfig(showsArrows: obsidianShowsArrows,
+                                   textFadeThreshold: obsidianTextFadeThreshold,
+                                   nodeSize: obsidianNodeSize,
+                                   linkThickness: obsidianLinkThickness)
     }
 
     internal func wateredCount(for threadID: String) -> Int {
@@ -209,21 +302,48 @@ internal final class GraphCanvasSettings: ObservableObject {
     }
 
     internal func restoreWhisperDefaults() {
-        let defaults = GraphForceConstants.defaults
-        forceCenter = defaults.center
-        forceRepel = defaults.repel
-        forceRepelCutoff = defaults.repelCutoff
-        forceLinkSpring = defaults.linkSpring
-        forceTrunkLength = defaults.trunkLength
-        forceChainLength = defaults.chainLength
-        forceDamping = defaults.damping
-        forceBreezeAmplitude = defaults.breezeAmplitude
-        forceCurl = defaults.curl
-        forceCurlVariability = defaults.curlVariability
-        forceSplineTension = defaults.splineTension
-        forceCurlFalloff = defaults.curlFalloff
-        forceLabelRepelOn = defaults.labelRepelOn
-        forceLabelRepelStrength = defaults.labelRepelStrength
+        applyForceConfig(GraphForceConstants.defaults)
+    }
+
+    internal func restoreObsidianDefaults() {
+        applyObsidianForceConfig(.defaults)
+        applyObsidianDisplayConfig(.defaults)
+    }
+
+    internal static func clampedVisibleBranchCount(_ value: Int) -> Int {
+        min(max(value, visibleBranchCountRange.lowerBound), visibleBranchCountRange.upperBound)
+    }
+
+    private func applyForceConfig(_ config: GraphForceConfig) {
+        forceCenter = config.center
+        forceRepel = config.repel
+        forceRepelCutoff = config.repelCutoff
+        forceLinkSpring = config.linkSpring
+        forceTrunkLength = config.trunkLength
+        forceChainLength = config.chainLength
+        forceDamping = config.damping
+        forceBreezeAmplitude = config.breezeAmplitude
+        forceCurl = config.curl
+        forceCurlVariability = config.curlVariability
+        forceSplineTension = config.splineTension
+        forceCurlFalloff = config.curlFalloff
+        forceLabelRepelOn = config.labelRepelOn
+        forceLabelRepelStrength = config.labelRepelStrength
+    }
+
+    private func applyObsidianForceConfig(_ config: ObsidianGraphForceConfig) {
+        obsidianCenterStrength = config.centerStrength
+        obsidianRepelStrength = config.repelStrength
+        obsidianLinkStrength = config.linkStrength
+        obsidianLinkDistance = config.linkDistance
+        obsidianDamping = config.damping
+    }
+
+    private func applyObsidianDisplayConfig(_ config: ObsidianGraphDisplayConfig) {
+        obsidianShowsArrows = config.showsArrows
+        obsidianTextFadeThreshold = config.textFadeThreshold
+        obsidianNodeSize = config.nodeSize
+        obsidianLinkThickness = config.linkThickness
     }
 
     private func persistWateredCounts() {

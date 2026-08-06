@@ -23,7 +23,19 @@ internal struct GraphSettingsSheet: View {
                     TextField(NSLocalizedString("graph.settings.snip_parent", comment: "Graph snip parent mailbox field"),
                               text: $settings.snipParentMailboxPath)
                         .textFieldStyle(.roundedBorder)
+                    Stepper(value: $settings.visibleBranchCount,
+                            in: GraphCanvasSettings.visibleBranchCountRange) {
+                        HStack {
+                            Text(NSLocalizedString("graph.settings.visible_branches",
+                                                   comment: "Number of graph branches shown per page"))
+                            Spacer()
+                            Text("\(settings.visibleBranchCount)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+                        }
+                    }
                 }
+                displaySection
                 forcesSection
                 HStack {
                     Spacer()
@@ -48,72 +60,65 @@ internal struct GraphSettingsSheet: View {
                     .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
                 Spacer()
                 Button(NSLocalizedString("graph.settings.forces.restore", comment: "Restore graph force defaults")) {
-                    settings.restoreWhisperDefaults()
+                    settings.restoreObsidianDefaults()
                 }
             }
-            forceSlider(NSLocalizedString("graph.settings.forces.center", comment: "Center force slider"),
-                        value: $settings.forceCenter,
-                        range: 0.001...0.02,
-                        step: 0.001,
-                        precision: 3)
-            forceSlider(NSLocalizedString("graph.settings.forces.repel", comment: "Repel force slider"),
-                        value: $settings.forceRepel,
-                        range: 1_000...8_000,
+            forceSlider(NSLocalizedString("graph.controls.center_force", comment: "Graph center force slider"),
+                        value: $settings.obsidianCenterStrength,
+                        range: 0...0.012,
+                        step: 0.0005,
+                        precision: 4)
+            forceSlider(NSLocalizedString("graph.controls.repel_force", comment: "Graph repel force slider"),
+                        value: $settings.obsidianRepelStrength,
+                        range: 400...6_000,
                         step: 100,
                         precision: 0)
-            forceSlider(NSLocalizedString("graph.settings.forces.repel_cutoff", comment: "Repel cutoff slider"),
-                        value: $settings.forceRepelCutoff,
-                        range: 160...640,
-                        step: 10,
-                        precision: 0)
-            forceSlider(NSLocalizedString("graph.settings.forces.link_spring", comment: "Link spring slider"),
-                        value: $settings.forceLinkSpring,
-                        range: 0.01...0.09,
+            forceSlider(NSLocalizedString("graph.controls.link_force", comment: "Graph link force slider"),
+                        value: $settings.obsidianLinkStrength,
+                        range: 0.005...0.09,
                         step: 0.005,
                         precision: 3)
-            forceSlider(NSLocalizedString("graph.settings.forces.trunk_length", comment: "Trunk length slider"),
-                        value: $settings.forceTrunkLength,
-                        range: 120...320,
-                        step: 4,
-                        precision: 0)
-            forceSlider(NSLocalizedString("graph.settings.forces.chain_length", comment: "Chain length slider"),
-                        value: $settings.forceChainLength,
-                        range: 60...180,
+            forceSlider(NSLocalizedString("graph.controls.link_distance", comment: "Graph link distance slider"),
+                        value: $settings.obsidianLinkDistance,
+                        range: 48...180,
                         step: 2,
                         precision: 0)
-            forceSlider(NSLocalizedString("graph.settings.forces.damping", comment: "Damping slider"),
-                        value: $settings.forceDamping,
-                        range: 0.72...0.96,
-                        step: 0.01,
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+    }
+
+    private var displaySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(NSLocalizedString("graph.controls.display", comment: "Graph display controls heading"))
+                .font(.headline)
+                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+            Toggle(NSLocalizedString("graph.controls.arrows", comment: "Show graph arrows toggle"),
+                   isOn: $settings.obsidianShowsArrows)
+            forceSlider(NSLocalizedString("graph.controls.text_fade",
+                                          comment: "Graph text fade threshold slider"),
+                        value: $settings.obsidianTextFadeThreshold,
+                        range: -2...1,
+                        step: 0.05,
                         precision: 2)
-            forceSlider(NSLocalizedString("graph.settings.forces.curl", comment: "Curl slider"),
-                        value: $settings.forceCurl,
-                        range: 0...16,
-                        step: 0.5,
+            forceSlider(NSLocalizedString("graph.controls.node_size", comment: "Graph node size slider"),
+                        value: $settings.obsidianNodeSize,
+                        range: 0.65...1.8,
+                        step: 0.05,
+                        precision: 2)
+            forceSlider(NSLocalizedString("graph.controls.link_thickness",
+                                          comment: "Graph link thickness slider"),
+                        value: $settings.obsidianLinkThickness,
+                        range: 0.5...3,
+                        step: 0.1,
                         precision: 1)
-            forceSlider(NSLocalizedString("graph.settings.forces.curl_variability", comment: "Curl variability slider"),
-                        value: $settings.forceCurlVariability,
-                        range: 0...1,
-                        step: 0.05,
-                        precision: 2)
-            forceSlider(NSLocalizedString("graph.settings.forces.spline_tension", comment: "Spline tension slider"),
-                        value: $settings.forceSplineTension,
-                        range: 0...1,
-                        step: 0.05,
-                        precision: 2)
-            forceSlider(NSLocalizedString("graph.settings.forces.curl_falloff", comment: "Curl falloff slider"),
-                        value: $settings.forceCurlFalloff,
-                        range: 0...1,
-                        step: 0.05,
-                        precision: 2)
-            Toggle(NSLocalizedString("graph.settings.forces.label_repel", comment: "Label repel toggle"),
-                   isOn: $settings.forceLabelRepelOn)
-            forceSlider(NSLocalizedString("graph.settings.forces.label_repel_strength", comment: "Label repel strength slider"),
-                        value: $settings.forceLabelRepelStrength,
-                        range: 0...0.4,
-                        step: 0.01,
-                        precision: 2)
-                .disabled(!settings.forceLabelRepelOn)
         }
         .padding(12)
         .background(

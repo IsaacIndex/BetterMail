@@ -7,6 +7,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
     internal let selectedNodeID: String?
     internal let reduceMotion: Bool
     internal let colorScheme: ColorScheme
+    internal let textScale: CGFloat
     internal let audio: GraphAudio
     internal let onSelectRootNode: (String?) -> Void
 
@@ -19,12 +20,14 @@ internal struct GraphRepresentable: NSViewRepresentable {
         view.allowsTransparency = false
         view.ignoresSiblingOrder = true
         view.shouldCullNonVisibleNodes = true
-        view.preferredFramesPerSecond = GraphScene.activeFramesPerSecond
+        view.preferredFramesPerSecond = ObsidianGraphScene.activeFramesPerSecond
 #if DEBUG
         view.showsFPS = true
         view.showsNodeCount = true
 #endif
-        let scene = GraphScene(size: view.bounds.size == .zero ? CGSize(width: 960, height: 640) : view.bounds.size)
+        let scene = ObsidianGraphScene(size: view.bounds.size == .zero
+                                      ? CGSize(width: 960, height: 640)
+                                      : view.bounds.size)
         context.coordinator.scene = scene
         view.presentScene(scene)
         return view
@@ -32,13 +35,21 @@ internal struct GraphRepresentable: NSViewRepresentable {
 
     internal func updateNSView(_ nsView: GraphSKView, context: Context) {
         context.coordinator.parent = self
+        nsView.isPaused = false
         nsView.appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
-        let scene = context.coordinator.scene ?? GraphScene(size: nsView.bounds.size)
+        let scene = context.coordinator.scene ?? ObsidianGraphScene(size: nsView.bounds.size)
         context.coordinator.scene = scene
         if nsView.scene !== scene {
             nsView.presentScene(scene)
         }
         scene.onSelectGraphNode = { graphNodeID in
+            if let graphNodeID,
+               graphViewModel.data.groupingByID[graphNodeID] != nil {
+                graphViewModel.selectGrouping(id: graphNodeID)
+                onSelectRootNode(nil)
+                return
+            }
+            graphViewModel.selectGrouping(id: nil)
             onSelectRootNode(graphViewModel.rootNodeID(forGraphNodeID: graphNodeID))
         }
         scene.onExpandRemainingBranches = {
@@ -66,6 +77,9 @@ internal struct GraphRepresentable: NSViewRepresentable {
                 break
             }
         }
+        scene.onPruneAnimationFinished = { [weak graphViewModel] requestID in
+            graphViewModel?.finishPruneAnimation(id: requestID)
+        }
         scene.onViewportChanged = { zoom, pan in
             graphViewModel.setZoom(zoom)
             graphViewModel.setPanOffset(pan)
@@ -77,22 +91,34 @@ internal struct GraphRepresentable: NSViewRepresentable {
             nsView?.preferredFramesPerSecond = framesPerSecond
         }
         scene.configure(data: graphViewModel.data,
-                        selectedGraphNodeID: graphViewModel.selectedGraphNodeID(for: selectedNodeID),
+                        selectedGraphNodeID: graphViewModel.selectedGroupingID
+                            ?? graphViewModel.selectedGraphNodeID(for: selectedNodeID),
                         pruneMode: graphViewModel.pruneMode,
                         filteredNodeIDs: graphViewModel.filteredNodeIDs,
                         wateredCounts: settings.wateredCounts,
                         reduceMotion: reduceMotion,
                         sproutingMessageIDs: graphViewModel.sproutingMessageIDs,
-                        forceConfig: settings.forceConfig,
+                        forceConfig: settings.obsidianForceConfig,
+                        displayConfig: settings.obsidianDisplayConfig,
                         theme: DesignTokens.Graph.AppTheme.palette(for: colorScheme),
+                        textScale: textScale,
                         zoomScale: graphViewModel.zoomScale,
-                        panOffset: graphViewModel.panOffset)
+                        panOffset: graphViewModel.panOffset,
+                        pruneAnimationRequest: graphViewModel.pruneAnimationRequest)
         nsView.preferredFramesPerSecond = scene.preferredFramesPerSecond
+    }
+
+    static func dismantleNSView(_ nsView: GraphSKView, coordinator: Coordinator) {
+        nsView.isPaused = true
+        coordinator.scene?.teardownForRemoval()
+        coordinator.scene = nil
+        nsView.presentScene(nil)
+        nsView.delegate = nil
     }
 
     internal final class Coordinator {
         internal var parent: GraphRepresentable
-        internal var scene: GraphScene?
+        internal var scene: ObsidianGraphScene?
 
         internal init(parent: GraphRepresentable) {
             self.parent = parent
@@ -105,11 +131,12 @@ internal final class GraphSKView: SKView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        isPaused = window == nil
         window?.acceptsMouseMovedEvents = true
     }
 
     override func magnify(with event: NSEvent) {
-        guard let graphScene = scene as? GraphScene else {
+        guard let graphScene = scene as? ObsidianGraphScene else {
             super.magnify(with: event)
             return
         }
@@ -118,7 +145,7 @@ internal final class GraphSKView: SKView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard let graphScene = scene as? GraphScene else {
+        guard let graphScene = scene as? ObsidianGraphScene else {
             super.scrollWheel(with: event)
             return
         }

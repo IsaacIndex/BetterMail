@@ -21,6 +21,7 @@ internal struct GraphCanvasView: View {
                                    selectedNodeID: threadViewModel.selectedNodeID,
                                    reduceMotion: reduceMotion,
                                    colorScheme: colorScheme,
+                                   textScale: displaySettings.textScale,
                                    audio: audio,
                                    onSelectRootNode: { nodeID in
                                        threadViewModel.selectNode(id: nodeID)
@@ -31,14 +32,19 @@ internal struct GraphCanvasView: View {
                     .accessibilityIdentifier(AccessibilityID.graphCanvas)
                     .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
                                                           comment: "Accessibility label for graph canvas"))
-                graphDotGrid
-                    .allowsHitTesting(false)
                 VStack {
                     HStack {
                         GraphLegend(isExpanded: $isLegendExpanded)
                             .padding(.top, 16)
                             .padding(.leading, 18)
                         Spacer(minLength: 0)
+                        ObsidianGraphControls(settings: graphSettings,
+                                              searchQuery: $threadViewModel.searchQuery,
+                                              data: graphViewModel.data,
+                                              totalBranchCount: graphViewModel.totalBranchCount,
+                                              textScale: displaySettings.textScale)
+                            .padding(.top, 16)
+                            .padding(.trailing, 18)
                     }
                     Spacer(minLength: 0)
                 }
@@ -47,13 +53,62 @@ internal struct GraphCanvasView: View {
                     GraphHoverCard(item: hoverItem, textScale: displaySettings.textScale)
                         .position(hoverPosition(for: hoverItem, in: proxy.size))
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .allowsHitTesting(false)
                         .zIndex(2)
                 }
                 VStack {
                     Spacer()
+                    if let grouping = graphViewModel.selectedGrouping {
+                        GraphGroupingActionBar(grouping: grouping,
+                                               textScale: displaySettings.textScale,
+                                               onConfirm: { confirmGrouping(grouping) },
+                                               onOpenFolder: { openFolder(grouping) })
+                            .padding(.bottom, 8)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    if selectedActionTarget == nil,
+                       graphViewModel.selectedGrouping == nil,
+                       let instruction = pruneInstruction {
+                        Label(instruction.title, systemImage: instruction.systemImage)
+                            .font(DesignTokens.font(size: 11,
+                                                   weight: .semibold,
+                                                   textScale: displaySettings.textScale))
+                            .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(DesignTokens.Graph.AppTheme.panel)
+                                    .shadow(color: Color.black.opacity(0.08), radius: 12, y: 5)
+                            )
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+                            )
+                            .padding(.bottom, 8)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    if let target = selectedActionTarget,
+                       let message = sourceMessage(withID: target.rawMessageID) {
+                        GraphThreadActionBar(subject: target.subject,
+                                             isActionItem: threadViewModel.actionItemIDs.contains(message.messageID),
+                                             textScale: displaySettings.textScale,
+                                             onToggleActionItem: {
+                                                 toggleActionItem(message: message, target: target)
+                                             },
+                                             onSnip: {
+                                                 graphViewModel.requestSnip(threadID: target.threadID)
+                                             },
+                                             onArchive: {
+                                                 graphViewModel.requestArchive(threadID: target.threadID)
+                                             })
+                            .padding(.bottom, 8)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                     GraphToolbar(viewModel: graphViewModel,
                                  settings: graphSettings,
-                                 textScale: displaySettings.textScale)
+                                 textScale: displaySettings.textScale,
+                                 selectedThreadID: selectedActionTarget?.threadID)
                     .padding(.bottom, overlayBottomPadding)
                 }
                 VStack {
@@ -74,16 +129,23 @@ internal struct GraphCanvasView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onAppear {
             warmAudioIfNeeded()
+            graphViewModel.setGraphTitleGenerationActive(true)
             syncData()
+        }
+        .onDisappear {
+            graphViewModel.setGraphTitleGenerationActive(false)
         }
         .onChange(of: graphSettings.soundOn) { _, _ in
             warmAudioIfNeeded()
         }
+        .onChange(of: graphSettings.visibleBranchCount) { _, _ in syncData() }
         .onReceive(threadViewModel.$roots) { _ in syncData() }
         .onReceive(threadViewModel.$searchQuery) { _ in syncData() }
         .onReceive(threadViewModel.$activeMailboxScope) { _ in syncData() }
         .onReceive(threadViewModel.$timelineTagsByNodeID) { _ in syncData() }
         .onReceive(threadViewModel.$nodeSummaries) { _ in syncData() }
+        .onReceive(threadViewModel.$threadFolders) { _ in syncData() }
+        .onReceive(threadViewModel.$folderMembershipByThreadID) { _ in syncData() }
         .sheet(item: $graphViewModel.snipMoveRequest) { request in
             SnipMoveSheet(request: request,
                           mailboxAccounts: threadViewModel.mailboxAccounts,
@@ -101,9 +163,9 @@ internal struct GraphCanvasView: View {
     internal func handleKey(_ key: GraphKeyboardCommand) -> KeyPress.Result {
         switch key {
         case .snip:
-            graphViewModel.toggleSnipMode()
+            performSnipAction()
         case .archive:
-            graphViewModel.toggleArchiveMode()
+            performArchiveAction()
         case .escape:
             graphViewModel.exitPruneMode()
         case .water:
@@ -129,33 +191,73 @@ internal struct GraphCanvasView: View {
         24 + bottomChromeInset
     }
 
+    private var selectedActionTarget: GraphThreadActionTarget? {
+        graphViewModel.actionTarget(for: threadViewModel.selectedNodeID)
+    }
+
+    private var pruneInstruction: (title: String, systemImage: String)? {
+        switch graphViewModel.pruneMode {
+        case .idle:
+            return nil
+        case .snip:
+            return (
+                NSLocalizedString("graph.toolbar.snip.instruction",
+                                  comment: "Instruction shown while choosing a graph branch to snip"),
+                "scissors"
+            )
+        case .archive:
+            return (
+                NSLocalizedString("graph.toolbar.archive.instruction",
+                                  comment: "Instruction shown while choosing a graph branch to archive"),
+                "archivebox"
+            )
+        }
+    }
+
+    private func sourceMessage(withID messageID: String) -> EmailMessage? {
+        for root in threadViewModel.roots {
+            if let message = sourceMessage(withID: messageID, in: root) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    private func sourceMessage(withID messageID: String, in node: ThreadNode) -> EmailMessage? {
+        if node.id == messageID {
+            return node.message
+        }
+        for child in node.children {
+            if let message = sourceMessage(withID: messageID, in: child) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    private func toggleActionItem(message: EmailMessage, target: GraphThreadActionTarget) {
+        if threadViewModel.actionItemIDs.contains(message.messageID) {
+            threadViewModel.removeActionItem(message: message)
+            return
+        }
+        let folderID = message.threadID.flatMap { threadViewModel.folderMembershipByThreadID[$0] }
+        threadViewModel.addActionItem(message: message,
+                                      folderID: folderID,
+                                      tags: target.tags)
+    }
+
+    private func performSnipAction() {
+        graphViewModel.activateSnip(selectedThreadID: selectedActionTarget?.threadID)
+    }
+
+    private func performArchiveAction() {
+        graphViewModel.activateArchive(selectedThreadID: selectedActionTarget?.threadID)
+    }
+
     @MainActor
     private func warmAudioIfNeeded() {
         guard graphSettings.soundOn else { return }
         audio.warm()
-    }
-
-    private var graphDotGrid: some View {
-        Canvas { context, size in
-            let spacing: CGFloat = 28
-            let color = Color.black.opacity(0.035)
-            var x: CGFloat = 0
-            while x < size.width {
-                var y: CGFloat = 0
-                while y < size.height {
-                    let rect = CGRect(x: x, y: y, width: 1.2, height: 1.2)
-                    context.fill(Path(ellipseIn: rect), with: .color(color))
-                    y += spacing
-                }
-                x += spacing
-            }
-        }
-        .mask(
-            RadialGradient(colors: [.black, .black.opacity(0.2), .clear],
-                           center: .center,
-                           startRadius: 80,
-                           endRadius: 680)
-        )
     }
 
     private func syncData() {
@@ -166,13 +268,19 @@ internal struct GraphCanvasView: View {
                               searchQuery: threadViewModel.searchQuery,
                               tagsByNodeID: threadViewModel.timelineTagsByNodeID,
                               summariesByNodeID: threadViewModel.nodeSummaries,
-                              showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive)
+                              folders: threadViewModel.threadFolders,
+                              folderMembershipByThreadID: threadViewModel.folderMembershipByThreadID,
+                              showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive,
+                              branchPageSize: graphSettings.visibleBranchCount)
+        for root in threadViewModel.roots.prefix(10) {
+            threadViewModel.requestTimelineTagsIfNeeded(for: root)
+        }
     }
 
     private func hoverPosition(for item: GraphHoverItem, in size: CGSize) -> CGPoint {
         let rawPoint: CGPoint
         switch item {
-        case .thread(_, let point), .remaining(_, let point), .message(_, let point):
+        case .grouping(_, let point), .thread(_, let point), .remaining(_, let point), .message(_, let point):
             rawPoint = point
         }
         let x = min(max(rawPoint.x + 150, 140), max(140, size.width - 140))
@@ -206,6 +314,215 @@ internal struct GraphCanvasView: View {
             }
         }
     }
+
+    private func confirmGrouping(_ grouping: GraphGrouping) {
+        guard grouping.isSuggestion else { return }
+        Task {
+            do {
+                _ = try await threadViewModel.confirmGraphFolderSuggestion(
+                    title: grouping.title,
+                    threadIDs: Set(grouping.rawThreadIDs)
+                )
+                graphViewModel.selectGrouping(id: nil)
+                syncData()
+                threadViewModel.showToast(NSLocalizedString("graph.group.confirm.success",
+                                                            comment: "Graph grouping confirmation success toast"),
+                                          style: .success)
+            } catch {
+                threadViewModel.showError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func openFolder(_ grouping: GraphGrouping) {
+        guard let folderID = grouping.sourceFolderID else { return }
+        graphViewModel.selectGrouping(id: nil)
+        threadViewModel.selectFolder(id: folderID)
+    }
+}
+
+private struct GraphCanopyStatus: View {
+    let visibleCount: Int
+    let totalCount: Int
+    let textScale: CGFloat
+
+    private var needsTrim: Bool { totalCount > 10 }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            Label(String.localizedStringWithFormat(
+                NSLocalizedString("graph.canopy.count",
+                                  comment: "Graph canopy visible and total branch count"),
+                visibleCount,
+                totalCount
+            ), systemImage: needsTrim ? "leaf.fill" : "leaf")
+                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
+            Text(needsTrim
+                 ? NSLocalizedString("graph.canopy.trim",
+                                     comment: "Graph canopy asks the user to trim branches")
+                 : NSLocalizedString("graph.canopy.stable",
+                                     comment: "Graph canopy is at a stable branch count"))
+                .font(DesignTokens.font(size: 9.5, textScale: textScale))
+                .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+        }
+        .foregroundStyle(needsTrim ? DesignTokens.Graph.AppTheme.snip : DesignTokens.Graph.AppTheme.ink)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct GraphGroupingActionBar: View {
+    let grouping: GraphGrouping
+    let textScale: CGFloat
+    let onConfirm: () -> Void
+    let onOpenFolder: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: grouping.isSuggestion ? "sparkles" : "folder.fill")
+                .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(grouping.title)
+                    .font(DesignTokens.font(size: 11.5, weight: .semibold, textScale: textScale))
+                    .lineLimit(1)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString(grouping.isSuggestion
+                                      ? "graph.group.suggestion.detail"
+                                      : "graph.group.folder.detail",
+                                      comment: "Graph grouping branch detail"),
+                    grouping.threadIDs.count
+                ))
+                    .font(DesignTokens.font(size: 9.5, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+            }
+            .frame(maxWidth: 240, alignment: .leading)
+            Button(action: grouping.isSuggestion ? onConfirm : onOpenFolder) {
+                Label(grouping.isSuggestion
+                      ? NSLocalizedString("graph.group.confirm",
+                                          comment: "Confirm a graph topic grouping as a folder")
+                      : NSLocalizedString("graph.group.open_folder",
+                                          comment: "Open a confirmed graph folder"),
+                      systemImage: grouping.isSuggestion ? "folder.badge.plus" : "arrow.right")
+                    .font(DesignTokens.font(size: 10.5, weight: .semibold, textScale: textScale))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(DesignTokens.Graph.AppTheme.accent)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+                .shadow(color: Color.black.opacity(0.10), radius: 18, x: 0, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(grouping.isSuggestion
+                        ? DesignTokens.Graph.AppTheme.accent.opacity(0.55)
+                        : DesignTokens.Graph.AppTheme.line,
+                        style: StrokeStyle(lineWidth: 1,
+                                           dash: grouping.isSuggestion ? [5, 4] : []))
+        )
+    }
+}
+
+private struct GraphThreadActionBar: View {
+    let subject: String
+    let isActionItem: Bool
+    let textScale: CGFloat
+    let onToggleActionItem: () -> Void
+    let onSnip: () -> Void
+    let onArchive: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(subject)
+                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
+                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                .lineLimit(1)
+                .frame(maxWidth: 180, alignment: .leading)
+                .accessibilityLabel(String.localizedStringWithFormat(
+                    NSLocalizedString("graph.actions.selected_thread",
+                                      comment: "Selected graph thread accessibility label"),
+                    subject
+                ))
+            Divider()
+                .frame(height: 22)
+            actionButton(title: isActionItem
+                         ? NSLocalizedString("graph.actions.remove_action_item",
+                                             comment: "Remove selected graph email from action items")
+                         : NSLocalizedString("graph.actions.action_item",
+                                             comment: "Mark selected graph email as an action item"),
+                         systemImage: isActionItem ? "checkmark.circle.fill" : "bolt.circle",
+                         tint: DesignTokens.Graph.AppTheme.accent,
+                         isOn: isActionItem,
+                         accessibilityID: AccessibilityID.graphActionItem,
+                         action: onToggleActionItem)
+            actionButton(title: NSLocalizedString("graph.actions.not_important",
+                                                  comment: "Move selected graph thread to a less important mailbox"),
+                         systemImage: "scissors",
+                         tint: DesignTokens.Graph.AppTheme.snip,
+                         isOn: false,
+                         accessibilityID: AccessibilityID.graphNotImportant,
+                         action: onSnip)
+            actionButton(title: NSLocalizedString("graph.actions.done",
+                                                  comment: "Archive selected graph thread as done"),
+                         systemImage: "archivebox",
+                         tint: DesignTokens.Graph.AppTheme.archive,
+                         isOn: false,
+                         accessibilityID: AccessibilityID.graphDone,
+                         action: onArchive)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+                .shadow(color: Color.black.opacity(0.10), radius: 18, x: 0, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(AccessibilityID.graphThreadActions)
+    }
+
+    private func actionButton(title: String,
+                              systemImage: String,
+                              tint: Color,
+                              isOn: Bool,
+                              accessibilityID: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.titleAndIcon)
+                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
+                .frame(minWidth: 96, minHeight: 30)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .foregroundStyle(isOn ? Color.white : tint)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isOn ? tint : tint.opacity(0.10))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focusEffectDisabled()
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(accessibilityID)
+        .help(title)
+    }
 }
 
 private struct GraphLegend: View {
@@ -232,6 +549,28 @@ private struct GraphLegend: View {
                         legendCircle(stroke: DesignTokens.Graph.AppTheme.inkSecondary, lineWidth: 1.4)
                         legendCircle(stroke: DesignTokens.Graph.AppTheme.ink, lineWidth: 1.9)
                     }
+                }
+                legendRow(title: NSLocalizedString("graph.legend.folder.title",
+                                                   comment: "Graph legend folder branch title"),
+                          detail: NSLocalizedString("graph.legend.folder.detail",
+                                                    comment: "Graph legend folder branch detail")) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
+                }
+                legendRow(title: NSLocalizedString("graph.legend.ghost.title",
+                                                   comment: "Graph legend ghost branch title"),
+                          detail: NSLocalizedString("graph.legend.ghost.detail",
+                                                    comment: "Graph legend ghost branch detail")) {
+                    ZStack {
+                        Circle()
+                            .stroke(DesignTokens.Graph.AppTheme.accent,
+                                    style: StrokeStyle(lineWidth: 1.3, dash: [4, 3]))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
+                    }
+                    .frame(width: 22, height: 22)
                 }
                 legendRow(title: NSLocalizedString("graph.legend.message.title",
                                                    comment: "Graph legend message node title"),

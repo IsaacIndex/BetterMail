@@ -3849,6 +3849,7 @@ private extension EmailMessage {
 }
 #endif
 
+#if !BETTERMAIL_DISABLE_PREVIEWS
 #Preview("ThreadTimelineTagChip") {
     ThreadTimelineTagChip(text: "Important", fontScale: 1.0)
 }
@@ -3875,3 +3876,4 @@ private extension EmailMessage {
         readabilityMode: .detailed
     )
 }
+#endif

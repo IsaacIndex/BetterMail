@@ -28,7 +28,9 @@ internal struct ThreadListView: View {
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @StateObject private var graphSettings = GraphCanvasSettings()
-    @StateObject private var graphViewModel = GraphCanvasViewModel()
+    @StateObject private var graphViewModel = GraphCanvasViewModel(
+        graphTitleCapabilityProvider: GraphTitleProviderFactory.makeCapability
+    )
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
     @State private var navHeight: CGFloat = 96
@@ -620,9 +622,7 @@ internal struct ThreadListView: View {
         HStack(spacing: 2) {
             ForEach(ThreadListCanvasViewMode.allCases) { mode in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        selectCanvasViewMode(mode)
-                    }
+                    transitionCanvasViewMode(to: mode)
                 } label: {
                     Text(mode.localizedTitle)
                         .font(DesignTokens.font(size: 12,
@@ -677,6 +677,21 @@ internal struct ThreadListView: View {
 
     private var isThreadCanvasSelected: Bool {
         graphSettings.mode == .timeline
+    }
+
+    private func transitionCanvasViewMode(to mode: ThreadListCanvasViewMode) {
+        let isLeavingGraph = selectedCanvasViewMode == .graph && mode != .graph
+        if isLeavingGraph {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                selectCanvasViewMode(mode)
+            }
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            selectCanvasViewMode(mode)
+        }
     }
 
     private func selectCanvasViewMode(_ mode: ThreadListCanvasViewMode) {

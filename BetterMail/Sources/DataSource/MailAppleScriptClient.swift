@@ -2,9 +2,24 @@ import Carbon
 import Foundation
 import OSLog
 
-private enum MailAppleScriptClientError: Error {
+private enum MailAppleScriptClientError: LocalizedError {
     case malformedDescriptor
     case missingMessageID
+    case noMessagesMoved
+
+    var errorDescription: String? {
+        switch self {
+        case .malformedDescriptor:
+            return NSLocalizedString("mail.applescript.error.malformed_result",
+                                     comment: "Mail returned an unexpected AppleScript result")
+        case .missingMessageID:
+            return NSLocalizedString("mail.applescript.error.missing_move_target",
+                                     comment: "A Mail move target was missing")
+        case .noMessagesMoved:
+            return NSLocalizedString("graph.snip.error.no_messages_moved",
+                                     comment: "No messages matched a graph snip move")
+        }
+    }
 }
 
 internal enum MailFetchProfile: Equatable, Sendable {
@@ -175,7 +190,11 @@ internal actor MailAppleScriptClient {
         }
     }
 
-    internal func moveMessages(messageIDs: [String], toMailboxPath mailboxPath: String) async throws {
+    internal func moveMessages(messageIDs: [String],
+                               toMailboxPath mailboxPath: String,
+                               account: String? = nil,
+                               sourceMailboxPath: String? = nil,
+                               sourceAccount: String? = nil) async throws {
         let cleanedIDs = Array(Set(messageIDs.map { MailControl.cleanMessageIDPreservingCase($0) }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }))
@@ -184,9 +203,22 @@ internal actor MailAppleScriptClient {
         let trimmedMailboxPath = mailboxPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMailboxPath.isEmpty else { throw MailAppleScriptClientError.missingMessageID }
         let script = buildMoveMessagesByMessageIDScript(messageIDs: cleanedIDs,
-                                                        mailboxPath: trimmedMailboxPath)
+                                                        mailboxPath: trimmedMailboxPath,
+                                                        account: account,
+                                                        sourceMailboxPath: sourceMailboxPath,
+                                                        sourceAccount: sourceAccount)
         Log.appleScript.debug("Generated graph snip move AppleScript for \(cleanedIDs.count, privacy: .public) messages.")
-        _ = try await scriptRunner.run(script)
+        let descriptor = try await scriptRunner.run(script)
+        try Task.checkCancellation()
+        guard descriptor.descriptorType == typeSInt32 || descriptor.descriptorType == typeSInt16 else {
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+        let movedCount = Int(descriptor.int32Value)
+        guard movedCount > 0 else {
+            Log.appleScript.error("Graph snip found no matching messages; requested=\(cleanedIDs.count, privacy: .public) mailbox=\(trimmedMailboxPath, privacy: .public) account=\(account ?? "", privacy: .public)")
+            throw MailAppleScriptClientError.noMessagesMoved
+        }
+        Log.appleScript.info("Graph snip moved \(movedCount, privacy: .public) of \(cleanedIDs.count, privacy: .public) requested messages to mailbox=\(trimmedMailboxPath, privacy: .public) account=\(account ?? "", privacy: .public)")
     }
 
     private func mailboxPathHelpersScript() -> String {
@@ -895,13 +927,53 @@ internal actor MailAppleScriptClient {
     }
 
     private func buildMoveMessagesByMessageIDScript(messageIDs: [String],
-                                                    mailboxPath: String) -> String {
+                                                    mailboxPath: String,
+                                                    account: String?,
+                                                    sourceMailboxPath: String?,
+                                                    sourceAccount: String?) -> String {
         let escapedIDs = messageIDs.map { "\"\(escapedForAppleScript($0))\"" }.joined(separator: ", ")
+        let trimmedSourcePath = sourceMailboxPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let mailboxScanSetup: String
+        if !trimmedSourcePath.isEmpty {
+            let escapedSourcePath = escapedForAppleScript(trimmedSourcePath)
+            let escapedSourceAccount = escapedForAppleScript(
+                (sourceAccount ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            mailboxScanSetup = """
+            set _sourceMailbox to my resolveMailboxByPath("\(escapedSourceAccount)", "\(escapedSourcePath)")
+            if _sourceMailbox is missing value then
+              error "Source mailbox not found for path: \(escapedSourcePath) account: \(escapedSourceAccount)" number -1728
+            end if
+            set _mailboxesToScan to {_sourceMailbox}
+            """
+        } else {
+            mailboxScanSetup = """
+            set _mailboxesToScan to {}
+            tell application id "com.apple.mail"
+              repeat with _account in every account
+                set _accountMailboxes to my allMailboxesIn(_account)
+                repeat with _mailbox in _accountMailboxes
+                  copy _mailbox to end of _mailboxesToScan
+                end repeat
+              end repeat
+            end tell
+            """
+        }
         return """
-        \(mailboxResolverScript(mailbox: mailboxPath, account: nil))
+        \(mailboxResolverScript(mailbox: mailboxPath, account: account))
         set _destinationMailbox to _mbx
         set _targetMessageIDs to {\(escapedIDs)}
         set _movedCount to 0
+
+        on containsTargetMessageID(_messageID, _targetMessageIDs)
+          if _messageID is "" then return false
+          repeat with _targetMessageID in _targetMessageIDs
+            ignoring case
+              if (_messageID as string) is equal to (_targetMessageID as string) then return true
+            end ignoring
+          end repeat
+          return false
+        end containsTargetMessageID
 
         on childMailboxes(_containerRef)
           tell application id "com.apple.mail"
@@ -930,25 +1002,25 @@ internal actor MailAppleScriptClient {
           return _results
         end allMailboxesIn
 
+        \(mailboxScanSetup)
+
         tell application id "com.apple.mail"
           with timeout of 120 seconds
-            repeat with _account in every account
-              set _mailboxes to my allMailboxesIn(_account)
-              repeat with _mailbox in _mailboxes
-                set _messages to {}
+            repeat with _mailbox in _mailboxesToScan
+              set _messages to {}
+              try
+                set _messages to messages of _mailbox
+              end try
+              repeat with _message in _messages
+                set _messageID to ""
                 try
-                  set _messages to messages of _mailbox
+                  set _messageID to (message id of _message as string)
                 end try
-                repeat with _message in _messages
-                  set _messageID to ""
-                  try
-                    set _messageID to (message id of _message as string)
-                  end try
-                  if _messageID is in _targetMessageIDs then
-                    move _message to _destinationMailbox
-                    set _movedCount to _movedCount + 1
-                  end if
-                end repeat
+                if my containsTargetMessageID(_messageID, _targetMessageIDs) then
+                  move _message to _destinationMailbox
+                  set _movedCount to _movedCount + 1
+                  if _movedCount is greater than or equal to (count of _targetMessageIDs) then exit repeat
+                end if
               end repeat
             end repeat
           end timeout

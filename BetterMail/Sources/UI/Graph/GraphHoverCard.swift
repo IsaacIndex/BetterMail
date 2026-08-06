@@ -7,6 +7,26 @@ internal struct GraphHoverCard: View {
     internal var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switch item {
+            case .grouping(let grouping, _):
+                Label(grouping.isSuggestion
+                      ? NSLocalizedString("graph.hover.group.suggestion",
+                                          comment: "Graph hover label for an AI topic suggestion")
+                      : NSLocalizedString("graph.hover.group.folder",
+                                          comment: "Graph hover label for a confirmed folder branch"),
+                      systemImage: grouping.isSuggestion ? "sparkles" : "folder.fill")
+                    .font(DesignTokens.font(size: 10.5, weight: .semibold, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
+                Text(grouping.title)
+                    .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                    .lineLimit(2)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("graph.hover.group.detail",
+                                      comment: "Graph hover grouping branch count"),
+                    grouping.threadIDs.count
+                ))
+                    .font(DesignTokens.font(size: 11, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
             case .thread(let thread, _):
                 metadataRow(primary: thread.mailboxPath, secondary: relativeTime(from: thread.lastUpdated))
                 Text(thread.subject)

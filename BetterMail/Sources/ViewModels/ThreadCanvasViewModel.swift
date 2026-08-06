@@ -5390,6 +5390,41 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    internal func confirmGraphFolderSuggestion(title: String,
+                                                threadIDs: Set<String>) async throws -> String {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard threadIDs.count >= 2, !normalizedTitle.isEmpty else {
+            throw GraphFolderSuggestionError.invalidSuggestion
+        }
+
+        let folder = ThreadFolder(id: "folder-\(UUID().uuidString.lowercased())",
+                                  title: normalizedTitle,
+                                  color: ThreadFolderColor.defaultNewFolder,
+                                  threadIDs: threadIDs,
+                                  parentID: nil)
+        let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
+        let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
+            var updatedFolder = existingFolder
+            updatedFolder.threadIDs.subtract(threadIDs)
+            if updatedFolder.threadIDs.isEmpty && (childIDsByParent[updatedFolder.id]?.isEmpty ?? true) {
+                return nil
+            }
+            return updatedFolder
+        }
+        let deletedFolderIDs = Set(threadFolders.map(\.id)).subtracting(updatedExistingFolders.map(\.id))
+        let updatedFolders = updatedExistingFolders + [folder]
+
+        try await store.upsertThreadFolders(updatedFolders)
+        if !deletedFolderIDs.isEmpty {
+            try await store.deleteThreadFolders(ids: Array(deletedFolderIDs))
+        }
+        threadFolders = updatedFolders
+        folderMembershipByThreadID = Self.folderMembershipMap(for: updatedFolders)
+        refreshFolderSummaries(for: roots, folders: updatedFolders)
+        return folder.id
+    }
+
     private func effectiveThreadID(for node: ThreadNode) -> String? {
         let messageKey = node.message.threadKey
         if let manualGroupID = manualGroupByMessageKey[messageKey] {

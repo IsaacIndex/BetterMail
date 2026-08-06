@@ -8,9 +8,11 @@ internal final class GraphScene: SKScene {
     }
 
     private static let ribbonEdgeBudget = 420
+    private static let pruneEdgeHitTolerance: CGFloat = 14
     private static let settledRibbonSamples = 72
     private static let edgeViewportBucketSize: CGFloat = 80
     private static let layoutSettlingFrameLimit = 120
+    private static let localSettlingFrameLimit = 30
     private static let layoutSettledEnergyPerNodeThreshold: CGFloat = 0.04
     private static let interactionActiveFrameWindow: TimeInterval = 1.2
     internal static let activeFramesPerSecond = 30
@@ -21,6 +23,7 @@ internal final class GraphScene: SKScene {
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
     internal var onPruneThread: ((String) -> Void)?
+    internal var onPruneAnimationFinished: ((UUID) -> Void)?
     internal var onViewportChanged: ((CGFloat, CGPoint) -> Void)?
     internal var onPositionsChanged: (([String: CGPoint]) -> Void)?
     internal var onFrameRatePreferenceChanged: ((Int) -> Void)?
@@ -55,11 +58,13 @@ internal final class GraphScene: SKScene {
     private var theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
     private var selectedGraphNodeID: String?
     private var hoveredGraphNodeID: String?
+    private var isHoverSuspended = false
     private var pruneMode: GraphPruneMode = .idle
     private var filteredNodeIDs: Set<String> = []
     private var edgeSourceByTargetID: [String: String] = [:]
     private var wateredCounts: [String: Int] = [:]
     private var reduceMotion = false
+    private var textScale: CGFloat = 1
     private var sproutingMessageIDs: Set<String> = []
     private var lastUpdateTime: TimeInterval?
     private var edgeRenderFrame = 0
@@ -67,11 +72,26 @@ internal final class GraphScene: SKScene {
     private var layoutIsSettled = false
     private var layoutSettledPositionsReported = false
     private var draggedNodeID: String?
+    private var draggedNodeOffset: CGPoint?
+    private var pendingDraggedNodePosition: CGPoint?
+    private var dragStartPosition: CGPoint?
+    private var dragInitialPositions: [String: CGPoint] = [:]
+    private var dragInitialRestingPositions: [String: CGPoint] = [:]
+    private var dragBranchNodeIDs: Set<String> = []
+    private var localSettlingNodeIDs: Set<String>?
+    private var localSettlingBranchNodeIDs: Set<String>?
+    private var localReturningNodeOrigins: [String: CGPoint] = [:]
+    private var hasDraggedNode = false
+    private var pendingClickSelectionID: String?
+    private var hasPendingClickSelection = false
     private var isPanning = false
+    private var hasPanned = false
     private var lastInteractionTime: TimeInterval?
     private var lastPositionReportTime: TimeInterval = 0
     private var publishedFramesPerSecond = GraphScene.activeFramesPerSecond
     private var lastRenderedEdgeState: EdgeRenderState?
+    private var runningPruneAnimationID: UUID?
+    private var remainingPruneAnimationNodes = 0
     private let cameraNode = SKCameraNode()
 
     override init(size: CGSize) {
@@ -93,12 +113,22 @@ internal final class GraphScene: SKScene {
                             sproutingMessageIDs: Set<String>,
                             forceConfig: GraphForceConfig,
                             theme: DesignTokens.Graph.AppTheme.Palette,
+                            textScale: CGFloat = 1,
                             zoomScale: CGFloat,
-                            panOffset: CGPoint) {
-        let shouldRebuild = data != graphData || simulator.size != size || theme != self.theme
+                            panOffset: CGPoint,
+                            pruneAnimationRequest: GraphPruneAnimationRequest? = nil) {
+        let dataChanged = data != graphData
+        let textScaleChanged = textScale != self.textScale
+        let shouldRebuild = dataChanged || simulator.size != size || theme != self.theme || textScaleChanged
         let themeChanged = theme != self.theme
         let forceConfigChanged = forceConfig != self.forceConfig
+        let wasRunningGlobalLayout = !layoutIsSettled &&
+            localSettlingNodeIDs == nil &&
+            draggedNodeID == nil
         graphData = data
+        if dataChanged {
+            suspendHoverForInteraction()
+        }
         self.forceConfig = forceConfig
         self.theme = theme
         self.selectedGraphNodeID = selectedGraphNodeID
@@ -106,36 +136,84 @@ internal final class GraphScene: SKScene {
         self.filteredNodeIDs = filteredNodeIDs
         self.wateredCounts = wateredCounts
         self.reduceMotion = reduceMotion
+        self.textScale = textScale
         self.sproutingMessageIDs = sproutingMessageIDs
         if themeChanged {
             applyTheme()
         }
         applyViewport(zoomScale: zoomScale, panOffset: panOffset)
         if shouldRebuild {
-            rebuildGraph()
+            runningPruneAnimationID = nil
+            remainingPruneAnimationNodes = 0
+            rebuildGraph(restartLayout: dataChanged || wasRunningGlobalLayout)
         } else if forceConfigChanged {
+            cancelScopedSimulation()
             resetLayoutSettling()
         }
         applyVisualState()
+        startPruneAnimationIfNeeded(pruneAnimationRequest)
         publishFrameRatePreferenceIfNeeded()
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
-        cameraNode.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        rebuildGraph()
+        let wasRunningGlobalLayout = !layoutIsSettled &&
+            localSettlingNodeIDs == nil &&
+            draggedNodeID == nil
+        let previousCenter = CGPoint(x: oldSize.width / 2, y: oldSize.height / 2)
+        let panOffset = CGPoint(x: cameraNode.position.x - previousCenter.x,
+                                y: cameraNode.position.y - previousCenter.y)
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        cameraNode.position = CGPoint(x: center.x + panOffset.x,
+                                      y: center.y + panOffset.y)
+        runningPruneAnimationID = nil
+        remainingPruneAnimationNodes = 0
+        rebuildGraph(restartLayout: wasRunningGlobalLayout)
     }
 
     override func update(_ currentTime: TimeInterval) {
         let previous = lastUpdateTime ?? currentTime
         lastUpdateTime = currentTime
-        if !layoutIsSettled {
+        let isActivelyDragging = draggedNodeID != nil && hasDraggedNode
+        if isActivelyDragging {
+            if let draggedNodeID,
+               let pendingDraggedNodePosition,
+               let dragStartPosition {
+                dragBranchNodeIDs = simulator.previewDrag(nodeID: draggedNodeID,
+                                                           from: dragStartPosition,
+                                                           to: pendingDraggedNodePosition,
+                                                           initialPositions: dragInitialPositions)
+            }
+            let frameDelta = min(max(currentTime - previous, 0.001), 0.032)
+            simulator.step(deltaTime: frameDelta,
+                           elapsedTime: currentTime * 1_000,
+                           reduceMotion: reduceMotion,
+                           config: forceConfig,
+                           labelOccluderFrame: nil,
+                           scope: .dragging(activeNodeID: draggedNodeID ?? "",
+                                            branchNodeIDs: dragBranchNodeIDs,
+                                            obstacleOrigins: dragInitialPositions))
+            renderFromSimulator(elapsedTime: currentTime * 1_000)
+        } else if !layoutIsSettled {
+            let simulationScope: GraphSimulationScope
+            if let localSettlingBranchNodeIDs {
+                simulationScope = .localSettling(branchNodeIDs: localSettlingBranchNodeIDs,
+                                                  returningNodeOrigins: localReturningNodeOrigins)
+            } else {
+                simulationScope = .global
+            }
+            let labelFramesByID = simulationScope.isGlobal ? labelOccluderFramesByID() : [:]
             simulator.step(deltaTime: currentTime - previous,
                            elapsedTime: currentTime * 1_000,
-                           reduceMotion: true,
+                           reduceMotion: reduceMotion,
                            config: forceConfig,
-                           labelOccluderRadius: labelOccluderRadius(for:))
-            updateLayoutSettlingState()
+                           labelOccluderFrame: labelFramesByID.isEmpty
+                               ? nil
+                               : { labelFramesByID[$0.id] },
+                           scope: simulationScope)
+            if !layoutIsSettled {
+                updateLayoutSettlingState()
+            }
             renderFromSimulator(elapsedTime: currentTime * 1_000)
         }
         if shouldReportPositions(),
@@ -151,16 +229,30 @@ internal final class GraphScene: SKScene {
 
     override func mouseDown(with event: NSEvent) {
         markInteraction()
+        pendingClickSelectionID = nil
+        hasPendingClickSelection = false
+        hasPanned = false
         let location = event.location(in: self)
-        if pruneMode != .idle,
-           let threadID = nearestEdgeThreadID(to: location) {
-            onPruneThread?(threadID)
-            return
+        let hitNodeID = nodeID(at: location)
+        if pruneMode != .idle {
+            if let threadID = nearestEdgeThreadID(to: location) {
+                onPruneThread?(threadID)
+                return
+            }
+            if let hitNodeID,
+               let threadID = threadID(forGraphNodeID: hitNodeID) {
+                onPruneThread?(threadID)
+                return
+            }
         }
-        if let nodeID = nodeID(at: location) {
+        if let nodeID = hitNodeID {
             if graphData.remainingBranch?.id == nodeID {
                 onExpandRemainingBranches?()
                 publishFrameRatePreferenceIfNeeded()
+                draggedNodeOffset = nil
+                pendingDraggedNodePosition = nil
+                clearDragSnapshot()
+                hasDraggedNode = false
                 return
             }
             if event.clickCount >= 2,
@@ -170,14 +262,36 @@ internal final class GraphScene: SKScene {
                 graphNodesByID[nodeID]?.runWaterPulse(wateredCount: wateredCounts[threadID, default: 0] + 1,
                                                        reduceMotion: reduceMotion)
                 publishFrameRatePreferenceIfNeeded()
+                draggedNodeOffset = nil
+                pendingDraggedNodePosition = nil
+                clearDragSnapshot()
+                hasDraggedNode = false
             } else {
-                onSelectGraphNode?(nodeID)
+                pendingClickSelectionID = nodeID
+                hasPendingClickSelection = true
                 draggedNodeID = nodeID == GraphCenter.you.id ? nil : nodeID
+                if let node = simulator.nodesByID[nodeID] {
+                    draggedNodeOffset = CGPoint(x: node.position.x - location.x,
+                                               y: node.position.y - location.y)
+                    dragStartPosition = node.position
+                    dragInitialPositions = simulator.positionsByID()
+                    dragInitialRestingPositions = simulator.restingPositionsByID()
+                }
+                pendingDraggedNodePosition = nil
+                hasDraggedNode = false
                 publishFrameRatePreferenceIfNeeded()
             }
         } else {
-            onSelectGraphNode?(nil)
+            suspendHoverForInteraction()
+            draggedNodeOffset = nil
+            pendingDraggedNodePosition = nil
+            clearDragSnapshot()
+            hasDraggedNode = false
+            pendingClickSelectionID = nil
+            hasPendingClickSelection = true
             if event.clickCount >= 2 {
+                onSelectGraphNode?(nil)
+                hasPendingClickSelection = false
                 recenterCamera(animated: true)
                 publishViewport()
                 return
@@ -189,19 +303,46 @@ internal final class GraphScene: SKScene {
 
     override func mouseDragged(with event: NSEvent) {
         markInteraction()
+        suspendHoverForInteraction()
         let location = event.location(in: self)
         if let draggedNodeID {
-            simulator.setPosition(location, for: draggedNodeID, pinned: true)
+            let offset = draggedNodeOffset ?? .zero
+            let target = CGPoint(x: location.x + offset.x, y: location.y + offset.y)
+            if !hasDraggedNode {
+                dragStartPosition = simulator.nodesByID[draggedNodeID]?.position
+                dragInitialPositions = simulator.positionsByID()
+                dragInitialRestingPositions = simulator.restingPositionsByID()
+                dragBranchNodeIDs = simulator.descendantNodeIDs(from: draggedNodeID)
+                localSettlingNodeIDs = nil
+                localSettlingBranchNodeIDs = nil
+                localReturningNodeOrigins = [:]
+                simulator.stopMotion()
+                resetLayoutSettling()
+            }
+            hasDraggedNode = true
+            hasPendingClickSelection = false
+            pendingDraggedNodePosition = target
+            if let dragStartPosition {
+                dragBranchNodeIDs = simulator.previewDrag(nodeID: draggedNodeID,
+                                                           from: dragStartPosition,
+                                                           to: target,
+                                                           initialPositions: dragInitialPositions)
+            }
             renderFromSimulator(elapsedTime: (lastUpdateTime ?? 0) * 1_000)
             return
         }
         guard isPanning else { return }
+        hasPanned = true
+        hasPendingClickSelection = false
         panBy(deltaX: event.deltaX, deltaY: event.deltaY)
         publishViewport()
     }
 
     override func rightMouseDown(with event: NSEvent) {
         markInteraction()
+        suspendHoverForInteraction()
+        hasPendingClickSelection = false
+        hasPanned = false
         isPanning = true
         publishFrameRatePreferenceIfNeeded()
     }
@@ -209,31 +350,84 @@ internal final class GraphScene: SKScene {
     override func rightMouseDragged(with event: NSEvent) {
         markInteraction()
         guard isPanning else { return }
+        hasPanned = true
         panBy(deltaX: event.deltaX, deltaY: event.deltaY)
         publishViewport()
     }
 
     override func mouseUp(with event: NSEvent) {
         markInteraction()
-        if let draggedNodeID {
-            simulator.setPosition(event.location(in: self), for: draggedNodeID, pinned: false)
-            resetLayoutSettling()
+        let clickSelectionID = pendingClickSelectionID
+        let shouldApplyClickSelection = hasPendingClickSelection && !hasDraggedNode && !hasPanned
+        if let draggedNodeID, hasDraggedNode {
+            let location = event.location(in: self)
+            let offset = draggedNodeOffset ?? .zero
+            let target = CGPoint(x: location.x + offset.x, y: location.y + offset.y)
+            if let dragStartPosition,
+               !dragInitialPositions.isEmpty {
+                let reactiveNodeIDs = simulator.lastDragReactiveNodeIDs
+                    .subtracting(dragBranchNodeIDs)
+                let movableNodeIDs = simulator.commitDrag(
+                    nodeID: draggedNodeID,
+                    from: dragStartPosition,
+                    to: target,
+                    initialPositions: dragInitialPositions,
+                    initialRestingPositions: dragInitialRestingPositions
+                )
+                localSettlingBranchNodeIDs = movableNodeIDs.isEmpty ? nil : movableNodeIDs
+                localReturningNodeOrigins = Dictionary(uniqueKeysWithValues: reactiveNodeIDs.compactMap { nodeID in
+                    dragInitialPositions[nodeID].map { (nodeID, $0) }
+                })
+                localSettlingNodeIDs = movableNodeIDs
+                    .union(localReturningNodeOrigins.keys)
+            } else {
+                simulator.releaseNode(at: target, for: draggedNodeID)
+                localSettlingBranchNodeIDs = [draggedNodeID]
+                localSettlingNodeIDs = [draggedNodeID]
+                localReturningNodeOrigins = [:]
+            }
+            if localSettlingNodeIDs == nil {
+                layoutIsSettled = true
+            } else {
+                resetLayoutSettling()
+                renderFromSimulator(elapsedTime: (lastUpdateTime ?? 0) * 1_000)
+            }
         }
         draggedNodeID = nil
+        draggedNodeOffset = nil
+        pendingDraggedNodePosition = nil
+        clearDragSnapshot()
+        hasDraggedNode = false
+        pendingClickSelectionID = nil
+        hasPendingClickSelection = false
         isPanning = false
+        hasPanned = false
+        if shouldApplyClickSelection {
+            onSelectGraphNode?(clickSelectionID)
+        }
         publishFrameRatePreferenceIfNeeded()
     }
 
     override func rightMouseUp(with event: NSEvent) {
         markInteraction()
         isPanning = false
+        hasPanned = false
         publishFrameRatePreferenceIfNeeded()
     }
 
     override func mouseMoved(with event: NSEvent) {
         markInteraction()
+        guard draggedNodeID == nil, !isPanning else {
+            suspendHoverForInteraction()
+            return
+        }
         let location = event.location(in: self)
         let nextHoveredID = nodeID(at: location)
+        applyHoverCandidate(nextHoveredID, at: location)
+    }
+
+    internal func applyHoverCandidate(_ nextHoveredID: String?, at location: CGPoint) {
+        isHoverSuspended = false
         if hoveredGraphNodeID != nextHoveredID {
             hoveredGraphNodeID = nextHoveredID
             applyVisualState()
@@ -242,7 +436,9 @@ internal final class GraphScene: SKScene {
             onHoverItem?(nil)
             return
         }
-        if let thread = graphData.threadByID[nextHoveredID] {
+        if let grouping = graphData.groupingByID[nextHoveredID] {
+            onHoverItem?(.grouping(grouping, location))
+        } else if let thread = graphData.threadByID[nextHoveredID] {
             onHoverItem?(.thread(thread, location))
         } else if let remainingBranch = graphData.remainingBranch,
                   remainingBranch.id == nextHoveredID {
@@ -254,6 +450,17 @@ internal final class GraphScene: SKScene {
         }
     }
 
+    internal func suspendHoverForInteraction() {
+        guard !isHoverSuspended || hoveredGraphNodeID != nil else { return }
+        let shouldRefreshVisualState = hoveredGraphNodeID != nil
+        isHoverSuspended = true
+        hoveredGraphNodeID = nil
+        onHoverItem?(nil)
+        if shouldRefreshVisualState {
+            applyVisualState()
+        }
+    }
+
     override func mouseExited(with event: NSEvent) {
         hoveredGraphNodeID = nil
         onHoverItem?(nil)
@@ -262,12 +469,12 @@ internal final class GraphScene: SKScene {
 
     override func scrollWheel(with event: NSEvent) {
         markInteraction()
-        let shouldZoom = event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control)
+        suspendHoverForInteraction()
+        let hasZoomModifier = event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control)
+        let shouldZoom = Self.shouldZoomScroll(hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas,
+                                               hasZoomModifier: hasZoomModifier)
         guard shouldZoom else {
             panBy(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
-            if event.phase.contains(.ended) || event.momentumPhase.contains(.ended) {
-                settleCameraIfNeeded()
-            }
             publishViewport()
             return
         }
@@ -278,8 +485,15 @@ internal final class GraphScene: SKScene {
         publishViewport()
     }
 
+    internal static func shouldZoomScroll(hasPreciseScrollingDeltas: Bool,
+                                          hasZoomModifier: Bool) -> Bool {
+        _ = hasPreciseScrollingDeltas
+        return hasZoomModifier
+    }
+
     internal func magnify(by magnification: CGFloat, at viewPoint: CGPoint, in view: SKView) {
         markInteraction()
+        suspendHoverForInteraction()
         let scenePoint = convertPoint(fromView: viewPoint)
         let currentZoom = 1 / cameraNode.xScale
         let nextZoom = currentZoom * max(0.2, 1 + magnification)
@@ -352,8 +566,8 @@ internal final class GraphScene: SKScene {
         let clampedZoom = GraphViewport.clampedZoom(zoomScale)
         cameraNode.setScale(1 / clampedZoom)
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        cameraNode.position = constrainedCameraPosition(CGPoint(x: center.x + panOffset.x,
-                                                                y: center.y + panOffset.y))
+        cameraNode.position = CGPoint(x: center.x + panOffset.x,
+                                      y: center.y + panOffset.y)
     }
 
     private func setZoom(_ zoomScale: CGFloat, around focus: CGPoint?) {
@@ -368,21 +582,11 @@ internal final class GraphScene: SKScene {
             cameraNode.position = CGPoint(x: focus.x - (focus.x - previousPosition.x) * scaleRatio,
                                           y: focus.y - (focus.y - previousPosition.y) * scaleRatio)
         }
-        cameraNode.position = constrainedCameraPosition(cameraNode.position)
     }
 
     private func panBy(deltaX: CGFloat, deltaY: CGFloat) {
-        let proposed = CGPoint(x: cameraNode.position.x - deltaX * cameraNode.xScale,
-                               y: cameraNode.position.y + deltaY * cameraNode.yScale)
-        cameraNode.position = rubberBandedCameraPosition(proposed)
-    }
-
-    private func settleCameraIfNeeded() {
-        let constrained = constrainedCameraPosition(cameraNode.position)
-        guard hypot(constrained.x - cameraNode.position.x, constrained.y - cameraNode.position.y) > 0.5 else { return }
-        cameraNode.removeAction(forKey: "graph-camera-settle")
-        cameraNode.run(.move(to: constrained, duration: 0.18), withKey: "graph-camera-settle")
-        publishFrameRatePreferenceIfNeeded()
+        cameraNode.position = CGPoint(x: cameraNode.position.x - deltaX * cameraNode.xScale,
+                                      y: cameraNode.position.y + deltaY * cameraNode.yScale)
     }
 
     private func recenterCamera(animated: Bool) {
@@ -414,9 +618,16 @@ internal final class GraphScene: SKScene {
         onViewportChanged?(zoomScale, pan)
     }
 
-    private func rebuildGraph() {
+    private func rebuildGraph(restartLayout: Bool = true) {
         lastRenderedEdgeState = nil
-        resetLayoutSettling()
+        cancelScopedSimulation()
+        if restartLayout {
+            resetLayoutSettling()
+        } else {
+            layoutSettlingFrames = 0
+            layoutIsSettled = true
+            layoutSettledPositionsReported = false
+        }
         let existingPositions = simulator.positionsByID()
         simulator.reset(data: graphData, size: size, preserving: existingPositions)
         edgeSourceByTargetID = graphData.edges.reduce(into: [:]) { sourcesByTarget, edge in
@@ -439,9 +650,27 @@ internal final class GraphScene: SKScene {
                                         strokeColor: theme.inkNS,
                                         strokeWidth: 1.6,
                                         showsLabel: true,
+                                        textScale: textScale,
                                         theme: theme)
         graphNodesByID[graphData.center.id] = centerNode
         addChild(centerNode)
+        for grouping in graphData.groupings {
+            let node = GraphSceneNode(graphID: grouping.id,
+                                      kind: grouping.nodeKind,
+                                      threadID: nil,
+                                      radius: grouping.radius,
+                                      title: grouping.title,
+                                      fillColor: grouping.isSuggestion
+                                          ? theme.panelSecondaryNS.withAlphaComponent(0.30)
+                                          : theme.accentSoftNS,
+                                      strokeColor: theme.accentNS,
+                                      strokeWidth: grouping.isSuggestion ? 1.3 : 1.6,
+                                      showsLabel: true,
+                                      textScale: textScale,
+                                      theme: theme)
+            graphNodesByID[grouping.id] = node
+            addChild(node)
+        }
         for thread in graphData.threads {
             let node = GraphSceneNode(graphID: thread.id,
                                       kind: .thread,
@@ -452,6 +681,7 @@ internal final class GraphScene: SKScene {
                                       strokeColor: strokeColor(for: thread.importance),
                                       strokeWidth: thread.importance.ringWidth,
                                       showsLabel: true,
+                                      textScale: textScale,
                                       theme: theme)
             graphNodesByID[thread.id] = node
             addChild(node)
@@ -466,6 +696,7 @@ internal final class GraphScene: SKScene {
                                       strokeColor: theme.archiveNS,
                                       strokeWidth: 1.4,
                                       showsLabel: true,
+                                      textScale: textScale,
                                       theme: theme)
             graphNodesByID[remainingBranch.id] = node
             addChild(node)
@@ -482,13 +713,14 @@ internal final class GraphScene: SKScene {
                                       strokeColor: theme.inkNS.withAlphaComponent(0.9),
                                       strokeWidth: 1.0,
                                       showsLabel: false,
-                                      theme: theme,
-                                      labelSide: message.index.isMultiple(of: 2) ? 1 : -1)
+                                      textScale: textScale,
+                                      theme: theme)
             graphNodesByID[message.id] = node
             addChild(node)
             if !message.summaryPreviewText.isEmpty {
                 let callout = SummaryCalloutNode(graphID: message.id,
                                                  text: message.summaryPreviewText,
+                                                 textScale: textScale,
                                                  theme: theme)
                 summaryCalloutsByID[message.id] = callout
                 addChild(callout)
@@ -501,35 +733,143 @@ internal final class GraphScene: SKScene {
         applyVisualState()
     }
 
+    private func startPruneAnimationIfNeeded(_ request: GraphPruneAnimationRequest?) {
+        guard let request,
+              runningPruneAnimationID != request.id else { return }
+        let branchNodes = graphNodesByID.values.filter { $0.threadID == request.threadID }
+        guard !branchNodes.isEmpty else {
+            onPruneAnimationFinished?(request.id)
+            return
+        }
+
+        runningPruneAnimationID = request.id
+        remainingPruneAnimationNodes = branchNodes.count
+        for node in branchNodes {
+            node.runPrune(action: request.action,
+                          reduceMotion: reduceMotion) { [weak self] in
+                guard let self,
+                      self.runningPruneAnimationID == request.id else { return }
+                self.remainingPruneAnimationNodes -= 1
+                guard self.remainingPruneAnimationNodes <= 0 else { return }
+                self.runningPruneAnimationID = nil
+                self.remainingPruneAnimationNodes = 0
+                self.onPruneAnimationFinished?(request.id)
+            }
+        }
+    }
+
     private func renderFromSimulator(elapsedTime: TimeInterval) {
         edgeRenderFrame += 1
         for physicsNode in simulator.nodes {
             guard let node = graphNodesByID[physicsNode.id] else { continue }
             node.position = physicsNode.position
-            if physicsNode.kind == .message,
+            if physicsNode.kind != .center,
                let sourceID = edgeSourceByTargetID[physicsNode.id],
                let source = simulator.nodesByID[sourceID] {
                 let dx = physicsNode.position.x - source.position.x
                 let dy = physicsNode.position.y - source.position.y
-                node.setBranchAngle(CGFloat(atan2(Double(dy), Double(dx))))
-            }
-            if let thread = graphData.threadByID[physicsNode.id], thread.isLive {
-                node.updateBreath(elapsedTime: elapsedTime,
-                                  phase: Double(abs(thread.id.hashValue % 997)) / 997,
-                                  reduceMotion: reduceMotion)
+                node.setBranchGeometry(angle: CGFloat(atan2(Double(dy), Double(dx))),
+                                       incomingDistance: hypot(dx, dy))
             }
         }
-        updateSummaryCallouts()
-        renderEdges(skipCoalescedChains: !layoutIsSettled && edgeRenderFrame % 2 != 0)
+        updateFocusedThreadMotion(elapsedTime: elapsedTime)
+        let shouldRefreshOcclusionLayout = draggedNodeID == nil || edgeRenderFrame.isMultiple(of: 2)
+        if shouldRefreshOcclusionLayout {
+            updateSummaryCallouts()
+            resolveGraphLabelOverlaps()
+        }
+        if draggedNodeID == nil || edgeRenderFrame.isMultiple(of: 2) {
+            renderEdges(skipCoalescedChains: !layoutIsSettled && edgeRenderFrame % 2 != 0)
+        }
+    }
+
+    private func resolveGraphLabelOverlaps() {
+        guard let center = simulator.nodesByID[graphData.center.id]?.position else { return }
+        let candidates = simulator.nodes
+            .filter { $0.kind != .center && $0.kind != .message }
+            .sorted { left, right in
+                let leftAngle = atan2(left.position.y - center.y, left.position.x - center.x)
+                let rightAngle = atan2(right.position.y - center.y, right.position.x - center.x)
+                if leftAngle != rightAngle { return leftAngle < rightAngle }
+                return left.id < right.id
+            }
+        let nodeFramesByID = Dictionary(uniqueKeysWithValues: simulator.nodes.map { node in
+            let clearance: CGFloat = node.kind == .message ? 5 : 8
+            return (node.id, CGRect(x: node.position.x - node.radius - clearance,
+                                    y: node.position.y - node.radius - clearance,
+                                    width: (node.radius + clearance) * 2,
+                                    height: (node.radius + clearance) * 2))
+        })
+        let calloutFrames = summaryCalloutsByID.values.compactMap { callout -> CGRect? in
+            guard callout.parent != nil, callout.alpha > 0.01 else { return nil }
+            return callout.calculateAccumulatedFrame()
+        }
+        let centerLabelFrame = graphNodesByID[graphData.center.id]?.labelFrame(in: self)
+        var occupiedFrames = calloutFrames + [centerLabelFrame].compactMap { $0 }
+        let viewport = cameraVisibleRect().insetBy(dx: 8, dy: 8)
+        for physicsNode in candidates {
+            guard let sceneNode = graphNodesByID[physicsNode.id] else { continue }
+            sceneNode.setLabelCollisionOffset(.zero)
+            guard let frame = sceneNode.labelFrame(in: self) else { continue }
+            let sourcePosition = edgeSourceByTargetID[physicsNode.id]
+                .flatMap { simulator.nodesByID[$0]?.position } ?? center
+            let dx = physicsNode.position.x - sourcePosition.x
+            let dy = physicsNode.position.y - sourcePosition.y
+            let distance = max(1, hypot(dx, dy))
+            let branchUnit = CGVector(dx: dx / distance, dy: dy / distance)
+            let nodeOccluders = nodeFramesByID.compactMap { id, frame in
+                id == physicsNode.id ? nil : frame
+            }
+            let offset = Self.resolvedLabelOffset(frame: frame,
+                                                  branchUnit: branchUnit,
+                                                  occluders: occupiedFrames + nodeOccluders,
+                                                  viewport: viewport)
+            sceneNode.setLabelCollisionOffset(offset)
+            occupiedFrames.append(frame.offsetBy(dx: offset.dx, dy: offset.dy))
+        }
+    }
+
+    internal static func resolvedLabelOffset(frame: CGRect,
+                                             branchUnit: CGVector,
+                                             occluders: [CGRect],
+                                             viewport: CGRect) -> CGVector {
+        let perpendicular = CGVector(dx: -branchUnit.dy, dy: branchUnit.dx)
+        let candidates: [CGVector] = [
+            .zero,
+            perpendicular.scaled(by: 16), perpendicular.scaled(by: -16),
+            branchUnit.scaled(by: 16), branchUnit.scaled(by: -16),
+            perpendicular.scaled(by: 32), perpendicular.scaled(by: -32),
+            perpendicular.scaled(by: 48), perpendicular.scaled(by: -48),
+            perpendicular.scaled(by: 64), perpendicular.scaled(by: -64)
+        ]
+        var best = candidates[0]
+        var bestScore = CGFloat.greatestFiniteMagnitude
+        for candidate in candidates {
+            let proposed = frame.offsetBy(dx: candidate.dx, dy: candidate.dy)
+            let overlapScore = occluders.reduce(CGFloat.zero) { score, occluder in
+                let intersection = proposed.insetBy(dx: -6, dy: -4).intersection(occluder)
+                guard !intersection.isNull else { return score }
+                return score + intersection.width * intersection.height
+            }
+            let viewportPenalty: CGFloat = viewport.contains(proposed) ? 0 : 1_000_000
+            let movementPenalty = hypot(candidate.dx, candidate.dy) * 0.01
+            let score = overlapScore + viewportPenalty + movementPenalty
+            if score < bestScore {
+                best = candidate
+                bestScore = score
+            }
+            if score < 0.001 { break }
+        }
+        return best
     }
 
     private func updateSummaryCallouts() {
-        let occluders = simulator.nodes.map { physicsNode in
+        var occluders = simulator.nodes.map { physicsNode in
             GraphSummaryOccluder(id: physicsNode.id,
                                  position: physicsNode.position,
-                                 radius: physicsNode.radius + labelOccluderRadius(for: physicsNode))
+                                 radius: summaryOcclusionRadius(for: physicsNode))
         }
-        for message in graphData.messages {
+        for message in graphData.messages.sorted(by: { $0.id < $1.id }) {
             guard let callout = summaryCalloutsByID[message.id],
                   let physicsNode = simulator.nodesByID[message.id] else { continue }
             let angle = callout.update(text: message.summaryPreviewText,
@@ -540,6 +880,9 @@ internal final class GraphScene: SKScene {
             summaryAnglesByMessageID[message.id] = angle
             let isDimmed = !filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(message.id)
             callout.applyDimmed(isDimmed)
+            occluders.append(GraphSummaryOccluder(id: "callout:\(message.id)",
+                                                  position: callout.position,
+                                                  radius: callout.occlusionRadius))
         }
     }
 
@@ -571,7 +914,7 @@ internal final class GraphScene: SKScene {
             guard visibleRect.contains(midpoint) else { continue }
             let isDimmed = isEdgeDimmed(edge)
             switch (edge.kind, isDimmed) {
-            case (.trunk, false):
+            case (.trunk, false), (.grouping, false):
                 appendEdge(edge: edge,
                            source: source.position,
                            target: target.position,
@@ -580,11 +923,11 @@ internal final class GraphScene: SKScene {
                            branchConfig: branchConfig,
                            curlConfig: curlConfig,
                            anchor: anchor)
-            case (.remaining, false):
+            case (.remaining, false), (.suggested, false):
                 appendDashedEdge(source: source,
                                  target: target,
                                  to: remainingPath)
-            case (.trunk, true):
+            case (.trunk, true), (.grouping, true):
                 appendEdge(edge: edge,
                            source: source.position,
                            target: target.position,
@@ -593,7 +936,7 @@ internal final class GraphScene: SKScene {
                            branchConfig: branchConfig,
                            curlConfig: curlConfig,
                            anchor: anchor)
-            case (.remaining, true):
+            case (.remaining, true), (.suggested, true):
                 appendDashedEdge(source: source,
                                  target: target,
                                  to: dimmedRemainingPath)
@@ -671,6 +1014,13 @@ internal final class GraphScene: SKScene {
                                   strokeColor: strokeColor(for: thread.importance),
                                   strokeWidth: thread.importance.ringWidth,
                                   theme: theme)
+            } else if let grouping = graphData.groupingByID[id] {
+                node.setBaseStyle(fillColor: grouping.isSuggestion
+                                  ? theme.panelSecondaryNS.withAlphaComponent(0.30)
+                                  : theme.accentSoftNS,
+                                  strokeColor: theme.accentNS,
+                                  strokeWidth: grouping.isSuggestion ? 1.3 : 1.6,
+                                  theme: theme)
             } else if let message = graphData.messageByID[id] {
                 node.setBaseStyle(fillColor: message.unread
                                   ? theme.accentNS
@@ -692,7 +1042,19 @@ internal final class GraphScene: SKScene {
         for (id, callout) in summaryCalloutsByID {
             callout.applyDimmed(!filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(id))
         }
+        updateFocusedThreadMotion(elapsedTime: (lastUpdateTime ?? 0) * 1_000)
         renderEdgesIfNeeded()
+    }
+
+    private func updateFocusedThreadMotion(elapsedTime: TimeInterval) {
+        let focusedThreadID = threadID(forGraphNodeID: selectedGraphNodeID)
+        for thread in graphData.threads where thread.isLive {
+            graphNodesByID[thread.id]?.updateBreath(
+                elapsedTime: elapsedTime,
+                phase: Double(abs(thread.id.hashValue % 997)) / 997,
+                reduceMotion: reduceMotion || thread.id != focusedThreadID
+            )
+        }
     }
 
     private func isEdgeDimmed(_ edge: GraphEdge) -> Bool {
@@ -707,63 +1069,6 @@ internal final class GraphScene: SKScene {
                       y: cameraNode.position.y - halfHeight,
                       width: halfWidth * 2,
                       height: halfHeight * 2)
-    }
-
-    private func constrainedCameraPosition(_ proposed: CGPoint) -> CGPoint {
-        guard let envelope = cameraEnvelope() else { return proposed }
-        return CGPoint(x: min(max(proposed.x, envelope.minX), envelope.maxX),
-                       y: min(max(proposed.y, envelope.minY), envelope.maxY))
-    }
-
-    private func rubberBandedCameraPosition(_ proposed: CGPoint) -> CGPoint {
-        let constrained = constrainedCameraPosition(proposed)
-        var adjusted = proposed
-        if proposed.x != constrained.x {
-            adjusted.x = cameraNode.position.x + (proposed.x - cameraNode.position.x) * 0.5
-        }
-        if proposed.y != constrained.y {
-            adjusted.y = cameraNode.position.y + (proposed.y - cameraNode.position.y) * 0.5
-        }
-        return constrainedCameraPosition(adjusted)
-    }
-
-    private func cameraEnvelope() -> CGRect? {
-        let contentBounds = graphContentBounds()
-        guard !contentBounds.isNull, size.width > 0, size.height > 0 else {
-            return nil
-        }
-        let halfWidth = (size.width * cameraNode.xScale) / 2
-        let halfHeight = (size.height * cameraNode.yScale) / 2
-        let overscrollX = max(size.width * cameraNode.xScale * 0.55, 220)
-        let overscrollY = max(size.height * cameraNode.yScale * 0.55, 180)
-        let allowedMinX = contentBounds.minX - halfWidth - overscrollX
-        let allowedMaxX = contentBounds.maxX + halfWidth + overscrollX
-        let allowedMinY = contentBounds.minY - halfHeight - overscrollY
-        let allowedMaxY = contentBounds.maxY + halfHeight + overscrollY
-        return CGRect(x: allowedMinX,
-                      y: allowedMinY,
-                      width: max(0, allowedMaxX - allowedMinX),
-                      height: max(0, allowedMaxY - allowedMinY))
-    }
-
-    private func graphContentBounds() -> CGRect {
-        var bounds = CGRect.null
-        for node in simulator.nodes {
-            let labelPadding: CGFloat
-            switch node.kind {
-            case .message:
-                labelPadding = 170
-            case .thread, .remaining:
-                labelPadding = 130
-            case .center:
-                labelPadding = 72
-            }
-            bounds = bounds.union(CGRect(x: node.position.x - node.radius - labelPadding,
-                                         y: node.position.y - node.radius - labelPadding,
-                                         width: (node.radius + labelPadding) * 2,
-                                         height: (node.radius + labelPadding) * 2))
-        }
-        return bounds
     }
 
     private func strokeColor(for importance: GraphImportance) -> NSColor {
@@ -795,12 +1100,49 @@ internal final class GraphScene: SKScene {
 
     private func updateLayoutSettlingState() {
         layoutSettlingFrames += 1
-        let nodeCount = max(1, simulator.nodesByID.count)
-        let energyPerNode = simulator.totalEnergy() / CGFloat(nodeCount)
-        if layoutSettlingFrames >= Self.layoutSettlingFrameLimit ||
+        let nodeCount = max(1, localSettlingNodeIDs?.count ?? simulator.nodesByID.count)
+        let energy = localSettlingNodeIDs.map { simulator.totalEnergy(for: $0) } ?? simulator.totalEnergy()
+        let energyPerNode = energy / CGFloat(nodeCount)
+        let frameLimit = localSettlingNodeIDs == nil
+            ? Self.layoutSettlingFrameLimit
+            : Self.localSettlingFrameLimit
+        if layoutSettlingFrames >= frameLimit ||
             energyPerNode <= Self.layoutSettledEnergyPerNodeThreshold {
+            if let localSettlingNodeIDs {
+                simulator.stopMotion(for: localSettlingNodeIDs)
+                simulator.finishLocalSettling(returningNodeOrigins: localReturningNodeOrigins)
+                self.localSettlingNodeIDs = nil
+                localSettlingBranchNodeIDs = nil
+                localReturningNodeOrigins = [:]
+            }
             layoutIsSettled = true
         }
+    }
+
+    private func clearDragSnapshot() {
+        dragStartPosition = nil
+        dragInitialPositions = [:]
+        dragInitialRestingPositions = [:]
+        dragBranchNodeIDs = []
+    }
+
+    private func cancelScopedSimulation() {
+        if draggedNodeID != nil,
+           !dragInitialPositions.isEmpty {
+            simulator.restoreSnapshot(positions: dragInitialPositions,
+                                      restingPositions: dragInitialRestingPositions)
+        } else if !localReturningNodeOrigins.isEmpty {
+            simulator.finishLocalSettling(returningNodeOrigins: localReturningNodeOrigins)
+        }
+        simulator.stopMotion()
+        localSettlingNodeIDs = nil
+        localSettlingBranchNodeIDs = nil
+        localReturningNodeOrigins = [:]
+        draggedNodeID = nil
+        draggedNodeOffset = nil
+        pendingDraggedNodePosition = nil
+        hasDraggedNode = false
+        clearDragSnapshot()
     }
 
     private func shouldReportPositions() -> Bool {
@@ -930,15 +1272,25 @@ internal final class GraphScene: SKScene {
     }
 
     private func nearestEdgeThreadID(to location: CGPoint) -> String? {
-        graphData.edges
+        let edgeHitTolerance = Self.pruneEdgeHitTolerance * max(cameraNode.xScale, 0.2)
+        return graphData.edges
             .compactMap { edge -> (threadID: String, distance: CGFloat)? in
+                guard edge.kind != .suggested else { return nil }
                 guard graphData.threadByID[edge.threadID] != nil else { return nil }
                 guard let source = simulator.nodesByID[edge.sourceID],
                       let target = simulator.nodesByID[edge.targetID] else { return nil }
                 return (edge.threadID, distanceToSegment(location, source: source.position, target: target.position))
             }
-            .filter { $0.distance < 14 }
+            .filter { $0.distance < edgeHitTolerance }
             .min { $0.distance < $1.distance }?.threadID
+    }
+
+    private func threadID(forGraphNodeID graphNodeID: String?) -> String? {
+        guard let graphNodeID else { return nil }
+        if graphData.threadByID[graphNodeID] != nil {
+            return graphNodeID
+        }
+        return graphData.messageByID[graphNodeID]?.threadID
     }
 
     private func distanceToSegment(_ point: CGPoint, source: CGPoint, target: CGPoint) -> CGFloat {
@@ -951,16 +1303,31 @@ internal final class GraphScene: SKScene {
         return hypot(point.x - projection.x, point.y - projection.y)
     }
 
-    private func labelOccluderRadius(for node: GraphPhysicsNode) -> CGFloat {
+    private func labelOccluderFrame(for node: GraphPhysicsNode) -> CGRect? {
+        graphNodesByID[node.id]?.labelFrame(in: self)
+    }
+
+    private func labelOccluderFramesByID() -> [String: CGRect] {
+        Dictionary(uniqueKeysWithValues: simulator.nodes.compactMap { node in
+            labelOccluderFrame(for: node).map { (node.id, $0) }
+        })
+    }
+
+    private func summaryOcclusionRadius(for node: GraphPhysicsNode) -> CGFloat {
+        if let frame = labelOccluderFrame(for: node) {
+            let centerDistance = hypot(frame.midX - node.position.x,
+                                       frame.midY - node.position.y)
+            return max(node.radius, centerDistance + hypot(frame.width, frame.height) * 0.5)
+        }
         switch node.kind {
         case .message:
-            return summaryCalloutsByID[node.id] == nil ? 0 : 60
-        case .remaining:
-            return 34
+            return node.radius + (summaryCalloutsByID[node.id] == nil ? 18 : 124)
+        case .folderGroup, .ghostGroup, .remaining:
+            return node.radius + 90
         case .thread:
-            return 34
+            return node.radius + 108
         case .center:
-            return 0
+            return node.radius
         }
     }
 
@@ -977,5 +1344,11 @@ internal final class GraphScene: SKScene {
             hash &*= 16_777_619
         }
         return hash
+    }
+}
+
+private extension CGVector {
+    func scaled(by multiplier: CGFloat) -> CGVector {
+        CGVector(dx: dx * multiplier, dy: dy * multiplier)
     }
 }
