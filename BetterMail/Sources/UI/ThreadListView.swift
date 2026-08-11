@@ -29,7 +29,8 @@ internal struct ThreadListView: View {
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @StateObject private var graphSettings = GraphCanvasSettings()
     @StateObject private var graphViewModel = GraphCanvasViewModel(
-        graphTitleCapabilityProvider: GraphTitleProviderFactory.makeCapability
+        graphTitleCapabilityProvider: GraphTitleProviderFactory.makeCapability,
+        graphTopicCapabilityProvider: GraphTopicProviderFactory.makeCapability
     )
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
@@ -50,7 +51,6 @@ internal struct ThreadListView: View {
     private let navBottomSpacing: CGFloat = 12
     private let navCanvasSpacing: CGFloat = 6
     private let inspectorWidth: CGFloat = 320
-    private let graphInspectorSpacing: CGFloat = 18
     private let graphSelectionBarReservation: CGFloat = 78
 
     internal var body: some View {
@@ -171,9 +171,6 @@ internal struct ThreadListView: View {
                                 displaySettings: displaySettings,
                                 topInset: canvasTopPadding,
                                 bottomChromeInset: graphBottomChromeReservation)
-                .padding(.trailing, graphTrailingChromeReservation)
-                .animation(.spring(response: 0.24, dampingFraction: 0.82),
-                           value: graphTrailingChromeReservation)
                 .animation(.easeInOut(duration: 0.2),
                            value: graphBottomChromeReservation)
             } else {
@@ -253,6 +250,8 @@ internal struct ThreadListView: View {
                                value: viewModel.selectedFolderID ?? viewModel.selectedNodeID)
             } else if let selectedNode = viewModel.selectedNode {
                 ThreadInspectorView(node: selectedNode,
+                                    generatedGraphTitle: selectedGeneratedGraphTitle,
+                                    isGraphTitleRegenerating: isSelectedGraphTitleRegenerating,
                                     summaryState: selectedSummaryState,
                                     summaryExpansion: selectedSummaryExpansion,
                                     inspectorSettings: inspectorSettings,
@@ -261,6 +260,10 @@ internal struct ThreadListView: View {
                                     canRegenerateSummary: viewModel.isSummaryProviderAvailable,
                                     onRegenerateSummary: {
                                         viewModel.regenerateNodeSummary(for: selectedNode.id)
+                                    },
+                                    canRegenerateGraphTitle: canRegenerateSelectedGraphTitle,
+                                    onRegenerateGraphTitle: {
+                                        graphViewModel.regenerateGraphTitle(for: selectedNode.id)
                                     },
                                     onOpenInMail: viewModel.openMessageInMail,
                                     onCopyOpenInMailText: viewModel.copyToPasteboard)
@@ -285,11 +288,6 @@ internal struct ThreadListView: View {
 
     private var canvasTopPadding: CGFloat {
         navHeight + navTopPadding + navCanvasSpacing
-    }
-
-    private var graphTrailingChromeReservation: CGFloat {
-        guard graphSettings.mode == .graph, isInspectorVisible else { return 0 }
-        return inspectorWidth + navHorizontalPadding + graphInspectorSpacing
     }
 
     private var graphBottomChromeReservation: CGFloat {
@@ -997,6 +995,21 @@ internal struct ThreadListView: View {
             return nil
         }
         return viewModel.summaryState(for: selectedNodeID)
+    }
+
+    private var selectedGeneratedGraphTitle: String? {
+        guard graphSettings.mode == .graph else { return nil }
+        return graphViewModel.generatedGraphTitle(for: viewModel.selectedNodeID)
+    }
+
+    private var isSelectedGraphTitleRegenerating: Bool {
+        guard graphSettings.mode == .graph else { return false }
+        return graphViewModel.isRegeneratingGraphTitle(for: viewModel.selectedNodeID)
+    }
+
+    private var canRegenerateSelectedGraphTitle: Bool {
+        guard graphSettings.mode == .graph else { return false }
+        return graphViewModel.canRegenerateGraphTitle(for: viewModel.selectedNodeID)
     }
 
     private var selectedSummaryExpansion: Binding<Bool>? {

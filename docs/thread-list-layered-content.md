@@ -21,7 +21,7 @@ ZStack draw order (back to front):
 ### 2) inspectorOverlay
 - Role: Shows folder or thread inspector on the top-right when a selection exists.
 - Key inputs: `viewModel.selectedFolder`, `viewModel.selectedNode`, `inspectorSettings`, `selectedSummaryState`.
-- Notes: Uses a spring transition and keeps a fixed width; offset down by `navInsetHeight` so it clears the nav bar.
+- Notes: Uses a spring transition and keeps a fixed width; offset down by `navInsetHeight` so it clears the nav bar. It overlays the canvas rather than reserving graph width, so selection does not resize or reflow the graph.
 
 ### 3) navigationBarOverlay
 - Role: Top navigation bar with status, refresh controls, and limit settings.

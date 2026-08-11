@@ -13,10 +13,12 @@ internal final class ObsidianGraphScene: SKScene {
     private static let maximumSettlingFrames = 240
     private static let reducedMotionSettlingFrames = 48
 
-    internal var onSelectGraphNode: ((String?) -> Void)?
+    internal var onSelectGraphNode: ((String?, Bool) -> Void)?
     internal var onExpandRemainingBranches: (() -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
+    internal var onToggleActionItem: ((String) -> Void)?
+    internal var isActionItem: ((String) -> Bool)?
     internal var onPruneThread: ((String) -> Void)?
     internal var onPruneAnimationFinished: ((UUID) -> Void)?
     internal var onViewportChanged: ((CGFloat, CGPoint) -> Void)?
@@ -53,7 +55,7 @@ internal final class ObsidianGraphScene: SKScene {
     private var forceConfig = ObsidianGraphForceConfig.defaults
     private var displayConfig = ObsidianGraphDisplayConfig.defaults
     private var theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
-    private var selectedGraphNodeID: String?
+    private var selectedGraphNodeIDs: Set<String> = []
     private var hoveredGraphNodeID: String?
     private var pruneMode: GraphPruneMode = .idle
     private var filteredNodeIDs: Set<String> = []
@@ -77,6 +79,7 @@ internal final class ObsidianGraphScene: SKScene {
     private var isPanning = false
     private var hasPanned = false
     private var pendingSelectionID: String?
+    private var pendingSelectionIsAdditive = false
     private var hasPendingSelection = false
 
     private var runningPruneAnimationID: UUID?
@@ -95,6 +98,7 @@ internal final class ObsidianGraphScene: SKScene {
 
     internal func configure(data: GraphData,
                             selectedGraphNodeID: String?,
+                            selectedGraphNodeIDs: Set<String> = [],
                             pruneMode: GraphPruneMode,
                             filteredNodeIDs: Set<String>,
                             wateredCounts: [String: Int],
@@ -119,7 +123,11 @@ internal final class ObsidianGraphScene: SKScene {
             hoveredGraphNodeID = nil
             onHoverItem?(nil)
         }
-        self.selectedGraphNodeID = selectedGraphNodeID.flatMap { data.allNodeIDs.contains($0) ? $0 : nil }
+        self.selectedGraphNodeIDs = selectedGraphNodeIDs.intersection(data.allNodeIDs)
+        if let selectedGraphNodeID,
+           data.allNodeIDs.contains(selectedGraphNodeID) {
+            self.selectedGraphNodeIDs.insert(selectedGraphNodeID)
+        }
         self.pruneMode = pruneMode
         self.filteredNodeIDs = filteredNodeIDs
         self.wateredCounts = wateredCounts
@@ -209,14 +217,17 @@ internal final class ObsidianGraphScene: SKScene {
         onExpandRemainingBranches = nil
         onHoverItem = nil
         onWaterThread = nil
+        onToggleActionItem = nil
+        isActionItem = nil
         onPruneThread = nil
         onPruneAnimationFinished = nil
         onViewportChanged = nil
         onPositionsChanged = nil
         onFrameRatePreferenceChanged = nil
-        selectedGraphNodeID = nil
+        selectedGraphNodeIDs = []
         hoveredGraphNodeID = nil
         pendingSelectionID = nil
+        pendingSelectionIsAdditive = false
         draggedNodeID = nil
         graphData = .empty
         simulator = ObsidianGraphForceSimulator()
@@ -235,6 +246,7 @@ internal final class ObsidianGraphScene: SKScene {
         hasDraggedNode = false
         hasPendingSelection = false
         pendingSelectionID = nil
+        pendingSelectionIsAdditive = false
         let location = event.location(in: self)
         let hitNodeID = hitTestNodeID(at: location)
 
@@ -259,6 +271,7 @@ internal final class ObsidianGraphScene: SKScene {
                 return
             }
             pendingSelectionID = hitNodeID
+            pendingSelectionIsAdditive = event.modifierFlags.contains(.command)
             hasPendingSelection = true
             if let physicsNode = simulator.nodesByID[hitNodeID] {
                 draggedNodeID = hitNodeID
@@ -274,7 +287,7 @@ internal final class ObsidianGraphScene: SKScene {
         if event.clickCount >= 2 {
             hasPendingSelection = false
             isPanning = false
-            onSelectGraphNode?(nil)
+            onSelectGraphNode?(nil, false)
             recenterCamera(animated: true)
         }
     }
@@ -312,7 +325,7 @@ internal final class ObsidianGraphScene: SKScene {
                                               y: location.y + draggedNodeOffset.y))
             wakeLayout()
         } else if hasPendingSelection && !hasPanned {
-            onSelectGraphNode?(pendingSelectionID)
+            onSelectGraphNode?(pendingSelectionID, pendingSelectionIsAdditive)
         }
         draggedNodeID = nil
         draggedNodeOffset = .zero
@@ -320,6 +333,7 @@ internal final class ObsidianGraphScene: SKScene {
         isPanning = false
         hasPanned = false
         pendingSelectionID = nil
+        pendingSelectionIsAdditive = false
         hasPendingSelection = false
         publishFrameRatePreferenceIfNeeded()
     }
@@ -330,6 +344,7 @@ internal final class ObsidianGraphScene: SKScene {
         isPanning = true
         hasPanned = false
         hasPendingSelection = false
+        pendingSelectionIsAdditive = false
     }
 
     override func rightMouseDragged(with event: NSEvent) {
@@ -344,6 +359,43 @@ internal final class ObsidianGraphScene: SKScene {
         markInteraction()
         isPanning = false
         hasPanned = false
+    }
+
+    internal func contextMenu(at viewPoint: CGPoint) -> NSMenu? {
+        let location = convertPoint(fromView: viewPoint)
+        guard let graphNodeID = hitTestNodeID(at: location) else { return nil }
+        markInteraction()
+        clearHover()
+        return actionItemContextMenu(forGraphNodeID: graphNodeID)
+    }
+
+    internal func actionItemContextMenu(forGraphNodeID graphNodeID: String) -> NSMenu? {
+        guard pruneMode == .idle,
+              graphData.threadByID[graphNodeID] != nil || graphData.messageByID[graphNodeID] != nil,
+              let onToggleActionItem else {
+            return nil
+        }
+
+        onSelectGraphNode?(graphNodeID, false)
+        let isActionItem = isActionItem?(graphNodeID) ?? false
+        let title = isActionItem
+            ? NSLocalizedString("graph.actions.remove_action_item",
+                                comment: "Remove selected graph email from action items")
+            : NSLocalizedString("graph.actions.action_item",
+                                comment: "Mark selected graph email as an action item")
+        let action = GraphContextMenuAction {
+            onToggleActionItem(graphNodeID)
+        }
+        let item = NSMenuItem(title: title,
+                              action: #selector(GraphContextMenuAction.perform(_:)),
+                              keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: isActionItem ? "checkmark.circle.fill" : "bolt.circle",
+                             accessibilityDescription: title)
+        item.target = action
+        item.representedObject = action
+        let menu = NSMenu()
+        menu.addItem(item)
+        return menu
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -499,10 +551,10 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func applyVisualState() {
-        let focusedID = hoveredGraphNodeID ?? selectedGraphNodeID
-        let neighbors = focusedID.flatMap { neighborIDsByNodeID[$0] } ?? []
+        let focusedNodeIDs = hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+        let neighbors = Set(focusedNodeIDs.flatMap { neighborIDsByNodeID[$0] ?? [] })
         for (id, node) in graphNodesByID {
-            let isSelected = selectedGraphNodeID == id
+            let isSelected = selectedGraphNodeIDs.contains(id)
             let isHovered = hoveredGraphNodeID == id
             let isNeighbor = neighbors.contains(id)
             let isFiltered = !filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(id)
@@ -510,7 +562,7 @@ internal final class ObsidianGraphScene: SKScene {
                             isHovered: isHovered,
                             isNeighbor: isNeighbor,
                             isDimmed: isFiltered,
-                            hasFocusedNode: focusedID != nil)
+                            hasFocusedNode: !focusedNodeIDs.isEmpty)
         }
         for edge in graphData.edges {
             guard let visual = edgeVisualsByID[edge.id] else { continue }
@@ -520,8 +572,10 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func applyStyle(to visual: EdgeVisual, edge: GraphEdge) {
-        let focusedID = hoveredGraphNodeID ?? selectedGraphNodeID
-        let isConnected = focusedID == nil || edge.sourceID == focusedID || edge.targetID == focusedID
+        let focusedNodeIDs = hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+        let isConnected = focusedNodeIDs.isEmpty
+            || focusedNodeIDs.contains(edge.sourceID)
+            || focusedNodeIDs.contains(edge.targetID)
         let isFiltered = !filteredNodeIDs.isEmpty
             && (!filteredNodeIDs.contains(edge.sourceID) || !filteredNodeIDs.contains(edge.targetID))
         let baseColor: NSColor
@@ -534,21 +588,21 @@ internal final class ObsidianGraphScene: SKScene {
             baseColor = theme.inkTertiaryNS
         }
         let alpha: CGFloat = isFiltered ? 0.08 : isConnected ? 0.58 : 0.10
-        let color = (isConnected && focusedID != nil ? theme.accentNS : baseColor).withAlphaComponent(alpha)
+        let color = (isConnected && !focusedNodeIDs.isEmpty ? theme.accentNS : baseColor).withAlphaComponent(alpha)
         visual.line.strokeColor = color
-        visual.line.lineWidth = displayConfig.linkThickness * (isConnected && focusedID != nil ? 1.35 : 1)
+        visual.line.lineWidth = displayConfig.linkThickness * (isConnected && !focusedNodeIDs.isEmpty ? 1.35 : 1)
         visual.arrow.strokeColor = color
         visual.arrow.lineWidth = max(0.8, displayConfig.linkThickness)
     }
 
     private func updateLabels() {
-        let focusedID = hoveredGraphNodeID ?? selectedGraphNodeID
-        let focusedIDs = Set([selectedGraphNodeID, hoveredGraphNodeID].compactMap { $0 })
-        let neighbors = focusedID.flatMap { neighborIDsByNodeID[$0] } ?? []
+        let focusedNodeIDs = hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+        let visibleNodeIDs = selectedGraphNodeIDs.union(focusedNodeIDs)
+        let neighbors = Set(focusedNodeIDs.flatMap { neighborIDsByNodeID[$0] ?? [] })
         for (id, node) in graphNodesByID {
             node.updateLabel(zoomScale: currentZoomScale,
                              threshold: displayConfig.textFadeThreshold,
-                             forceVisible: focusedIDs.contains(id) || neighbors.contains(id))
+                             forceVisible: visibleNodeIDs.contains(id) || neighbors.contains(id))
         }
     }
 
@@ -841,5 +895,17 @@ internal final class ObsidianGraphScene: SKScene {
         let t = max(0, min(1, ((point.x - source.x) * dx + (point.y - source.y) * dy) / lengthSquared))
         let projection = CGPoint(x: source.x + t * dx, y: source.y + t * dy)
         return hypot(point.x - projection.x, point.y - projection.y)
+    }
+}
+
+internal final class GraphContextMenuAction: NSObject {
+    private let handler: () -> Void
+
+    internal init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc internal func perform(_ sender: Any?) {
+        handler()
     }
 }

@@ -216,20 +216,427 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertEqual(grouping?.threadIDs, [GraphData.threadNodeID(for: "root-a")])
     }
 
-    func test_mapping_withSharedAppleIntelligenceTag_createsConfirmableGhostBranch() {
+    func test_mapping_withSharedWholeConversationTopic_createsConfirmableGhostBranch() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 1),
                                            makeThread(rootID: "root-b", messageCount: 1),
                                            makeThread(rootID: "root-c", messageCount: 1)],
-                                   tagsByNodeID: ["root-a": ["Launch"],
-                                                  "root-b": ["launch"],
-                                                  "root-c": ["Finance"]],
+                                   topicSignalsByRawThreadID: [
+                                    "root-a": makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+                                    "root-b": makeTopicSignal("CR60 Booking Rollout", confidence: 0.86),
+                                    "root-c": makeTopicSignal("Finance planning", confidence: 0.90)
+                                   ],
                                    now: Date(timeIntervalSince1970: 10_000))
 
         let suggestion = graph.groupings.first { $0.kind == .suggestedTopic }
-        XCTAssertEqual(suggestion?.title, "Launch")
+        XCTAssertEqual(suggestion?.title, "CR60 booking rollout")
         XCTAssertEqual(Set(suggestion?.rawThreadIDs ?? []), ["root-a", "root-b"])
+        XCTAssertEqual(suggestion?.reviewMembers.map(\.fullTitle), ["Subject root-a", "Subject root-b"])
         XCTAssertTrue(suggestion?.isSuggestion == true)
         XCTAssertTrue(graph.edges.contains { $0.sourceID == suggestion?.id && $0.kind == .suggested })
+    }
+
+    func test_mapping_whenSuggestedTopicIsDismissed_hidesEquivalentNormalizedSuggestion() {
+        let roots = [makeThread(rootID: "root-a", messageCount: 1),
+                     makeThread(rootID: "root-b", messageCount: 1),
+                     makeThread(rootID: "root-c", messageCount: 1),
+                     makeThread(rootID: "root-d", messageCount: 1)]
+        let originalSignals = [
+            "root-a": makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+            "root-b": makeTopicSignal("CR60 Booking Rollout", confidence: 0.86),
+            "root-c": makeTopicSignal("Finance planning", confidence: 0.90),
+            "root-d": makeTopicSignal("Finance Planning", confidence: 0.86)
+        ]
+        let initialGraph = GraphData.make(roots: roots,
+                                          topicSignalsByRawThreadID: originalSignals,
+                                          now: Date(timeIntervalSince1970: 10_000))
+        guard let rolloutSuggestion = initialGraph.groupings.first(where: { grouping in
+            grouping.isSuggestion && Set(grouping.rawThreadIDs) == ["root-a", "root-b"]
+        }), let dismissalID = rolloutSuggestion.suggestionDismissalID else {
+            return XCTFail("Expected a dismissible rollout topic suggestion")
+        }
+
+        let remappedGraph = GraphData.make(
+            roots: roots,
+            topicSignalsByRawThreadID: originalSignals,
+            dismissedSuggestedTopicIDs: [dismissalID],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertFalse(remappedGraph.groupings.contains { grouping in
+            grouping.isSuggestion && Set(grouping.rawThreadIDs) == ["root-a", "root-b"]
+        })
+        XCTAssertTrue(remappedGraph.groupings.contains { grouping in
+            grouping.isSuggestion && Set(grouping.rawThreadIDs) == ["root-c", "root-d"]
+        })
+    }
+}
+
+final class GraphSuggestionDismissalSettingsTests: XCTestCase {
+    @MainActor
+    func test_dismissSuggestedTopic_whenSettingsAreRecreated_persistsDismissal() throws {
+        let suiteName = "GraphSuggestionDismissalSettingsTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let dismissalID = "suggestion:launch:root-a.root-b"
+
+        let firstSettings = GraphCanvasSettings(userDefaults: defaults)
+        firstSettings.dismissSuggestedTopic(id: dismissalID)
+
+        let recreatedSettings = GraphCanvasSettings(userDefaults: defaults)
+        XCTAssertTrue(recreatedSettings.dismissedSuggestedTopicIDs.contains(dismissalID))
+    }
+
+    @MainActor
+    func test_topicPreferences_whenPersistedAndReset_remainIndependent() throws {
+        let suiteName = "GraphSuggestionPreferencesTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let exactID = try XCTUnwrap(GraphTopicPreferenceID.exact(
+            normalizedTopic: "CR60 booking rollout",
+            rawThreadIDs: ["root-a", "root-b"]
+        ))
+
+        let firstSettings = GraphCanvasSettings(userDefaults: defaults)
+        firstSettings.rejectSuggestedGroup(id: exactID)
+        firstSettings.hideSuggestedTopic(" Finance Planning ")
+
+        let recreatedSettings = GraphCanvasSettings(userDefaults: defaults)
+        XCTAssertEqual(recreatedSettings.dismissedSuggestedTopicIDs, [exactID])
+        XCTAssertEqual(recreatedSettings.hiddenSuggestedTopics, ["finance planning"])
+
+        recreatedSettings.resetSuggestedTopicPreferences()
+        let resetSettings = GraphCanvasSettings(userDefaults: defaults)
+        XCTAssertTrue(resetSettings.dismissedSuggestedTopicIDs.isEmpty)
+        XCTAssertTrue(resetSettings.hiddenSuggestedTopics.isEmpty)
+        XCTAssertFalse(resetSettings.hasSuggestedTopicPreferences)
+    }
+}
+
+final class GraphTopicQualityTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 2_000_000)
+
+    func test_normalization_isLocaleInvariantAndCanonical() {
+        XCTAssertEqual(GraphTopicNormalizer.normalize("  CR60—Bóóking / ROLLOUT!  "),
+                       "cr60 booking rollout")
+        XCTAssertEqual(GraphTopicNormalizer.normalize("ＣＲ６０ booking.rollout"),
+                       "cr60 booking rollout")
+    }
+
+    func test_genericTopicRejection_rejectsWorkflowLabelsButKeepsSpecificTopic() {
+        for topic in ["Update", "Review", "Meeting", "Weekly meeting", "Status"] {
+            XCTAssertTrue(GraphTopicQualityPolicy.isGeneric(topic), topic)
+            XCTAssertEqual(GraphTopicQualityPolicy.specificity(of: topic), 0, topic)
+        }
+        XCTAssertFalse(GraphTopicQualityPolicy.isGeneric("CR60 booking rollout"))
+        XCTAssertGreaterThanOrEqual(GraphTopicQualityPolicy.specificity(of: "CR60 booking rollout"),
+                                    GraphTopicRanker.minimumSpecificity)
+    }
+
+    func test_thresholds_rejectLowConfidenceAndLowOverallQuality() {
+        let recent = [
+            makeTopicConversation("a", date: now.addingTimeInterval(-3_600)),
+            makeTopicConversation("b", date: now.addingTimeInterval(-7_200))
+        ]
+        let lowConfidence = GraphTopicRanker.rank(
+            conversations: recent,
+            signalsByRawThreadID: [
+                "a": makeTopicSignal("CR60 booking rollout", confidence: 0.67),
+                "b": makeTopicSignal("CR60 booking rollout", confidence: 0.67)
+            ],
+            now: now
+        )
+        XCTAssertTrue(lowConfidence.isEmpty)
+
+        let oldFoldered = [
+            makeTopicConversation("a", date: now.addingTimeInterval(-400 * 86_400), folderID: "folder-a"),
+            makeTopicConversation("b", date: now.addingTimeInterval(-250 * 86_400), folderID: "folder-b")
+        ]
+        let lowQuality = GraphTopicRanker.rank(
+            conversations: oldFoldered,
+            signalsByRawThreadID: [
+                "a": makeTopicSignal("booking rollout", confidence: 0.68),
+                "b": makeTopicSignal("booking rollout", confidence: 0.68)
+            ],
+            now: now
+        )
+        XCTAssertTrue(lowQuality.isEmpty)
+    }
+
+    func test_scoringOrder_prioritizesSpecificConfidentCohesiveUsefulTopic() {
+        let conversations = [
+            makeTopicConversation("a", date: now.addingTimeInterval(-3_600)),
+            makeTopicConversation("b", date: now.addingTimeInterval(-7_200)),
+            makeTopicConversation("c", date: now.addingTimeInterval(-300 * 86_400)),
+            makeTopicConversation("d", date: now.addingTimeInterval(-240 * 86_400))
+        ]
+        let ranked = GraphTopicRanker.rank(
+            conversations: conversations,
+            signalsByRawThreadID: [
+                "a": makeTopicSignal("CR60 booking rollout", confidence: 0.82),
+                "b": makeTopicSignal("CR60 booking rollout", confidence: 0.82),
+                "c": makeTopicSignal("budget planning", confidence: 0.95),
+                "d": makeTopicSignal("budget planning", confidence: 0.95)
+            ],
+            now: now
+        )
+
+        XCTAssertEqual(ranked.map(\.normalizedTopic), ["cr60 booking rollout", "budget planning"])
+        XCTAssertGreaterThan(ranked[0].qualityScore, ranked[1].qualityScore)
+    }
+
+    func test_topThree_returnsOnlyThreePassingCandidatesWithStableTieBreak() {
+        var conversations: [GraphTopicConversation] = []
+        var signals: [String: GraphTopicSignal] = [:]
+        for index in 1...4 {
+            for suffix in ["a", "b"] {
+                let threadID = "\(index)-\(suffix)"
+                conversations.append(makeTopicConversation(threadID,
+                                                            date: now.addingTimeInterval(Double(-index * 60))))
+                signals[threadID] = makeTopicSignal("A\(index) rollout stream", confidence: 0.90)
+            }
+        }
+
+        let ranked = GraphTopicRanker.rank(conversations: conversations,
+                                           signalsByRawThreadID: signals,
+                                           now: now)
+
+        XCTAssertEqual(ranked.count, 3)
+        XCTAssertEqual(ranked.map(\.normalizedTopic),
+                       ["a1 rollout stream", "a2 rollout stream", "a3 rollout stream"])
+    }
+
+    func test_zeroResult_whenSignalsAreMissingGenericOrSingleThread() {
+        let conversations = [
+            makeTopicConversation("a", date: now),
+            makeTopicConversation("b", date: now)
+        ]
+        XCTAssertTrue(GraphTopicRanker.rank(conversations: conversations,
+                                            signalsByRawThreadID: [:],
+                                            now: now).isEmpty)
+        XCTAssertTrue(GraphTopicRanker.rank(
+            conversations: conversations,
+            signalsByRawThreadID: [
+                "a": makeTopicSignal("Meeting", confidence: 0.99),
+                "b": makeTopicSignal("meeting", confidence: 0.99)
+            ],
+            now: now
+        ).isEmpty)
+        XCTAssertTrue(GraphTopicRanker.rank(
+            conversations: conversations,
+            signalsByRawThreadID: ["a": makeTopicSignal("CR60 booking rollout", confidence: 0.99)],
+            now: now
+        ).isEmpty)
+    }
+
+    func test_deduplication_mergesCanonicalTopicVariantsIntoOneCandidate() {
+        let ranked = GraphTopicRanker.rank(
+            conversations: [makeTopicConversation("a", date: now),
+                            makeTopicConversation("b", date: now)],
+            signalsByRawThreadID: [
+                "a": makeTopicSignal("CR60—Booking Rollout", confidence: 0.88),
+                "b": makeTopicSignal("cr60 booking rollout", confidence: 0.90)
+            ],
+            now: now
+        )
+
+        XCTAssertEqual(ranked.count, 1)
+        XCTAssertEqual(ranked.first?.normalizedTopic, "cr60 booking rollout")
+        XCTAssertEqual(Set(ranked.first?.members.map(\.rawThreadID) ?? []), ["a", "b"])
+    }
+
+    func test_visibleScopeStability_keepsRankedMembersIndependentOfInitialPage() throws {
+        let roots = [makeThread(rootID: "root-a", messageCount: 1),
+                     makeThread(rootID: "root-b", messageCount: 1),
+                     makeThread(rootID: "root-c", messageCount: 1),
+                     makeThread(rootID: "root-d", messageCount: 1)]
+        let signals = [
+            "root-c": makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+            "root-d": makeTopicSignal("CR60 booking rollout", confidence: 0.88)
+        ]
+        let initialPage = GraphData.make(roots: roots,
+                                         topicSignalsByRawThreadID: signals,
+                                         branchLimit: 2,
+                                         now: Date(timeIntervalSince1970: 10_000))
+        let expandedPage = GraphData.make(roots: roots,
+                                          topicSignalsByRawThreadID: signals,
+                                          branchLimit: 4,
+                                          now: Date(timeIntervalSince1970: 10_000))
+        let initialSuggestion = try XCTUnwrap(initialPage.groupings.first(where: \.isSuggestion))
+        let expandedSuggestion = try XCTUnwrap(expandedPage.groupings.first(where: \.isSuggestion))
+
+        XCTAssertEqual(initialSuggestion.id, expandedSuggestion.id)
+        XCTAssertEqual(initialSuggestion.rawThreadIDs, expandedSuggestion.rawThreadIDs)
+        XCTAssertEqual(initialSuggestion.reviewMembers, expandedSuggestion.reviewMembers)
+        XCTAssertTrue(initialSuggestion.threadIDs.isEmpty)
+        XCTAssertEqual(Set(expandedSuggestion.threadIDs),
+                       [GraphData.threadNodeID(for: "root-c"), GraphData.threadNodeID(for: "root-d")])
+    }
+
+    func test_rejectionModes_exactRejectionAllowsChangedMembershipButHiddenTopicDoesNot() throws {
+        let baseConversations = [makeTopicConversation("a", date: now),
+                                 makeTopicConversation("b", date: now)]
+        let baseSignals = [
+            "a": makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+            "b": makeTopicSignal("CR60 booking rollout", confidence: 0.88)
+        ]
+        let initial = try XCTUnwrap(GraphTopicRanker.rank(conversations: baseConversations,
+                                                          signalsByRawThreadID: baseSignals,
+                                                          now: now).first)
+        let exactID = try XCTUnwrap(initial.exactPreferenceID)
+        XCTAssertTrue(GraphTopicRanker.rank(
+            conversations: baseConversations,
+            signalsByRawThreadID: baseSignals,
+            dismissedExactPreferenceIDs: [exactID],
+            now: now
+        ).isEmpty)
+
+        let changedConversations = baseConversations + [makeTopicConversation("c", date: now)]
+        let changedSignals = baseSignals.merging([
+            "c": makeTopicSignal("CR60 booking rollout", confidence: 0.86)
+        ], uniquingKeysWith: { _, new in new })
+        let changedMembership = GraphTopicRanker.rank(
+            conversations: changedConversations,
+            signalsByRawThreadID: changedSignals,
+            dismissedExactPreferenceIDs: [exactID],
+            now: now
+        )
+        XCTAssertEqual(changedMembership.first?.members.count, 3)
+        XCTAssertTrue(GraphTopicRanker.rank(
+            conversations: changedConversations,
+            signalsByRawThreadID: changedSignals,
+            dismissedExactPreferenceIDs: [exactID],
+            hiddenNormalizedTopics: ["CR60 BOOKING ROLLOUT"],
+            now: now
+        ).isEmpty)
+    }
+
+    func test_exactPreferenceIdentity_preservesMemberIDsAndHonorsLegacyDismissals() throws {
+        let punctuationID = try XCTUnwrap(GraphTopicPreferenceID.exact(
+            normalizedTopic: "CR60 booking rollout",
+            rawThreadIDs: ["thread-a-b", "thread-c"]
+        ))
+        let whitespaceID = try XCTUnwrap(GraphTopicPreferenceID.exact(
+            normalizedTopic: "CR60 booking rollout",
+            rawThreadIDs: ["thread-a b", "thread-c"]
+        ))
+        XCTAssertNotEqual(punctuationID, whitespaceID,
+                          "Exact member sets must not collide after identifier sanitization")
+
+        let conversations = [makeTopicConversation("a", date: now),
+                             makeTopicConversation("b", date: now)]
+        let signals = [
+            "a": makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+            "b": makeTopicSignal("CR60 booking rollout", confidence: 0.88)
+        ]
+        let legacyID = try XCTUnwrap(GraphTopicPreferenceID.legacyExact(
+            normalizedTopic: "CR60 booking rollout",
+            rawThreadIDs: ["a", "b"]
+        ))
+        XCTAssertTrue(GraphTopicRanker.rank(
+            conversations: conversations,
+            signalsByRawThreadID: signals,
+            dismissedExactPreferenceIDs: [legacyID],
+            now: now
+        ).isEmpty)
+    }
+}
+
+final class GraphSuggestionReviewViewModelTests: XCTestCase {
+    @MainActor
+    func test_create_passesEditedNameAndOnlySelectedMembersExactly() async {
+        var capturedName: String?
+        var capturedThreadIDs: Set<String>?
+        let viewModel = GraphSuggestionReviewViewModel(
+            grouping: makeReviewGrouping(),
+            impactProvider: { _ in .none },
+            confirmFolder: { name, threadIDs in
+                capturedName = name
+                capturedThreadIDs = threadIDs
+            }
+        )
+        viewModel.folderName = "Edited CR60 rollout"
+        viewModel.setSelected(false, member: viewModel.members[2])
+
+        await viewModel.requestCreate()
+
+        XCTAssertEqual(capturedName, "Edited CR60 rollout")
+        XCTAssertEqual(capturedThreadIDs, ["root-a", "root-b"])
+        XCTAssertTrue(viewModel.didCreateFolder)
+    }
+
+    @MainActor
+    func test_existingFolderImpact_requiresConfirmationAndCancellationDoesNotMutate() async {
+        var confirmationCount = 0
+        let impact = GraphFolderSuggestionImpact(affectedFolders: [
+            .init(id: "folder-a", title: "Existing", movedThreadCount: 2, willBeRemoved: true)
+        ])
+        let viewModel = GraphSuggestionReviewViewModel(
+            grouping: makeReviewGrouping(),
+            impactProvider: { _ in impact },
+            confirmFolder: { _, _ in confirmationCount += 1 }
+        )
+
+        await viewModel.requestCreate()
+        XCTAssertTrue(viewModel.isImpactConfirmationPresented)
+        XCTAssertEqual(confirmationCount, 0)
+
+        viewModel.cancelExistingFolderImpact()
+        XCTAssertFalse(viewModel.isImpactConfirmationPresented)
+        XCTAssertEqual(confirmationCount, 0)
+
+        await viewModel.requestCreate()
+        await viewModel.confirmExistingFolderImpact()
+        XCTAssertEqual(confirmationCount, 1)
+        XCTAssertTrue(viewModel.didCreateFolder)
+    }
+
+    @MainActor
+    func test_existingFolderImpact_preservesParentWithChildrenAndFlagsOnlyEmptiedLeaves() throws {
+        let suiteName = "GraphFolderSuggestionImpactTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let threadViewModel = ThreadCanvasViewModel(
+            settings: AutoRefreshSettings(),
+            inspectorSettings: InspectorViewSettings(),
+            store: store,
+            summaryCapability: EmailSummaryCapability(provider: nil,
+                                                      statusMessage: "Unavailable",
+                                                      providerID: "test-none"),
+            tagCapability: EmailTagCapability(provider: nil,
+                                              statusMessage: "Unavailable",
+                                              providerID: "test-none")
+        )
+        let parent = ThreadFolder(id: "folder-parent",
+                                  title: "Parent",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["root-a"],
+                                  parentID: nil)
+        let emptiedChild = ThreadFolder(id: "folder-child",
+                                        title: "Child",
+                                        color: .defaultNewFolder,
+                                        threadIDs: ["root-b"],
+                                        parentID: parent.id)
+        let partiallyMovedLeaf = ThreadFolder(id: "folder-partial",
+                                              title: "Partial",
+                                              color: .defaultNewFolder,
+                                              threadIDs: ["root-c", "root-d"],
+                                              parentID: nil)
+        threadViewModel.applyRethreadResultForTesting(
+            roots: [],
+            folders: [parent, emptiedChild, partiallyMovedLeaf]
+        )
+
+        let impact = threadViewModel.graphFolderSuggestionImpact(
+            for: ["root-a", "root-b", "root-c"]
+        )
+        let impactByID = Dictionary(uniqueKeysWithValues: impact.affectedFolders.map { ($0.id, $0) })
+
+        XCTAssertEqual(impact.movedThreadCount, 3)
+        XCTAssertFalse(try XCTUnwrap(impactByID[parent.id]).willBeRemoved,
+                       "A parent with a child folder must remain even when its direct membership empties")
+        XCTAssertTrue(try XCTUnwrap(impactByID[emptiedChild.id]).willBeRemoved)
+        XCTAssertFalse(try XCTUnwrap(impactByID[partiallyMovedLeaf.id]).willBeRemoved)
     }
 }
 
@@ -1453,6 +1860,7 @@ final class GraphTitleGenerationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(generatedTitle, "CR60 Booking Flow")
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "CR60 Booking Flow")
         let firstCallCount = await provider.callCount
         XCTAssertEqual(firstCallCount, 1)
 
@@ -1467,6 +1875,121 @@ final class GraphTitleGenerationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         let finalCallCount = await provider.callCount
         XCTAssertEqual(finalCallCount, 1)
+    }
+
+    @MainActor
+    func test_viewModel_regenerateGraphTitle_bypassesMatchingCachedTitle() async throws {
+        let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = SequentialGraphTitleProvider(titles: [
+            "HKJC CRC Review Materials CR#60",
+            "HKJC CRC Booking Review CR#60"
+        ])
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "Confirm the CR#60 booking-flow walkthrough scope and review materials.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary])
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "HKJC CRC Review Materials CR#60" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "HKJC CRC Review Materials CR#60")
+
+        viewModel.regenerateGraphTitle(for: "root")
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "HKJC CRC Booking Review CR#60" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "HKJC CRC Booking Review CR#60")
+        let regenerationCallCount = await provider.callCount
+        XCTAssertEqual(regenerationCallCount, 2)
+        let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
+        XCTAssertEqual(cached.first?.summaryText, "HKJC CRC Booking Review CR#60")
+    }
+
+    @MainActor
+    func test_viewModel_regenerateGraphTitle_withoutSummary_isNoOp() async throws {
+        let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "Unused title")
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:])
+
+        viewModel.regenerateGraphTitle(for: "root")
+        try await Task.sleep(for: .milliseconds(100))
+
+        let noOpCallCount = await provider.callCount
+        XCTAssertEqual(noOpCallCount, 0)
+        XCTAssertFalse(viewModel.canRegenerateGraphTitle(for: "root"))
+    }
+
+    @MainActor
+    func test_viewModel_regenerateGraphTitle_replacesAnInFlightTitleRequest() async throws {
+        let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = SequentialGraphTitleProvider(titles: [
+            "Initial title CR#60",
+            "Regenerated title CR#60"
+        ], delayFirstTitle: .seconds(5))
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "Confirm the CR#60 booking-flow walkthrough scope and review materials.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary])
+        for _ in 0..<150 {
+            if await provider.callCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let initialCallCount = await provider.callCount
+        XCTAssertEqual(initialCallCount, 1)
+
+        viewModel.regenerateGraphTitle(for: "root")
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "Regenerated title CR#60" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "Regenerated title CR#60")
+        XCTAssertFalse(viewModel.isRegeneratingGraphTitle(for: "root"))
+        let regenerationCallCount = await provider.callCount
+        XCTAssertEqual(regenerationCallCount, 2)
     }
 
     @MainActor
@@ -1535,6 +2058,132 @@ final class GraphTitleGenerationTests: XCTestCase {
     }
 }
 
+final class GraphTopicGenerationTests: XCTestCase {
+    @MainActor
+    func test_viewModel_generatesOneWholeConversationSignalPerThreadAndReusesCache() async throws {
+        let suiteName = "GraphTopicGenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTopicProvider(signal: makeTopicSignal(
+            "CR60 booking rollout",
+            confidence: 0.90,
+            reason: "Both conversations cover the CR60 booking rollout scope."
+        ))
+        let capability = GraphTopicCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-topic-v1",
+                                              shouldRetry: false)
+        let roots = [makeThread(rootID: "root-a", messageCount: 3),
+                     makeThread(rootID: "root-b", messageCount: 3)]
+        let summaries = [
+            "root-a": ThreadSummaryState(text: "CR60 rollout scope and booking sequence.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false),
+            "root-b": ThreadSummaryState(text: "CR60 booking rollout owner and timing.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+        ]
+
+        let firstViewModel = GraphCanvasViewModel(
+            store: store,
+            graphTopicCapabilityProvider: { capability }
+        )
+        firstViewModel.setGraphEnrichmentActive(true)
+        firstViewModel.update(roots: roots,
+                              searchQuery: "",
+                              tagsByNodeID: [:],
+                              summariesByNodeID: summaries,
+                              branchPageSize: 4)
+
+        for _ in 0..<150 {
+            if firstViewModel.data.groupings.contains(where: \.isSuggestion) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let firstSuggestion = try XCTUnwrap(
+            firstViewModel.data.groupings.first(where: \.isSuggestion)
+        )
+        XCTAssertEqual(Set(firstSuggestion.rawThreadIDs), ["root-a", "root-b"])
+        XCTAssertEqual(firstSuggestion.reviewMembers.count, 2)
+        XCTAssertEqual(firstSuggestion.threadIDs.count, 2)
+        let generatedCallCount = await provider.callCount
+        XCTAssertEqual(generatedCallCount, 2)
+        let requests = await provider.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests.allSatisfy { !$0.threadSummary.isEmpty })
+        XCTAssertTrue(requests.allSatisfy { $0.representativeContent.contains("Content:") })
+
+        let cached = try await store.fetchSummaries(scope: .graphTopic,
+                                                    ids: ["root-a", "root-b"])
+        XCTAssertEqual(cached.count, 2)
+        XCTAssertTrue(cached.allSatisfy { $0.provider == "test-graph-topic-v1" })
+        firstViewModel.setGraphEnrichmentActive(false)
+
+        let cachedViewModel = GraphCanvasViewModel(
+            store: store,
+            graphTopicCapabilityProvider: { capability }
+        )
+        cachedViewModel.setGraphEnrichmentActive(true)
+        cachedViewModel.update(roots: roots,
+                               searchQuery: "",
+                               tagsByNodeID: [:],
+                               summariesByNodeID: summaries,
+                               branchPageSize: 4)
+        for _ in 0..<150 {
+            if cachedViewModel.data.groupings.contains(where: \.isSuggestion) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertTrue(cachedViewModel.data.groupings.contains(where: \.isSuggestion))
+        let cachedCallCount = await provider.callCount
+        XCTAssertEqual(cachedCallCount, 2,
+                       "Matching whole-conversation fingerprints should reuse the dedicated cache")
+        cachedViewModel.setGraphEnrichmentActive(false)
+    }
+
+    @MainActor
+    func test_viewModel_whenGraphDisappears_cancelsInFlightTopicGeneration() async throws {
+        let suiteName = "GraphTopicGenerationCancellationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTopicProvider(
+            signal: makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+            delay: .seconds(5)
+        )
+        let capability = GraphTopicCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-topic-cancel-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(
+            store: store,
+            graphTopicCapabilityProvider: { capability }
+        )
+        viewModel.setGraphEnrichmentActive(true)
+        viewModel.update(roots: [makeThread(rootID: "root-a", messageCount: 2),
+                                 makeThread(rootID: "root-b", messageCount: 2)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:])
+
+        var attempts = 0
+        while await provider.callCount == 0, attempts < 50 {
+            try await Task.sleep(for: .milliseconds(20))
+            attempts += 1
+        }
+        let startedCallCount = await provider.callCount
+        XCTAssertEqual(startedCallCount, 1)
+
+        viewModel.setGraphEnrichmentActive(false)
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertFalse(viewModel.data.groupings.contains(where: \.isSuggestion))
+        let cached = try await store.fetchSummaries(scope: .graphTopic,
+                                                    ids: ["root-a", "root-b"])
+        XCTAssertTrue(cached.isEmpty)
+    }
+}
+
 final class ObsidianGraphSceneTests: XCTestCase {
     func test_hitTest_whenPointerIsOnLabel_selectsOnlyTheNodeShape() throws {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
@@ -1553,13 +2202,15 @@ final class ObsidianGraphSceneTests: XCTestCase {
         XCTAssertNil(scene.hitTestNodeID(at: labelPoint))
     }
 
-    func test_labelNode_withLongSummary_capsWidthAndKeepsOneLine() throws {
+    func test_labelNode_withLongTitle_preservesFullText() throws {
+        let title = Array(repeating: "Confirm the booking flow owner and rollout sequence", count: 5)
+            .joined(separator: " ")
         let node = ObsidianGraphSceneNode(
             graphID: "thread:long-summary",
             kind: .thread,
             threadID: "long-summary",
             radius: 14,
-            title: String(repeating: "Confirm the booking flow owner and rollout sequence ", count: 5),
+            title: title,
             fillColor: .white,
             strokeColor: .gray,
             textScale: 1,
@@ -1567,9 +2218,49 @@ final class ObsidianGraphSceneTests: XCTestCase {
         )
         let label = try XCTUnwrap(node.children.compactMap { $0 as? SKLabelNode }.first)
 
-        XCTAssertLessThanOrEqual(label.frame.width, 214)
-        XCTAssertTrue(label.text?.hasSuffix("…") == true)
+        XCTAssertEqual(label.text, title)
+        XCTAssertGreaterThan(label.frame.width, 214)
         XCTAssertFalse(label.text?.contains("\n") == true)
+    }
+
+    func test_actionItemContextMenu_whenThreadNodeIsActionItem_selectsAndTogglesNode() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "root")
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        var selectedNodeID: String?
+        var selectedAdditively = true
+        var toggledNodeID: String?
+        scene.onSelectGraphNode = { graphNodeID, isAdditive in
+            selectedNodeID = graphNodeID
+            selectedAdditively = isAdditive
+        }
+        scene.isActionItem = { $0 == threadID }
+        scene.onToggleActionItem = { toggledNodeID = $0 }
+
+        let menu = try XCTUnwrap(scene.actionItemContextMenu(forGraphNodeID: threadID))
+        let item = try XCTUnwrap(menu.items.first)
+        let action = try XCTUnwrap(item.representedObject as? GraphContextMenuAction)
+
+        XCTAssertEqual(menu.items.count, 1)
+        XCTAssertEqual(selectedNodeID, threadID)
+        XCTAssertFalse(selectedAdditively)
+        XCTAssertEqual(item.title,
+                       NSLocalizedString("graph.actions.remove_action_item",
+                                         comment: "Remove selected graph email from action items"))
+        action.perform(item)
+        XCTAssertEqual(toggledNodeID, threadID)
+    }
+
+    func test_actionItemContextMenu_whenNodeIsNotActionable_returnsNil() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        scene.onToggleActionItem = { _ in }
+
+        XCTAssertNil(scene.actionItemContextMenu(forGraphNodeID: GraphCenter.you.id))
     }
 
     func test_teardownForRemoval_releasesGraphAndStopsSceneWork() {
@@ -2052,6 +2743,32 @@ final class GraphSelectionTests: XCTestCase {
         }
     }
 
+    func test_graphNodeIDs_mapsEverySelectedThreadAndMessageNode() async {
+        await MainActor.run {
+            let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else {
+                return XCTFail("Expected isolated defaults")
+            }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+            viewModel.update(roots: [makeThread(rootID: "root", messageCount: 3)],
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:])
+
+            let selectedGraphNodeIDs = viewModel.graphNodeIDs(
+                for: ["root", "root-msg-1", "missing"]
+            )
+
+            XCTAssertEqual(selectedGraphNodeIDs,
+                           Set([
+                               GraphData.threadNodeID(for: "root"),
+                               GraphData.messageNodeID(for: "root-msg-1")
+                           ]))
+        }
+    }
+
     func test_requestSnip_whenArchiveModeWasActive_createsSnipRequest() async {
         await MainActor.run {
             let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
@@ -2240,6 +2957,88 @@ private actor TestGraphTitleProvider: GraphTitleProviding {
         }
         return title
     }
+}
+
+private actor SequentialGraphTitleProvider: GraphTitleProviding {
+    private let titles: [String]
+    private let delayFirstTitle: Duration?
+    private(set) var callCount = 0
+
+    init(titles: [String], delayFirstTitle: Duration? = nil) {
+        precondition(!titles.isEmpty)
+        self.titles = titles
+        self.delayFirstTitle = delayFirstTitle
+    }
+
+    func makeGraphTitle(_ request: GraphTitleRequest) async throws -> String {
+        let titleIndex = callCount
+        callCount += 1
+        if titleIndex == 0, let delayFirstTitle {
+            try await Task.sleep(for: delayFirstTitle)
+        }
+        return titles[min(titleIndex, titles.count - 1)]
+    }
+}
+
+private actor TestGraphTopicProvider: GraphTopicProviding {
+    private let signal: GraphTopicSignal?
+    private let delay: Duration?
+    private(set) var requests: [GraphTopicRequest] = []
+
+    init(signal: GraphTopicSignal?, delay: Duration? = nil) {
+        self.signal = signal
+        self.delay = delay
+    }
+
+    var callCount: Int { requests.count }
+
+    func generateTopic(_ request: GraphTopicRequest) async throws -> GraphTopicSignal? {
+        requests.append(request)
+        if let delay {
+            try await Task.sleep(for: delay)
+        }
+        return signal
+    }
+}
+
+private func makeTopicSignal(_ topic: String,
+                             confidence: Double,
+                             reason: String = "These conversations discuss the same specific workstream.") -> GraphTopicSignal {
+    GraphTopicSignal(topic: topic,
+                     displayTitle: topic,
+                     confidence: confidence,
+                     supportingReason: reason)
+}
+
+private func makeTopicConversation(_ rawThreadID: String,
+                                   date: Date,
+                                   folderID: String? = nil) -> GraphTopicConversation {
+    GraphTopicConversation(rawThreadID: rawThreadID,
+                           graphThreadID: GraphData.threadNodeID(for: rawThreadID),
+                           fullTitle: "Full title \(rawThreadID)",
+                           lastUpdated: date,
+                           existingFolderID: folderID,
+                           existingFolderTitle: folderID.map { "Folder \($0)" })
+}
+
+private func makeReviewGrouping() -> GraphGrouping {
+    let members = ["root-a", "root-b", "root-c"].map { rawThreadID in
+        GraphTopicMember(rawThreadID: rawThreadID,
+                         graphThreadID: GraphData.threadNodeID(for: rawThreadID),
+                         fullTitle: "Full title \(rawThreadID)",
+                         existingFolderID: nil,
+                         existingFolderTitle: nil)
+    }
+    return GraphGrouping(id: "suggestion:cr60-booking-rollout:root-a.root-b.root-c",
+                         title: "CR60 booking rollout",
+                         kind: .suggestedTopic,
+                         threadIDs: members.map(\.graphThreadID),
+                         rawThreadIDs: members.map(\.rawThreadID),
+                         sourceFolderID: nil,
+                         sourceTag: nil,
+                         normalizedTopic: "cr60 booking rollout",
+                         supportingReason: "These conversations discuss the CR60 booking rollout.",
+                         reviewMembers: members)
 }
 
 private func assertPairwiseGeometryPreserved(nodeIDs: Set<String>,

@@ -27,6 +27,8 @@ internal struct ActionItemsView: View {
             if isInspectorVisible, let selectedNode = viewModel.selectedNode {
                 ThreadInspectorView(
                     node: selectedNode,
+                    generatedGraphTitle: nil,
+                    isGraphTitleRegenerating: false,
                     summaryState: viewModel.summaryState(for: selectedNode.id),
                     summaryExpansion: Binding(
                         get: { viewModel.isSummaryExpanded(for: selectedNode.id) },
@@ -37,6 +39,8 @@ internal struct ActionItemsView: View {
                     openInMailState: viewModel.openInMailState,
                     canRegenerateSummary: viewModel.isSummaryProviderAvailable,
                     onRegenerateSummary: { viewModel.regenerateNodeSummary(for: selectedNode.id) },
+                    canRegenerateGraphTitle: false,
+                    onRegenerateGraphTitle: nil,
                     onOpenInMail: viewModel.openMessageInMail,
                     onCopyOpenInMailText: viewModel.copyToPasteboard
                 )

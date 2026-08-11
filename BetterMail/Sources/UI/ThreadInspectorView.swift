@@ -3,6 +3,8 @@ import SwiftUI
 
 internal struct ThreadInspectorView: View {
     internal let node: ThreadNode?
+    internal let generatedGraphTitle: String?
+    internal let isGraphTitleRegenerating: Bool
     internal let summaryState: ThreadSummaryState?
     internal let summaryExpansion: Binding<Bool>?
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
@@ -10,6 +12,8 @@ internal struct ThreadInspectorView: View {
     internal let openInMailState: OpenInMailState?
     internal let canRegenerateSummary: Bool
     internal let onRegenerateSummary: (() -> Void)?
+    internal let canRegenerateGraphTitle: Bool
+    internal let onRegenerateGraphTitle: (() -> Void)?
     internal let onOpenInMail: (ThreadNode) -> Void
     internal let onCopyOpenInMailText: (String) -> Void
 
@@ -69,6 +73,10 @@ internal struct ThreadInspectorView: View {
                     .foregroundStyle(Color.accentColor)
             }
 
+            if let generatedGraphTitle = Self.displayedGeneratedGraphTitle(generatedGraphTitle) {
+                generatedTitleCard(generatedGraphTitle)
+            }
+
             if let summaryState, let summaryExpansion {
                 ThreadSummaryDisclosureView(title: NSLocalizedString("threadcanvas.inspector.summary.title",
                                                                      comment: "Title for the thread summary disclosure in the inspector"),
@@ -102,6 +110,51 @@ internal struct ThreadInspectorView: View {
             openInMailStatus(for: node)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    internal static func displayedGeneratedGraphTitle(_ title: String?) -> String? {
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedTitle.isEmpty ? nil : trimmedTitle
+    }
+
+    private func generatedTitleCard(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
+                Text(NSLocalizedString("threadcanvas.inspector.generated_title.title",
+                                       comment: "Title for the Apple Intelligence generated message title card"))
+                    .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
+                Spacer(minLength: 0)
+                if isGraphTitleRegenerating {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                if let onRegenerateGraphTitle {
+                    Button(action: onRegenerateGraphTitle) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(DesignTokens.font(size: 12, textScale: textScale))
+                    }
+                    .buttonStyle(.plain)
+                    .controlSize(.mini)
+                    .disabled(!canRegenerateGraphTitle || isGraphTitleRegenerating)
+                    .accessibilityLabel(NSLocalizedString("threadcanvas.inspector.generated_title.regenerate",
+                                                          comment: "Accessibility label for regenerating a generated message title"))
+                    .help(NSLocalizedString("threadcanvas.inspector.generated_title.regenerate",
+                                            comment: "Help text for regenerating a generated message title"))
+                    .accessibilityIdentifier(AccessibilityID.threadGeneratedTitleRegenerateButton)
+                }
+            }
+
+            Text(title)
+                .font(DesignTokens.font(size: 13, textScale: textScale))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(generatedTitleBackground)
+        .accessibilityIdentifier(AccessibilityID.threadGeneratedTitle)
     }
 
     private var emptyState: some View {
@@ -140,6 +193,20 @@ internal struct ThreadInspectorView: View {
             shadowY: 8,
             tintOpacity: DesignTokens.Opacity.tint(for: colorScheme)
         )
+    }
+
+    @ViewBuilder
+    private var generatedTitleBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
+        if reduceTransparency {
+            shape
+                .fill(Color(nsColor: NSColor.windowBackgroundColor))
+                .overlay(shape.stroke(Color.secondary.opacity(0.2)))
+        } else {
+            shape
+                .fill(Color.accentColor.opacity(0.08))
+                .overlay(shape.stroke(Color.accentColor.opacity(0.25)))
+        }
     }
 
     private func subjectText(for node: ThreadNode) -> String {

@@ -36,6 +36,7 @@ internal struct GraphSettingsSheet: View {
                     }
                 }
                 displaySection
+                suggestionPreferencesSection
                 forcesSection
                 HStack {
                     Spacer()
@@ -119,6 +120,43 @@ internal struct GraphSettingsSheet: View {
                         range: 0.5...3,
                         step: 0.1,
                         precision: 1)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+    }
+
+    private var suggestionPreferencesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(NSLocalizedString("graph.settings.suggestions.title",
+                                   comment: "Graph suggestion preferences section title"))
+                .font(.headline)
+                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+            Text(NSLocalizedString("graph.settings.suggestions.local_note",
+                                   comment: "Graph suggestions are local preferences, not model training"))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("graph.settings.suggestions.counts",
+                                  comment: "Counts of hidden and exact rejected topic preferences"),
+                settings.hiddenSuggestedTopics.count,
+                settings.dismissedSuggestedTopicIDs.count
+            ))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            Button(NSLocalizedString("graph.settings.suggestions.reset",
+                                     comment: "Reset graph suggestion preferences")) {
+                settings.resetSuggestedTopicPreferences()
+            }
+            .disabled(!settings.hasSuggestedTopicPreferences)
+            .accessibilityIdentifier(AccessibilityID.graphSuggestionPreferencesReset)
         }
         .padding(12)
         .background(

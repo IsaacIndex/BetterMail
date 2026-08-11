@@ -2,6 +2,15 @@ import XCTest
 @testable import BetterMail
 
 final class ThreadInspectorViewTests: XCTestCase {
+    func test_displayedGeneratedGraphTitle_whenTitleContainsContent_returnsTrimmedTitle() {
+        XCTAssertEqual(ThreadInspectorView.displayedGeneratedGraphTitle("  HKJC CRC Review Materials CR#60  "),
+                       "HKJC CRC Review Materials CR#60")
+    }
+
+    func test_displayedGeneratedGraphTitle_whenTitleIsEmpty_returnsNil() {
+        XCTAssertNil(ThreadInspectorView.displayedGeneratedGraphTitle(" \n "))
+    }
+
     func test_openInMailStatus_whenStateIsNil_returnsIdle() {
         let status = ThreadInspectorView.openInMailStatus(for: nil, messageKey: "message-key")
         XCTAssertEqual(status, .idle)

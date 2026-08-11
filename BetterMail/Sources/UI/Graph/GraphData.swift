@@ -74,9 +74,46 @@ internal struct GraphGrouping: Identifiable, Codable, Hashable {
     internal let rawThreadIDs: [String]
     internal let sourceFolderID: String?
     internal let sourceTag: String?
+    internal let normalizedTopic: String?
+    internal let supportingReason: String?
+    internal let reviewMembers: [GraphTopicMember]
+
+    internal init(id: String,
+                  title: String,
+                  kind: GraphGroupingKind,
+                  threadIDs: [String],
+                  rawThreadIDs: [String],
+                  sourceFolderID: String?,
+                  sourceTag: String?,
+                  normalizedTopic: String? = nil,
+                  supportingReason: String? = nil,
+                  reviewMembers: [GraphTopicMember] = []) {
+        self.id = id
+        self.title = title
+        self.kind = kind
+        self.threadIDs = threadIDs
+        self.rawThreadIDs = rawThreadIDs
+        self.sourceFolderID = sourceFolderID
+        self.sourceTag = sourceTag
+        self.normalizedTopic = normalizedTopic
+        self.supportingReason = supportingReason
+        self.reviewMembers = reviewMembers
+    }
 
     internal var isSuggestion: Bool {
         kind == .suggestedTopic
+    }
+
+    /// Stable, user-preference identity for this exact suggested grouping.
+    /// Confirmed folders intentionally have no dismissal identity.
+    internal var suggestionDismissalID: String? {
+        guard isSuggestion, let topic = normalizedTopic ?? sourceTag else { return nil }
+        return GraphData.suggestionDismissalID(forTopic: topic,
+                                               rawThreadIDs: rawThreadIDs)
+    }
+
+    internal var memberCount: Int {
+        max(reviewMembers.count, rawThreadIDs.count, threadIDs.count)
     }
 
     internal var nodeKind: GraphNodeKind {
@@ -84,7 +121,7 @@ internal struct GraphGrouping: Identifiable, Codable, Hashable {
     }
 
     internal var radius: CGFloat {
-        18 + CGFloat(min(threadIDs.count, 8)) * 1.4
+        18 + CGFloat(min(memberCount, 8)) * 1.4
     }
 
     internal var accessibilityLabel: String {
@@ -94,15 +131,9 @@ internal struct GraphGrouping: Identifiable, Codable, Hashable {
         return String.localizedStringWithFormat(
             NSLocalizedString(key, comment: "VoiceOver label for graph grouping node"),
             title,
-            threadIDs.count
+            memberCount
         )
     }
-}
-
-private struct GraphTopicCandidate {
-    let normalizedTag: String
-    let displayTag: String
-    let threads: [GraphThread]
 }
 
 internal struct GraphCenter: Codable, Hashable {
@@ -334,10 +365,13 @@ internal struct GraphData: Codable, Hashable {
 internal static func make(roots: [ThreadNode],
                               archivedThreadIDs: Set<String> = [],
                               tagsByNodeID: [String: [String]] = [:],
+                              topicSignalsByRawThreadID: [String: GraphTopicSignal] = [:],
                               summariesByNodeID: [String: GraphMessageSummary] = [:],
                               titlesByNodeID: [String: String] = [:],
                               folders: [ThreadFolder] = [],
                               folderMembershipByThreadID: [String: String] = [:],
+                              dismissedSuggestedTopicIDs: Set<String> = [],
+                              hiddenSuggestedTopics: Set<String> = [],
                               branchLimit: Int? = nil,
                               branchBatchSize: Int = 10,
                               messageLimitPerBranch: Int? = nil,
@@ -352,6 +386,36 @@ internal static func make(roots: [ThreadNode],
             let threadID = threadNodeID(for: rawThreadID)
             guard !archivedThreadIDs.contains(threadID) else { return nil }
             return (index, root, rawThreadID, threadID)
+        }
+        var folderIDByRawThreadID = folderMembershipByThreadID.reduce(into: [String: String]()) { result, entry in
+            guard let threadID = normalizedThreadID(entry.key) else { return }
+            result[threadID] = entry.value
+        }
+        for folder in folders.sorted(by: { $0.id < $1.id }) {
+            for rawThreadID in folder.threadIDs {
+                guard let threadID = normalizedThreadID(rawThreadID),
+                      folderIDByRawThreadID[threadID] == nil else { continue }
+                folderIDByRawThreadID[threadID] = folder.id
+            }
+        }
+        let folderTitleByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.title) })
+        let topicConversations = candidates.map { candidate in
+            let conversationNodes = flatten(candidate.root)
+            let lastUpdated = conversationNodes.map(\.message.date).max() ?? candidate.root.message.date
+            let subject = candidate.root.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fullTitle = subject.isEmpty
+                ? candidate.root.message.from.trimmingCharacters(in: .whitespacesAndNewlines)
+                : subject
+            let normalizedRawThreadID = normalizedThreadID(candidate.rawThreadID) ?? candidate.rawThreadID
+            let existingFolderID = folderIDByRawThreadID[normalizedRawThreadID]
+            return GraphTopicConversation(
+                rawThreadID: normalizedRawThreadID,
+                graphThreadID: candidate.threadID,
+                fullTitle: fullTitle,
+                lastUpdated: lastUpdated,
+                existingFolderID: existingFolderID,
+                existingFolderTitle: existingFolderID.flatMap { folderTitleByID[$0] }
+            )
         }
         let visibleLimit = branchLimit.map { max(0, $0) } ?? candidates.count
         let visibleCandidates = candidates.prefix(visibleLimit)
@@ -441,8 +505,13 @@ internal static func make(roots: [ThreadNode],
         }
 
         let groupings = makeGroupings(threads: threads,
+                                      topicConversations: topicConversations,
+                                      topicSignalsByRawThreadID: topicSignalsByRawThreadID,
                                       folders: folders,
-                                      folderMembershipByThreadID: folderMembershipByThreadID)
+                                      folderMembershipByThreadID: folderMembershipByThreadID,
+                                      dismissedSuggestedTopicIDs: dismissedSuggestedTopicIDs,
+                                      hiddenSuggestedTopics: hiddenSuggestedTopics,
+                                      now: now)
         let folderGroupings = groupings.filter { $0.kind == .folder }
         let groupedThreadIDs = Set(folderGroupings.flatMap(\.threadIDs))
 
@@ -504,8 +573,13 @@ internal static func make(roots: [ThreadNode],
     }
 
     private static func makeGroupings(threads: [GraphThread],
+                                      topicConversations: [GraphTopicConversation],
+                                      topicSignalsByRawThreadID: [String: GraphTopicSignal],
                                       folders: [ThreadFolder],
-                                      folderMembershipByThreadID: [String: String]) -> [GraphGrouping] {
+                                      folderMembershipByThreadID: [String: String],
+                                      dismissedSuggestedTopicIDs: Set<String>,
+                                      hiddenSuggestedTopics: Set<String>,
+                                      now: Date) -> [GraphGrouping] {
         let threadByRawID = threads.reduce(into: [String: GraphThread]()) { result, thread in
             guard let normalizedID = normalizedThreadID(thread.rawThreadID) else { return }
             result[normalizedID] = thread
@@ -515,7 +589,6 @@ internal static func make(roots: [ThreadNode],
             return titleComparison == .orderedSame ? $0.id < $1.id : titleComparison == .orderedAscending
         }
         var confirmed: [GraphGrouping] = []
-        var folderIDByGraphThreadID: [String: String] = [:]
 
         for folder in sortedFolders {
             let rawThreadIDs = Set(folder.threadIDs.compactMap(normalizedThreadID)).union(
@@ -526,9 +599,6 @@ internal static func make(roots: [ThreadNode],
             )
             let members = rawThreadIDs.compactMap { threadByRawID[$0] }.sorted { $0.id < $1.id }
             guard !members.isEmpty else { continue }
-            for thread in members {
-                folderIDByGraphThreadID[thread.id] = folder.id
-            }
             confirmed.append(GraphGrouping(id: "folder:\(folder.id)",
                                            title: folder.title,
                                            kind: .folder,
@@ -538,64 +608,38 @@ internal static func make(roots: [ThreadNode],
                                            sourceTag: nil))
         }
 
-        var displayTagByNormalized: [String: String] = [:]
-        var threadIDsByNormalizedTag: [String: Set<String>] = [:]
-        for thread in threads {
-            for tag in thread.tags {
-                let normalized = normalizeTag(tag)
-                guard !normalized.isEmpty else { continue }
-                displayTagByNormalized[normalized] = displayTagByNormalized[normalized] ?? tag
-                threadIDsByNormalizedTag[normalized, default: []].insert(thread.id)
-            }
-        }
-        let threadByID = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
-        let candidates = threadIDsByNormalizedTag.compactMap { normalizedTag, threadIDs -> GraphTopicCandidate? in
-            let members = threadIDs.compactMap { threadByID[$0] }.sorted { $0.id < $1.id }
-            guard members.count >= 2 else { return nil }
-            let existingFolderIDs = Set(members.compactMap { folderIDByGraphThreadID[$0.id] })
-            guard existingFolderIDs.count != 1 || members.contains(where: { folderIDByGraphThreadID[$0.id] == nil }) else {
-                return nil
-            }
-            return GraphTopicCandidate(normalizedTag: normalizedTag,
-                                       displayTag: displayTagByNormalized[normalizedTag] ?? normalizedTag,
-                                       threads: members)
-        }.sorted {
-            if $0.threads.count != $1.threads.count { return $0.threads.count > $1.threads.count }
-            return $0.normalizedTag < $1.normalizedTag
-        }
-
-        var seenThreadSets: Set<String> = []
-        var suggestions: [GraphGrouping] = []
-        for candidate in candidates {
-            let threadSetKey = candidate.threads.map(\.id).joined(separator: "|")
-            guard seenThreadSets.insert(threadSetKey).inserted else { continue }
-            suggestions.append(GraphGrouping(id: "suggestion:\(identifierComponent(candidate.normalizedTag))",
-                                             title: candidate.displayTag,
-                                             kind: .suggestedTopic,
-                                             threadIDs: candidate.threads.map(\.id),
-                                             rawThreadIDs: candidate.threads.map(\.rawThreadID),
-                                             sourceFolderID: nil,
-                                             sourceTag: candidate.displayTag))
-            if suggestions.count == 3 { break }
+        let visibleThreadIDs = Set(threads.map(\.id))
+        let suggestions = GraphTopicRanker.rank(
+            conversations: topicConversations,
+            signalsByRawThreadID: topicSignalsByRawThreadID,
+            dismissedExactPreferenceIDs: dismissedSuggestedTopicIDs,
+            hiddenNormalizedTopics: hiddenSuggestedTopics,
+            now: now
+        ).map { candidate in
+            GraphGrouping(
+                id: "suggestion:\(GraphTopicNormalizer.identifierComponent(candidate.normalizedTopic))",
+                title: candidate.displayTitle,
+                kind: .suggestedTopic,
+                threadIDs: candidate.members.map(\.graphThreadID).filter(visibleThreadIDs.contains),
+                rawThreadIDs: candidate.members.map(\.rawThreadID),
+                sourceFolderID: nil,
+                sourceTag: candidate.displayTitle,
+                normalizedTopic: candidate.normalizedTopic,
+                supportingReason: candidate.supportingReason,
+                reviewMembers: candidate.members
+            )
         }
         return confirmed + suggestions
     }
 
+    internal static func suggestionDismissalID(forTopic topic: String,
+                                               rawThreadIDs: [String]) -> String? {
+        GraphTopicPreferenceID.exact(normalizedTopic: topic,
+                                     rawThreadIDs: rawThreadIDs)
+    }
+
     private static func normalizedThreadID(_ rawThreadID: String) -> String? {
         rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-    }
-
-    private static func normalizeTag(_ tag: String) -> String {
-        tag.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
-    }
-
-    private static func identifierComponent(_ value: String) -> String {
-        let component = value.unicodeScalars
-            .map { String($0.value, radix: 16) }
-            .joined(separator: "-")
-        return component.isEmpty ? "topic" : component
     }
 
     private static func flatten(_ node: ThreadNode) -> [ThreadNode] {

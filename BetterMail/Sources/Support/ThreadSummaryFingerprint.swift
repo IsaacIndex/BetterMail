@@ -35,6 +35,20 @@ internal enum ThreadSummaryFingerprint {
         return sha256Hex(components.joined(separator: "|"))
     }
 
+    internal static func makeGraphTopic(subject: String,
+                                        threadSummary: String,
+                                        representativeContent: String,
+                                        providerID: String) -> String {
+        let components = [
+            "version:graph-topic-v1",
+            "subject:\(subject)",
+            "summary:\(threadSummary)",
+            "content:\(representativeContent)",
+            "provider:\(providerID)"
+        ]
+        return sha256Hex(components.joined(separator: "|"))
+    }
+
     private static func sha256Hex(_ string: String) -> String {
         let digest = SHA256.hash(data: Data(string.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()

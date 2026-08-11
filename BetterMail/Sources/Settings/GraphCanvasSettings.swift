@@ -77,6 +77,8 @@ internal final class GraphCanvasSettings: ObservableObject {
         static let obsidianNodeSize = "graphCanvasObsidianNodeSize"
         static let obsidianLinkThickness = "graphCanvasObsidianLinkThickness"
         static let visibleBranchCount = "graphCanvasVisibleBranchCount"
+        static let dismissedSuggestedTopicIDs = "graphCanvasDismissedSuggestedTopicIDs"
+        static let hiddenSuggestedTopics = "graphCanvasHiddenSuggestedTopics"
         static let obsidianExpandedSpacingMigration = "graphCanvasObsidianExpandedSpacingMigrationV1"
     }
 
@@ -197,6 +199,8 @@ internal final class GraphCanvasSettings: ObservableObject {
         didSet { storedObsidianLinkThickness = Double(obsidianLinkThickness) }
     }
     @Published internal private(set) var wateredCounts: [String: Int] = [:]
+    @Published internal private(set) var dismissedSuggestedTopicIDs: Set<String> = []
+    @Published internal private(set) var hiddenSuggestedTopics: Set<String> = []
 
     private let userDefaults: UserDefaults
 
@@ -247,6 +251,15 @@ internal final class GraphCanvasSettings: ObservableObject {
                                                              nodeSize: CGFloat(storedObsidianNodeSize),
                                                              linkThickness: CGFloat(storedObsidianLinkThickness)))
         wateredCounts = Self.decodeWateredCounts(from: userDefaults.data(forKey: StorageKey.wateredCounts))
+        dismissedSuggestedTopicIDs = Set(
+            (userDefaults.stringArray(forKey: StorageKey.dismissedSuggestedTopicIDs) ?? [])
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        )
+        hiddenSuggestedTopics = Set(
+            (userDefaults.stringArray(forKey: StorageKey.hiddenSuggestedTopics) ?? [])
+                .map(GraphTopicNormalizer.normalize)
+                .filter { !$0.isEmpty }
+        )
     }
 
     internal var forceConfig: GraphForceConfig {
@@ -288,6 +301,39 @@ internal final class GraphCanvasSettings: ObservableObject {
     internal func incrementWateredCount(for threadID: String) {
         wateredCounts[threadID, default: 0] += 1
         persistWateredCounts()
+    }
+
+    internal func dismissSuggestedTopic(id: String) {
+        let trimmedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedID.isEmpty else { return }
+        var updatedIDs = dismissedSuggestedTopicIDs
+        guard updatedIDs.insert(trimmedID).inserted else { return }
+        dismissedSuggestedTopicIDs = updatedIDs
+        userDefaults.set(updatedIDs.sorted(), forKey: StorageKey.dismissedSuggestedTopicIDs)
+    }
+
+    internal func rejectSuggestedGroup(id: String) {
+        dismissSuggestedTopic(id: id)
+    }
+
+    internal func hideSuggestedTopic(_ topic: String) {
+        let normalizedTopic = GraphTopicNormalizer.normalize(topic)
+        guard !normalizedTopic.isEmpty else { return }
+        var updatedTopics = hiddenSuggestedTopics
+        guard updatedTopics.insert(normalizedTopic).inserted else { return }
+        hiddenSuggestedTopics = updatedTopics
+        userDefaults.set(updatedTopics.sorted(), forKey: StorageKey.hiddenSuggestedTopics)
+    }
+
+    internal var hasSuggestedTopicPreferences: Bool {
+        !dismissedSuggestedTopicIDs.isEmpty || !hiddenSuggestedTopics.isEmpty
+    }
+
+    internal func resetSuggestedTopicPreferences() {
+        dismissedSuggestedTopicIDs = []
+        hiddenSuggestedTopics = []
+        userDefaults.removeObject(forKey: StorageKey.dismissedSuggestedTopicIDs)
+        userDefaults.removeObject(forKey: StorageKey.hiddenSuggestedTopics)
     }
 
     internal func shouldReduceMotion(systemReduceMotion: Bool) -> Bool {

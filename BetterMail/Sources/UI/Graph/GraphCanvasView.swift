@@ -12,6 +12,7 @@ internal struct GraphCanvasView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var audio = GraphAudio()
     @State private var isLegendExpanded = false
+    @State private var reviewedGrouping: GraphGrouping?
 
     internal var body: some View {
         GeometryReader { proxy in
@@ -19,16 +20,19 @@ internal struct GraphCanvasView: View {
                 GraphRepresentable(graphViewModel: graphViewModel,
                                    settings: graphSettings,
                                    selectedNodeID: threadViewModel.selectedNodeID,
+                                   selectedNodeIDs: threadViewModel.selectedNodeIDs,
                                    reduceMotion: reduceMotion,
                                    colorScheme: colorScheme,
                                    textScale: displaySettings.textScale,
                                    audio: audio,
-                                   onSelectRootNode: { nodeID in
-                                       threadViewModel.selectNode(id: nodeID)
+                                   onSelectRootNode: { nodeID, isAdditive in
+                                       threadViewModel.selectNode(id: nodeID, additive: isAdditive)
                                        if nodeID == nil {
                                            threadViewModel.selectFolder(id: nil)
                                        }
-                                   })
+                                   },
+                                   onToggleActionItem: toggleActionItem(forGraphNodeID:),
+                                   isActionItem: isActionItem(forGraphNodeID:))
                     .accessibilityIdentifier(AccessibilityID.graphCanvas)
                     .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
                                                           comment: "Accessibility label for graph canvas"))
@@ -61,7 +65,9 @@ internal struct GraphCanvasView: View {
                     if let grouping = graphViewModel.selectedGrouping {
                         GraphGroupingActionBar(grouping: grouping,
                                                textScale: displaySettings.textScale,
-                                               onConfirm: { confirmGrouping(grouping) },
+                                               onReview: { reviewedGrouping = grouping },
+                                               onNotThisGroup: { rejectGrouping(grouping) },
+                                               onHideTopic: { hideGrouping(grouping) },
                                                onOpenFolder: { openFolder(grouping) })
                             .padding(.bottom, 8)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -85,23 +91,6 @@ internal struct GraphCanvasView: View {
                                 Capsule(style: .continuous)
                                     .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
                             )
-                            .padding(.bottom, 8)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                    if let target = selectedActionTarget,
-                       let message = sourceMessage(withID: target.rawMessageID) {
-                        GraphThreadActionBar(subject: target.subject,
-                                             isActionItem: threadViewModel.actionItemIDs.contains(message.messageID),
-                                             textScale: displaySettings.textScale,
-                                             onToggleActionItem: {
-                                                 toggleActionItem(message: message, target: target)
-                                             },
-                                             onSnip: {
-                                                 graphViewModel.requestSnip(threadID: target.threadID)
-                                             },
-                                             onArchive: {
-                                                 graphViewModel.requestArchive(threadID: target.threadID)
-                                             })
                             .padding(.bottom, 8)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -129,16 +118,18 @@ internal struct GraphCanvasView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onAppear {
             warmAudioIfNeeded()
-            graphViewModel.setGraphTitleGenerationActive(true)
+            graphViewModel.setGraphEnrichmentActive(true)
             syncData()
         }
         .onDisappear {
-            graphViewModel.setGraphTitleGenerationActive(false)
+            graphViewModel.setGraphEnrichmentActive(false)
         }
         .onChange(of: graphSettings.soundOn) { _, _ in
             warmAudioIfNeeded()
         }
         .onChange(of: graphSettings.visibleBranchCount) { _, _ in syncData() }
+        .onChange(of: graphSettings.dismissedSuggestedTopicIDs) { _, _ in syncData() }
+        .onChange(of: graphSettings.hiddenSuggestedTopics) { _, _ in syncData() }
         .onReceive(threadViewModel.$roots) { _ in syncData() }
         .onReceive(threadViewModel.$searchQuery) { _ in syncData() }
         .onReceive(threadViewModel.$activeMailboxScope) { _ in syncData() }
@@ -157,6 +148,23 @@ internal struct GraphCanvasView: View {
         }
         .sheet(isPresented: $graphViewModel.isSettingsPresented) {
             GraphSettingsSheet(settings: graphSettings)
+        }
+        .sheet(item: $reviewedGrouping) { grouping in
+            GraphSuggestionReviewSheet(
+                grouping: grouping,
+                impactProvider: { threadIDs in
+                    threadViewModel.graphFolderSuggestionImpact(for: threadIDs)
+                },
+                confirmFolder: { title, threadIDs in
+                    _ = try await threadViewModel.confirmGraphFolderSuggestion(
+                        title: title,
+                        threadIDs: threadIDs
+                    )
+                },
+                onNotThisGroup: { rejectGrouping(grouping) },
+                onHideTopic: { hideGrouping(grouping) },
+                onCreated: completeReviewedGrouping
+            )
         }
     }
 
@@ -235,6 +243,22 @@ internal struct GraphCanvasView: View {
         return nil
     }
 
+    private func isActionItem(forGraphNodeID graphNodeID: String) -> Bool {
+        guard let target = graphViewModel.actionTarget(for: graphNodeID),
+              let message = sourceMessage(withID: target.rawMessageID) else {
+            return false
+        }
+        return threadViewModel.actionItemIDs.contains(message.messageID)
+    }
+
+    private func toggleActionItem(forGraphNodeID graphNodeID: String) {
+        guard let target = graphViewModel.actionTarget(for: graphNodeID),
+              let message = sourceMessage(withID: target.rawMessageID) else {
+            return
+        }
+        toggleActionItem(message: message, target: target)
+    }
+
     private func toggleActionItem(message: EmailMessage, target: GraphThreadActionTarget) {
         if threadViewModel.actionItemIDs.contains(message.messageID) {
             threadViewModel.removeActionItem(message: message)
@@ -270,6 +294,8 @@ internal struct GraphCanvasView: View {
                               summariesByNodeID: threadViewModel.nodeSummaries,
                               folders: threadViewModel.threadFolders,
                               folderMembershipByThreadID: threadViewModel.folderMembershipByThreadID,
+                              dismissedSuggestedTopicIDs: graphSettings.dismissedSuggestedTopicIDs,
+                              hiddenSuggestedTopics: graphSettings.hiddenSuggestedTopics,
                               showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive,
                               branchPageSize: graphSettings.visibleBranchCount)
         for root in threadViewModel.roots.prefix(10) {
@@ -315,23 +341,34 @@ internal struct GraphCanvasView: View {
         }
     }
 
-    private func confirmGrouping(_ grouping: GraphGrouping) {
-        guard grouping.isSuggestion else { return }
-        Task {
-            do {
-                _ = try await threadViewModel.confirmGraphFolderSuggestion(
-                    title: grouping.title,
-                    threadIDs: Set(grouping.rawThreadIDs)
-                )
-                graphViewModel.selectGrouping(id: nil)
-                syncData()
-                threadViewModel.showToast(NSLocalizedString("graph.group.confirm.success",
-                                                            comment: "Graph grouping confirmation success toast"),
-                                          style: .success)
-            } catch {
-                threadViewModel.showError(error.localizedDescription)
-            }
+    private func rejectGrouping(_ grouping: GraphGrouping) {
+        guard grouping.isSuggestion,
+              let dismissalID = grouping.suggestionDismissalID else {
+            return
         }
+        graphSettings.rejectSuggestedGroup(id: dismissalID)
+        graphViewModel.selectGrouping(id: nil)
+        threadViewModel.showToast(NSLocalizedString("graph.group.not_this_group.success",
+                                                    comment: "Exact graph topic group rejection toast"),
+                                  style: .success)
+    }
+
+    private func hideGrouping(_ grouping: GraphGrouping) {
+        guard grouping.isSuggestion,
+              let topic = grouping.normalizedTopic ?? grouping.sourceTag else { return }
+        graphSettings.hideSuggestedTopic(topic)
+        graphViewModel.selectGrouping(id: nil)
+        threadViewModel.showToast(NSLocalizedString("graph.group.hide_topic.success",
+                                                    comment: "Hidden graph topic toast"),
+                                  style: .success)
+    }
+
+    private func completeReviewedGrouping() {
+        graphViewModel.selectGrouping(id: nil)
+        syncData()
+        threadViewModel.showToast(NSLocalizedString("graph.group.confirm.success",
+                                                    comment: "Graph grouping confirmation success toast"),
+                                  style: .success)
     }
 
     private func openFolder(_ grouping: GraphGrouping) {
@@ -380,7 +417,9 @@ private struct GraphCanopyStatus: View {
 private struct GraphGroupingActionBar: View {
     let grouping: GraphGrouping
     let textScale: CGFloat
-    let onConfirm: () -> Void
+    let onReview: () -> Void
+    let onNotThisGroup: () -> Void
+    let onHideTopic: () -> Void
     let onOpenFolder: () -> Void
 
     var body: some View {
@@ -388,33 +427,61 @@ private struct GraphGroupingActionBar: View {
             Image(systemName: grouping.isSuggestion ? "sparkles" : "folder.fill")
                 .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(grouping.title)
+                if grouping.isSuggestion {
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("graph.group.suggestion.presentation",
+                                          comment: "Potential graph topic presentation"),
+                        grouping.title,
+                        grouping.memberCount
+                    ))
                     .font(DesignTokens.font(size: 11.5, weight: .semibold, textScale: textScale))
-                    .lineLimit(1)
-                Text(String.localizedStringWithFormat(
-                    NSLocalizedString(grouping.isSuggestion
-                                      ? "graph.group.suggestion.detail"
-                                      : "graph.group.folder.detail",
-                                      comment: "Graph grouping branch detail"),
-                    grouping.threadIDs.count
-                ))
+                    .fixedSize(horizontal: false, vertical: true)
+                    if let reason = grouping.supportingReason, !reason.isEmpty {
+                        Text(reason)
+                            .font(DesignTokens.font(size: 9.5, textScale: textScale))
+                            .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+                            .lineLimit(2)
+                    }
+                } else {
+                    Text(grouping.title)
+                        .font(DesignTokens.font(size: 11.5, weight: .semibold, textScale: textScale))
+                        .lineLimit(1)
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("graph.group.folder.detail",
+                                          comment: "Graph grouping branch detail"),
+                        grouping.memberCount
+                    ))
                     .font(DesignTokens.font(size: 9.5, textScale: textScale))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+                }
             }
-            .frame(maxWidth: 240, alignment: .leading)
-            Button(action: grouping.isSuggestion ? onConfirm : onOpenFolder) {
+            .frame(maxWidth: 320, alignment: .leading)
+            if grouping.isSuggestion {
+                Button(NSLocalizedString("graph.group.not_this_group",
+                                         comment: "Reject this exact graph topic group"),
+                       action: onNotThisGroup)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier(AccessibilityID.graphSuggestionNotThisGroupAction)
+                Button(NSLocalizedString("graph.group.hide_topic",
+                                         comment: "Hide a graph topic across member changes"),
+                       action: onHideTopic)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier(AccessibilityID.graphSuggestionHideTopicAction)
+            }
+            Button(action: grouping.isSuggestion ? onReview : onOpenFolder) {
                 Label(grouping.isSuggestion
-                      ? NSLocalizedString("graph.group.confirm",
-                                          comment: "Confirm a graph topic grouping as a folder")
+                      ? NSLocalizedString("graph.group.review.action",
+                                          comment: "Review and edit a graph topic suggestion")
                       : NSLocalizedString("graph.group.open_folder",
                                           comment: "Open a confirmed graph folder"),
-                      systemImage: grouping.isSuggestion ? "folder.badge.plus" : "arrow.right")
+                      systemImage: grouping.isSuggestion ? "slider.horizontal.3" : "arrow.right")
                     .font(DesignTokens.font(size: 10.5, weight: .semibold, textScale: textScale))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 7)
             }
             .buttonStyle(.borderedProminent)
             .tint(DesignTokens.Graph.AppTheme.accent)
+            .accessibilityIdentifier(AccessibilityID.graphSuggestionReviewAction)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -431,97 +498,6 @@ private struct GraphGroupingActionBar: View {
                         style: StrokeStyle(lineWidth: 1,
                                            dash: grouping.isSuggestion ? [5, 4] : []))
         )
-    }
-}
-
-private struct GraphThreadActionBar: View {
-    let subject: String
-    let isActionItem: Bool
-    let textScale: CGFloat
-    let onToggleActionItem: () -> Void
-    let onSnip: () -> Void
-    let onArchive: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(subject)
-                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
-                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
-                .lineLimit(1)
-                .frame(maxWidth: 180, alignment: .leading)
-                .accessibilityLabel(String.localizedStringWithFormat(
-                    NSLocalizedString("graph.actions.selected_thread",
-                                      comment: "Selected graph thread accessibility label"),
-                    subject
-                ))
-            Divider()
-                .frame(height: 22)
-            actionButton(title: isActionItem
-                         ? NSLocalizedString("graph.actions.remove_action_item",
-                                             comment: "Remove selected graph email from action items")
-                         : NSLocalizedString("graph.actions.action_item",
-                                             comment: "Mark selected graph email as an action item"),
-                         systemImage: isActionItem ? "checkmark.circle.fill" : "bolt.circle",
-                         tint: DesignTokens.Graph.AppTheme.accent,
-                         isOn: isActionItem,
-                         accessibilityID: AccessibilityID.graphActionItem,
-                         action: onToggleActionItem)
-            actionButton(title: NSLocalizedString("graph.actions.not_important",
-                                                  comment: "Move selected graph thread to a less important mailbox"),
-                         systemImage: "scissors",
-                         tint: DesignTokens.Graph.AppTheme.snip,
-                         isOn: false,
-                         accessibilityID: AccessibilityID.graphNotImportant,
-                         action: onSnip)
-            actionButton(title: NSLocalizedString("graph.actions.done",
-                                                  comment: "Archive selected graph thread as done"),
-                         systemImage: "archivebox",
-                         tint: DesignTokens.Graph.AppTheme.archive,
-                         isOn: false,
-                         accessibilityID: AccessibilityID.graphDone,
-                         action: onArchive)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(DesignTokens.Graph.AppTheme.panel)
-                .shadow(color: Color.black.opacity(0.10), radius: 18, x: 0, y: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(AccessibilityID.graphThreadActions)
-    }
-
-    private func actionButton(title: String,
-                              systemImage: String,
-                              tint: Color,
-                              isOn: Bool,
-                              accessibilityID: String,
-                              action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
-                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
-                .frame(minWidth: 96, minHeight: 30)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .foregroundStyle(isOn ? Color.white : tint)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isOn ? tint : tint.opacity(0.10))
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable()
-        .focusEffectDisabled()
-        .accessibilityLabel(title)
-        .accessibilityIdentifier(accessibilityID)
-        .help(title)
     }
 }
 

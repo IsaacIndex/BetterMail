@@ -52,6 +52,14 @@ private struct GraphTitleInput: Hashable {
     let fingerprint: String
 }
 
+private struct GraphTopicInput: Hashable {
+    let rawThreadID: String
+    let subject: String
+    let threadSummary: String
+    let representativeContent: String
+    let fingerprint: String
+}
+
 @MainActor
 internal final class GraphCanvasViewModel: ObservableObject {
     internal static let defaultBranchPageSize = 10
@@ -70,6 +78,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
     @Published internal private(set) var nodePositions: [String: CGPoint] = [:]
     @Published internal private(set) var pruneAnimationRequest: GraphPruneAnimationRequest?
     @Published internal private(set) var selectedGroupingID: String?
+    @Published internal private(set) var regeneratingGraphTitleNodeIDs: Set<String> = []
     internal var onArchiveStateChanged: (() -> Void)?
 
     private var sourceRoots: [ThreadNode] = []
@@ -77,10 +86,15 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var currentTagsByNodeID: [String: [String]] = [:]
     private var currentSummariesByNodeID: [String: GraphMessageSummary] = [:]
     private var graphTitlesByNodeID: [String: String] = [:]
+    private var graphTopicSignalsByRawThreadID: [String: GraphTopicSignal] = [:]
     private var graphTitleFingerprintsByNodeID: [String: String] = [:]
+    private var graphTopicFingerprintsByRawThreadID: [String: String] = [:]
     private var currentGraphTitleInputs: [String: GraphTitleInput] = [:]
+    private var currentGraphTopicInputs: [String: GraphTopicInput] = [:]
     private var currentFolders: [ThreadFolder] = []
     private var currentFolderMembershipByThreadID: [String: String] = [:]
+    private var dismissedSuggestedTopicIDs: Set<String> = []
+    private var hiddenSuggestedTopics: Set<String> = []
     private var showsArchivedThreads = false
     private var branchPageSize = GraphCanvasViewModel.defaultBranchPageSize
     private var visibleBranchLimit = GraphCanvasViewModel.defaultBranchPageSize
@@ -91,17 +105,23 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var pruneCompletionTask: Task<Void, Never>?
     private var graphTitleRefreshTask: Task<Void, Never>?
     private var graphTitleRefreshID: UUID?
+    private var graphTopicRefreshTask: Task<Void, Never>?
+    private var graphTopicRefreshID: UUID?
     private var isGraphTitleGenerationActive = false
+    private var isGraphTopicGenerationActive = false
     private let store: MessageStore
     private let mailClient: MailAppleScriptClient
     private let graphTitleCapabilityProvider: (() -> GraphTitleCapability)?
+    private let graphTopicCapabilityProvider: (() -> GraphTopicCapability)?
 
     internal init(store: MessageStore = .shared,
                   mailClient: MailAppleScriptClient = MailAppleScriptClient(),
-                  graphTitleCapabilityProvider: (() -> GraphTitleCapability)? = nil) {
+                  graphTitleCapabilityProvider: (() -> GraphTitleCapability)? = nil,
+                  graphTopicCapabilityProvider: (() -> GraphTopicCapability)? = nil) {
         self.store = store
         self.mailClient = mailClient
         self.graphTitleCapabilityProvider = graphTitleCapabilityProvider
+        self.graphTopicCapabilityProvider = graphTopicCapabilityProvider
         Task { await loadArchivedEntries() }
     }
 
@@ -134,6 +154,23 @@ internal final class GraphCanvasViewModel: ObservableObject {
         } else {
             cancelGraphTitleRefresh()
             currentGraphTitleInputs = [:]
+            regeneratingGraphTitleNodeIDs = []
+        }
+    }
+
+    internal func setGraphEnrichmentActive(_ isActive: Bool) {
+        setGraphTitleGenerationActive(isActive)
+        setGraphTopicGenerationActive(isActive)
+    }
+
+    private func setGraphTopicGenerationActive(_ isActive: Bool) {
+        guard isActive != isGraphTopicGenerationActive else { return }
+        isGraphTopicGenerationActive = isActive
+        if isActive {
+            refreshGraphTopics()
+        } else {
+            cancelGraphTopicRefresh()
+            currentGraphTopicInputs = [:]
         }
     }
 
@@ -143,6 +180,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
                          summariesByNodeID: [String: ThreadSummaryState],
                          folders: [ThreadFolder] = [],
                          folderMembershipByThreadID: [String: String] = [:],
+                         dismissedSuggestedTopicIDs: Set<String> = [],
+                         hiddenSuggestedTopics: Set<String> = [],
                          showsArchivedThreads: Bool = false,
                          branchPageSize: Int = GraphCanvasViewModel.defaultBranchPageSize) {
         let clampedBranchPageSize = GraphCanvasSettings.clampedVisibleBranchCount(branchPageSize)
@@ -159,6 +198,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
         currentTagsByNodeID = tagsByNodeID
         currentFolders = folders
         currentFolderMembershipByThreadID = folderMembershipByThreadID
+        self.dismissedSuggestedTopicIDs = dismissedSuggestedTopicIDs
+        self.hiddenSuggestedTopics = hiddenSuggestedTopics
         self.showsArchivedThreads = showsArchivedThreads
         currentSummariesByNodeID = summariesByNodeID.mapValues {
             GraphMessageSummary(text: $0.text,
@@ -378,6 +419,41 @@ internal final class GraphCanvasViewModel: ObservableObject {
         }?.id
     }
 
+    internal func graphNodeIDs(for selectedNodeIDs: Set<String>) -> Set<String> {
+        Set(selectedNodeIDs.compactMap { selectedGraphNodeID(for: $0) })
+    }
+
+    internal func generatedGraphTitle(for selectedNodeID: String?) -> String? {
+        guard let graphNodeID = selectedGraphNodeID(for: selectedNodeID),
+              let sourceNodeID = rootNodeID(forGraphNodeID: graphNodeID),
+              let title = graphTitlesByNodeID[sourceNodeID]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else {
+            return nil
+        }
+        return title
+    }
+
+    internal func isRegeneratingGraphTitle(for selectedNodeID: String?) -> Bool {
+        guard let graphNodeID = selectedGraphNodeID(for: selectedNodeID),
+              let sourceNodeID = rootNodeID(forGraphNodeID: graphNodeID) else {
+            return false
+        }
+        return regeneratingGraphTitleNodeIDs.contains(sourceNodeID)
+    }
+
+    internal func canRegenerateGraphTitle(for selectedNodeID: String?) -> Bool {
+        graphTitleInputForRegeneration(for: selectedNodeID) != nil
+    }
+
+    internal func regenerateGraphTitle(for selectedNodeID: String?) {
+        guard let input = graphTitleInputForRegeneration(for: selectedNodeID) else { return }
+
+        regeneratingGraphTitleNodeIDs.insert(input.nodeID)
+        graphTitleFingerprintsByNodeID.removeValue(forKey: input.nodeID)
+        currentGraphTitleInputs = [:]
+        refreshGraphTitles(for: data)
+    }
+
     internal func rootNodeID(forGraphNodeID graphNodeID: String?) -> String? {
         guard let graphNodeID else { return nil }
         if let thread = data.threadByID[graphNodeID] {
@@ -387,6 +463,19 @@ internal final class GraphCanvasViewModel: ObservableObject {
             return message.rawMessageID
         }
         return nil
+    }
+
+    private func graphTitleInputForRegeneration(for selectedNodeID: String?) -> GraphTitleInput? {
+        guard isGraphTitleGenerationActive,
+              let graphTitleCapabilityProvider,
+              let graphNodeID = selectedGraphNodeID(for: selectedNodeID),
+              let sourceNodeID = rootNodeID(forGraphNodeID: graphNodeID) else {
+            return nil
+        }
+
+        let capability = graphTitleCapabilityProvider()
+        guard capability.provider != nil else { return nil }
+        return graphTitleInputs(in: data, providerID: capability.providerID)[sourceNodeID]
     }
 
     internal func actionTarget(for selectedNodeID: String?) -> GraphThreadActionTarget? {
@@ -447,10 +536,13 @@ internal final class GraphCanvasViewModel: ObservableObject {
         let rebuilt = GraphData.make(roots: sourceRoots,
                                      archivedThreadIDs: hiddenArchivedThreadIDs,
                                      tagsByNodeID: currentTagsByNodeID,
+                                     topicSignalsByRawThreadID: graphTopicSignalsByRawThreadID,
                                      summariesByNodeID: currentSummariesByNodeID,
                                      titlesByNodeID: graphTitlesByNodeID,
                                      folders: currentFolders,
                                      folderMembershipByThreadID: currentFolderMembershipByThreadID,
+                                     dismissedSuggestedTopicIDs: dismissedSuggestedTopicIDs,
+                                     hiddenSuggestedTopics: hiddenSuggestedTopics,
                                      branchLimit: visibleBranchLimit,
                                      branchBatchSize: branchPageSize,
                                      messageLimitPerBranch: Self.messagePreviewLimitPerBranch)
@@ -466,6 +558,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
         }
         syncArchivedCompostEntries()
         refreshGraphTitles(for: rebuilt)
+        refreshGraphTopics()
     }
 
     private func refreshGraphTitles(for graphData: GraphData) {
@@ -473,6 +566,11 @@ internal final class GraphCanvasViewModel: ObservableObject {
               let graphTitleCapabilityProvider else { return }
         let capability = graphTitleCapabilityProvider()
         let inputs = graphTitleInputs(in: graphData, providerID: capability.providerID)
+        let inputNodeIDs = Set(inputs.keys)
+        let staleRegenerationNodeIDs = regeneratingGraphTitleNodeIDs.subtracting(inputNodeIDs)
+        if !staleRegenerationNodeIDs.isEmpty {
+            regeneratingGraphTitleNodeIDs.subtract(staleRegenerationNodeIDs)
+        }
         guard !inputs.isEmpty else {
             cancelGraphTitleRefresh()
             currentGraphTitleInputs = [:]
@@ -481,7 +579,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
         let inputsChanged = inputs != currentGraphTitleInputs
         let needsRefresh = inputs.values.contains {
-            graphTitleFingerprintsByNodeID[$0.nodeID] != $0.fingerprint
+            graphTitleFingerprintsByNodeID[$0.nodeID] != $0.fingerprint ||
+                regeneratingGraphTitleNodeIDs.contains($0.nodeID)
         }
         if !inputsChanged, graphTitleRefreshTask != nil || !needsRefresh {
             return
@@ -553,7 +652,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
         for input in inputs.values.sorted(by: { $0.nodeID < $1.nodeID }) {
             if let cached = cachedByID[input.nodeID],
                cached.fingerprint == input.fingerprint,
-               cached.provider == initialCapability.providerID {
+               cached.provider == initialCapability.providerID,
+               !regeneratingGraphTitleNodeIDs.contains(input.nodeID) {
                 graphTitlesByNodeID[input.nodeID] = cached.summaryText
                 graphTitleFingerprintsByNodeID[input.nodeID] = cached.fingerprint
                 didApplyCachedTitle = true
@@ -588,8 +688,11 @@ internal final class GraphCanvasViewModel: ObservableObject {
             capability = graphTitleCapabilityProvider()
         }
 
-        guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs),
-              let provider = capability.provider else {
+        guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs) else {
+            return
+        }
+        guard let provider = capability.provider else {
+            finishGraphTitleRegeneration(for: inputs)
             finishGraphTitleRefresh(refreshID)
             return
         }
@@ -616,14 +719,22 @@ internal final class GraphCanvasViewModel: ObservableObject {
                 }
                 graphTitlesByNodeID[input.nodeID] = title
                 graphTitleFingerprintsByNodeID[input.nodeID] = input.fingerprint
+                regeneratingGraphTitleNodeIDs.remove(input.nodeID)
                 rebuildData()
             } catch is CancellationError {
+                if isCurrentGraphTitleRefresh(refreshID, inputs: inputs) {
+                    finishGraphTitleRegeneration(for: inputs)
+                    finishGraphTitleRefresh(refreshID)
+                }
                 return
             } catch {
                 Log.app.error("Failed to generate graph title: \(error.localizedDescription, privacy: .public)")
+                regeneratingGraphTitleNodeIDs.remove(input.nodeID)
             }
         }
 
+        guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs) else { return }
+        finishGraphTitleRegeneration(for: inputs)
         finishGraphTitleRefresh(refreshID)
     }
 
@@ -647,6 +758,248 @@ internal final class GraphCanvasViewModel: ObservableObject {
         guard graphTitleRefreshID == refreshID else { return }
         graphTitleRefreshID = nil
         graphTitleRefreshTask = nil
+    }
+
+    private func finishGraphTitleRegeneration(for inputs: [String: GraphTitleInput]) {
+        regeneratingGraphTitleNodeIDs.subtract(Set(inputs.keys))
+    }
+
+    private func refreshGraphTopics() {
+        guard isGraphTopicGenerationActive,
+              let graphTopicCapabilityProvider else { return }
+        let capability = graphTopicCapabilityProvider()
+        let inputs = graphTopicInputs(providerID: capability.providerID)
+        guard !inputs.isEmpty else {
+            cancelGraphTopicRefresh()
+            currentGraphTopicInputs = [:]
+            return
+        }
+
+        let inputsChanged = inputs != currentGraphTopicInputs
+        let needsRefresh = inputs.values.contains {
+            graphTopicFingerprintsByRawThreadID[$0.rawThreadID] != $0.fingerprint
+        }
+        if !inputsChanged, graphTopicRefreshTask != nil || !needsRefresh {
+            return
+        }
+
+        cancelGraphTopicRefresh()
+        currentGraphTopicInputs = inputs
+        let refreshID = UUID()
+        graphTopicRefreshID = refreshID
+        graphTopicRefreshTask = Task { [weak self] in
+            await self?.loadAndGenerateGraphTopics(inputs: inputs,
+                                                   initialCapability: capability,
+                                                   refreshID: refreshID)
+        }
+    }
+
+    private func graphTopicInputs(providerID: String) -> [String: GraphTopicInput] {
+        var inputs: [String: GraphTopicInput] = [:]
+        inputs.reserveCapacity(sourceRoots.count)
+
+        for root in sourceRoots {
+            let nodes = Self.flattenConversation(root)
+                .sorted { lhs, rhs in
+                    if lhs.message.date != rhs.message.date {
+                        return lhs.message.date < rhs.message.date
+                    }
+                    return lhs.id < rhs.id
+                }
+            guard !nodes.isEmpty else { continue }
+            let rawThreadID = GraphData.rawThreadID(for: root)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawThreadID.isEmpty else { continue }
+            let subject = root.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            let threadSummary = nodes.reversed().compactMap { node -> String? in
+                let summary = (currentSummariesByNodeID[node.id]
+                    ?? currentSummariesByNodeID[GraphData.messageNodeID(for: node.id)])?.text
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return summary.isEmpty ? nil : summary
+            }.first ?? ""
+            let representativeContent = Self.representativeConversationContent(nodes)
+            guard !subject.isEmpty || !threadSummary.isEmpty || !representativeContent.isEmpty else {
+                continue
+            }
+            inputs[rawThreadID] = GraphTopicInput(
+                rawThreadID: rawThreadID,
+                subject: subject,
+                threadSummary: threadSummary,
+                representativeContent: representativeContent,
+                fingerprint: ThreadSummaryFingerprint.makeGraphTopic(
+                    subject: subject,
+                    threadSummary: threadSummary,
+                    representativeContent: representativeContent,
+                    providerID: providerID
+                )
+            )
+        }
+        return inputs
+    }
+
+    private func loadAndGenerateGraphTopics(inputs: [String: GraphTopicInput],
+                                            initialCapability: GraphTopicCapability,
+                                            refreshID: UUID) async {
+        var cachedByID: [String: SummaryCacheEntry] = [:]
+        do {
+            let cached = try await store.fetchSummaries(scope: .graphTopic,
+                                                        ids: Array(inputs.keys))
+            cachedByID = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
+        } catch {
+            Log.app.error("Failed to load graph-topic cache: \(error.localizedDescription, privacy: .public)")
+        }
+
+        guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs) else { return }
+        var didApplyCachedResult = false
+        var pendingInputs: [GraphTopicInput] = []
+        for input in inputs.values.sorted(by: { $0.rawThreadID < $1.rawThreadID }) {
+            guard let cached = cachedByID[input.rawThreadID],
+                  cached.fingerprint == input.fingerprint,
+                  cached.provider == initialCapability.providerID,
+                  let record = Self.decodeGraphTopicCache(cached.summaryText) else {
+                pendingInputs.append(input)
+                continue
+            }
+            if let signal = record.signal {
+                graphTopicSignalsByRawThreadID[input.rawThreadID] = signal
+            } else {
+                graphTopicSignalsByRawThreadID.removeValue(forKey: input.rawThreadID)
+            }
+            graphTopicFingerprintsByRawThreadID[input.rawThreadID] = cached.fingerprint
+            didApplyCachedResult = true
+        }
+        if didApplyCachedResult {
+            rebuildData()
+        }
+
+        guard !pendingInputs.isEmpty else {
+            finishGraphTopicRefresh(refreshID)
+            return
+        }
+
+        var capability = initialCapability
+        var retryCount = 0
+        while capability.provider == nil,
+              capability.shouldRetry,
+              retryCount < Self.maximumGraphTopicReadinessRetries,
+              isCurrentGraphTopicRefresh(refreshID, inputs: inputs) {
+            retryCount += 1
+            do {
+                try await Task.sleep(for: .seconds(30))
+            } catch {
+                return
+            }
+            guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs),
+                  let graphTopicCapabilityProvider else { return }
+            capability = graphTopicCapabilityProvider()
+        }
+
+        guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs),
+              let provider = capability.provider else {
+            finishGraphTopicRefresh(refreshID)
+            return
+        }
+
+        var didApplyGeneratedResult = false
+        for input in pendingInputs {
+            guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs),
+                  currentGraphTopicInputs[input.rawThreadID]?.fingerprint == input.fingerprint else {
+                return
+            }
+            do {
+                let signal = try await provider.generateTopic(
+                    GraphTopicRequest(subject: input.subject,
+                                      threadSummary: input.threadSummary,
+                                      representativeContent: input.representativeContent)
+                )
+                guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs),
+                      currentGraphTopicInputs[input.rawThreadID]?.fingerprint == input.fingerprint else {
+                    return
+                }
+                let record = GraphTopicCacheRecord(signal: signal)
+                let entry = SummaryCacheEntry(scope: .graphTopic,
+                                              scopeID: input.rawThreadID,
+                                              summaryText: Self.encodeGraphTopicCache(record),
+                                              generatedAt: Date(),
+                                              fingerprint: input.fingerprint,
+                                              provider: capability.providerID)
+                do {
+                    try await store.upsertSummaries([entry])
+                } catch {
+                    Log.app.error("Failed to persist graph-topic cache: \(error.localizedDescription, privacy: .public)")
+                }
+                if let signal {
+                    graphTopicSignalsByRawThreadID[input.rawThreadID] = signal
+                } else {
+                    graphTopicSignalsByRawThreadID.removeValue(forKey: input.rawThreadID)
+                }
+                graphTopicFingerprintsByRawThreadID[input.rawThreadID] = input.fingerprint
+                didApplyGeneratedResult = true
+            } catch is CancellationError {
+                return
+            } catch {
+                Log.app.error("Failed to generate graph topic: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs) else { return }
+        if didApplyGeneratedResult {
+            rebuildData()
+        }
+        finishGraphTopicRefresh(refreshID)
+    }
+
+    private static let maximumGraphTopicReadinessRetries = 20
+
+    private func isCurrentGraphTopicRefresh(_ refreshID: UUID,
+                                            inputs: [String: GraphTopicInput]) -> Bool {
+        !Task.isCancelled &&
+            isGraphTopicGenerationActive &&
+            graphTopicRefreshID == refreshID &&
+            currentGraphTopicInputs == inputs
+    }
+
+    private func cancelGraphTopicRefresh() {
+        graphTopicRefreshID = nil
+        graphTopicRefreshTask?.cancel()
+        graphTopicRefreshTask = nil
+    }
+
+    private func finishGraphTopicRefresh(_ refreshID: UUID) {
+        guard graphTopicRefreshID == refreshID else { return }
+        graphTopicRefreshID = nil
+        graphTopicRefreshTask = nil
+    }
+
+    private static func flattenConversation(_ node: ThreadNode) -> [ThreadNode] {
+        [node] + node.children.flatMap(flattenConversation)
+    }
+
+    private static func representativeConversationContent(_ nodes: [ThreadNode]) -> String {
+        guard !nodes.isEmpty else { return "" }
+        let indices: [Int]
+        if nodes.count <= 4 {
+            indices = Array(nodes.indices)
+        } else {
+            indices = Array(Set([0, nodes.count / 3, (nodes.count * 2) / 3, nodes.count - 1])).sorted()
+        }
+        return indices.enumerated().map { offset, index in
+            let message = nodes[index].message
+            let subject = String(message.subject.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+            let sender = String(message.from.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+            let snippet = String(message.snippet.trimmingCharacters(in: .whitespacesAndNewlines).prefix(600))
+            return "\(offset + 1). Subject: \(subject) | From: \(sender) | Content: \(snippet)"
+        }.joined(separator: "\n")
+    }
+
+    private static func encodeGraphTopicCache(_ record: GraphTopicCacheRecord) -> String {
+        guard let data = try? JSONEncoder().encode(record) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func decodeGraphTopicCache(_ value: String) -> GraphTopicCacheRecord? {
+        guard let data = value.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(GraphTopicCacheRecord.self, from: data)
     }
 
     private func beginPruneAnimation(threadID: String, action: GraphCompostAction) {

@@ -5391,22 +5391,60 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     @discardableResult
+    internal func graphFolderSuggestionImpact(for threadIDs: Set<String>) -> GraphFolderSuggestionImpact {
+        let normalizedThreadIDs = Set(threadIDs.compactMap { rawThreadID -> String? in
+            let trimmed = rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        })
+        guard !normalizedThreadIDs.isEmpty else { return .none }
+        let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders)
+        let affectedFolders = threadFolders.compactMap { folder -> GraphFolderSuggestionImpact.AffectedFolder? in
+            let normalizedFolderThreadIDs = Set(folder.threadIDs.compactMap { rawThreadID -> String? in
+                let trimmed = rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            })
+            let movedThreadIDs = normalizedFolderThreadIDs.intersection(normalizedThreadIDs)
+            guard !movedThreadIDs.isEmpty else { return nil }
+            let remainingThreadIDs = normalizedFolderThreadIDs.subtracting(normalizedThreadIDs)
+            let willBeRemoved = remainingThreadIDs.isEmpty &&
+                (childIDsByParent[folder.id]?.isEmpty ?? true)
+            return GraphFolderSuggestionImpact.AffectedFolder(
+                id: folder.id,
+                title: folder.title,
+                movedThreadCount: movedThreadIDs.count,
+                willBeRemoved: willBeRemoved
+            )
+        }.sorted { lhs, rhs in
+            if lhs.title != rhs.title { return lhs.title < rhs.title }
+            return lhs.id < rhs.id
+        }
+        return GraphFolderSuggestionImpact(affectedFolders: affectedFolders)
+    }
+
+    @discardableResult
     internal func confirmGraphFolderSuggestion(title: String,
                                                 threadIDs: Set<String>) async throws -> String {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard threadIDs.count >= 2, !normalizedTitle.isEmpty else {
+        let normalizedThreadIDs = Set(threadIDs.compactMap { rawThreadID -> String? in
+            let trimmed = rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        })
+        guard normalizedThreadIDs.count >= 2, !normalizedTitle.isEmpty else {
             throw GraphFolderSuggestionError.invalidSuggestion
         }
 
         let folder = ThreadFolder(id: "folder-\(UUID().uuidString.lowercased())",
                                   title: normalizedTitle,
                                   color: ThreadFolderColor.defaultNewFolder,
-                                  threadIDs: threadIDs,
+                                  threadIDs: normalizedThreadIDs,
                                   parentID: nil)
         let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
         let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
             var updatedFolder = existingFolder
-            updatedFolder.threadIDs.subtract(threadIDs)
+            updatedFolder.threadIDs = Set(updatedFolder.threadIDs.filter { rawThreadID in
+                let trimmed = rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !normalizedThreadIDs.contains(trimmed)
+            })
             if updatedFolder.threadIDs.isEmpty && (childIDsByParent[updatedFolder.id]?.isEmpty ?? true) {
                 return nil
             }

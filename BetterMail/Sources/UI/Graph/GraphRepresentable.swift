@@ -5,11 +5,14 @@ internal struct GraphRepresentable: NSViewRepresentable {
     @ObservedObject internal var graphViewModel: GraphCanvasViewModel
     @ObservedObject internal var settings: GraphCanvasSettings
     internal let selectedNodeID: String?
+    internal let selectedNodeIDs: Set<String>
     internal let reduceMotion: Bool
     internal let colorScheme: ColorScheme
     internal let textScale: CGFloat
     internal let audio: GraphAudio
-    internal let onSelectRootNode: (String?) -> Void
+    internal let onSelectRootNode: (String?, Bool) -> Void
+    internal let onToggleActionItem: (String) -> Void
+    internal let isActionItem: (String) -> Bool
 
     internal func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -42,16 +45,18 @@ internal struct GraphRepresentable: NSViewRepresentable {
         if nsView.scene !== scene {
             nsView.presentScene(scene)
         }
-        scene.onSelectGraphNode = { graphNodeID in
+        scene.onSelectGraphNode = { graphNodeID, isAdditive in
             if let graphNodeID,
                graphViewModel.data.groupingByID[graphNodeID] != nil {
                 graphViewModel.selectGrouping(id: graphNodeID)
-                onSelectRootNode(nil)
+                onSelectRootNode(nil, false)
                 return
             }
             graphViewModel.selectGrouping(id: nil)
-            onSelectRootNode(graphViewModel.rootNodeID(forGraphNodeID: graphNodeID))
+            onSelectRootNode(graphViewModel.rootNodeID(forGraphNodeID: graphNodeID), isAdditive)
         }
+        scene.onToggleActionItem = onToggleActionItem
+        scene.isActionItem = isActionItem
         scene.onExpandRemainingBranches = {
             graphViewModel.expandRemainingBranches()
         }
@@ -90,9 +95,17 @@ internal struct GraphRepresentable: NSViewRepresentable {
         scene.onFrameRatePreferenceChanged = { [weak nsView] framesPerSecond in
             nsView?.preferredFramesPerSecond = framesPerSecond
         }
+        let selectedGraphNodeID = graphViewModel.selectedGroupingID
+            ?? graphViewModel.selectedGraphNodeID(for: selectedNodeID)
+        let selectedGraphNodeIDs: Set<String>
+        if let selectedGroupingID = graphViewModel.selectedGroupingID {
+            selectedGraphNodeIDs = [selectedGroupingID]
+        } else {
+            selectedGraphNodeIDs = graphViewModel.graphNodeIDs(for: selectedNodeIDs)
+        }
         scene.configure(data: graphViewModel.data,
-                        selectedGraphNodeID: graphViewModel.selectedGroupingID
-                            ?? graphViewModel.selectedGraphNodeID(for: selectedNodeID),
+                        selectedGraphNodeID: selectedGraphNodeID,
+                        selectedGraphNodeIDs: selectedGraphNodeIDs,
                         pruneMode: graphViewModel.pruneMode,
                         filteredNodeIDs: graphViewModel.filteredNodeIDs,
                         wateredCounts: settings.wateredCounts,
@@ -133,6 +146,19 @@ internal final class GraphSKView: SKView {
         super.viewDidMoveToWindow()
         isPaused = window == nil
         window?.acceptsMouseMovedEvents = true
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let graphScene = scene as? ObsidianGraphScene else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        if let menu = graphScene.contextMenu(at: viewPoint) {
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+            return
+        }
+        super.rightMouseDown(with: event)
     }
 
     override func magnify(with event: NSEvent) {

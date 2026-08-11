@@ -10,7 +10,7 @@ internal struct ObsidianGraphControls: View {
     internal let totalBranchCount: Int
     internal let textScale: CGFloat
 
-    @State private var isCollapsed = false
+    @State private var isCollapsed = true
     @State private var showsFilters = true
     @State private var showsGroups = false
     @State private var showsDisplay = false
@@ -145,7 +145,7 @@ internal struct ObsidianGraphControls: View {
                         Text(grouping.title)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        valueText("\(grouping.threadIDs.count)")
+                        valueText("\(grouping.memberCount)")
                     }
                     .font(.caption)
                 }

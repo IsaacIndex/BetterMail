@@ -31,7 +31,7 @@ internal struct GraphToolbar: View {
                                               comment: "Help for archiving the selected graph thread"),
                           action: performArchive)
             Divider()
-                .frame(height: 22)
+                .frame(height: 18)
             plainButton(systemImage: "minus.magnifyingglass",
                         title: NSLocalizedString("graph.toolbar.zoom_out", comment: "Graph zoom out"),
                         accessibilityID: AccessibilityID.graphToolbarZoomOut,
@@ -54,7 +54,7 @@ internal struct GraphToolbar: View {
                         action: { viewModel.isSettingsPresented = true })
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(DesignTokens.Graph.AppTheme.panel)
@@ -78,9 +78,9 @@ internal struct GraphToolbar: View {
             Label(title, systemImage: systemImage)
                 .labelStyle(.titleAndIcon)
                 .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
-                .frame(minWidth: 84, minHeight: 30)
+                .frame(minWidth: 84, minHeight: 26)
                 .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .padding(.vertical, 2)
                 .foregroundStyle(isOn ? Color.white : DesignTokens.Graph.AppTheme.inkSecondary)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)

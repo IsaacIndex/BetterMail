@@ -50,7 +50,7 @@ internal final class ObsidianGraphSceneNode: SKNode {
             let font = NSFont.systemFont(ofSize: fontSize,
                                          weight: kind == .center ? .semibold : .regular)
             let label = SKLabelNode(fontNamed: font.fontName)
-            label.text = Self.truncated(title, font: font)
+            label.text = title
             label.fontSize = fontSize
             label.fontColor = theme.inkSecondaryNS
             label.horizontalAlignmentMode = .left
@@ -207,29 +207,6 @@ internal final class ObsidianGraphSceneNode: SKNode {
     internal static func labelAlpha(zoomScale: CGFloat, threshold: CGFloat) -> CGFloat {
         let zoomLevel = log2(max(zoomScale, 0.05))
         return min(max((zoomLevel - threshold + 0.18) / 0.72, 0), 1)
-    }
-
-    private static func truncated(_ title: String,
-                                  font: NSFont,
-                                  maximumWidth: CGFloat = 210) -> String {
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        guard (title as NSString).size(withAttributes: attributes).width > maximumWidth else {
-            return title
-        }
-
-        let ellipsis = "…"
-        var lowerBound = 0
-        var upperBound = title.count
-        while lowerBound < upperBound {
-            let midpoint = (lowerBound + upperBound + 1) / 2
-            let candidate = String(title.prefix(midpoint)) + ellipsis
-            if (candidate as NSString).size(withAttributes: attributes).width <= maximumWidth {
-                lowerBound = midpoint
-            } else {
-                upperBound = midpoint - 1
-            }
-        }
-        return String(title.prefix(lowerBound)).trimmingCharacters(in: .whitespacesAndNewlines) + ellipsis
     }
 
     private static func dashedCirclePath(radius: CGFloat,
