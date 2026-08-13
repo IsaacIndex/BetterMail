@@ -35,7 +35,7 @@
 "graph.legend.thread.title" = "Threads";
 "graph.legend.thread.detail" = "Circles are threads; thicker, darker rings mean higher importance.";
 "graph.legend.folder.title" = "Folders";
-"graph.legend.folder.detail" = "Folder branches are groupings you already confirmed.";
+"graph.legend.folder.detail" = "Folder branches are confirmed groups. Drag a thread toward one and release when it highlights.";
 "graph.legend.ghost.title" = "Ghost branches";
 "graph.legend.ghost.detail" = "Dashed branches are Apple Intelligence topic hints; confirm one to create a folder.";
 "graph.legend.message.title" = "Messages";
@@ -61,6 +61,7 @@
 "graph.actions.selected_thread" = "Selected thread: %@";
 "graph.actions.action_item" = "Action Item";
 "graph.actions.remove_action_item" = "Remove Action Item";
+"graph.folder.drop.moving" = "Moving thread to ‘%@’…";
 "graph.actions.not_important" = "Not Important";
 "graph.actions.done" = "Done";
 "graph.settings.title" = "Graph Settings";

@@ -1304,7 +1304,8 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                                                      toFolderID: "folder-b",
                                                      folders: [folderA, folderB])
 
-        XCTAssertEqual(update?.folders.first(where: { $0.id == "folder-a" })?.threadIDs.contains("thread-1"), false)
+        XCTAssertNil(update?.folders.first(where: { $0.id == "folder-a" }))
+        XCTAssertEqual(update?.deletedFolderIDs, ["folder-a"])
         XCTAssertEqual(update?.folders.first(where: { $0.id == "folder-b" })?.threadIDs.contains("thread-1"), true)
         XCTAssertEqual(update?.membership["thread-1"], "folder-b")
     }

@@ -32,7 +32,8 @@ internal struct GraphCanvasView: View {
                                        }
                                    },
                                    onToggleActionItem: toggleActionItem(forGraphNodeID:),
-                                   isActionItem: isActionItem(forGraphNodeID:))
+                                   isActionItem: isActionItem(forGraphNodeID:),
+                                   onMoveThreadToFolder: moveGraphThread(_:toFolderID:))
                     .accessibilityIdentifier(AccessibilityID.graphCanvas)
                     .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
                                                           comment: "Accessibility label for graph canvas"))
@@ -268,6 +269,20 @@ internal struct GraphCanvasView: View {
         threadViewModel.addActionItem(message: message,
                                       folderID: folderID,
                                       tags: target.tags)
+    }
+
+    private func moveGraphThread(_ rawThreadID: String, toFolderID folderID: String) {
+        guard let folder = threadViewModel.threadFolders.first(where: { $0.id == folderID }) else {
+            return
+        }
+        threadViewModel.moveThread(threadID: rawThreadID, toFolderID: folderID)
+        threadViewModel.showToast(
+            String.localizedStringWithFormat(
+                NSLocalizedString("graph.folder.drop.moving",
+                                  comment: "Status after dropping a graph thread onto a confirmed folder"),
+                folder.title
+            )
+        )
     }
 
     private func performSnipAction() {

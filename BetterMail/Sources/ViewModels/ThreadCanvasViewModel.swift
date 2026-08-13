@@ -3539,6 +3539,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             } catch {
                 Log.app.error("Failed to move thread into folder: \(error.localizedDescription, privacy: .public)")
+                self.showError(error.localizedDescription)
             }
         }
     }

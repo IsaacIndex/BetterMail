@@ -82,6 +82,7 @@ internal struct ObsidianGraphForceSimulator {
     internal private(set) var size: CGSize = .zero
 
     private var draggedNodeID: String?
+    private var stationaryNodeIDsDuringDrag: Set<String> = []
     private static let interGroupRepelMultiplier: CGFloat = 3.2
     private static let interGroupRepelRangeMultiplier: CGFloat = 1.45
     private static let chronologyRadiusMultiplier: CGFloat = 1.8
@@ -140,6 +141,7 @@ internal struct ObsidianGraphForceSimulator {
         edges = data.edges.filter { nodesByID[$0.sourceID] != nil && nodesByID[$0.targetID] != nil }
         size = nextSize
         draggedNodeID = nil
+        stationaryNodeIDsDuringDrag = []
     }
 
     internal mutating func step(deltaTime: TimeInterval,
@@ -157,9 +159,18 @@ internal struct ObsidianGraphForceSimulator {
         }
     }
 
-    internal mutating func beginDragging(nodeID: String) {
+    internal mutating func beginDragging(nodeID: String,
+                                         keepingStationary stationaryNodeIDs: Set<String> = []) {
         guard nodesByID[nodeID] != nil else { return }
+        releaseStationaryNodesAfterDrag()
         draggedNodeID = nodeID
+        stationaryNodeIDsDuringDrag = stationaryNodeIDs
+            .intersection(Set(nodesByID.keys))
+            .subtracting([nodeID])
+        for stationaryNodeID in stationaryNodeIDsDuringDrag {
+            nodesByID[stationaryNodeID]?.isPinned = true
+            nodesByID[stationaryNodeID]?.velocity = .zero
+        }
         nodesByID[nodeID]?.isPinned = true
         nodesByID[nodeID]?.velocity = .zero
     }
@@ -176,6 +187,15 @@ internal struct ObsidianGraphForceSimulator {
         nodesByID[nodeID]?.velocity = .zero
         nodesByID[nodeID]?.isPinned = false
         draggedNodeID = nil
+        releaseStationaryNodesAfterDrag()
+    }
+
+    private mutating func releaseStationaryNodesAfterDrag() {
+        for stationaryNodeID in stationaryNodeIDsDuringDrag {
+            nodesByID[stationaryNodeID]?.isPinned = false
+            nodesByID[stationaryNodeID]?.velocity = .zero
+        }
+        stationaryNodeIDsDuringDrag = []
     }
 
     internal mutating func stopMotion() {

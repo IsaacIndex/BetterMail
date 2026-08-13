@@ -9,6 +9,7 @@ internal final class ObsidianGraphScene: SKScene {
     internal static let idleFramesPerSecond = 12
 
     private static let pruneEdgeHitTolerance: CGFloat = 14
+    private static let folderDropMagnetRadius: CGFloat = 44
     private static let interactionFrameWindow: TimeInterval = 1.1
     private static let maximumSettlingFrames = 240
     private static let reducedMotionSettlingFrames = 48
@@ -19,6 +20,7 @@ internal final class ObsidianGraphScene: SKScene {
     internal var onWaterThread: ((String) -> Void)?
     internal var onToggleActionItem: ((String) -> Void)?
     internal var isActionItem: ((String) -> Bool)?
+    internal var onMoveThreadToFolder: ((String, String) -> Void)?
     internal var onPruneThread: ((String) -> Void)?
     internal var onPruneAnimationFinished: ((UUID) -> Void)?
     internal var onViewportChanged: ((CGFloat, CGPoint) -> Void)?
@@ -75,6 +77,7 @@ internal final class ObsidianGraphScene: SKScene {
 
     private var draggedNodeID: String?
     private var draggedNodeOffset = CGPoint.zero
+    private var activeFolderDropTarget: GraphFolderDropTarget?
     private var hasDraggedNode = false
     private var isPanning = false
     private var hasPanned = false
@@ -122,6 +125,9 @@ internal final class ObsidianGraphScene: SKScene {
         if dataChanged, hoveredGraphNodeID != nil {
             hoveredGraphNodeID = nil
             onHoverItem?(nil)
+        }
+        if dataChanged {
+            activeFolderDropTarget = nil
         }
         self.selectedGraphNodeIDs = selectedGraphNodeIDs.intersection(data.allNodeIDs)
         if let selectedGraphNodeID,
@@ -219,6 +225,7 @@ internal final class ObsidianGraphScene: SKScene {
         onWaterThread = nil
         onToggleActionItem = nil
         isActionItem = nil
+        onMoveThreadToFolder = nil
         onPruneThread = nil
         onPruneAnimationFinished = nil
         onViewportChanged = nil
@@ -229,6 +236,7 @@ internal final class ObsidianGraphScene: SKScene {
         pendingSelectionID = nil
         pendingSelectionIsAdditive = false
         draggedNodeID = nil
+        activeFolderDropTarget = nil
         graphData = .empty
         simulator = ObsidianGraphForceSimulator()
         filteredNodeIDs = []
@@ -242,6 +250,7 @@ internal final class ObsidianGraphScene: SKScene {
 
     override func mouseDown(with event: NSEvent) {
         markInteraction()
+        setActiveFolderDropTarget(nil)
         hasPanned = false
         hasDraggedNode = false
         hasPendingSelection = false
@@ -300,11 +309,18 @@ internal final class ObsidianGraphScene: SKScene {
             let target = CGPoint(x: location.x + draggedNodeOffset.x,
                                  y: location.y + draggedNodeOffset.y)
             if !hasDraggedNode {
-                simulator.beginDragging(nodeID: draggedNodeID)
+                simulator.beginDragging(
+                    nodeID: draggedNodeID,
+                    keepingStationary: stationaryFolderDropNodeIDs(
+                        forDraggedGraphNodeID: draggedNodeID
+                    )
+                )
             }
             hasDraggedNode = true
             hasPendingSelection = false
             simulator.drag(nodeID: draggedNodeID, to: target)
+            setActiveFolderDropTarget(folderDropTarget(at: location,
+                                                       draggedGraphNodeID: draggedNodeID))
             wakeLayout()
             renderGraph()
             return
@@ -323,12 +339,14 @@ internal final class ObsidianGraphScene: SKScene {
             simulator.endDragging(nodeID: draggedNodeID,
                                   at: CGPoint(x: location.x + draggedNodeOffset.x,
                                               y: location.y + draggedNodeOffset.y))
+            performFolderDrop(at: location, draggedGraphNodeID: draggedNodeID)
             wakeLayout()
         } else if hasPendingSelection && !hasPanned {
             onSelectGraphNode?(pendingSelectionID, pendingSelectionIsAdditive)
         }
         draggedNodeID = nil
         draggedNodeOffset = .zero
+        setActiveFolderDropTarget(nil)
         hasDraggedNode = false
         isPanning = false
         hasPanned = false
@@ -551,11 +569,11 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func applyVisualState() {
-        let focusedNodeIDs = hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+        let focusedNodeIDs = interactionFocusedNodeIDs
         let neighbors = Set(focusedNodeIDs.flatMap { neighborIDsByNodeID[$0] ?? [] })
         for (id, node) in graphNodesByID {
             let isSelected = selectedGraphNodeIDs.contains(id)
-            let isHovered = hoveredGraphNodeID == id
+            let isHovered = hoveredGraphNodeID == id || activeFolderDropTarget?.graphNodeID == id
             let isNeighbor = neighbors.contains(id)
             let isFiltered = !filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(id)
             node.applyFocus(isSelected: isSelected,
@@ -572,7 +590,7 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func applyStyle(to visual: EdgeVisual, edge: GraphEdge) {
-        let focusedNodeIDs = hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+        let focusedNodeIDs = interactionFocusedNodeIDs
         let isConnected = focusedNodeIDs.isEmpty
             || focusedNodeIDs.contains(edge.sourceID)
             || focusedNodeIDs.contains(edge.targetID)
@@ -596,7 +614,7 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func updateLabels() {
-        let focusedNodeIDs = hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+        let focusedNodeIDs = interactionFocusedNodeIDs
         let visibleNodeIDs = selectedGraphNodeIDs.union(focusedNodeIDs)
         let neighbors = Set(focusedNodeIDs.flatMap { neighborIDsByNodeID[$0] ?? [] })
         for (id, node) in graphNodesByID {
@@ -651,6 +669,19 @@ internal final class ObsidianGraphScene: SKScene {
         guard hoveredGraphNodeID != nil else { return }
         hoveredGraphNodeID = nil
         onHoverItem?(nil)
+        applyVisualState()
+    }
+
+    private var interactionFocusedNodeIDs: Set<String> {
+        if let activeFolderDropTarget {
+            return Set([activeFolderDropTarget.graphNodeID, draggedNodeID].compactMap { $0 })
+        }
+        return hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
+    }
+
+    private func setActiveFolderDropTarget(_ target: GraphFolderDropTarget?) {
+        guard target != activeFolderDropTarget else { return }
+        activeFolderDropTarget = target
         applyVisualState()
     }
 
@@ -785,6 +816,55 @@ internal final class ObsidianGraphScene: SKScene {
         return bestNodeID
     }
 
+    internal func folderDropTarget(at location: CGPoint,
+                                   draggedGraphNodeID: String) -> GraphFolderDropTarget? {
+        guard let rawThreadID = rawThreadID(forGraphNodeID: draggedGraphNodeID) else { return nil }
+        let scale = max(displayConfig.nodeSize, 0.55)
+        let zoomAdjustedMagnetRadius = Self.folderDropMagnetRadius * max(cameraNode.xScale, 0.2)
+
+        return graphData.groupings.compactMap { grouping -> (CGFloat, GraphFolderDropTarget)? in
+            guard grouping.kind == .folder,
+                  let folderID = grouping.sourceFolderID,
+                  !grouping.rawThreadIDs.contains(rawThreadID),
+                  let folderNode = simulator.nodesByID[grouping.id] else {
+                return nil
+            }
+            let distance = hypot(folderNode.position.x - location.x,
+                                 folderNode.position.y - location.y)
+            let dropRadius = max(folderNode.radius * scale, zoomAdjustedMagnetRadius)
+            guard distance <= dropRadius else { return nil }
+            return (distance,
+                    GraphFolderDropTarget(graphNodeID: grouping.id,
+                                          rawThreadID: rawThreadID,
+                                          folderID: folderID))
+        }
+        .min { $0.0 < $1.0 }?.1
+    }
+
+    internal func stationaryFolderDropNodeIDs(forDraggedGraphNodeID graphNodeID: String) -> Set<String> {
+        guard let rawThreadID = rawThreadID(forGraphNodeID: graphNodeID) else { return [] }
+        return Set(graphData.groupings.compactMap { grouping in
+            guard grouping.kind == .folder,
+                  grouping.sourceFolderID != nil,
+                  !grouping.rawThreadIDs.contains(rawThreadID) else {
+                return nil
+            }
+            return grouping.id
+        })
+    }
+
+    @discardableResult
+    internal func performFolderDrop(at location: CGPoint,
+                                    draggedGraphNodeID: String) -> Bool {
+        guard let target = folderDropTarget(at: location,
+                                            draggedGraphNodeID: draggedGraphNodeID),
+              let onMoveThreadToFolder else {
+            return false
+        }
+        onMoveThreadToFolder(target.rawThreadID, target.folderID)
+        return true
+    }
+
     private func nearestEdgeThreadID(to location: CGPoint) -> String? {
         let tolerance = Self.pruneEdgeHitTolerance * max(cameraNode.xScale, 0.2)
         return graphData.edges.compactMap { edge -> (String, CGFloat)? in
@@ -802,6 +882,13 @@ internal final class ObsidianGraphScene: SKScene {
     private func threadID(forGraphNodeID graphNodeID: String) -> String? {
         if graphData.threadByID[graphNodeID] != nil { return graphNodeID }
         return graphData.messageByID[graphNodeID]?.threadID
+    }
+
+    private func rawThreadID(forGraphNodeID graphNodeID: String) -> String? {
+        if let thread = graphData.threadByID[graphNodeID] {
+            return thread.rawThreadID
+        }
+        return graphData.messageByID[graphNodeID]?.rawThreadID
     }
 
     private func startPruneAnimationIfNeeded(_ request: GraphPruneAnimationRequest?) {
@@ -896,6 +983,12 @@ internal final class ObsidianGraphScene: SKScene {
         let projection = CGPoint(x: source.x + t * dx, y: source.y + t * dy)
         return hypot(point.x - projection.x, point.y - projection.y)
     }
+}
+
+internal struct GraphFolderDropTarget: Equatable {
+    internal let graphNodeID: String
+    internal let rawThreadID: String
+    internal let folderID: String
 }
 
 internal final class GraphContextMenuAction: NSObject {

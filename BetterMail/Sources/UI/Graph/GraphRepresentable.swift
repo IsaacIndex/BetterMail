@@ -13,6 +13,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
     internal let onSelectRootNode: (String?, Bool) -> Void
     internal let onToggleActionItem: (String) -> Void
     internal let isActionItem: (String) -> Bool
+    internal let onMoveThreadToFolder: (String, String) -> Void
 
     internal func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -57,6 +58,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
         }
         scene.onToggleActionItem = onToggleActionItem
         scene.isActionItem = isActionItem
+        scene.onMoveThreadToFolder = onMoveThreadToFolder
         scene.onExpandRemainingBranches = {
             graphViewModel.expandRemainingBranches()
         }

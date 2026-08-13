@@ -1712,6 +1712,53 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
         XCTAssertFalse(simulator.nodesByID[threadID]?.isPinned ?? true)
     }
 
+    func test_drag_keepingFolderStationary_pinsTargetUntilRelease() throws {
+        let folder = ThreadFolder(id: "folder-meetings",
+                                  title: "Meetings",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [
+            makeThread(rootID: "foldered-thread", messageCount: 1),
+            makeThread(rootID: "unfiled-thread", messageCount: 1)
+        ],
+        folders: [folder],
+        folderMembershipByThreadID: ["foldered-thread": folder.id],
+        now: Date(timeIntervalSince1970: 10_000))
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let draggedNodeID = GraphData.threadNodeID(for: "unfiled-thread")
+        let folderStart = CGPoint(x: 1_000, y: 1_000)
+        let dragTarget = CGPoint(x: 1_018, y: 1_000)
+        var preservedPositions = Dictionary(uniqueKeysWithValues: graph.allNodeIDs.sorted().enumerated().map {
+            ($0.element, CGPoint(x: 10_000 + CGFloat($0.offset) * 2_000, y: 10_000))
+        })
+        preservedPositions[grouping.id] = folderStart
+        preservedPositions[draggedNodeID] = CGPoint(x: 1_080, y: 1_000)
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: graph,
+                        size: CGSize(width: 100_000, height: 20_000),
+                        preserving: preservedPositions)
+
+        simulator.beginDragging(nodeID: draggedNodeID,
+                                keepingStationary: [grouping.id])
+        simulator.drag(nodeID: draggedNodeID, to: dragTarget)
+        for _ in 0..<30 {
+            simulator.step(deltaTime: 1.0 / 60.0,
+                           reduceMotion: false,
+                           config: .defaults)
+        }
+
+        assertPointsEqual(simulator.nodesByID[grouping.id]?.position, folderStart)
+        assertPointsEqual(simulator.nodesByID[draggedNodeID]?.position, dragTarget)
+        XCTAssertTrue(simulator.nodesByID[grouping.id]?.isPinned ?? false)
+        XCTAssertTrue(simulator.nodesByID[draggedNodeID]?.isPinned ?? false)
+
+        simulator.endDragging(nodeID: draggedNodeID, at: dragTarget)
+
+        XCTAssertFalse(simulator.nodesByID[grouping.id]?.isPinned ?? true)
+        XCTAssertFalse(simulator.nodesByID[draggedNodeID]?.isPinned ?? true)
+    }
+
     func test_drag_youNode_movesAndReleasesLikeAnyOtherNode() throws {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
                                    now: Date(timeIntervalSince1970: 10_000))
@@ -2261,6 +2308,167 @@ final class ObsidianGraphSceneTests: XCTestCase {
         scene.onToggleActionItem = { _ in }
 
         XCTAssertNil(scene.actionItemContextMenu(forGraphNodeID: GraphCenter.you.id))
+    }
+
+    func test_folderDropTarget_threadOverConfirmedFolder_returnsPersistedIDs() throws {
+        let folder = ThreadFolder(id: "folder-meetings",
+                                  title: "Meetings",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [
+            makeThread(rootID: "foldered-thread", messageCount: 1),
+            makeThread(rootID: "unfiled-thread", messageCount: 1)
+        ],
+        folders: [folder],
+        folderMembershipByThreadID: ["foldered-thread": folder.id],
+        now: Date(timeIntervalSince1970: 10_000))
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let folderNode = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == grouping.id })
+
+        let target = try XCTUnwrap(scene.folderDropTarget(
+            at: folderNode.position,
+            draggedGraphNodeID: GraphData.threadNodeID(for: "unfiled-thread")
+        ))
+
+        XCTAssertEqual(target.graphNodeID, grouping.id)
+        XCTAssertEqual(target.rawThreadID, "unfiled-thread")
+        XCTAssertEqual(target.folderID, folder.id)
+        XCTAssertEqual(
+            scene.stationaryFolderDropNodeIDs(
+                forDraggedGraphNodeID: GraphData.threadNodeID(for: "unfiled-thread")
+            ),
+            [grouping.id]
+        )
+    }
+
+    func test_folderDropTarget_nearConfirmedFolder_usesZoomAwareMagnet() throws {
+        let folder = ThreadFolder(id: "folder-meetings",
+                                  title: "Meetings",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [
+            makeThread(rootID: "foldered-thread", messageCount: 1),
+            makeThread(rootID: "unfiled-thread", messageCount: 1)
+        ],
+        folders: [folder],
+        folderMembershipByThreadID: ["foldered-thread": folder.id],
+        now: Date(timeIntervalSince1970: 10_000))
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let draggedNodeID = GraphData.threadNodeID(for: "unfiled-thread")
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let folderNode = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == grouping.id })
+
+        XCTAssertNotNil(scene.folderDropTarget(
+            at: CGPoint(x: folderNode.position.x + 36, y: folderNode.position.y),
+            draggedGraphNodeID: draggedNodeID
+        ))
+        XCTAssertNil(scene.folderDropTarget(
+            at: CGPoint(x: folderNode.position.x + 70, y: folderNode.position.y),
+            draggedGraphNodeID: draggedNodeID
+        ))
+
+        let zoomedOutScene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(zoomedOutScene, data: graph, zoomScale: 0.5)
+        let zoomedOutFolderNode = try XCTUnwrap(
+            zoomedOutScene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+                .first { $0.graphID == grouping.id }
+        )
+        XCTAssertNotNil(zoomedOutScene.folderDropTarget(
+            at: CGPoint(x: zoomedOutFolderNode.position.x + 70,
+                        y: zoomedOutFolderNode.position.y),
+            draggedGraphNodeID: draggedNodeID
+        ))
+    }
+
+    func test_performFolderDrop_messageOverConfirmedFolder_movesOwningThread() throws {
+        let folder = ThreadFolder(id: "folder-meetings",
+                                  title: "Meetings",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [
+            makeThread(rootID: "foldered-thread", messageCount: 1),
+            makeThread(rootID: "unfiled-thread", messageCount: 2)
+        ],
+        folders: [folder],
+        folderMembershipByThreadID: ["foldered-thread": folder.id],
+        now: Date(timeIntervalSince1970: 10_000))
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let folderNode = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == grouping.id })
+        var movedThreadID: String?
+        var destinationFolderID: String?
+        scene.onMoveThreadToFolder = { threadID, folderID in
+            movedThreadID = threadID
+            destinationFolderID = folderID
+        }
+
+        let didMove = scene.performFolderDrop(
+            at: folderNode.position,
+            draggedGraphNodeID: GraphData.messageNodeID(for: "unfiled-thread-msg-1")
+        )
+
+        XCTAssertTrue(didMove)
+        XCTAssertEqual(movedThreadID, "unfiled-thread")
+        XCTAssertEqual(destinationFolderID, folder.id)
+    }
+
+    func test_folderDropTarget_threadAlreadyInFolder_returnsNil() throws {
+        let folder = ThreadFolder(id: "folder-meetings",
+                                  title: "Meetings",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "foldered-thread", messageCount: 1)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["foldered-thread": folder.id],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let folderNode = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == grouping.id })
+
+        XCTAssertNil(scene.folderDropTarget(
+            at: folderNode.position,
+            draggedGraphNodeID: GraphData.threadNodeID(for: "foldered-thread")
+        ))
+        XCTAssertTrue(
+            scene.stationaryFolderDropNodeIDs(
+                forDraggedGraphNodeID: GraphData.threadNodeID(for: "foldered-thread")
+            ).isEmpty
+        )
+    }
+
+    func test_folderDropTarget_threadOverSuggestedTopic_returnsNil() throws {
+        let graph = GraphData.make(roots: [
+            makeThread(rootID: "root-a", messageCount: 1),
+            makeThread(rootID: "root-b", messageCount: 1)
+        ],
+        topicSignalsByRawThreadID: [
+            "root-a": makeTopicSignal("CR60 booking rollout", confidence: 0.90),
+            "root-b": makeTopicSignal("CR60 booking rollout", confidence: 0.86)
+        ],
+        now: Date(timeIntervalSince1970: 10_000))
+        let suggestion = try XCTUnwrap(graph.groupings.first(where: \.isSuggestion))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let suggestionNode = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == suggestion.id })
+
+        XCTAssertNil(scene.folderDropTarget(
+            at: suggestionNode.position,
+            draggedGraphNodeID: GraphData.threadNodeID(for: "root-a")
+        ))
     }
 
     func test_teardownForRemoval_releasesGraphAndStopsSceneWork() {
