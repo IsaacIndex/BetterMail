@@ -178,7 +178,7 @@ private struct GraphRadialLayoutTargets {
     let threadByID: [String: CGPoint]
     let groupingByID: [String: CGPoint]
     let branchByNodeID: [String: String]
-    let remaining: CGPoint?
+    let remainingByID: [String: CGPoint]
 }
 
 private struct GraphRadialBranch {
@@ -308,14 +308,16 @@ internal struct GraphForceSimulator {
                                                          restingPosition: preservedRestingPosition(message.id) ?? target)
             }
         }
-        if let remainingBranch = data.remainingBranch {
+        for remainingBranch in data.remainingBranches {
             let fallbackRadius = Self.threadRingRadius(branchCount: data.threads.count + 1, size: size)
-            let defaultPosition = radialTargets.remaining ??
-                                  CGPoint(x: center.x + fallbackRadius, y: center.y)
+            let angle = CGFloat(remainingBranch.angle) * .pi / 180
+            let defaultPosition = radialTargets.remainingByID[remainingBranch.id] ??
+                CGPoint(x: center.x + cos(angle) * fallbackRadius,
+                        y: center.y + sin(angle) * fallbackRadius)
             nextNodes[remainingBranch.id] = GraphPhysicsNode(id: remainingBranch.id,
                                                              kind: .remaining,
                                                              threadID: nil,
-                                                             branchID: remainingBranch.id,
+                                                             branchID: radialTargets.branchByNodeID[remainingBranch.id] ?? remainingBranch.id,
                                                              position: preservedPosition(remainingBranch.id) ?? defaultPosition,
                                                              velocity: .zero,
                                                              radius: remainingBranch.radius,
@@ -981,7 +983,7 @@ internal struct GraphForceSimulator {
                                               isRemaining: false,
                                               lastUpdated: thread.lastUpdated))
         }
-        if let remaining = data.remainingBranch {
+        if let remaining = data.rootRemainingBranch {
             branches.append(GraphRadialBranch(id: remaining.id,
                                               threadIDs: [],
                                               groupingID: nil,
@@ -997,7 +999,7 @@ internal struct GraphForceSimulator {
         var threadTargets: [String: CGPoint] = [:]
         var groupingTargets: [String: CGPoint] = [:]
         var branchByNodeID: [String: String] = [:]
-        var remainingTarget: CGPoint?
+        var remainingTargets: [String: CGPoint] = [:]
         let branchesPerRing = 10
         let baseRadius = threadRingRadius(branchCount: branches.count, size: size)
 
@@ -1011,7 +1013,7 @@ internal struct GraphForceSimulator {
             let radius = baseRadius + CGFloat(ringIndex) * branchSpacingStep
 
             if branch.isRemaining {
-                remainingTarget = point(center: center, radius: radius * 0.9, angle: angle)
+                remainingTargets[branch.id] = point(center: center, radius: radius * 0.9, angle: angle)
                 branchByNodeID[branch.id] = branch.id
                 continue
             }
@@ -1053,10 +1055,20 @@ internal struct GraphForceSimulator {
             branchByNodeID[grouping.id] = grouping.id
         }
 
+        for remaining in data.remainingBranches where remaining.parentID != data.center.id {
+            let parentTarget = groupingTargets[remaining.parentID]
+                ?? threadTargets[remaining.parentID]
+                ?? center
+            let direction = outwardUnitVector(from: center, through: parentTarget)
+            remainingTargets[remaining.id] = CGPoint(x: parentTarget.x + direction.x * 118,
+                                                     y: parentTarget.y + direction.y * 118)
+            branchByNodeID[remaining.id] = branchByNodeID[remaining.parentID] ?? remaining.parentID
+        }
+
         return GraphRadialLayoutTargets(threadByID: threadTargets,
                                         groupingByID: groupingTargets,
                                         branchByNodeID: branchByNodeID,
-                                        remaining: remainingTarget)
+                                        remainingByID: remainingTargets)
     }
 
     private static func messageOffset(for messageIndex: Int) -> CGFloat {

@@ -107,8 +107,8 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertEqual(graph.threads.count, 10)
         XCTAssertEqual(graph.visibleEmailNodeCount, 10)
         XCTAssertTrue(graph.messages.isEmpty)
-        XCTAssertEqual(graph.remainingBranch?.hiddenThreadCount, 15)
-        XCTAssertEqual(graph.remainingBranch?.nextBatchCount, 10)
+        XCTAssertEqual(graph.rootRemainingBranch?.hiddenCount, 15)
+        XCTAssertEqual(graph.rootRemainingBranch?.nextBatchCount, 10)
         XCTAssertTrue(graph.allNodeIDs.contains(GraphRemainingBranch.graphID))
         let remainingEdges = graph.edges.filter { $0.targetID == GraphRemainingBranch.graphID }
         XCTAssertEqual(remainingEdges.count, 1)
@@ -126,8 +126,8 @@ final class GraphMappingTests: XCTestCase {
                                    now: Date(timeIntervalSince1970: 10_000))
 
         XCTAssertEqual(graph.threads.count, 20)
-        XCTAssertEqual(graph.remainingBranch?.hiddenThreadCount, 5)
-        XCTAssertEqual(graph.remainingBranch?.nextBatchCount, 5)
+        XCTAssertEqual(graph.rootRemainingBranch?.hiddenCount, 5)
+        XCTAssertEqual(graph.rootRemainingBranch?.nextBatchCount, 5)
     }
 
     func test_mapping_whenMessageLimitIsSet_capsRenderedMessagesButKeepsThreadActionsComplete() {
@@ -188,7 +188,12 @@ final class GraphMappingTests: XCTestCase {
         let grouping = graph.groupings.first { $0.sourceFolderID == folder.id }
         let visibleThreadID = GraphData.threadNodeID(for: "root-a")
         XCTAssertEqual(grouping?.title, "CR60 Walkthrough")
-        XCTAssertEqual(grouping?.rawThreadIDs, ["root-a"])
+        XCTAssertEqual(grouping?.rawThreadIDs, ["root-a", "root-b"])
+        XCTAssertEqual(grouping?.threadIDs, [GraphData.threadNodeID(for: "root-a"),
+                                             GraphData.threadNodeID(for: "root-b")])
+        XCTAssertEqual(graph.visiblePrimaryBranchCount, 1)
+        XCTAssertEqual(graph.totalPrimaryBranchCount, 1)
+        XCTAssertNil(graph.rootRemainingBranch)
         XCTAssertTrue(graph.edges.contains {
             $0.sourceID == GraphCenter.you.id && $0.targetID == grouping?.id && $0.kind == .trunk
         })
@@ -233,6 +238,133 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertEqual(suggestion?.reviewMembers.map(\.fullTitle), ["Subject root-a", "Subject root-b"])
         XCTAssertTrue(suggestion?.isSuggestion == true)
         XCTAssertTrue(graph.edges.contains { $0.sourceID == suggestion?.id && $0.kind == .suggested })
+    }
+
+    func test_mapping_confirmedFolderConsumesOneRootSlotAndPagesItsChildrenInSourceOrder() throws {
+        let folder = ThreadFolder(id: "folder-topic",
+                                  title: "Handled Topic",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["grouped-0", "grouped-1", "grouped-2"],
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "grouped-0", messageCount: 1),
+                    makeThread(rootID: "grouped-1", messageCount: 1),
+                    makeThread(rootID: "grouped-2", messageCount: 1),
+                    makeThread(rootID: "unhandled-0", messageCount: 1),
+                    makeThread(rootID: "unhandled-1", messageCount: 1)],
+            folders: [folder],
+            folderMembershipByThreadID: ["grouped-0": folder.id,
+                                         "grouped-1": folder.id,
+                                         "grouped-2": folder.id],
+            branchLimit: 2,
+            branchBatchSize: 2,
+            perNodeBranchPageSize: 2,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        XCTAssertEqual(graph.visiblePrimaryBranchCount, 2)
+        XCTAssertEqual(graph.totalPrimaryBranchCount, 3)
+        XCTAssertEqual(grouping.threadIDs, [GraphData.threadNodeID(for: "grouped-0"),
+                                            GraphData.threadNodeID(for: "grouped-1")])
+        XCTAssertTrue(graph.threads.contains { $0.rawThreadID == "unhandled-0" })
+        XCTAssertFalse(graph.threads.contains { $0.rawThreadID == "unhandled-1" })
+        XCTAssertEqual(graph.rootRemainingBranch?.hiddenCount, 1)
+        let childRemainder = try XCTUnwrap(graph.remainingBranch(forParentID: grouping.id))
+        XCTAssertEqual(childRemainder.id, GraphRemainingBranch.graphID(for: grouping.id))
+        XCTAssertEqual(childRemainder.hiddenCount, 1)
+        XCTAssertEqual(childRemainder.nextBatchCount, 1)
+        XCTAssertTrue(childRemainder.accessibilityLabel.contains(grouping.title))
+    }
+
+    func test_mapping_suggestionStaysOutsideRootQuotaAndPreviewsHiddenThreadWithoutDuplication() throws {
+        let roots = (0..<8).map { makeThread(rootID: "root-\($0)", messageCount: 1) }
+        let graph = GraphData.make(
+            roots: roots,
+            topicSignalsByRawThreadID: [
+                "root-0": makeTopicSignal("CR60 hidden inbox rollout", confidence: 0.92),
+                "root-7": makeTopicSignal("CR60 hidden inbox rollout", confidence: 0.90)
+            ],
+            branchLimit: 2,
+            branchBatchSize: 2,
+            perNodeBranchPageSize: 6,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        let suggestion = try XCTUnwrap(graph.groupings.first(where: \.isSuggestion))
+        let sharedThreadID = GraphData.threadNodeID(for: "root-0")
+        let otherwiseHiddenThreadID = GraphData.threadNodeID(for: "root-7")
+        XCTAssertEqual(graph.visiblePrimaryBranchCount, 2)
+        XCTAssertEqual(graph.totalPrimaryBranchCount, 8)
+        XCTAssertEqual(graph.rootRemainingBranch?.hiddenCount, 6)
+        XCTAssertEqual(graph.threads.filter { $0.id == sharedThreadID }.count, 1)
+        XCTAssertNotNil(graph.threadByID[otherwiseHiddenThreadID])
+        XCTAssertTrue(graph.edges.contains {
+            $0.sourceID == GraphCenter.you.id && $0.targetID == sharedThreadID && $0.kind == .trunk
+        })
+        XCTAssertTrue(graph.edges.contains {
+            $0.sourceID == suggestion.id && $0.targetID == sharedThreadID && $0.kind == .suggested
+        })
+        XCTAssertTrue(graph.edges.contains {
+            $0.sourceID == suggestion.id && $0.targetID == otherwiseHiddenThreadID && $0.kind == .suggested
+        })
+    }
+
+    func test_mapping_suggestionPreviewCapsAtSixAndPagesItsStableRemainder() throws {
+        let roots = (0..<8).map { makeThread(rootID: "topic-\($0)", messageCount: 1) }
+        let signals = Dictionary(uniqueKeysWithValues: (0..<8).map {
+            ("topic-\($0)", makeTopicSignal("CR60 inbox coverage rollout", confidence: 0.90))
+        })
+        let suggestionID = "suggestion:\(GraphTopicNormalizer.identifierComponent("CR60 inbox coverage rollout"))"
+        let initial = GraphData.make(
+            roots: roots,
+            topicSignalsByRawThreadID: signals,
+            branchLimit: 2,
+            perNodeBranchPageSize: 12,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertEqual(initial.groupingByID[suggestionID]?.threadIDs.count, 6)
+        let initialRemainder = try XCTUnwrap(initial.remainingBranch(forParentID: suggestionID))
+        XCTAssertEqual(initialRemainder.id, GraphRemainingBranch.graphID(for: suggestionID))
+        XCTAssertEqual(initialRemainder.hiddenCount, 2)
+        XCTAssertEqual(initialRemainder.nextBatchCount, 2)
+
+        let expanded = GraphData.make(
+            roots: roots,
+            topicSignalsByRawThreadID: signals,
+            branchLimit: 2,
+            perNodeBranchPageSize: 12,
+            visibleChildLimitsByParentID: [suggestionID: 18],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        XCTAssertEqual(expanded.groupingByID[suggestionID]?.threadIDs.count, 8)
+        XCTAssertNil(expanded.remainingBranch(forParentID: suggestionID))
+    }
+
+    func test_mapping_archivedThreadsAreExcludedFromPrimaryAndChildBudgets() {
+        let folder = ThreadFolder(id: "folder-archive",
+                                  title: "Archive Check",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["kept", "archived"],
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "kept", messageCount: 1),
+                    makeThread(rootID: "archived", messageCount: 1),
+                    makeThread(rootID: "unhandled", messageCount: 1)],
+            archivedThreadIDs: [GraphData.threadNodeID(for: "archived")],
+            folders: [folder],
+            folderMembershipByThreadID: ["kept": folder.id, "archived": folder.id],
+            branchLimit: 2,
+            perNodeBranchPageSize: 2,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertEqual(graph.visiblePrimaryBranchCount, 2)
+        XCTAssertEqual(graph.totalPrimaryBranchCount, 2)
+        XCTAssertNil(graph.rootRemainingBranch)
+        XCTAssertNil(graph.threadByID[GraphData.threadNodeID(for: "archived")])
+        XCTAssertNil(graph.groupings.first.flatMap { graph.remainingBranch(forParentID: $0.id) })
     }
 
     func test_mapping_whenSuggestedTopicIsDismissed_hidesEquivalentNormalizedSuggestion() {
@@ -309,6 +441,25 @@ final class GraphSuggestionDismissalSettingsTests: XCTestCase {
         XCTAssertTrue(resetSettings.dismissedSuggestedTopicIDs.isEmpty)
         XCTAssertTrue(resetSettings.hiddenSuggestedTopics.isEmpty)
         XCTAssertFalse(resetSettings.hasSuggestedTopicPreferences)
+    }
+
+    @MainActor
+    func test_visibleBranchesPerNode_defaultsClampsAndPersists() throws {
+        let suiteName = "GraphVisibleBranchesPerNodeSettingsTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(GraphCanvasSettings.visibleBranchesPerNodeRange, 2...12)
+        XCTAssertEqual(GraphCanvasSettings.defaultVisibleBranchesPerNode, 6)
+        let settings = GraphCanvasSettings(userDefaults: defaults)
+        XCTAssertEqual(settings.visibleBranchesPerNode, 6)
+
+        settings.visibleBranchesPerNode = 99
+        XCTAssertEqual(settings.visibleBranchesPerNode, 12)
+        XCTAssertEqual(GraphCanvasSettings(userDefaults: defaults).visibleBranchesPerNode, 12)
+
+        defaults.set(-3, forKey: "graphCanvasVisibleBranchesPerNode")
+        XCTAssertEqual(GraphCanvasSettings(userDefaults: defaults).visibleBranchesPerNode, 2)
     }
 }
 
@@ -658,15 +809,15 @@ final class GraphBranchPagingTests: XCTestCase {
                              summariesByNodeID: [:])
 
             XCTAssertEqual(viewModel.data.threads.count, 10)
-            XCTAssertEqual(viewModel.data.remainingBranch?.hiddenThreadCount, 15)
+            XCTAssertEqual(viewModel.data.rootRemainingBranch?.hiddenCount, 15)
 
-            viewModel.expandRemainingBranches()
+            viewModel.expandRemainingBranches(parentID: GraphCenter.you.id)
             XCTAssertEqual(viewModel.data.threads.count, 20)
-            XCTAssertEqual(viewModel.data.remainingBranch?.hiddenThreadCount, 5)
+            XCTAssertEqual(viewModel.data.rootRemainingBranch?.hiddenCount, 5)
 
-            viewModel.expandRemainingBranches()
+            viewModel.expandRemainingBranches(parentID: GraphCenter.you.id)
             XCTAssertEqual(viewModel.data.threads.count, 25)
-            XCTAssertNil(viewModel.data.remainingBranch)
+            XCTAssertNil(viewModel.data.rootRemainingBranch)
         }
     }
 
@@ -688,10 +839,76 @@ final class GraphBranchPagingTests: XCTestCase {
                              branchPageSize: 6)
 
             XCTAssertEqual(viewModel.data.threads.count, 6)
-            XCTAssertEqual(viewModel.data.remainingBranch?.nextBatchCount, 6)
-            viewModel.expandRemainingBranches()
+            XCTAssertEqual(viewModel.data.rootRemainingBranch?.nextBatchCount, 6)
+            viewModel.expandRemainingBranches(parentID: GraphCenter.you.id)
             XCTAssertEqual(viewModel.data.threads.count, 12)
-            XCTAssertEqual(viewModel.data.remainingBranch?.hiddenThreadCount, 5)
+            XCTAssertEqual(viewModel.data.rootRemainingBranch?.hiddenCount, 5)
+        }
+    }
+
+    func test_expandRemainingBranches_targetsOnlyClickedParentAndRetainsExpansionAcrossMetadataRefresh() async {
+        await MainActor.run {
+            let suiteName = "GraphChildBranchPagingTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let viewModel = GraphCanvasViewModel(
+                store: MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            )
+            let firstIDs = (0..<8).map { "first-\($0)" }
+            let secondIDs = (0..<8).map { "second-\($0)" }
+            let roots = (firstIDs + secondIDs).map { makeThread(rootID: $0, messageCount: 1) }
+            let firstFolder = ThreadFolder(id: "folder-first",
+                                           title: "First Topic",
+                                           color: .defaultNewFolder,
+                                           threadIDs: Set(firstIDs),
+                                           parentID: nil)
+            let secondFolder = ThreadFolder(id: "folder-second",
+                                            title: "Second Topic",
+                                            color: .defaultNewFolder,
+                                            threadIDs: Set(secondIDs),
+                                            parentID: nil)
+            let membership = Dictionary(uniqueKeysWithValues:
+                firstIDs.map { ($0, firstFolder.id) } + secondIDs.map { ($0, secondFolder.id) })
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             folders: [firstFolder, secondFolder],
+                             folderMembershipByThreadID: membership,
+                             perNodeBranchPageSize: 6)
+
+            let firstParentID = "folder:\(firstFolder.id)"
+            let secondParentID = "folder:\(secondFolder.id)"
+            XCTAssertEqual(viewModel.data.groupingByID[firstParentID]?.threadIDs.count, 6)
+            XCTAssertEqual(viewModel.data.groupingByID[secondParentID]?.threadIDs.count, 6)
+            XCTAssertEqual(viewModel.data.remainingBranch(forParentID: firstParentID)?.hiddenCount, 2)
+            XCTAssertEqual(viewModel.data.remainingBranch(forParentID: secondParentID)?.hiddenCount, 2)
+
+            viewModel.expandRemainingBranches(parentID: firstParentID)
+            XCTAssertEqual(viewModel.data.groupingByID[firstParentID]?.threadIDs.count, 8)
+            XCTAssertNil(viewModel.data.remainingBranch(forParentID: firstParentID))
+            XCTAssertEqual(viewModel.data.groupingByID[secondParentID]?.threadIDs.count, 6)
+            XCTAssertEqual(viewModel.data.remainingBranch(forParentID: secondParentID)?.hiddenCount, 2)
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: ["first-0": ["Refreshed"]],
+                             summariesByNodeID: [:],
+                             folders: [firstFolder, secondFolder],
+                             folderMembershipByThreadID: membership,
+                             perNodeBranchPageSize: 6)
+            XCTAssertEqual(viewModel.data.groupingByID[firstParentID]?.threadIDs.count, 8)
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             folders: [firstFolder, secondFolder],
+                             folderMembershipByThreadID: membership,
+                             perNodeBranchPageSize: 4)
+            XCTAssertEqual(viewModel.data.groupingByID[firstParentID]?.threadIDs.count, 4)
+            XCTAssertEqual(viewModel.data.groupingByID[secondParentID]?.threadIDs.count, 4)
         }
     }
 }
@@ -2232,6 +2449,48 @@ final class GraphTopicGenerationTests: XCTestCase {
 }
 
 final class ObsidianGraphSceneTests: XCTestCase {
+    func test_remainingNodeActivation_invokesOwningParentExactlyOnce() throws {
+        let groupedIDs = ["grouped-0", "grouped-1", "grouped-2"]
+        let folder = ThreadFolder(id: "folder-paged",
+                                  title: "Paged Topic",
+                                  color: .defaultNewFolder,
+                                  threadIDs: Set(groupedIDs),
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: (groupedIDs + ["unhandled-0", "unhandled-1"]).map {
+                makeThread(rootID: $0, messageCount: 1)
+            },
+            folders: [folder],
+            folderMembershipByThreadID: Dictionary(uniqueKeysWithValues: groupedIDs.map { ($0, folder.id) }),
+            branchLimit: 2,
+            branchBatchSize: 2,
+            perNodeBranchPageSize: 2,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let childParentID = "folder:\(folder.id)"
+        let childRemainderID = GraphRemainingBranch.graphID(for: childParentID)
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        var expandedParentIDs: [String] = []
+        scene.onExpandRemainingBranches = { expandedParentIDs.append($0) }
+
+        let remainingNodes = scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .filter { $0.kind == .remaining }
+        XCTAssertEqual(remainingNodes.count, 2)
+        let childRemainderNode = try XCTUnwrap(remainingNodes.first { $0.graphID == childRemainderID })
+        let childRemainder = try XCTUnwrap(graph.remainingBranchByID[childRemainderID])
+        XCTAssertEqual(childRemainderNode.accessibilityRole, NSAccessibility.Role.button.rawValue)
+        XCTAssertEqual(childRemainderNode.accessibilityLabel, childRemainder.accessibilityLabel)
+        XCTAssertTrue(childRemainderNode.accessibilityPerformPress())
+        XCTAssertEqual(expandedParentIDs, [childParentID])
+        expandedParentIDs.removeAll()
+
+        XCTAssertTrue(scene.expandRemainingBranchIfPresent(nodeID: GraphRemainingBranch.graphID))
+        XCTAssertTrue(scene.expandRemainingBranchIfPresent(nodeID: childRemainderID))
+        XCTAssertFalse(scene.expandRemainingBranchIfPresent(nodeID: GraphData.threadNodeID(for: "unhandled-0")))
+        XCTAssertEqual(expandedParentIDs, [GraphCenter.you.id, childParentID])
+    }
+
     func test_hitTest_whenPointerIsOnLabel_selectsOnlyTheNodeShape() throws {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
                                    now: Date(timeIntervalSince1970: 10_000))
@@ -2543,6 +2802,110 @@ final class ObsidianGraphSceneTests: XCTestCase {
 
         XCTAssertEqual(publishedViewport?.zoom ?? -1, 1, accuracy: 0.001)
         assertPointsEqual(publishedViewport?.pan, .zero)
+    }
+
+    func test_snipTargetResolver_mapsWholeThreadsAndConfirmedFolderTrunksOnly() throws {
+        let folder = ThreadFolder(id: "folder-snip",
+                                  title: "Snip Folder",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered"],
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "foldered", messageCount: 2)],
+            folders: [folder],
+            folderMembershipByThreadID: ["foldered": folder.id],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.kind == .folder })
+        let threadID = GraphData.threadNodeID(for: "foldered")
+        let replyID = GraphData.messageNodeID(for: "foldered-msg-1")
+        let trunk = try XCTUnwrap(graph.edges.first {
+            $0.kind == .trunk && $0.targetID == grouping.id
+        })
+        let replyEdge = try XCTUnwrap(graph.edges.first { $0.targetID == replyID })
+
+        XCTAssertEqual(scene.snipTarget(forGraphNodeID: grouping.id),
+                       .confirmedGroup(grouping.id))
+        XCTAssertEqual(scene.snipTarget(for: trunk), .confirmedGroup(grouping.id))
+        XCTAssertEqual(scene.snipTarget(forGraphNodeID: threadID), .thread(threadID))
+        XCTAssertEqual(scene.snipTarget(forGraphNodeID: replyID), .thread(threadID))
+        XCTAssertEqual(scene.snipTarget(for: replyEdge), .thread(threadID))
+        XCTAssertNil(scene.snipTarget(forGraphNodeID: GraphCenter.you.id))
+
+        let suggestedGraph = GraphData.make(
+            roots: [makeThread(rootID: "suggested-a", messageCount: 1),
+                    makeThread(rootID: "suggested-b", messageCount: 1)],
+            topicSignalsByRawThreadID: [
+                "suggested-a": makeTopicSignal("Shared rollout", confidence: 0.91),
+                "suggested-b": makeTopicSignal("Shared rollout", confidence: 0.88)
+            ],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let suggestedScene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(suggestedScene, data: suggestedGraph)
+        let suggestion = try XCTUnwrap(suggestedGraph.groupings.first(where: \.isSuggestion))
+        let suggestedEdge = try XCTUnwrap(suggestedGraph.edges.first { $0.kind == .suggested })
+        XCTAssertNil(suggestedScene.snipTarget(forGraphNodeID: suggestion.id))
+        XCTAssertNil(suggestedScene.snipTarget(for: suggestedEdge))
+
+        let pagedGraph = GraphData.make(
+            roots: (1...3).map { makeThread(rootID: "paged-\($0)", messageCount: 1) },
+            branchLimit: 1,
+            branchBatchSize: 1,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let pagedScene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(pagedScene, data: pagedGraph)
+        let remainingEdge = try XCTUnwrap(pagedGraph.edges.first { $0.kind == .remaining })
+        XCTAssertNil(pagedScene.snipTarget(forGraphNodeID: GraphRemainingBranch.graphID))
+        XCTAssertNil(pagedScene.snipTarget(for: remainingEdge))
+    }
+
+    func test_snipNodeState_ghostsAndReversesInPlaceIncludingReduceMotion() {
+        let node = ObsidianGraphSceneNode(
+            graphID: "thread:snip",
+            kind: .thread,
+            threadID: "thread:snip",
+            radius: 14,
+            title: "Snip",
+            fillColor: .white,
+            strokeColor: .gray,
+            textScale: 1,
+            theme: DesignTokens.Graph.AppTheme.Palette(isDark: false)
+        )
+        let originalPosition = CGPoint(x: 120, y: 240)
+        node.position = originalPosition
+
+        node.applyFocus(isSelected: false,
+                        isHovered: false,
+                        isNeighbor: false,
+                        isDimmed: false,
+                        hasFocusedNode: false,
+                        snipState: .staged)
+        XCTAssertEqual(node.alpha, 0.34, accuracy: 0.001)
+        assertPointsEqual(node.position, originalPosition)
+
+        node.applyFocus(isSelected: false,
+                        isHovered: false,
+                        isNeighbor: false,
+                        isDimmed: false,
+                        hasFocusedNode: false,
+                        snipState: .partial)
+        XCTAssertEqual(node.alpha, 0.68, accuracy: 0.001)
+
+        node.runSnipTransition(.unstage, reduceMotion: true, delay: 0)
+        XCTAssertNotNil(node.action(forKey: "obsidian-snip-transition"))
+        assertPointsEqual(node.position, originalPosition)
+
+        node.applyFocus(isSelected: false,
+                        isHovered: false,
+                        isNeighbor: false,
+                        isDimmed: false,
+                        hasFocusedNode: false,
+                        snipState: .normal)
+        XCTAssertEqual(node.alpha, 1, accuracy: 0.001)
     }
 
     private func configure(_ scene: ObsidianGraphScene,
@@ -2996,7 +3359,9 @@ final class GraphSelectionTests: XCTestCase {
             viewModel.requestSnip(threadID: threadID)
 
             XCTAssertEqual(viewModel.pruneMode, .snip)
-            XCTAssertEqual(viewModel.snipMoveRequest?.thread.id, threadID)
+            XCTAssertEqual(viewModel.snipPhase, .staging)
+            XCTAssertEqual(viewModel.stagedSnipThreadIDs, [threadID])
+            XCTAssertNil(viewModel.snipBatchRequest)
         }
     }
 
@@ -3013,7 +3378,9 @@ final class GraphSelectionTests: XCTestCase {
             viewModel.activateSnip(selectedThreadID: nil)
 
             XCTAssertEqual(viewModel.pruneMode, .snip)
-            XCTAssertNil(viewModel.snipMoveRequest)
+            XCTAssertEqual(viewModel.snipPhase, .staging)
+            XCTAssertTrue(viewModel.stagedSnipItems.isEmpty)
+            XCTAssertNil(viewModel.snipBatchRequest)
         }
     }
 
@@ -3048,6 +3415,563 @@ final class GraphSelectionTests: XCTestCase {
             XCTAssertNil(viewModel.data.threadByID[threadID])
             XCTAssertNil(viewModel.pruneAnimationRequest)
         }
+    }
+}
+
+final class GraphBatchSnipTests: XCTestCase {
+    func test_firstSnipClick_entersStagingWithoutConsumingSelection() async {
+        let mover = TestGraphSnipMailMover([])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let threadID = GraphData.threadNodeID(for: "root")
+
+        await MainActor.run {
+            setup.viewModel.activateSnip(selectedThreadID: threadID)
+
+            XCTAssertEqual(setup.viewModel.snipPhase, .staging)
+            XCTAssertEqual(setup.viewModel.pruneMode, .snip)
+            XCTAssertTrue(setup.viewModel.stagedSnipItems.isEmpty)
+            XCTAssertEqual(setup.viewModel.snipActionTitle,
+                           NSLocalizedString("graph.toolbar.snip", comment: "Graph snip mode"))
+
+            setup.viewModel.activateSnip()
+            XCTAssertEqual(setup.viewModel.snipPhase, .idle)
+        }
+    }
+
+    func test_threadToggling_deduplicatesAndClearsAccountLockAfterLastUnstage() async {
+        let mover = TestGraphSnipMailMover([])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: [makeThread(rootID: "one", messageCount: 2, accountName: "Work"),
+                        makeThread(rootID: "two", messageCount: 1, accountName: "Work")],
+                mailMover: mover
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let one = GraphData.threadNodeID(for: "one")
+        let two = GraphData.threadNodeID(for: "two")
+
+        await MainActor.run {
+            setup.viewModel.activateSnip()
+            setup.viewModel.toggleSnipTarget(.thread(one))
+            setup.viewModel.toggleSnipTarget(.thread(two))
+            XCTAssertEqual(setup.viewModel.stagedSnipThreadIDs, [one, two])
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 2)
+            XCTAssertTrue(setup.viewModel.snipActionTitle.contains("2"))
+            XCTAssertEqual(setup.viewModel.snipLockedAccountName, "Work")
+            XCTAssertTrue(setup.viewModel.isArchiveDisabledForSnip)
+
+            setup.viewModel.toggleSnipTarget(.thread(one))
+            setup.viewModel.toggleSnipTarget(.thread(two))
+            XCTAssertTrue(setup.viewModel.stagedSnipItems.isEmpty)
+            XCTAssertNil(setup.viewModel.snipLockedAccountName)
+        }
+    }
+
+    func test_confirmedGroupToggle_includesPagedOutDescendantsAndTogglesAsOneSet() async throws {
+        let mover = TestGraphSnipMailMover([])
+        let rawIDs = (1...3).map { "root-\($0)" }
+        let roots = rawIDs.map { makeThread(rootID: $0, messageCount: 1, accountName: "Work") }
+        let folder = ThreadFolder(id: "folder-work",
+                                  title: "Work",
+                                  color: .defaultNewFolder,
+                                  threadIDs: Set(rawIDs),
+                                  parentID: nil)
+        let membership = Dictionary(uniqueKeysWithValues: rawIDs.map { ($0, folder.id) })
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: roots,
+                                   mailMover: mover,
+                                   folders: [folder],
+                                   folderMembershipByThreadID: membership,
+                                   perNodeBranchPageSize: 2)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+
+        try await MainActor.run {
+            let grouping = try XCTUnwrap(setup.viewModel.data.groupings.first { $0.kind == .folder })
+            XCTAssertEqual(grouping.rawThreadIDs.count, 3)
+            XCTAssertEqual(setup.viewModel.data.threads.count, 2)
+
+            setup.viewModel.activateSnip()
+            setup.viewModel.toggleSnipTarget(.confirmedGroup(grouping.id))
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 3)
+            XCTAssertEqual(setup.viewModel.fullyStagedSnipGroupingIDs, [grouping.id])
+
+            setup.viewModel.toggleSnipTarget(.confirmedGroup(grouping.id))
+            XCTAssertTrue(setup.viewModel.stagedSnipItems.isEmpty)
+            XCTAssertNil(setup.viewModel.snipLockedAccountName)
+
+            setup.viewModel.toggleSnipTarget(.thread(GraphData.threadNodeID(for: "root-1")))
+            XCTAssertEqual(setup.viewModel.partiallyStagedSnipGroupingIDs, [grouping.id])
+            setup.viewModel.toggleSnipTarget(.confirmedGroup(grouping.id))
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 3)
+            XCTAssertEqual(setup.viewModel.fullyStagedSnipGroupingIDs, [grouping.id])
+        }
+    }
+
+    func test_mixedAccountGroup_requiresThreadLockThenStagesOnlyMatchingDescendants() async throws {
+        let mover = TestGraphSnipMailMover([])
+        let roots = [makeThread(rootID: "work-1", messageCount: 1, accountName: "Work"),
+                     makeThread(rootID: "work-2", messageCount: 1, accountName: "Work"),
+                     makeThread(rootID: "personal", messageCount: 1, accountName: "Personal")]
+        let rawIDs = ["work-1", "work-2", "personal"]
+        let folder = ThreadFolder(id: "folder-mixed",
+                                  title: "Mixed",
+                                  color: .defaultNewFolder,
+                                  threadIDs: Set(rawIDs),
+                                  parentID: nil)
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: roots,
+                mailMover: mover,
+                folders: [folder],
+                folderMembershipByThreadID: Dictionary(uniqueKeysWithValues: rawIDs.map { ($0, folder.id) })
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+
+        try await MainActor.run {
+            let grouping = try XCTUnwrap(setup.viewModel.data.groupings.first { $0.kind == .folder })
+            setup.viewModel.activateSnip()
+            setup.viewModel.toggleSnipTarget(.confirmedGroup(grouping.id))
+            XCTAssertTrue(setup.viewModel.stagedSnipItems.isEmpty)
+            XCTAssertNil(setup.viewModel.snipLockedAccountName)
+            XCTAssertEqual(setup.viewModel.snipNotice?.style, .error)
+
+            setup.viewModel.toggleSnipTarget(.thread(GraphData.threadNodeID(for: "work-1")))
+            setup.viewModel.toggleSnipTarget(.confirmedGroup(grouping.id))
+            XCTAssertEqual(setup.viewModel.stagedSnipThreadIDs,
+                           [GraphData.threadNodeID(for: "work-1"),
+                            GraphData.threadNodeID(for: "work-2")])
+            XCTAssertEqual(setup.viewModel.snipLockedAccountName, "Work")
+            XCTAssertFalse(setup.viewModel.stagedSnipThreadIDs
+                .contains(GraphData.threadNodeID(for: "personal")))
+
+            setup.viewModel.toggleSnipTarget(.thread(GraphData.threadNodeID(for: "personal")))
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 2)
+            XCTAssertEqual(setup.viewModel.snipNotice?.style, .error)
+        }
+    }
+
+    func test_sheetBackPreservesGhostsAndDrafts_whileDiscardClearsSession() async throws {
+        let mover = TestGraphSnipMailMover([])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: [makeThread(rootID: "one", messageCount: 1),
+                        makeThread(rootID: "two", messageCount: 1)],
+                mailMover: mover
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+
+        try await MainActor.run {
+            setup.viewModel.activateSnip()
+            setup.viewModel.toggleSnipTarget(.thread(GraphData.threadNodeID(for: "one")))
+            setup.viewModel.toggleSnipTarget(.thread(GraphData.threadNodeID(for: "two")))
+            setup.viewModel.activateSnip()
+            let request = try XCTUnwrap(setup.viewModel.snipBatchRequest)
+            setup.viewModel.setSnipAllocation(threadID: request.items[0].threadID,
+                                              destinationPath: "Archive/One")
+
+            setup.viewModel.returnToSnipStaging()
+            XCTAssertEqual(setup.viewModel.snipPhase, .staging)
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 2)
+            XCTAssertEqual(setup.viewModel.snipAllocations.count, 1)
+
+            setup.viewModel.presentSnipAllocation()
+            setup.viewModel.applySnipDestinationToAll("Archive/All")
+            XCTAssertTrue(setup.viewModel.canConfirmSnipAllocations)
+            XCTAssertEqual(Set(setup.viewModel.snipAllocations.values.map(\.destinationMailboxPath)),
+                           ["Archive/All"])
+
+            setup.viewModel.discardSnipSession()
+            XCTAssertEqual(setup.viewModel.snipPhase, .idle)
+            XCTAssertTrue(setup.viewModel.stagedSnipItems.isEmpty)
+            XCTAssertTrue(setup.viewModel.snipAllocations.isEmpty)
+            XCTAssertNil(setup.viewModel.snipBatchRequest)
+        }
+    }
+
+    func test_canvasEscapeWhileAllocationSheetOwnsEvent_preservesBatchAndDrafts() async throws {
+        let mover = TestGraphSnipMailMover([])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: [makeThread(rootID: "one", messageCount: 1)],
+                mailMover: mover
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+
+        try await MainActor.run {
+            setup.viewModel.activateSnip()
+            setup.viewModel.toggleSnipTarget(.thread(GraphData.threadNodeID(for: "one")))
+            setup.viewModel.activateSnip()
+            let request = try XCTUnwrap(setup.viewModel.snipBatchRequest)
+            setup.viewModel.setSnipAllocation(threadID: request.items[0].threadID,
+                                              destinationPath: "Archive/One")
+
+            setup.viewModel.exitPruneMode()
+            XCTAssertEqual(setup.viewModel.snipPhase, .allocating)
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 1)
+            XCTAssertEqual(setup.viewModel.snipAllocations.count, 1)
+            XCTAssertNotNil(setup.viewModel.snipBatchRequest)
+
+            setup.viewModel.returnToSnipStaging()
+            XCTAssertEqual(setup.viewModel.snipPhase, .staging)
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 1)
+            XCTAssertEqual(setup.viewModel.snipAllocations.count, 1)
+        }
+    }
+
+    func test_batchMove_fullSuccessRecordsExactLocationsAndRestoreIsSourceScoped() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved(["<ROOT@EXAMPLE.COM>", "child@example.com"]),
+            .moved(["root@example.com", "CHILD@EXAMPLE.COM"])
+        ])
+        let child = ThreadNode(message: makeMessage(id: "child@example.com",
+                                                    date: Date(timeIntervalSince1970: 9_940),
+                                                    threadID: "root@example.com",
+                                                    mailboxID: "Inbox",
+                                                    accountName: "Work"),
+                               children: [])
+        let root = ThreadNode(message: makeMessage(id: "root@example.com",
+                                                   date: Date(timeIntervalSince1970: 10_000),
+                                                   threadID: "root@example.com",
+                                                   mailboxID: "Inbox",
+                                                   accountName: "Work"),
+                              children: [child])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [root], mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [GraphData.threadNodeID(for: "root@example.com"): "Filed/Done"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.succeeded.count, 1)
+        XCTAssertEqual(result.attemptedCount, 1)
+        let entry = try await MainActor.run { try XCTUnwrap(setup.viewModel.compostEntries.first) }
+        XCTAssertEqual(Set(entry.movedMessages.map(\.messageID)),
+                       ["root@example.com", "child@example.com"])
+        XCTAssertEqual(Set(entry.movedMessages.map(\.sourceMailboxPath)), ["Inbox"])
+        XCTAssertEqual(Set(entry.movedMessages.map(\.destinationMailboxPath)), ["Filed/Done"])
+        XCTAssertFalse(entry.requiresRecovery)
+
+        try await setup.viewModel.restore(entry)
+        let calls = await mover.recordedCalls()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[1].messageIDs, ["child@example.com", "root@example.com"])
+        XCTAssertEqual(calls[1].sourceMailboxPath, "Filed/Done")
+        XCTAssertEqual(calls[1].destinationMailboxPath, "Inbox")
+        let compostIsEmpty = await MainActor.run { setup.viewModel.compostEntries.isEmpty }
+        XCTAssertTrue(compostIsEmpty)
+    }
+
+    func test_batchMove_partialMoveWithSuccessfulCompensationRollsBack() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved(["root"]),
+            .moved(["root"])
+        ])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.rolledBack.count, 1)
+        XCTAssertTrue(result.recoveryNeeded.isEmpty)
+        let compostIsEmpty = await MainActor.run { setup.viewModel.compostEntries.isEmpty }
+        XCTAssertTrue(compostIsEmpty)
+        let calls = await mover.recordedCalls()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[1].messageIDs, ["root"])
+        XCTAssertEqual(calls[1].sourceMailboxPath, "Filed")
+        XCTAssertEqual(calls[1].destinationMailboxPath, "Inbox")
+    }
+
+    func test_batchMove_incompleteCompensationKeepsRecoveryBranchAndOnlyDisplacedIDs() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved(["root"]),
+            .moved([])
+        ])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [makeThread(rootID: "root", messageCount: 2)],
+                                   mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let threadID = GraphData.threadNodeID(for: "root")
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel, destinations: [threadID: "Filed"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.recoveryNeeded.count, 1)
+        let entry = try await MainActor.run { try XCTUnwrap(setup.viewModel.compostEntries.first) }
+        XCTAssertTrue(entry.requiresRecovery)
+        XCTAssertEqual(entry.messageIDs, ["root"])
+        XCTAssertEqual(entry.movedMessages.map(\.messageID), ["root"])
+        let branchRemainsVisible = await MainActor.run {
+            setup.viewModel.data.threadByID[threadID] != nil
+        }
+        let pruneAnimationRequest = await MainActor.run { setup.viewModel.pruneAnimationRequest }
+        XCTAssertTrue(branchRemainsVisible)
+        XCTAssertNil(pruneAnimationRequest)
+    }
+
+    func test_batchMove_zeroMoveContinuesToLaterDestination() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved([]),
+            .moved(["second"])
+        ])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: [makeThread(rootID: "first", messageCount: 1),
+                        makeThread(rootID: "second", messageCount: 1)],
+                mailMover: mover
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let firstID = GraphData.threadNodeID(for: "first")
+        let secondID = GraphData.threadNodeID(for: "second")
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [firstID: "Filed/A", secondID: "Filed/B"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.unchanged.map(\.item.threadID), [firstID])
+        XCTAssertEqual(result.succeeded.map(\.item.threadID), [secondID])
+        XCTAssertEqual(result.attemptedCount, 2)
+        let calls = await mover.recordedCalls()
+        XCTAssertEqual(calls.map(\.destinationMailboxPath), ["Filed/A", "Filed/B"])
+    }
+
+    func test_batchMove_multipleSuccessesShareOneCompletionAnimation() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved(["first"]),
+            .moved(["second"])
+        ])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: [makeThread(rootID: "first", messageCount: 1),
+                        makeThread(rootID: "second", messageCount: 1)],
+                mailMover: mover
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let firstID = GraphData.threadNodeID(for: "first")
+        let secondID = GraphData.threadNodeID(for: "second")
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [firstID: "Filed", secondID: "Filed"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.succeeded.count, 2)
+        let completionRequest = await MainActor.run { setup.viewModel.pruneAnimationRequest }
+        XCTAssertEqual(completionRequest?.threadIDs, [firstID, secondID])
+        XCTAssertEqual(completionRequest?.action, .snip)
+    }
+
+    func test_batchMove_mixedSuccessAndRecoveryPrunesOnlySucceededBranch() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved(["success", "success-msg-1"]),
+            .moved(["recovery"]),
+            .moved([])
+        ])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(
+                roots: [makeThread(rootID: "success", messageCount: 2),
+                        makeThread(rootID: "recovery", messageCount: 2)],
+                mailMover: mover
+            )
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let successID = GraphData.threadNodeID(for: "success")
+        let recoveryID = GraphData.threadNodeID(for: "recovery")
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [successID: "Filed", recoveryID: "Filed"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.succeeded.map(\.item.threadID), [successID])
+        XCTAssertEqual(result.recoveryNeeded.map(\.item.threadID), [recoveryID])
+        let state = await MainActor.run {
+            (setup.viewModel.pruneAnimationRequest,
+             setup.viewModel.compostEntries,
+             setup.viewModel.data.threadByID[recoveryID] != nil)
+        }
+        XCTAssertEqual(state.0?.threadIDs, [successID])
+        XCTAssertEqual(state.1.count, 2)
+        XCTAssertEqual(state.1.filter(\.requiresRecovery).map(\.threadID), [recoveryID])
+        XCTAssertTrue(state.2)
+    }
+
+    func test_batchMove_ignoresDismissAndDiscardWhileExecutionIsFrozen() async throws {
+        let mover = BlockingGraphSnipMailMover(movedMessageIDs: ["root"])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
+        }
+
+        let execution = Task { await setup.viewModel.confirmSnipBatch(request: request) }
+        await mover.waitUntilStarted()
+        await MainActor.run {
+            XCTAssertEqual(setup.viewModel.snipPhase, .moving)
+            setup.viewModel.returnToSnipStaging()
+            setup.viewModel.discardSnipSession()
+            XCTAssertEqual(setup.viewModel.snipPhase, .moving)
+            XCTAssertEqual(setup.viewModel.stagedSnipCount, 1)
+            XCTAssertNotNil(setup.viewModel.snipBatchRequest)
+        }
+
+        await mover.release()
+        let batchResult = await execution.value
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.succeeded.count, 1)
+        await MainActor.run {
+            XCTAssertEqual(setup.viewModel.snipPhase, .idle)
+            XCTAssertNil(setup.viewModel.snipBatchRequest)
+        }
+    }
+
+    func test_restore_sameNormalizedIDInTwoSourceMailboxesKeepsOnlyFailedLocation() async throws {
+        let mover = TestGraphSnipMailMover([
+            .moved(["duplicate@example.com"]),
+            .moved(["DUPLICATE@EXAMPLE.COM"]),
+            .moved(["duplicate@example.com"]),
+            .moved([])
+        ])
+        let setup = await MainActor.run { () -> GraphSnipTestSetup in
+            let inboxCopy = ThreadNode(
+                message: makeMessage(id: "duplicate@example.com",
+                                     date: Date(timeIntervalSince1970: 9_940),
+                                     threadID: "root",
+                                     mailboxID: "Inbox",
+                                     accountName: "Work")
+            )
+            let archiveCopy = ThreadNode(
+                message: makeMessage(id: "DUPLICATE@EXAMPLE.COM",
+                                     date: Date(timeIntervalSince1970: 9_880),
+                                     threadID: "root",
+                                     mailboxID: "Archive",
+                                     accountName: "Work")
+            )
+            let root = ThreadNode(
+                message: makeMessage(id: "root",
+                                     date: Date(timeIntervalSince1970: 10_000),
+                                     threadID: "root",
+                                     mailboxID: "Filed",
+                                     accountName: "Work"),
+                children: [inboxCopy, archiveCopy]
+            )
+            return makeGraphSnipViewModel(roots: [root], mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
+        }
+
+        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let result = try XCTUnwrap(batchResult)
+        XCTAssertEqual(result.succeeded.count, 1)
+        let entry = try await MainActor.run { try XCTUnwrap(setup.viewModel.compostEntries.first) }
+        XCTAssertEqual(entry.movedMessages.count, 2)
+        XCTAssertEqual(Set(entry.movedMessages.map(\.sourceMailboxPath)), ["Archive", "Inbox"])
+
+        do {
+            try await setup.viewModel.restore(entry)
+            XCTFail("Expected an incomplete source-scoped restore")
+        } catch {
+            // The residual Compost entry is the user-visible recovery contract.
+        }
+        let residual = try await MainActor.run {
+            try XCTUnwrap(setup.viewModel.compostEntries.first)
+        }
+        XCTAssertTrue(residual.requiresRecovery)
+        XCTAssertEqual(residual.movedMessages.count, 1)
+        XCTAssertEqual(residual.movedMessages.first?.sourceMailboxPath, "Inbox")
+    }
+
+    func test_mailMoveResult_normalizesAndDeduplicatesCaseInsensitively() {
+        let result = GraphMailMoveResult(movedMessageIDs: [
+            " <ABC@Example.com> ",
+            "abc@example.COM",
+            "<other@example.com>"
+        ])
+
+        XCTAssertEqual(result.movedMessageIDs, ["abc@example.com", "other@example.com"])
+        XCTAssertTrue(result.contains("<ABC@EXAMPLE.COM>"))
+    }
+
+    func test_allocationValidation_requiresEveryCurrentFolderInLockedAccount() async throws {
+        let mover = TestGraphSnipMailMover([])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [makeThread(rootID: "root",
+                                                       messageCount: 1,
+                                                       accountName: "Work")],
+                                   mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
+        }
+        let allocations = await MainActor.run { setup.viewModel.snipAllocations }
+
+        let valid = await MainActor.run {
+            SnipMoveSheet.allocationsAreValid(items: request.items,
+                                              allocations: allocations,
+                                              accountName: " work ",
+                                              validPaths: ["Filed"])
+        }
+        let staleFolder = await MainActor.run {
+            SnipMoveSheet.allocationsAreValid(items: request.items,
+                                              allocations: allocations,
+                                              accountName: "Work",
+                                              validPaths: ["Archive"])
+        }
+        var wrongAccountAllocations = allocations
+        let item = try XCTUnwrap(request.items.first)
+        wrongAccountAllocations[item.threadID] = GraphSnipAllocation(
+            threadID: item.threadID,
+            destinationMailboxPath: "Filed",
+            destinationAccountName: "Personal"
+        )
+        let wrongAccount = await MainActor.run {
+            SnipMoveSheet.allocationsAreValid(items: request.items,
+                                              allocations: wrongAccountAllocations,
+                                              accountName: "Work",
+                                              validPaths: ["Filed"])
+        }
+
+        XCTAssertTrue(valid)
+        XCTAssertFalse(staleFolder)
+        XCTAssertFalse(wrongAccount)
     }
 }
 
@@ -3128,6 +4052,145 @@ final class GraphPruneStateMachineTests: XCTestCase {
         XCTAssertEqual(machine.send(.edgeClicked(threadID: "thread-1")), .settling(threadID: "thread-1"))
         XCTAssertEqual(machine.send(.cancel), .idle)
     }
+}
+
+private actor TestGraphSnipMailMover: GraphSnipMailMoving {
+    nonisolated enum Response: Sendable {
+        case moved([String])
+        case failure
+    }
+
+    nonisolated struct Call: Equatable, Sendable {
+        let messageIDs: [String]
+        let destinationMailboxPath: String
+        let account: String?
+        let sourceMailboxPath: String?
+        let sourceAccount: String?
+    }
+
+    private var responses: [Response]
+    private var calls: [Call] = []
+
+    init(_ responses: [Response]) {
+        self.responses = responses
+    }
+
+    func moveMessages(messageIDs: [String],
+                      toMailboxPath mailboxPath: String,
+                      account: String?,
+                      sourceMailboxPath: String?,
+                      sourceAccount: String?) async throws -> GraphMailMoveResult {
+        calls.append(Call(messageIDs: messageIDs,
+                          destinationMailboxPath: mailboxPath,
+                          account: account,
+                          sourceMailboxPath: sourceMailboxPath,
+                          sourceAccount: sourceAccount))
+        guard !responses.isEmpty else { return GraphMailMoveResult(movedMessageIDs: []) }
+        switch responses.removeFirst() {
+        case .moved(let movedMessageIDs):
+            return GraphMailMoveResult(movedMessageIDs: movedMessageIDs)
+        case .failure:
+            throw TestGraphSnipMailMoverError.moveFailed
+        }
+    }
+
+    func recordedCalls() -> [Call] {
+        calls
+    }
+}
+
+private actor BlockingGraphSnipMailMover: GraphSnipMailMoving {
+    private let movedMessageIDs: [String]
+    private var hasStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(movedMessageIDs: [String]) {
+        self.movedMessageIDs = movedMessageIDs
+    }
+
+    func moveMessages(messageIDs: [String],
+                      toMailboxPath mailboxPath: String,
+                      account: String?,
+                      sourceMailboxPath: String?,
+                      sourceAccount: String?) async throws -> GraphMailMoveResult {
+        hasStarted = true
+        let waiters = startWaiters
+        startWaiters = []
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+        return GraphMailMoveResult(movedMessageIDs: movedMessageIDs)
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+private nonisolated enum TestGraphSnipMailMoverError: Error {
+    case moveFailed
+}
+
+private struct GraphSnipTestSetup {
+    let viewModel: GraphCanvasViewModel
+    let suiteName: String
+}
+
+@MainActor
+private func makeGraphSnipViewModel(
+    roots: [ThreadNode],
+    mailMover: any GraphSnipMailMoving,
+    folders: [ThreadFolder] = [],
+    folderMembershipByThreadID: [String: String] = [:],
+    perNodeBranchPageSize: Int = 6
+) -> GraphSnipTestSetup {
+    let suiteName = "GraphBatchSnipTests-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        fatalError("Expected isolated defaults")
+    }
+    let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+    let viewModel = GraphCanvasViewModel(store: store, mailClient: mailMover)
+    viewModel.update(roots: roots,
+                     searchQuery: "",
+                     tagsByNodeID: [:],
+                     summariesByNodeID: [:],
+                     folders: folders,
+                     folderMembershipByThreadID: folderMembershipByThreadID,
+                     perNodeBranchPageSize: perNodeBranchPageSize)
+    return GraphSnipTestSetup(viewModel: viewModel, suiteName: suiteName)
+}
+
+@MainActor
+private func stageGraphSnipBatch(
+    _ viewModel: GraphCanvasViewModel,
+    destinations: [String: String]
+) throws -> GraphSnipBatchRequest {
+    viewModel.activateSnip()
+    for thread in viewModel.data.threads where destinations[thread.id] != nil {
+        viewModel.toggleSnipTarget(.thread(thread.id))
+    }
+    viewModel.presentSnipAllocation()
+    let request = try XCTUnwrap(viewModel.snipBatchRequest)
+    for item in request.items {
+        viewModel.setSnipAllocation(threadID: item.threadID,
+                                    destinationPath: destinations[item.threadID])
+    }
+    XCTAssertTrue(viewModel.canConfirmSnipAllocations)
+    return request
+}
+
+private func removeGraphSnipTestDefaults(_ suiteName: String) {
+    UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
 }
 
 private func assertPointsEqual(_ lhs: CGPoint?,
@@ -3271,31 +4334,39 @@ private func assertPairwiseGeometryPreserved(nodeIDs: Set<String>,
 
 private func makeThread(rootID: String,
                         messageCount: Int,
-                        rootDate: Date = Date(timeIntervalSince1970: 10_000)) -> ThreadNode {
+                        rootDate: Date = Date(timeIntervalSince1970: 10_000),
+                        mailboxID: String = "Inbox",
+                        accountName: String = "Account") -> ThreadNode {
     var child: ThreadNode?
     for index in stride(from: messageCount - 1, through: 1, by: -1) {
         let node = ThreadNode(message: makeMessage(id: "\(rootID)-msg-\(index)",
                                                    subject: "Subject \(rootID)",
                                                    date: rootDate.addingTimeInterval(Double(index) * -60),
-                                                   threadID: rootID),
+                                                   threadID: rootID,
+                                                   mailboxID: mailboxID,
+                                                   accountName: accountName),
                               children: child.map { [$0] } ?? [])
         child = node
     }
     return ThreadNode(message: makeMessage(id: rootID,
                                            subject: "Subject \(rootID)",
                                            date: rootDate,
-                                           threadID: rootID),
+                                           threadID: rootID,
+                                           mailboxID: mailboxID,
+                                           accountName: accountName),
                       children: child.map { [$0] } ?? [])
 }
 
 private func makeMessage(id: String,
                          subject: String = "Subject",
                          date: Date,
-                         threadID: String) -> EmailMessage {
+                         threadID: String,
+                         mailboxID: String = "Inbox",
+                         accountName: String = "Account") -> EmailMessage {
     EmailMessage(messageID: id,
                  internalMailID: "internal-\(id)",
-                 mailboxID: "Inbox",
-                 accountName: "Account",
+                 mailboxID: mailboxID,
+                 accountName: accountName,
                  subject: subject,
                  from: "sender@example.com",
                  to: "me@example.com",

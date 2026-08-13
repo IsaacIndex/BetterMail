@@ -20,6 +20,7 @@ internal final class ObsidianGraphSceneNode: SKNode {
     private var baseStrokeColor: NSColor
     private var nodeScale: CGFloat = 1
     private var labelBaseAlpha: CGFloat = 1
+    private var onAccessibilityPress: (() -> Void)?
 
     internal init(graphID: String,
                   kind: GraphNodeKind,
@@ -101,6 +102,22 @@ internal final class ObsidianGraphSceneNode: SKNode {
         nil
     }
 
+    internal func configureExpansionAccessibility(label spokenLabel: String,
+                                                  onPress: @escaping () -> Void) {
+        children.forEach { $0.isAccessibilityElement = false }
+        isAccessibilityElement = true
+        accessibilityRole = NSAccessibility.Role.button.rawValue
+        accessibilityLabel = spokenLabel
+        isAccessibilityEnabled = true
+        onAccessibilityPress = onPress
+    }
+
+    @objc func accessibilityPerformPress() -> Bool {
+        guard let onAccessibilityPress else { return false }
+        onAccessibilityPress()
+        return true
+    }
+
     internal func setNodeScale(_ scale: CGFloat) {
         nodeScale = max(0.55, min(scale, 2.2))
         dot.setScale(nodeScale)
@@ -125,9 +142,18 @@ internal final class ObsidianGraphSceneNode: SKNode {
                              isHovered: Bool,
                              isNeighbor: Bool,
                              isDimmed: Bool,
-                             hasFocusedNode: Bool) {
+                             hasFocusedNode: Bool,
+                             snipState: GraphSnipNodeState = .normal) {
         let shouldDimForFocus = hasFocusedNode && !isSelected && !isHovered && !isNeighbor
-        alpha = isDimmed ? 0.12 : shouldDimForFocus ? 0.22 : 1
+        let focusAlpha: CGFloat = isDimmed ? 0.12 : shouldDimForFocus ? 0.22 : 1
+        switch snipState {
+        case .normal:
+            alpha = focusAlpha
+        case .partial:
+            alpha = min(focusAlpha, 0.68)
+        case .staged:
+            alpha = min(focusAlpha, 0.34)
+        }
         if isSelected || isHovered {
             let color = theme.accentNS
             focusRing.strokeColor = color.withAlphaComponent(isSelected ? 0.92 : 0.65)
@@ -147,6 +173,20 @@ internal final class ObsidianGraphSceneNode: SKNode {
             dashedRing?.strokeColor = baseStrokeColor.withAlphaComponent(0.78)
             dashedRing?.lineWidth = 1.15
             label?.fontColor = isNeighbor ? theme.inkNS : theme.inkSecondaryNS
+        }
+        switch snipState {
+        case .normal:
+            break
+        case .partial:
+            focusRing.strokeColor = theme.snipNS.withAlphaComponent(0.68)
+            focusRing.lineWidth = 1.3
+            dashedRing?.strokeColor = theme.snipNS.withAlphaComponent(0.72)
+        case .staged:
+            focusRing.strokeColor = theme.snipNS.withAlphaComponent(0.92)
+            focusRing.lineWidth = 1.8
+            dot.strokeColor = theme.snipNS.withAlphaComponent(0.9)
+            dashedRing?.strokeColor = theme.snipNS.withAlphaComponent(0.9)
+            label?.fontColor = theme.snipNS
         }
     }
 
@@ -184,6 +224,40 @@ internal final class ObsidianGraphSceneNode: SKNode {
         alpha = 0
         run(.group([.scale(to: 1, duration: 0.22), .fadeIn(withDuration: 0.18)]),
             withKey: "obsidian-sprout")
+    }
+
+    internal func runSnipTransition(_ change: GraphSnipVisualChange,
+                                    reduceMotion: Bool,
+                                    delay: TimeInterval) {
+        removeAction(forKey: "obsidian-snip-transition")
+        let wait = SKAction.wait(forDuration: delay)
+        if reduceMotion {
+            let targetAlpha: CGFloat = change == .stage ? 0.34 : 1
+            alpha = change == .stage ? 1 : 0.34
+            run(.sequence([wait, .fadeAlpha(to: targetAlpha, duration: 0.16)]),
+                withKey: "obsidian-snip-transition")
+            return
+        }
+        switch change {
+        case .stage:
+            alpha = 1
+            setScale(1)
+            run(.sequence([
+                wait,
+                .group([.scale(to: 0.88, duration: 0.07),
+                        .fadeAlpha(to: 0.18, duration: 0.07)]),
+                .group([.scale(to: 1, duration: 0.16),
+                        .fadeAlpha(to: 0.34, duration: 0.16)])
+            ]), withKey: "obsidian-snip-transition")
+        case .unstage:
+            alpha = 0.34
+            setScale(1)
+            run(.sequence([
+                wait,
+                .group([.scale(to: 1, duration: 0.18),
+                        .fadeAlpha(to: 1, duration: 0.18)])
+            ]), withKey: "obsidian-snip-transition")
+        }
     }
 
     internal func runPrune(action: GraphCompostAction,

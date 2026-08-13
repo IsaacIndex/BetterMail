@@ -388,11 +388,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             self.threader = threader
         }
 
-        struct RefreshOutcome {
-            let fetchedCount: Int
-            let latestDate: Date?
-        }
-
         struct RethreadOutcome {
             let roots: [ThreadNode]
             let unreadTotal: Int
@@ -403,22 +398,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let manualGroups: [String: ManualThreadGroup]
             let jwzThreadMap: [String: String]
             let folders: [ThreadFolder]
-        }
-
-        func performRefresh(effectiveLimit: Int,
-                            since: Date?,
-                            mailbox: String,
-                            account: String?,
-                            snippetLineLimit: Int) async throws -> RefreshOutcome {
-            let fetched = try await client.fetchMessages(since: since,
-                                                         limit: effectiveLimit,
-                                                         mailbox: mailbox,
-                                                         account: account,
-                                                         snippetLineLimit: snippetLineLimit,
-                                                         profile: .refresh)
-            try await store.upsert(messages: fetched)
-            let latest = fetched.map(\.date).max()
-            return RefreshOutcome(fetchedCount: fetched.count, latestDate: latest)
         }
 
         func performRethread(cutoffDate: Date?,
@@ -711,23 +690,25 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var visibleRangeHasMessages = false
     @Published internal private(set) var isBackfilling = false
+    @Published internal private(set) var dayFetchCoverages: [Date: DayFetchCoverage] = [:]
+    @Published internal private(set) var activeDayFetchDate: Date?
+    private var resolvedDayFetchScopesByAggregateKey: [String: [DayFetchScope]] = [:]
     @Published internal private(set) var folderJumpInProgressIDs: Set<String> = [] {
         didSet { bumpFolderHeaderStateVersion() }
     }
     @Published internal private(set) var minimapViewportSnapshot = FolderMinimapViewportSnapshot(normalizedRectByFolderID: [:])
     @Published internal private(set) var globalMinimapViewportNormalizedRect: CGRect?
     @Published internal private(set) var globalMinimapFoldersSnapshot: [GlobalMinimapFolder] = []
-    @Published internal var fetchLimit: Int = 10 {
+    @Published internal var fetchLimit: Int = DayFetchCoordinator.maximumRequestBatchSize {
         didSet {
             if fetchLimit < 1 {
                 fetchLimit = 1
-            } else if fetchLimit != oldValue {
-                shouldForceFullReload = true
+            } else if fetchLimit > DayFetchCoordinator.maximumRequestBatchSize {
+                fetchLimit = DayFetchCoordinator.maximumRequestBatchSize
             }
         }
     }
 
-    private static let maximumRefreshFetchCount = 4
     private static let maximumAppleScriptRetryAttempts = 3
     private static let appleScriptRetryDelayNanoseconds: UInt64 = 750_000_000
 
@@ -747,6 +728,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let mailboxFolderOrderSettings: MailboxFolderOrderSettings
     private let mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings
     private let backfillService: BatchBackfillServicing
+    private let dayFetchCoordinator: any DayFetchCoordinating
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
     private var isRethreadRunning = false
@@ -816,6 +798,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   client: any MailCanvasClient = MailAppleScriptClient(),
                   threader: JWZThreader = JWZThreader(),
                   backfillService: BatchBackfillServicing? = nil,
+                  dayFetchCoordinator: (any DayFetchCoordinating)? = nil,
                   summaryCapability: EmailSummaryCapability? = nil,
                   tagCapability: EmailTagCapability? = nil,
                   activityCenter: ProcessingActivityCenter? = nil,
@@ -826,7 +809,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         self.activityCenter = activityCenter
-        self.backfillService = backfillService ?? BatchBackfillService(client: client, store: store)
+        let resolvedDayFetchCoordinator: any DayFetchCoordinating
+        if let dayFetchCoordinator {
+            resolvedDayFetchCoordinator = dayFetchCoordinator
+        } else if store === MessageStore.shared {
+            resolvedDayFetchCoordinator = DayFetchCoordinator.shared
+        } else {
+            resolvedDayFetchCoordinator = DayFetchCoordinator(client: client, store: store)
+        }
+        self.dayFetchCoordinator = resolvedDayFetchCoordinator
+        self.backfillService = backfillService ?? BatchBackfillService(client: client,
+                                                                       store: store,
+                                                                       coordinator: resolvedDayFetchCoordinator)
         self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
         self.mailboxFolderOrderSettings = mailboxFolderOrderSettings ?? MailboxFolderOrderSettings()
         self.mailboxThreadAutoMoveSettings = mailboxThreadAutoMoveSettings ?? MailboxThreadAutoMoveSettings()
@@ -847,6 +841,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.scheduleRethread()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .dayFetchCoverageDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.reloadDayFetchCoverages()
             }
             .store(in: &cancellables)
         self.pinnedFolderSettings.$pinnedFolderIDs
@@ -1096,6 +1096,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         guard !didStart else { return }
         didStart = true
         Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
+        Task {
+            try? await store.markInterruptedDayFetchCoverageFailed()
+            await loadDayFetchCoverages(refreshConcreteScopes: true)
+        }
         Task { await loadCachedMessages() }
         refreshMailboxHierarchy()
         refreshNow()
@@ -1170,47 +1174,39 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                        detail: NSLocalizedString("activity.refresh.latest.detail",
                                                                  comment: "Refresh latest mail activity detail"),
                                        kind: .refresh)
-        let requestedLimit = max(1, limit ?? fetchLimit)
-        let effectiveLimit = min(requestedLimit, Self.maximumRefreshFetchCount)
+        let requestBatchSize = min(DayFetchCoordinator.maximumRequestBatchSize,
+                                   max(1, limit ?? fetchLimit))
         isRefreshing = true
         refreshProgress = nil
         status = NSLocalizedString("refresh.status.refreshing", comment: "Status when refresh begins")
-        let useFullReload = shouldForceFullReload
-        let mailboxTarget = activeMailboxFetchTarget
-        let since: Date?
-        if useFullReload {
-            Log.refresh.info("Forcing full reload due to fetchLimit change.")
-            since = nil
-        } else {
-            since = store.lastSyncDate
-        }
-        let sinceDisplay = since?.ISO8601Format() ?? "nil"
-        Log.refresh.info("Starting refresh. requestedLimit=\(requestedLimit, privacy: .public) effectiveLimit=\(effectiveLimit, privacy: .public) since=\(sinceDisplay, privacy: .public)")
+        let scope = activeDayFetchScope
+        Log.refresh.info("Starting exhaustive today refresh. scope=\(scope.key, privacy: .private) requestBatchSize=\(requestBatchSize, privacy: .public)")
         Task { [weak self] in
             guard let self else { return }
             do {
                 let snippetLineLimit = inspectorSettings.snippetLineLimit
-                let outcome = try await self.performRefreshWithRetry(effectiveLimit: effectiveLimit,
-                                                                     since: since,
-                                                                     mailbox: mailboxTarget.mailbox,
-                                                                     account: mailboxTarget.account,
+                let outcome = try await self.performRefreshWithRetry(date: Date(),
+                                                                     scope: scope,
+                                                                     requestBatchSize: requestBatchSize,
                                                                      snippetLineLimit: snippetLineLimit)
-                if let latest = outcome.latestDate {
-                    store.lastSyncDate = latest
-                    Log.refresh.debug("Updated lastSyncDate to \(latest.ISO8601Format(), privacy: .public)")
-                }
-                Log.refresh.info("AppleScript fetch succeeded. messageCount=\(outcome.fetchedCount, privacy: .public)")
+                Log.refresh.info("Today fetch succeeded. manifestCount=\(outcome.expectedCount, privacy: .public) downloaded=\(outcome.downloadedCount, privacy: .public) absent=\(outcome.absentCount, privacy: .public)")
                 let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
                 await MainActor.run {
-                    if useFullReload {
-                        self.shouldForceFullReload = false
-                    }
+                    self.shouldForceFullReload = false
                     self.scheduleRethread()
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
                     self.lastRefreshDate = Date()
                     self.status = String.localizedStringWithFormat(
                         NSLocalizedString("refresh.status.updated", comment: "Status after refresh completes"),
                         timestamp
                     )
+                    if outcome.absentCount > 0 {
+                        self.showToast(String.localizedStringWithFormat(
+                            NSLocalizedString("dayfetch.result.absent_hidden",
+                                              comment: "Day fetch result when cached messages were hidden"),
+                            outcome.absentCount
+                        ))
+                    }
                     self.finishActivity(activityID, detail: self.status)
                 }
             } catch is CancellationError {
@@ -1224,6 +1220,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             } catch {
                 Log.refresh.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
                     if Self.isMailboxResolveNotFound(error) {
                         self.status = NSLocalizedString("refresh.status.mailbox_unavailable",
                                                         comment: "Status when selected mailbox scope cannot be resolved in Mail")
@@ -1246,22 +1243,30 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    private func performRefreshWithRetry(effectiveLimit: Int,
-                                         since: Date?,
-                                         mailbox: String,
-                                         account: String?,
+    private func performRefreshWithRetry(date: Date,
+                                         scope: DayFetchScope,
+                                         requestBatchSize: Int,
                                          snippetLineLimit: Int,
-                                         maxAttempts: Int = ThreadCanvasViewModel.maximumAppleScriptRetryAttempts) async throws -> SidebarBackgroundWorker.RefreshOutcome {
+                                         maxAttempts: Int = ThreadCanvasViewModel.maximumAppleScriptRetryAttempts) async throws -> DayFetchResult {
         precondition(maxAttempts > 0)
         var lastError: Error?
 
         for attempt in 1...maxAttempts {
             do {
-                return try await worker.performRefresh(effectiveLimit: effectiveLimit,
-                                                       since: since,
-                                                       mailbox: mailbox,
-                                                       account: account,
-                                                       snippetLineLimit: snippetLineLimit)
+                return try await dayFetchCoordinator.fetchDay(containing: date,
+                                                              scope: scope,
+                                                              mode: .refresh,
+                                                              requestBatchSize: requestBatchSize,
+                                                              snippetLineLimit: snippetLineLimit,
+                                                              referenceDate: Date()) { progress in
+                    Task { @MainActor [weak self] in
+                        guard progress.total > 0 else {
+                            self?.refreshProgress = nil
+                            return
+                        }
+                        self?.refreshProgress = Double(progress.completed) / Double(progress.total)
+                    }
+                }
             } catch {
                 lastError = error
                 let shouldRetry = attempt < maxAttempts && Self.shouldRetryAppleScriptTimeout(after: error)
@@ -1275,7 +1280,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal var isAnyRefreshRunning: Bool {
-        isRefreshing || !refreshingFolderThreadIDs.isEmpty
+        isRefreshing || isBackfilling || activeDayFetchDate != nil || !refreshingFolderThreadIDs.isEmpty
     }
 
     internal func isRefreshingFolderThreads(for folderID: String) -> Bool {
@@ -2553,6 +2558,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         activeMailboxScope = scope
         mailboxActionStatusMessage = nil
         bottomBarMailboxActionStatusMessage = nil
+        reloadDayFetchCoverages(refreshConcreteScopes: true)
         scheduleRethread(delay: 0)
     }
 
@@ -2737,6 +2743,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 path,
                 choice.path
             )
+            reloadDayFetchCoverages(refreshConcreteScopes: true)
             scheduleRethread(delay: 0)
         case .missing, .ambiguous:
             activeMailboxScope = .allEmails
@@ -2746,6 +2753,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 account,
                 path
             )
+            reloadDayFetchCoverages(refreshConcreteScopes: true)
             scheduleRethread(delay: 0)
         }
     }
@@ -3811,7 +3819,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal var canBackfillVisibleRange: Bool {
-        !visibleEmptyDayIntervals.isEmpty && !isBackfilling
+        !visibleAtRiskDayIntervals.isEmpty && !isBackfilling
     }
 
     internal func scheduleVisibleDayRangeUpdate(scrollOffset: CGFloat,
@@ -3980,26 +3988,26 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func backfillVisibleRange(rangeOverride: DateInterval? = nil, limitOverride: Int? = nil) {
         guard !isBackfilling else { return }
-        let ranges = rangeOverride.map { [$0] } ?? visibleEmptyDayIntervals
+        let ranges = rangeOverride.map { [$0] } ?? visibleAtRiskDayIntervals
         guard !ranges.isEmpty else { return }
         isBackfilling = true
         status = NSLocalizedString("threadlist.backfill.status.fetching", comment: "Status when backfill begins")
         let activityID = beginActivity(titleKey: "activity.backfill.visible.title",
                                        detail: status,
                                        kind: .importing)
-        let limit = max(1, limitOverride ?? fetchLimit)
+        let limit = min(DayFetchCoordinator.maximumRequestBatchSize,
+                        max(1, limitOverride ?? fetchLimit))
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         let mailboxTarget = activeMailboxFetchTarget
         Task { [weak self] in
             guard let self else { return }
             do {
-                Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) limit=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
+                Log.refresh.info("Backfill requested. ranges=\(ranges, privacy: .public) requestBatchSize=\(limit, privacy: .public) snippetLineLimit=\(snippetLineLimit, privacy: .public)")
                 var fetchedCount = 0
                 for range in ranges {
                     let total = try await backfillService.countMessages(in: range,
                                                                         mailbox: mailboxTarget.mailbox,
                                                                         account: mailboxTarget.account)
-                    guard total > 0 else { continue }
                     let result = try await backfillService.runBackfill(range: range,
                                                                        mailbox: mailboxTarget.mailbox,
                                                                        account: mailboxTarget.account,
@@ -4027,9 +4035,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                           comment: "Status after backfill completes"),
                         fetchedCount
                     )
-                    if fetchedCount > 0 {
-                        self.scheduleRethread()
-                    }
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
+                    self.scheduleRethread()
                     self.finishActivity(activityID, detail: self.status)
                 }
             } catch is CancellationError {
@@ -4048,10 +4055,32 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                           comment: "Status when backfill fails"),
                         error.localizedDescription
                     )
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
                     self.showError(self.status)
                     self.finishActivity(activityID, state: .failed, detail: self.status)
                 }
             }
+        }
+    }
+
+    internal var visibleAtRiskDayIntervals: [DateInterval] {
+        makeVisibleAtRiskDayIntervals()
+    }
+
+    private func makeVisibleAtRiskDayIntervals(today: Date = Date(),
+                                               calendar: Calendar = .current) -> [DateInterval] {
+        guard let visibleDayRange else { return [] }
+        return visibleDayRange.compactMap { dayIndex in
+            let day = ThreadCanvasDateHelper.dayDate(for: dayIndex,
+                                                     today: today,
+                                                     calendar: calendar)
+            let dayStart = calendar.startOfDay(for: day)
+            let state = dayFetchCoverages[dayStart]?.state ?? .unknown
+            guard state != .verified,
+                  let interval = calendar.dateInterval(of: .day, for: dayStart) else {
+                return nil
+            }
+            return interval
         }
     }
 
@@ -4951,6 +4980,149 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         nearBottomHitCount = 0
         dayWindowCount = targetDayCount
         scheduleRethread()
+    }
+
+    internal var activeDayFetchScope: DayFetchScope {
+        switch activeMailboxScope {
+        case .mailboxFolder(let account, let path):
+            return DayFetchScope(mailbox: path,
+                                 account: account,
+                                 displayName: "\(account) / \(path)")
+        case .actionItems, .allEmails, .allFolders, .allInboxes, .graphArchive:
+            return DayFetchScope(mailbox: "inbox",
+                                 account: nil,
+                                 displayName: NSLocalizedString("dayfetch.scope.all_inboxes",
+                                                                comment: "Day coverage scope for Inbox across all accounts"),
+                                 includesAllInboxAliases: true)
+        }
+    }
+
+    internal func coverage(for date: Date,
+                           calendar: Calendar = .current) -> DayFetchCoverage? {
+        dayFetchCoverages[calendar.startOfDay(for: date)]
+    }
+
+    internal func fetchDay(_ date: Date) {
+        guard activeDayFetchDate == nil,
+              Calendar.current.startOfDay(for: date) <= Calendar.current.startOfDay(for: Date()) else {
+            return
+        }
+        let scope = activeDayFetchScope
+        let dayStart = Calendar.current.startOfDay(for: date)
+        activeDayFetchDate = dayStart
+        status = NSLocalizedString("dayfetch.status.fetching",
+                                   comment: "Status while an explicit calendar day fetch is running")
+        let activityID = beginActivity(titleKey: "activity.dayfetch.title",
+                                       detail: status,
+                                       kind: .importing)
+        let snippetLineLimit = inspectorSettings.snippetLineLimit
+        let requestBatchSize = min(DayFetchCoordinator.maximumRequestBatchSize, max(1, fetchLimit))
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await dayFetchCoordinator.fetchDay(containing: dayStart,
+                                                                    scope: scope,
+                                                                    mode: .full,
+                                                                    requestBatchSize: requestBatchSize,
+                                                                    snippetLineLimit: snippetLineLimit,
+                                                                    referenceDate: Date()) { progress in
+                    Task { @MainActor [weak self] in
+                        let detail = String.localizedStringWithFormat(
+                            NSLocalizedString("activity.dayfetch.progress",
+                                              comment: "Day fetch progress detail"),
+                            progress.completed,
+                            progress.total
+                        )
+                        self?.updateActivity(activityID,
+                                             detail: detail,
+                                             progress: progress.total > 0
+                                                 ? Double(progress.completed) / Double(progress.total)
+                                                 : nil)
+                    }
+                }
+                await MainActor.run {
+                    self.activeDayFetchDate = nil
+                    self.lastRefreshDate = Date()
+                    self.status = String.localizedStringWithFormat(
+                        NSLocalizedString("dayfetch.status.complete",
+                                          comment: "Status after an explicit calendar day fetch completes"),
+                        result.expectedCount
+                    )
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
+                    self.scheduleRethread(delay: 0)
+                    if result.absentCount > 0 {
+                        self.showToast(String.localizedStringWithFormat(
+                            NSLocalizedString("dayfetch.result.absent_hidden",
+                                              comment: "Day fetch result when cached messages were hidden"),
+                            result.absentCount
+                        ))
+                    } else {
+                        self.showToast(self.status)
+                    }
+                    self.finishActivity(activityID, detail: self.status)
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.activeDayFetchDate = nil
+                    self.finishActivity(activityID,
+                                        state: .cancelled,
+                                        detail: NSLocalizedString("activity.state.cancelled",
+                                                                  comment: "Cancelled processing activity state"))
+                }
+            } catch {
+                await MainActor.run {
+                    self.activeDayFetchDate = nil
+                    self.status = String.localizedStringWithFormat(
+                        NSLocalizedString("dayfetch.status.failed",
+                                          comment: "Status after an explicit calendar day fetch fails"),
+                        error.localizedDescription
+                    )
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
+                    self.showError(self.status)
+                    self.finishActivity(activityID, state: .failed, detail: self.status)
+                }
+            }
+        }
+    }
+
+    private func reloadDayFetchCoverages(refreshConcreteScopes: Bool = false) {
+        Task { [weak self] in
+            await self?.loadDayFetchCoverages(refreshConcreteScopes: refreshConcreteScopes)
+        }
+    }
+
+    private func loadDayFetchCoverages(refreshConcreteScopes: Bool = false) async {
+        let scope = activeDayFetchScope
+        do {
+            let concreteScopes: [DayFetchScope]?
+            if scope.account == nil {
+                if refreshConcreteScopes || resolvedDayFetchScopesByAggregateKey[scope.key] == nil {
+                    do {
+                        resolvedDayFetchScopesByAggregateKey[scope.key] = try await client.resolveDayFetchScopes(
+                            mailbox: scope.mailbox,
+                            account: scope.account
+                        )
+                    } catch {
+                        resolvedDayFetchScopesByAggregateKey[scope.key] = []
+                        Log.refresh.error("Failed to resolve concrete day coverage scopes. scope=\(scope.key, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
+                    }
+                }
+                let cachedScopes = resolvedDayFetchScopesByAggregateKey[scope.key] ?? []
+                concreteScopes = cachedScopes.isEmpty ? nil : cachedScopes
+            } else {
+                concreteScopes = [scope]
+            }
+            let coverages = try await store.fetchDayFetchCoverages(scope: scope,
+                                                                   concreteScopes: concreteScopes)
+            guard scope == activeDayFetchScope else { return }
+            dayFetchCoverages = Dictionary(coverages.map {
+                (Calendar.current.startOfDay(for: $0.dayStart), $0)
+            }, uniquingKeysWith: { current, replacement in
+                current.lastAttemptAt >= replacement.lastAttemptAt ? current : replacement
+            })
+        } catch {
+            Log.refresh.error("Failed to load day coverage. scope=\(scope.key, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
+        }
     }
 
     private var activeMailboxFetchTarget: (mailbox: String, account: String?) {

@@ -46,7 +46,6 @@ internal struct GraphCanvasView: View {
                         ObsidianGraphControls(settings: graphSettings,
                                               searchQuery: $threadViewModel.searchQuery,
                                               data: graphViewModel.data,
-                                              totalBranchCount: graphViewModel.totalBranchCount,
                                               textScale: displaySettings.textScale)
                             .padding(.top, 16)
                             .padding(.trailing, 18)
@@ -73,9 +72,38 @@ internal struct GraphCanvasView: View {
                             .padding(.bottom, 8)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    if selectedActionTarget == nil,
-                       graphViewModel.selectedGrouping == nil,
-                       let instruction = pruneInstruction {
+                    if graphViewModel.snipPhase == .staging {
+                        HStack(spacing: 10) {
+                            Label(snipInstructionTitle, systemImage: "scissors")
+                            Divider().frame(height: 14)
+                            Button(NSLocalizedString("graph.snip.cancel_snipping",
+                                                     comment: "Cancel the staged Snip session")) {
+                                graphViewModel.discardSnipSession()
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(DesignTokens.Graph.AppTheme.snip)
+                            .accessibilityIdentifier(AccessibilityID.graphSnipCancelSession)
+                        }
+                        .font(DesignTokens.font(size: 11,
+                                               weight: .semibold,
+                                               textScale: displaySettings.textScale))
+                        .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(DesignTokens.Graph.AppTheme.panel)
+                                .shadow(color: Color.black.opacity(0.08), radius: 12, y: 5)
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+                        )
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else if selectedActionTarget == nil,
+                              graphViewModel.selectedGrouping == nil,
+                              let instruction = pruneInstruction {
                         Label(instruction.title, systemImage: instruction.systemImage)
                             .font(DesignTokens.font(size: 11,
                                                    weight: .semibold,
@@ -105,11 +133,15 @@ internal struct GraphCanvasView: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        GraphCompostRing(entries: graphViewModel.compostEntries,
-                                         textScale: displaySettings.textScale,
-                                         onRestore: restore)
-                        .padding(.trailing, 24)
-                        .padding(.bottom, overlayBottomPadding)
+                        if !graphViewModel.compostEntries.isEmpty {
+                            GraphCompostRing(entries: graphViewModel.compostEntries,
+                                             textScale: displaySettings.textScale,
+                                             onRestore: restore)
+                                .padding(.trailing, 24)
+                                .padding(.bottom, overlayBottomPadding)
+                                .anchorPreference(key: GraphCompostPanelAnchorPreferenceKey.self,
+                                                  value: .bounds) { $0 }
+                        }
                     }
                 }
             }
@@ -124,28 +156,42 @@ internal struct GraphCanvasView: View {
         }
         .onDisappear {
             graphViewModel.setGraphEnrichmentActive(false)
+            graphViewModel.discardSnipSession()
         }
         .onChange(of: graphSettings.soundOn) { _, _ in
             warmAudioIfNeeded()
         }
         .onChange(of: graphSettings.visibleBranchCount) { _, _ in syncData() }
+        .onChange(of: graphSettings.visibleBranchesPerNode) { _, _ in syncData() }
         .onChange(of: graphSettings.dismissedSuggestedTopicIDs) { _, _ in syncData() }
         .onChange(of: graphSettings.hiddenSuggestedTopics) { _, _ in syncData() }
         .onReceive(threadViewModel.$roots) { _ in syncData() }
         .onReceive(threadViewModel.$searchQuery) { _ in syncData() }
-        .onReceive(threadViewModel.$activeMailboxScope) { _ in syncData() }
+        .onChange(of: threadViewModel.activeMailboxScope) { _, _ in
+            graphViewModel.discardSnipSession()
+            syncData()
+        }
         .onReceive(threadViewModel.$timelineTagsByNodeID) { _ in syncData() }
         .onReceive(threadViewModel.$nodeSummaries) { _ in syncData() }
         .onReceive(threadViewModel.$threadFolders) { _ in syncData() }
         .onReceive(threadViewModel.$folderMembershipByThreadID) { _ in syncData() }
-        .sheet(item: $graphViewModel.snipMoveRequest) { request in
+        .onChange(of: graphViewModel.snipNotice) { _, notice in
+            guard let notice else { return }
+            switch notice.style {
+            case .information:
+                threadViewModel.showToast(notice.message)
+            case .success:
+                threadViewModel.showToast(notice.message, style: .success)
+            case .error:
+                threadViewModel.showError(notice.message)
+            }
+        }
+        .sheet(item: $graphViewModel.snipBatchRequest,
+               onDismiss: graphViewModel.returnToSnipStaging) { request in
             SnipMoveSheet(request: request,
                           mailboxAccounts: threadViewModel.mailboxAccounts,
                           settings: graphSettings,
-                          onConfirm: { path, account in
-                              Task { await confirmSnip(request: request, path: path, account: account) }
-                          },
-                          onCancel: graphViewModel.cancelSnip)
+                          viewModel: graphViewModel)
         }
         .sheet(isPresented: $graphViewModel.isSettingsPresented) {
             GraphSettingsSheet(settings: graphSettings)
@@ -176,6 +222,8 @@ internal struct GraphCanvasView: View {
         case .archive:
             performArchiveAction()
         case .escape:
+            guard graphViewModel.snipPhase != .allocating,
+                  graphViewModel.snipPhase != .moving else { return .handled }
             graphViewModel.exitPruneMode()
         case .water:
             guard let threadID = graphViewModel.selectedGraphNodeID(for: threadViewModel.selectedNodeID),
@@ -202,6 +250,18 @@ internal struct GraphCanvasView: View {
 
     private var selectedActionTarget: GraphThreadActionTarget? {
         graphViewModel.actionTarget(for: threadViewModel.selectedNodeID)
+    }
+
+    private var snipInstructionTitle: String {
+        if graphViewModel.stagedSnipCount == 0 {
+            return NSLocalizedString("graph.snip.staging.empty",
+                                     comment: "Snip staging mode with no branches selected")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("graph.snip.staging.count",
+                              comment: "Number of staged graph branches"),
+            graphViewModel.stagedSnipCount
+        )
     }
 
     private var pruneInstruction: (title: String, systemImage: String)? {
@@ -286,7 +346,7 @@ internal struct GraphCanvasView: View {
     }
 
     private func performSnipAction() {
-        graphViewModel.activateSnip(selectedThreadID: selectedActionTarget?.threadID)
+        graphViewModel.activateSnip()
     }
 
     private func performArchiveAction() {
@@ -312,7 +372,8 @@ internal struct GraphCanvasView: View {
                               dismissedSuggestedTopicIDs: graphSettings.dismissedSuggestedTopicIDs,
                               hiddenSuggestedTopics: graphSettings.hiddenSuggestedTopics,
                               showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive,
-                              branchPageSize: graphSettings.visibleBranchCount)
+                              branchPageSize: graphSettings.visibleBranchCount,
+                              perNodeBranchPageSize: graphSettings.visibleBranchesPerNode)
         for root in threadViewModel.roots.prefix(10) {
             threadViewModel.requestTimelineTagsIfNeeded(for: root)
         }
@@ -327,20 +388,6 @@ internal struct GraphCanvasView: View {
         let x = min(max(rawPoint.x + 150, 140), max(140, size.width - 140))
         let y = min(max(size.height - rawPoint.y + 76, 90), max(90, size.height - 90))
         return CGPoint(x: x, y: y)
-    }
-
-    private func confirmSnip(request: SnipMoveRequest, path: String, account: String?) async {
-        do {
-            try await graphViewModel.confirmSnip(request: request,
-                                                 destinationPath: path,
-                                                 account: account)
-            threadViewModel.showToast(NSLocalizedString("graph.snip.success",
-                                                        comment: "Graph snip success toast"),
-                                      style: .success)
-        } catch {
-            graphViewModel.cancelSnip()
-            threadViewModel.showError(error.localizedDescription)
-        }
     }
 
     private func restore(_ entry: GraphCompostEntry) {
@@ -390,6 +437,15 @@ internal struct GraphCanvasView: View {
         guard let folderID = grouping.sourceFolderID else { return }
         graphViewModel.selectGrouping(id: nil)
         threadViewModel.selectFolder(id: folderID)
+    }
+}
+
+internal struct GraphCompostPanelAnchorPreferenceKey: PreferenceKey {
+    internal static var defaultValue: Anchor<CGRect>? = nil
+
+    internal static func reduce(value: inout Anchor<CGRect>?,
+                                nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
     }
 }
 

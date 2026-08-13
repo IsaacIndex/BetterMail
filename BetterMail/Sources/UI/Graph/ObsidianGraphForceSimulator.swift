@@ -397,9 +397,12 @@ internal struct ObsidianGraphForceSimulator {
              branchIDByThreadID[thread.id],
              thread.id)
         })
-        if let remaining = data.remainingBranch {
-            result.append((remaining.id, .remaining, 8.5, nil, nil))
-        }
+        result.append(contentsOf: data.remainingBranches.map { remaining in
+            let branchID = remaining.parentID == data.center.id
+                ? nil
+                : (data.groupingByID[remaining.parentID]?.sourceFolderID ?? remaining.parentID)
+            return (remaining.id, .remaining, 8.5, branchID, nil)
+        })
         result.append(contentsOf: data.messages.map { message in
             (message.id,
              .message,

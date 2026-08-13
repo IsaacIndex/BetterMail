@@ -7,7 +7,6 @@ internal struct ObsidianGraphControls: View {
     @ObservedObject internal var settings: GraphCanvasSettings
     @Binding internal var searchQuery: String
     internal let data: GraphData
-    internal let totalBranchCount: Int
     internal let textScale: CGFloat
 
     @State private var isCollapsed = true
@@ -82,8 +81,8 @@ internal struct ObsidianGraphControls: View {
                     Text(String.localizedStringWithFormat(
                         NSLocalizedString("graph.controls.branch_count",
                                           comment: "Visible and total graph branch count"),
-                        data.threads.count,
-                        totalBranchCount
+                        data.visiblePrimaryBranchCount,
+                        data.totalPrimaryBranchCount
                     ))
                     .font(DesignTokens.font(size: 9, weight: .regular, textScale: textScale))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
@@ -118,6 +117,20 @@ internal struct ObsidianGraphControls: View {
                 }
             }
             .font(.caption)
+            .help(NSLocalizedString("graph.settings.visible_branches.help",
+                                    comment: "Help for the root graph branch limit"))
+            Stepper(value: $settings.visibleBranchesPerNode,
+                    in: GraphCanvasSettings.visibleBranchesPerNodeRange) {
+                HStack {
+                    Text(NSLocalizedString("graph.settings.visible_branches_per_node",
+                                           comment: "Number of child branches shown per graph node"))
+                    Spacer()
+                    valueText("\(settings.visibleBranchesPerNode)")
+                }
+            }
+            .font(.caption)
+            .help(NSLocalizedString("graph.settings.visible_branches_per_node.help",
+                                    comment: "Help for the per-node graph branch limit"))
         }
     }
 

@@ -19,7 +19,7 @@ internal final class GraphScene: SKScene {
     internal static let idleFramesPerSecond = 5
 
     internal var onSelectGraphNode: ((String?) -> Void)?
-    internal var onExpandRemainingBranches: (() -> Void)?
+    internal var onExpandRemainingBranches: ((String) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
     internal var onPruneThread: ((String) -> Void)?
@@ -246,8 +246,8 @@ internal final class GraphScene: SKScene {
             }
         }
         if let nodeID = hitNodeID {
-            if graphData.remainingBranch?.id == nodeID {
-                onExpandRemainingBranches?()
+            if let remaining = graphData.remainingBranchByID[nodeID] {
+                onExpandRemainingBranches?(remaining.parentID)
                 publishFrameRatePreferenceIfNeeded()
                 draggedNodeOffset = nil
                 pendingDraggedNodePosition = nil
@@ -440,8 +440,7 @@ internal final class GraphScene: SKScene {
             onHoverItem?(.grouping(grouping, location))
         } else if let thread = graphData.threadByID[nextHoveredID] {
             onHoverItem?(.thread(thread, location))
-        } else if let remainingBranch = graphData.remainingBranch,
-                  remainingBranch.id == nextHoveredID {
+        } else if let remainingBranch = graphData.remainingBranchByID[nextHoveredID] {
             onHoverItem?(.remaining(remainingBranch, location))
         } else if let message = graphData.messageByID[nextHoveredID] {
             onHoverItem?(.message(message, location))
@@ -686,7 +685,7 @@ internal final class GraphScene: SKScene {
             graphNodesByID[thread.id] = node
             addChild(node)
         }
-        if let remainingBranch = graphData.remainingBranch {
+        for remainingBranch in graphData.remainingBranches {
             let node = GraphSceneNode(graphID: remainingBranch.id,
                                       kind: .remaining,
                                       threadID: nil,
@@ -698,6 +697,9 @@ internal final class GraphScene: SKScene {
                                       showsLabel: true,
                                       textScale: textScale,
                                       theme: theme)
+            node.configureExpansionAccessibility(label: remainingBranch.accessibilityLabel) { [weak self] in
+                self?.onExpandRemainingBranches?(remainingBranch.parentID)
+            }
             graphNodesByID[remainingBranch.id] = node
             addChild(node)
         }
@@ -736,7 +738,9 @@ internal final class GraphScene: SKScene {
     private func startPruneAnimationIfNeeded(_ request: GraphPruneAnimationRequest?) {
         guard let request,
               runningPruneAnimationID != request.id else { return }
-        let branchNodes = graphNodesByID.values.filter { $0.threadID == request.threadID }
+        let branchNodes = graphNodesByID.values.filter { node in
+            node.threadID.map(request.threadIDs.contains) == true
+        }
         guard !branchNodes.isEmpty else {
             onPruneAnimationFinished?(request.id)
             return
@@ -1028,7 +1032,7 @@ internal final class GraphScene: SKScene {
                                   strokeColor: theme.inkNS.withAlphaComponent(0.9),
                                   strokeWidth: 1.0,
                                   theme: theme)
-            } else if graphData.remainingBranch?.id == id {
+            } else if graphData.remainingBranchByID[id] != nil {
                 node.setBaseStyle(fillColor: theme.panelSecondaryNS.withAlphaComponent(0.34),
                                   strokeColor: theme.archiveNS,
                                   strokeWidth: 1.4,

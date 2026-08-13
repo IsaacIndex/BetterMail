@@ -1,6 +1,6 @@
 import Foundation
 
-internal protocol MailMessageFetching {
+internal protocol MailMessageFetching: Sendable {
     func countMessages(in range: DateInterval, mailbox: String, account: String?) async throws -> Int
     func fetchMessages(in range: DateInterval,
                        limit: Int,
@@ -15,6 +15,49 @@ internal protocol MailMessageFetching {
                        mailbox: String,
                        account: String?,
                        snippetLineLimit: Int) async throws -> [EmailMessage]
+    func fetchMessageManifest(in range: DateInterval,
+                              mailbox: String,
+                              account: String?) async throws -> [MessageReference]
+    func fetchMessages(references: [MessageReference],
+                       profile: MailFetchProfile,
+                       snippetLineLimit: Int) async throws -> [EmailMessage]
+    func resolveDayFetchScopes(mailbox: String,
+                               account: String?) async throws -> [DayFetchScope]
+}
+
+internal enum MailMessageFetchingError: LocalizedError {
+    case dayFetchUnsupported
+
+    internal var errorDescription: String? {
+        NSLocalizedString("dayfetch.error.unsupported_client",
+                          comment: "Error when a mail client does not support exhaustive day fetching")
+    }
+}
+
+internal extension MailMessageFetching {
+    func fetchMessageManifest(in range: DateInterval,
+                              mailbox: String,
+                              account: String?) async throws -> [MessageReference] {
+        throw MailMessageFetchingError.dayFetchUnsupported
+    }
+
+    func fetchMessages(references: [MessageReference],
+                       profile: MailFetchProfile,
+                       snippetLineLimit: Int) async throws -> [EmailMessage] {
+        throw MailMessageFetchingError.dayFetchUnsupported
+    }
+
+    func resolveDayFetchScopes(mailbox: String,
+                               account: String?) async throws -> [DayFetchScope] {
+        let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return [DayFetchScope(mailbox: mailbox,
+                              account: trimmedAccount.isEmpty ? nil : trimmedAccount,
+                              displayName: trimmedAccount.isEmpty
+                                  ? mailbox
+                                  : "\(trimmedAccount) / \(mailbox)",
+                              includesAllInboxAliases: trimmedAccount.isEmpty
+                                  && mailbox.caseInsensitiveCompare("inbox") == .orderedSame)]
+    }
 }
 
 extension MailAppleScriptClient: MailMessageFetching {}
@@ -62,30 +105,22 @@ internal struct BatchBackfillResult {
     internal let fetched: Int
 }
 
-private enum BatchBackfillServiceError: LocalizedError {
-    case incompleteFetch(expected: Int, actual: Int)
-
-    var errorDescription: String? {
-        switch self {
-        case let .incompleteFetch(expected, actual):
-            return "Fetched \(actual) of \(expected) messages for the current interval."
-        }
-    }
-}
-
 internal actor BatchBackfillService: BatchBackfillServicing {
     nonisolated internal static let maximumFetchCount = 4
 
     private let client: any MailMessageFetching
-    private let store: MessageStore
     private let calendar: Calendar
+    private let coordinator: any DayFetchCoordinating
 
     internal init(client: any MailMessageFetching = MailAppleScriptClient(),
                   store: MessageStore = .shared,
-                  calendar: Calendar = .current) {
+                  calendar: Calendar = .autoupdatingCurrent,
+                  coordinator: (any DayFetchCoordinating)? = nil) {
         self.client = client
-        self.store = store
         self.calendar = calendar
+        self.coordinator = coordinator ?? DayFetchCoordinator(client: client,
+                                                               store: store,
+                                                               calendar: calendar)
     }
 
     internal func countMessages(in range: DateInterval,
@@ -98,23 +133,45 @@ internal actor BatchBackfillService: BatchBackfillServicing {
         }
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
+        guard clampedStart < clampedEnd else { return 0 }
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
-        return try await client.countMessages(in: clampedRange, mailbox: mailbox, account: account)
+        var total = 0
+        var dayStart = calendar.startOfDay(for: clampedRange.start)
+        while dayStart < clampedRange.end {
+            try Task.checkCancellation()
+            guard let dayInterval = calendar.dateInterval(of: .day, for: dayStart) else {
+                break
+            }
+            let interval = DateInterval(start: max(dayInterval.start, clampedRange.start),
+                                        end: min(dayInterval.end, clampedRange.end))
+            if interval.start < interval.end {
+                total += try await client.fetchMessageManifest(in: interval,
+                                                               mailbox: mailbox,
+                                                               account: account).count
+            }
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart),
+                  nextDay > dayStart else {
+                break
+            }
+            dayStart = nextDay
+        }
+        return total
     }
 
     internal func runBackfill(range: DateInterval,
                               mailbox: String = "inbox",
                               account: String? = nil,
-                              preferredBatchSize: Int = 5,
+                              preferredBatchSize: Int = DayFetchCoordinator.maximumRequestBatchSize,
                               totalExpected: Int,
                               snippetLineLimit: Int,
                               progressHandler: @Sendable (BatchBackfillProgress) -> Void) async throws -> BatchBackfillResult {
         try Task.checkCancellation()
         let now = Date()
-        if range.start > now || totalExpected == 0 {
+        if range.start > now || range.start >= range.end {
             progressHandler(BatchBackfillProgress(total: totalExpected,
                                                   completed: 0,
-                                                  currentBatchSize: max(1, preferredBatchSize),
+                                                  currentBatchSize: min(Self.maximumFetchCount,
+                                                                        max(1, preferredBatchSize)),
                                                   currentRange: nil,
                                                   rangeMessageCount: nil,
                                                   state: .finished,
@@ -123,97 +180,55 @@ internal actor BatchBackfillService: BatchBackfillServicing {
         }
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
-        let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
-        var pendingRanges = makeInitialRanges(for: clampedRange)
-        var completed = 0
-        var currentBatchSize = max(1, preferredBatchSize)
-        var seenMessageIDs = Set<String>()
-
-        while completed < totalExpected && !pendingRanges.isEmpty {
-            try Task.checkCancellation()
-            let nextRange = pendingRanges.removeFirst()
-            do {
-                let expectedCount = try await client.countMessages(in: nextRange,
-                                                                   mailbox: mailbox,
-                                                                   account: account)
-                try Task.checkCancellation()
-                guard expectedCount > 0 else { continue }
-
-                if expectedCount > Self.maximumFetchCount {
-                    try splitAndRetry(range: nextRange,
-                                      totalExpected: totalExpected,
-                                      completed: completed,
-                                      expectedCount: expectedCount,
-                                      currentBatchSize: &currentBatchSize,
-                                      progressHandler: progressHandler,
-                                      pendingRanges: &pendingRanges,
-                                      state: .splitting,
-                                      error: nil)
-                    continue
-                }
-
-                currentBatchSize = expectedCount
-                let messages = try await client.fetchMessages(in: nextRange,
-                                                              limit: expectedCount,
-                                                              mailbox: mailbox,
-                                                              account: account,
-                                                              snippetLineLimit: snippetLineLimit)
-                try Task.checkCancellation()
-                guard !messages.isEmpty else { continue }
-
-                let uniqueMessages = messages.filter { seenMessageIDs.insert($0.messageID).inserted }
-                guard uniqueMessages.count == expectedCount else {
-                    try splitAndRetry(range: nextRange,
-                                      totalExpected: totalExpected,
-                                      completed: completed,
-                                      expectedCount: expectedCount,
-                                      currentBatchSize: &currentBatchSize,
-                                      progressHandler: progressHandler,
-                                      pendingRanges: &pendingRanges,
-                                      state: .retrying,
-                                      error: BatchBackfillServiceError.incompleteFetch(expected: expectedCount,
-                                                                                      actual: uniqueMessages.count))
-                    continue
-                }
-
-                try await store.upsert(messages: uniqueMessages)
-                try Task.checkCancellation()
-                completed += uniqueMessages.count
-
-                progressHandler(BatchBackfillProgress(total: totalExpected,
-                                                      completed: min(completed, totalExpected),
-                                                      currentBatchSize: currentBatchSize,
-                                                      currentRange: nextRange,
-                                                      rangeMessageCount: expectedCount,
-                                                      state: .running,
-                                                      errorMessage: nil))
-            } catch {
-                do {
-                    try splitAndRetry(range: nextRange,
-                                      totalExpected: totalExpected,
-                                      completed: completed,
-                                      expectedCount: currentBatchSize,
-                                      currentBatchSize: &currentBatchSize,
-                                      progressHandler: progressHandler,
-                                      pendingRanges: &pendingRanges,
-                                      state: .retrying,
-                                      error: error)
-                } catch {
-                    progressHandler(BatchBackfillProgress(total: totalExpected,
-                                                          completed: min(completed, totalExpected),
-                                                          currentBatchSize: currentBatchSize,
-                                                          currentRange: nextRange,
-                                                          rangeMessageCount: nil,
-                                                          state: .finished,
-                                                          errorMessage: error.localizedDescription))
-                    throw error
-                }
-            }
+        guard clampedStart < clampedEnd else {
+            return BatchBackfillResult(total: totalExpected, fetched: 0)
         }
+        let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
+        let requestBatchSize = min(Self.maximumFetchCount, max(1, preferredBatchSize))
+        let scope = DayFetchScope(mailbox: mailbox,
+                                  account: account,
+                                  displayName: account.map { "\($0) / \(mailbox)" }
+                                      ?? String.localizedStringWithFormat(
+                                          NSLocalizedString("dayfetch.scope.all_accounts_format",
+                                                            comment: "All-account day fetch scope label"),
+                                          mailbox
+                                      ),
+                                  includesAllInboxAliases: account == nil
+                                      && mailbox.caseInsensitiveCompare("inbox") == .orderedSame)
+
+        let results: [DayFetchResult]
+        do {
+            results = try await coordinator.fetchRange(clampedRange,
+                                                       scope: scope,
+                                                       mode: .full,
+                                                       requestBatchSize: requestBatchSize,
+                                                       snippetLineLimit: snippetLineLimit,
+                                                       referenceDate: now) { progress in
+                progressHandler(BatchBackfillProgress(
+                    total: max(totalExpected, progress.total),
+                    completed: progress.completed,
+                    currentBatchSize: requestBatchSize,
+                    currentRange: progress.dayInterval,
+                    rangeMessageCount: progress.total,
+                    state: .running,
+                    errorMessage: nil
+                ))
+            }
+        } catch {
+            progressHandler(BatchBackfillProgress(total: totalExpected,
+                                                  completed: 0,
+                                                  currentBatchSize: requestBatchSize,
+                                                  currentRange: clampedRange,
+                                                  rangeMessageCount: nil,
+                                                  state: .finished,
+                                                  errorMessage: error.localizedDescription))
+            throw error
+        }
+        let completed = results.reduce(0) { $0 + $1.fetchedCount }
 
         progressHandler(BatchBackfillProgress(total: totalExpected,
-                                              completed: min(completed, totalExpected),
-                                              currentBatchSize: currentBatchSize,
+                                              completed: completed,
+                                              currentBatchSize: requestBatchSize,
                                               currentRange: nil,
                                               rangeMessageCount: nil,
                                               state: .finished,
@@ -251,62 +266,4 @@ internal actor BatchBackfillService: BatchBackfillServicing {
                                               snippetLineLimit: snippetLineLimit)
     }
 
-    private func splitAndRetry(range: DateInterval,
-                               totalExpected: Int,
-                               completed: Int,
-                               expectedCount: Int,
-                               currentBatchSize: inout Int,
-                               progressHandler: @Sendable (BatchBackfillProgress) -> Void,
-                               pendingRanges: inout [DateInterval],
-                               state: BatchBackfillProgress.State,
-                               error: Error?) throws {
-        guard let splitRanges = split(range: range) else {
-            throw error ?? BatchBackfillServiceError.incompleteFetch(expected: expectedCount, actual: 0)
-        }
-
-        currentBatchSize = min(Self.maximumFetchCount, max(1, expectedCount / 2))
-        pendingRanges.insert(contentsOf: splitRanges, at: 0)
-        progressHandler(BatchBackfillProgress(total: totalExpected,
-                                              completed: min(completed, totalExpected),
-                                              currentBatchSize: currentBatchSize,
-                                              currentRange: range,
-                                              rangeMessageCount: expectedCount,
-                                              state: state,
-                                              errorMessage: error?.localizedDescription))
-    }
-
-    private func makeInitialRanges(for range: DateInterval) -> [DateInterval] {
-        guard range.duration > 0 else { return [] }
-
-        var ranges: [DateInterval] = []
-        var bucketEnd = range.end
-        while bucketEnd > range.start {
-            let anchor = bucketEnd.addingTimeInterval(-1)
-            let bucketStart = max(range.start, calendar.startOfDay(for: anchor))
-            ranges.append(DateInterval(start: bucketStart, end: bucketEnd))
-            bucketEnd = bucketStart
-        }
-        return ranges
-    }
-
-    private func split(range: DateInterval) -> [DateInterval]? {
-        guard range.duration > 1 else { return nil }
-
-        let midpoint = range.start.addingTimeInterval(range.duration / 2)
-        let flooredMidpoint = Date(timeIntervalSinceReferenceDate: floor(midpoint.timeIntervalSinceReferenceDate))
-        let splitPoint: Date
-        if flooredMidpoint <= range.start {
-            splitPoint = range.start.addingTimeInterval(1)
-        } else if flooredMidpoint >= range.end {
-            splitPoint = range.end.addingTimeInterval(-1)
-        } else {
-            splitPoint = flooredMidpoint
-        }
-
-        guard splitPoint > range.start && splitPoint < range.end else { return nil }
-        return [
-            DateInterval(start: splitPoint, end: range.end),
-            DateInterval(start: range.start, end: splitPoint)
-        ]
-    }
 }

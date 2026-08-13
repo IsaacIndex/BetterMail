@@ -21,6 +21,7 @@ internal final class GraphSceneNode: SKNode {
     private var theme: DesignTokens.Graph.AppTheme.Palette
     private var breathRing: SKShapeNode?
     private var labelCollisionOffset = CGVector.zero
+    private var onAccessibilityPress: (() -> Void)?
 
     internal init(graphID: String,
                   kind: GraphNodeKind,
@@ -120,6 +121,22 @@ internal final class GraphSceneNode: SKNode {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    internal func configureExpansionAccessibility(label spokenLabel: String,
+                                                  onPress: @escaping () -> Void) {
+        children.forEach { $0.isAccessibilityElement = false }
+        isAccessibilityElement = true
+        accessibilityRole = NSAccessibility.Role.button.rawValue
+        accessibilityLabel = spokenLabel
+        isAccessibilityEnabled = true
+        onAccessibilityPress = onPress
+    }
+
+    @objc func accessibilityPerformPress() -> Bool {
+        guard let onAccessibilityPress else { return false }
+        onAccessibilityPress()
+        return true
     }
 
     internal func applySelection(isSelected: Bool, isHovered: Bool, isDimmed: Bool) {

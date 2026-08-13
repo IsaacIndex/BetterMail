@@ -4,6 +4,7 @@ import OSLog
 
 internal extension Notification.Name {
     static let manualThreadGroupsReset = Notification.Name("MessageStore.manualThreadGroupsReset")
+    static let dayFetchCoverageDidChange = Notification.Name("MessageStore.dayFetchCoverageDidChange")
 }
 
 internal final class MessageStore {
@@ -67,17 +68,60 @@ internal final class MessageStore {
         request.fetchBatchSize = messageFetchBatchSize
     }
 
+    private static var visibleMessagePredicate: NSPredicate {
+        NSPredicate(format: "sourceAbsentAt == nil")
+    }
+
+    private static func sourceIdentity(internalMailID: String?,
+                                       messageID: String,
+                                       account: String,
+                                       mailbox: String) -> String {
+        let trimmedInternalID = internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedInternalID.isEmpty {
+            return "mail|\(account.lowercased())|\(mailbox.lowercased())|\(trimmedInternalID)"
+        }
+        return "message|\(account.lowercased())|\(mailbox.lowercased())|\(messageID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
     internal func upsert(messages: [EmailMessage]) async throws {
         guard !messages.isEmpty else { return }
         try await container.performBackgroundTask { context in
             let encoder = JSONEncoder()
-            let ids = messages.map { $0.messageID }
+            let ids = messages.map(\.messageID)
+            let internalIDs = messages.compactMap(\.internalMailID)
             let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-            request.predicate = NSPredicate(format: "messageID IN %@", ids)
+            var lookupPredicates = [NSPredicate(format: "messageID IN %@", ids)]
+            if !internalIDs.isEmpty {
+                lookupPredicates.append(NSPredicate(format: "internalMailID IN %@", internalIDs))
+            }
+            request.predicate = NSCompoundPredicate(orPredicateWithSubpredicates: lookupPredicates)
             let existing = try context.fetch(request)
-            var lookup = Dictionary(uniqueKeysWithValues: existing.map { ($0.messageID, $0) })
+            var lookup = Dictionary(existing.map { entity in
+                (Self.sourceIdentity(internalMailID: entity.internalMailID,
+                                     messageID: entity.messageID,
+                                     account: entity.accountName ?? "",
+                                     mailbox: entity.mailboxID), entity)
+            }, uniquingKeysWith: { current, _ in current })
+            var legacyLookup = Dictionary(existing.compactMap { entity -> (String, MessageEntity)? in
+                let internalID = entity.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard internalID.isEmpty else { return nil }
+                return (Self.sourceIdentity(internalMailID: nil,
+                                            messageID: entity.messageID,
+                                            account: entity.accountName ?? "",
+                                            mailbox: entity.mailboxID), entity)
+            }, uniquingKeysWith: { current, _ in current })
             for message in messages {
-                let entity = lookup[message.messageID] ?? MessageEntity(context: context)
+                let sourceIdentity = Self.sourceIdentity(internalMailID: message.internalMailID,
+                                                         messageID: message.messageID,
+                                                         account: message.accountName,
+                                                         mailbox: message.mailboxID)
+                let legacyKey = Self.sourceIdentity(internalMailID: nil,
+                                                    messageID: message.messageID,
+                                                    account: message.accountName,
+                                                    mailbox: message.mailboxID)
+                let entity = lookup[sourceIdentity]
+                    ?? legacyLookup[legacyKey]
+                    ?? MessageEntity(context: context)
                 entity.id = message.id
                 entity.messageID = message.messageID
                 let normalized = message.normalizedMessageID.isEmpty ? message.id.uuidString.lowercased() : message.normalizedMessageID
@@ -95,7 +139,10 @@ internal final class MessageStore {
                 entity.referencesData = try encoder.encode(message.references)
                 entity.threadID = message.threadID
                 entity.rawSourcePath = message.rawSourceLocation?.path
-                lookup[message.messageID] = entity
+                entity.sourceAbsentAt = nil
+                entity.sourceAbsentScopeKey = nil
+                lookup[sourceIdentity] = entity
+                legacyLookup.removeValue(forKey: legacyKey)
             }
             if context.hasChanges {
                 try context.save()
@@ -123,7 +170,7 @@ internal final class MessageStore {
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
             ]
-            var predicates: [NSPredicate] = []
+            var predicates: [NSPredicate] = [Self.visibleMessagePredicate]
             if let date {
                 predicates.append(NSPredicate(format: "date >= %@", date as NSDate))
             }
@@ -149,8 +196,9 @@ internal final class MessageStore {
     internal func countMessages(in range: DateInterval, mailbox: String? = nil) async throws -> Int {
         try await container.performBackgroundTask { context in
             let basePredicates: [NSPredicate] = [
+                Self.visibleMessagePredicate,
                 NSPredicate(format: "date >= %@", range.start as NSDate),
-                NSPredicate(format: "date <= %@", range.end as NSDate)
+                NSPredicate(format: "date < %@", range.end as NSDate)
             ]
             let basePredicate = NSCompoundPredicate(andPredicateWithSubpredicates: basePredicates)
 
@@ -204,8 +252,9 @@ internal final class MessageStore {
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
             ]
             var predicates: [NSPredicate] = [
+                Self.visibleMessagePredicate,
                 NSPredicate(format: "date >= %@", range.start as NSDate),
-                NSPredicate(format: "date <= %@", range.end as NSDate)
+                NSPredicate(format: "date < %@", range.end as NSDate)
             ]
             if let mailbox {
                 predicates.append(self.mailboxPredicate(mailbox: mailbox,
@@ -236,7 +285,10 @@ internal final class MessageStore {
                 NSSortDescriptor(key: #keyPath(MessageEntity.date), ascending: false),
                 NSSortDescriptor(key: #keyPath(MessageEntity.messageID), ascending: true)
             ]
-            request.predicate = NSPredicate(format: "threadID IN %@", Array(threadIDs))
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                Self.visibleMessagePredicate,
+                NSPredicate(format: "threadID IN %@", Array(threadIDs))
+            ])
             if let limit { request.fetchLimit = limit }
             let entities = try context.fetch(request)
             return autoreleasepool {
@@ -263,9 +315,309 @@ internal final class MessageStore {
                 ]
             }
             request.fetchLimit = 1
-            request.predicate = NSPredicate(format: "threadID IN %@", Array(threadIDs))
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                Self.visibleMessagePredicate,
+                NSPredicate(format: "threadID IN %@", Array(threadIDs))
+            ])
             return try context.fetch(request).first?.toModel()
         }
+    }
+
+    internal func fetchMessagesForReconciliation(in range: DateInterval,
+                                                  scope: DayFetchScope) async throws -> [EmailMessage] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            Self.configureMessageWindowFetch(request)
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "date >= %@", range.start as NSDate),
+                NSPredicate(format: "date < %@", range.end as NSDate),
+                self.mailboxPredicate(mailbox: scope.mailbox,
+                                      includeAllInboxesAliases: scope.includesAllInboxAliases)
+            ]
+            if let account = scope.account {
+                predicates.append(NSPredicate(format: "accountName ==[c] %@", account))
+            }
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            return try context.fetch(request).compactMap { $0.toModel() }
+        }
+    }
+
+    internal func reconcileSourcePresence(in range: DateInterval,
+                                          scope: DayFetchScope,
+                                          manifest: [MessageReference],
+                                          checkedAt: Date) async throws -> Int {
+        let absentCount = try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "date >= %@", range.start as NSDate),
+                NSPredicate(format: "date < %@", range.end as NSDate),
+                self.mailboxPredicate(mailbox: scope.mailbox,
+                                      includeAllInboxesAliases: scope.includesAllInboxAliases)
+            ]
+            if let account = scope.account {
+                predicates.append(NSPredicate(format: "accountName ==[c] %@", account))
+            }
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+
+            let manifestInternalIdentities = Set(manifest.compactMap { reference -> String? in
+                guard reference.internalMailID != nil else { return nil }
+                return reference.stableIdentity
+            })
+            let manifestMessageIdentities = Set(manifest.map { $0.normalizedMessageIdentity })
+            let entities = try context.fetch(request)
+            var absentCount = 0
+            for entity in entities {
+                let isPresent: Bool
+                if let internalMailID = entity.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !internalMailID.isEmpty {
+                    let reference = MessageReference(internalMailID: internalMailID,
+                                                     messageID: entity.messageID,
+                                                     mailbox: entity.mailboxID,
+                                                     account: entity.accountName ?? "",
+                                                     subject: entity.subject,
+                                                     date: entity.date,
+                                                     isUnread: entity.isUnread)
+                    isPresent = manifestInternalIdentities.contains(reference.stableIdentity)
+                } else {
+                    let reference = MessageReference(internalMailID: nil,
+                                                     messageID: entity.messageID,
+                                                     mailbox: entity.mailboxID,
+                                                     account: entity.accountName ?? "",
+                                                     subject: entity.subject,
+                                                     date: entity.date,
+                                                     isUnread: entity.isUnread)
+                    isPresent = manifestMessageIdentities.contains(reference.normalizedMessageIdentity)
+                }
+
+                if isPresent {
+                    entity.sourceAbsentAt = nil
+                    entity.sourceAbsentScopeKey = nil
+                } else {
+                    entity.sourceAbsentAt = checkedAt
+                    entity.sourceAbsentScopeKey = scope.key
+                    absentCount += 1
+                }
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+            return absentCount
+        }
+        logger.info("Source reconciliation completed. scope=\(scope.key, privacy: .private) absent=\(absentCount, privacy: .public)")
+        return absentCount
+    }
+
+    internal func beginDayFetchCoverage(scope: DayFetchScope,
+                                        dayInterval: DateInterval,
+                                        attemptedAt: Date) async throws {
+        let identifier = coverageIdentifier(scope: scope, dayStart: dayInterval.start)
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "id == %@", identifier)
+            request.fetchLimit = 1
+            let entity = try context.fetch(request).first ?? DayFetchCoverageEntity(context: context)
+            if entity.isInserted {
+                entity.id = identifier
+                entity.scopeKey = scope.key
+                entity.mailbox = scope.mailbox
+                entity.account = scope.account
+                entity.dayStart = dayInterval.start
+                entity.dayEnd = dayInterval.end
+                entity.firstTouchedAt = attemptedAt
+                entity.expectedCount = 0
+                entity.fetchedCount = 0
+                entity.absentCount = 0
+            }
+            entity.lastAttemptAt = attemptedAt
+            entity.stateRaw = DayCoverageState.fetching.rawValue
+            entity.errorMessage = nil
+            try context.save()
+        }
+        NotificationCenter.default.post(name: .dayFetchCoverageDidChange, object: nil)
+    }
+
+    internal func completeDayFetchCoverage(scope: DayFetchScope,
+                                           dayInterval: DateInterval,
+                                           coveredThrough: Date,
+                                           expectedCount: Int,
+                                           fetchedCount: Int,
+                                           absentCount: Int,
+                                           state: DayCoverageState,
+                                           completedAt: Date) async throws -> DayFetchCoverage {
+        let identifier = coverageIdentifier(scope: scope, dayStart: dayInterval.start)
+        let coverage = try await container.performBackgroundTask { context -> DayFetchCoverage in
+            let request: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "id == %@", identifier)
+            request.fetchLimit = 1
+            let entity = try context.fetch(request).first ?? DayFetchCoverageEntity(context: context)
+            if entity.isInserted {
+                entity.id = identifier
+                entity.scopeKey = scope.key
+                entity.mailbox = scope.mailbox
+                entity.account = scope.account
+                entity.dayStart = dayInterval.start
+                entity.dayEnd = dayInterval.end
+                entity.firstTouchedAt = completedAt
+                entity.expectedCount = 0
+                entity.fetchedCount = 0
+                entity.absentCount = 0
+            }
+            entity.lastAttemptAt = completedAt
+            entity.lastSuccessAt = completedAt
+            entity.coveredThrough = coveredThrough
+            entity.expectedCount = Int64(expectedCount)
+            entity.fetchedCount = Int64(fetchedCount)
+            entity.absentCount = Int64(absentCount)
+            entity.stateRaw = state.rawValue
+            entity.errorMessage = nil
+            try context.save()
+            return entity.toModel()
+        }
+        NotificationCenter.default.post(name: .dayFetchCoverageDidChange, object: nil)
+        return coverage
+    }
+
+    internal func failDayFetchCoverage(scope: DayFetchScope,
+                                       dayInterval: DateInterval,
+                                       attemptedAt: Date,
+                                       errorMessage: String) async throws {
+        let identifier = coverageIdentifier(scope: scope, dayStart: dayInterval.start)
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "id == %@", identifier)
+            request.fetchLimit = 1
+            let entity = try context.fetch(request).first ?? DayFetchCoverageEntity(context: context)
+            if entity.isInserted {
+                entity.id = identifier
+                entity.scopeKey = scope.key
+                entity.mailbox = scope.mailbox
+                entity.account = scope.account
+                entity.dayStart = dayInterval.start
+                entity.dayEnd = dayInterval.end
+                entity.firstTouchedAt = attemptedAt
+                entity.expectedCount = 0
+                entity.fetchedCount = 0
+                entity.absentCount = 0
+            }
+            entity.lastAttemptAt = attemptedAt
+            entity.stateRaw = DayCoverageState.failed.rawValue
+            entity.errorMessage = errorMessage
+            try context.save()
+        }
+        NotificationCenter.default.post(name: .dayFetchCoverageDidChange, object: nil)
+    }
+
+    internal func fetchDayFetchCoverages(scope: DayFetchScope,
+                                         concreteScopes: [DayFetchScope]? = nil) async throws -> [DayFetchCoverage] {
+        try await container.performBackgroundTask { context in
+            let request: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            guard scope.account == nil, scope.includesAllInboxAliases else {
+                request.predicate = NSPredicate(format: "scopeKey == %@", scope.key)
+                request.sortDescriptors = [NSSortDescriptor(key: "dayStart", ascending: false)]
+                return try context.fetch(request).map { $0.toModel() }
+            }
+
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                NSCompoundPredicate(orPredicateWithSubpredicates: [
+                    NSPredicate(format: "mailbox ==[c] %@", "inbox"),
+                    NSPredicate(format: "mailbox ==[c] %@", "all inboxes")
+                ]),
+                NSPredicate(format: "account != nil")
+            ])
+            request.sortDescriptors = [NSSortDescriptor(key: "dayStart", ascending: false)]
+            let concreteCoverages = try context.fetch(request).map { $0.toModel() }
+            let aggregateRequest: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            aggregateRequest.predicate = NSPredicate(format: "scopeKey == %@", scope.key)
+            aggregateRequest.sortDescriptors = [NSSortDescriptor(key: "dayStart", ascending: false)]
+            let aggregateAttempts = try context.fetch(aggregateRequest).map { $0.toModel() }
+            guard !concreteCoverages.isEmpty else {
+                return aggregateAttempts
+            }
+
+            let expectedScopeKeys: Set<String>
+            let relevantConcreteCoverages: [DayFetchCoverage]
+            if let concreteScopes, !concreteScopes.isEmpty {
+                expectedScopeKeys = Set(concreteScopes.map(\.key))
+                relevantConcreteCoverages = concreteCoverages.filter {
+                    expectedScopeKeys.contains($0.scopeKey)
+                }
+            } else {
+                expectedScopeKeys = Set(concreteCoverages.map(\.scopeKey))
+                relevantConcreteCoverages = concreteCoverages
+            }
+            var coverageByDay = Dictionary(grouping: relevantConcreteCoverages, by: \.dayStart)
+                .map { dayStart, dayCoverages in
+                    self.aggregateDayFetchCoverage(dayCoverages,
+                                                   requestedScope: scope,
+                                                   dayStart: dayStart,
+                                                   expectedScopeKeys: expectedScopeKeys)
+                }
+                .reduce(into: [Date: DayFetchCoverage]()) { result, coverage in
+                    result[coverage.dayStart] = coverage
+                }
+            for aggregateAttempt in aggregateAttempts {
+                if let concreteAttempt = coverageByDay[aggregateAttempt.dayStart],
+                   concreteAttempt.lastAttemptAt >= aggregateAttempt.lastAttemptAt {
+                    continue
+                }
+                coverageByDay[aggregateAttempt.dayStart] = aggregateAttempt
+            }
+            return coverageByDay.values.sorted { $0.dayStart > $1.dayStart }
+        }
+    }
+
+    internal func markInterruptedDayFetchCoverageFailed(at date: Date = Date()) async throws {
+        let changed = try await container.performBackgroundTask { context -> Bool in
+            let request: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "stateRaw == %@", DayCoverageState.fetching.rawValue)
+            let entities = try context.fetch(request)
+            guard !entities.isEmpty else { return false }
+            for entity in entities {
+                entity.lastAttemptAt = date
+                entity.stateRaw = DayCoverageState.failed.rawValue
+                entity.errorMessage = NSLocalizedString("dayfetch.error.interrupted",
+                                                        comment: "Persisted failure after an interrupted day fetch")
+            }
+            try context.save()
+            return true
+        }
+        if changed {
+            NotificationCenter.default.post(name: .dayFetchCoverageDidChange, object: nil)
+        }
+    }
+
+    private func coverageIdentifier(scope: DayFetchScope, dayStart: Date) -> String {
+        "\(scope.key)|\(Int64(dayStart.timeIntervalSinceReferenceDate))"
+    }
+
+    private func aggregateDayFetchCoverage(_ coverages: [DayFetchCoverage],
+                                           requestedScope: DayFetchScope,
+                                           dayStart: Date,
+                                           expectedScopeKeys: Set<String>) -> DayFetchCoverage {
+        let presentScopeKeys = Set(coverages.map(\.scopeKey))
+        let hasMissingScope = !expectedScopeKeys.isSubset(of: presentScopeKeys)
+        let allSucceeded = !hasMissingScope && coverages.allSatisfy { $0.lastSuccessAt != nil }
+        return DayFetchCoverage(
+            id: coverageIdentifier(scope: requestedScope, dayStart: dayStart),
+            scopeKey: requestedScope.key,
+            mailbox: requestedScope.mailbox,
+            account: requestedScope.account,
+            dayStart: dayStart,
+            dayEnd: coverages.map(\.dayEnd).max() ?? dayStart,
+            firstTouchedAt: coverages.map(\.firstTouchedAt).min() ?? dayStart,
+            lastAttemptAt: coverages.map(\.lastAttemptAt).max() ?? dayStart,
+            lastSuccessAt: allSucceeded ? coverages.compactMap(\.lastSuccessAt).min() : nil,
+            coveredThrough: allSucceeded ? coverages.compactMap(\.coveredThrough).min() : nil,
+            expectedCount: coverages.reduce(0) { $0 + $1.expectedCount },
+            fetchedCount: coverages.reduce(0) { $0 + $1.fetchedCount },
+            absentCount: coverages.reduce(0) { $0 + $1.absentCount },
+            state: DayFetchCoordinator.aggregateState(coverages.map(\.state),
+                                                      hasMissingScope: hasMissingScope),
+            errorMessage: coverages
+                .filter { $0.state == .failed }
+                .max(by: { $0.lastAttemptAt < $1.lastAttemptAt })?
+                .errorMessage
+        )
     }
 
     internal func fetchThreads(limit: Int? = nil) async throws -> [EmailThread] {
@@ -867,6 +1219,17 @@ internal final class MessageStore {
         rawAttr.attributeType = .stringAttributeType
         rawAttr.isOptional = true
 
+        let sourceAbsentAtAttr = NSAttributeDescription()
+        sourceAbsentAtAttr.name = "sourceAbsentAt"
+        sourceAbsentAtAttr.attributeType = .dateAttributeType
+        sourceAbsentAtAttr.isOptional = true
+        sourceAbsentAtAttr.isIndexed = true
+
+        let sourceAbsentScopeKeyAttr = NSAttributeDescription()
+        sourceAbsentScopeKeyAttr.name = "sourceAbsentScopeKey"
+        sourceAbsentScopeKeyAttr.attributeType = .stringAttributeType
+        sourceAbsentScopeKeyAttr.isOptional = true
+
         messageEntity.properties = [
             idAttr,
             msgIDAttr,
@@ -883,7 +1246,43 @@ internal final class MessageStore {
             inReplyAttr,
             referencesAttr,
             threadAttr,
-            rawAttr
+            rawAttr,
+            sourceAbsentAtAttr,
+            sourceAbsentScopeKeyAttr
+        ]
+
+        let dayFetchCoverageEntity = NSEntityDescription()
+        dayFetchCoverageEntity.name = "DayFetchCoverageEntity"
+        dayFetchCoverageEntity.managedObjectClassName = NSStringFromClass(DayFetchCoverageEntity.self)
+
+        func coverageAttribute(_ name: String,
+                               type: NSAttributeType,
+                               optional: Bool = false,
+                               indexed: Bool = false) -> NSAttributeDescription {
+            let attribute = NSAttributeDescription()
+            attribute.name = name
+            attribute.attributeType = type
+            attribute.isOptional = optional
+            attribute.isIndexed = indexed
+            return attribute
+        }
+
+        dayFetchCoverageEntity.properties = [
+            coverageAttribute("id", type: .stringAttributeType, indexed: true),
+            coverageAttribute("scopeKey", type: .stringAttributeType, indexed: true),
+            coverageAttribute("mailbox", type: .stringAttributeType),
+            coverageAttribute("account", type: .stringAttributeType, optional: true),
+            coverageAttribute("dayStart", type: .dateAttributeType, indexed: true),
+            coverageAttribute("dayEnd", type: .dateAttributeType),
+            coverageAttribute("firstTouchedAt", type: .dateAttributeType),
+            coverageAttribute("lastAttemptAt", type: .dateAttributeType),
+            coverageAttribute("lastSuccessAt", type: .dateAttributeType, optional: true),
+            coverageAttribute("coveredThrough", type: .dateAttributeType, optional: true),
+            coverageAttribute("expectedCount", type: .integer64AttributeType),
+            coverageAttribute("fetchedCount", type: .integer64AttributeType),
+            coverageAttribute("absentCount", type: .integer64AttributeType),
+            coverageAttribute("stateRaw", type: .stringAttributeType),
+            coverageAttribute("errorMessage", type: .stringAttributeType, optional: true)
         ]
 
         let threadEntity = NSEntityDescription()
@@ -1271,6 +1670,7 @@ internal final class MessageStore {
 
         model.entities = [
             messageEntity,
+            dayFetchCoverageEntity,
             threadEntity,
             overrideEntity,
             manualGroupEntity,
@@ -1452,7 +1852,19 @@ internal final class MessageStore {
         (try? await container.performBackgroundTask { context -> [ActionItem] in
             let request = ActionItemEntity.fetchRequest()
             request.sortDescriptors = [NSSortDescriptor(key: "addedAt", ascending: false)]
-            return try context.fetch(request).compactMap { $0.toModel() }
+            let entities = try context.fetch(request)
+            let messageIDs = entities.map(\.messageID)
+            guard !messageIDs.isEmpty else { return [] }
+            let visibleRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            visibleRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                Self.visibleMessagePredicate,
+                NSPredicate(format: "messageID IN %@", messageIDs)
+            ])
+            let visibleMessageIDs = Set(try context.fetch(visibleRequest).map(\.messageID))
+            return entities.compactMap { entity in
+                guard visibleMessageIDs.contains(entity.messageID) else { return nil }
+                return entity.toModel()
+            }
         }) ?? []
     }
 
@@ -1479,6 +1891,8 @@ internal final class MessageEntity: NSManagedObject {
     @NSManaged var referencesData: Data?
     @NSManaged var threadID: String?
     @NSManaged var rawSourcePath: String?
+    @NSManaged var sourceAbsentAt: Date?
+    @NSManaged var sourceAbsentScopeKey: String?
 
     internal func toModel() -> EmailMessage? {
         let refs: [String]
@@ -1509,6 +1923,49 @@ internal final class MessageEntity: NSManagedObject {
 internal extension MessageEntity {
     @nonobjc class func fetchRequest() -> NSFetchRequest<MessageEntity> {
         NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
+    }
+}
+
+@objc(DayFetchCoverageEntity)
+internal final class DayFetchCoverageEntity: NSManagedObject {
+    @NSManaged var id: String
+    @NSManaged var scopeKey: String
+    @NSManaged var mailbox: String
+    @NSManaged var account: String?
+    @NSManaged var dayStart: Date
+    @NSManaged var dayEnd: Date
+    @NSManaged var firstTouchedAt: Date
+    @NSManaged var lastAttemptAt: Date
+    @NSManaged var lastSuccessAt: Date?
+    @NSManaged var coveredThrough: Date?
+    @NSManaged var expectedCount: Int64
+    @NSManaged var fetchedCount: Int64
+    @NSManaged var absentCount: Int64
+    @NSManaged var stateRaw: String
+    @NSManaged var errorMessage: String?
+
+    internal func toModel() -> DayFetchCoverage {
+        DayFetchCoverage(id: id,
+                         scopeKey: scopeKey,
+                         mailbox: mailbox,
+                         account: account,
+                         dayStart: dayStart,
+                         dayEnd: dayEnd,
+                         firstTouchedAt: firstTouchedAt,
+                         lastAttemptAt: lastAttemptAt,
+                         lastSuccessAt: lastSuccessAt,
+                         coveredThrough: coveredThrough,
+                         expectedCount: Int(expectedCount),
+                         fetchedCount: Int(fetchedCount),
+                         absentCount: Int(absentCount),
+                         state: DayCoverageState(rawValue: stateRaw) ?? .unknown,
+                         errorMessage: errorMessage)
+    }
+}
+
+internal extension DayFetchCoverageEntity {
+    @nonobjc class func fetchRequest() -> NSFetchRequest<DayFetchCoverageEntity> {
+        NSFetchRequest<DayFetchCoverageEntity>(entityName: "DayFetchCoverageEntity")
     }
 }
 

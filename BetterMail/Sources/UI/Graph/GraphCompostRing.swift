@@ -17,6 +17,10 @@ internal struct GraphCompostRing: View {
                     } label: {
                         HStack(spacing: 5) {
                             Text(entry.action == .snip ? "✂" : "⏚")
+                            if entry.requiresRecovery {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                            }
                             Text(entry.subject)
                                 .lineLimit(1)
                                 .frame(maxWidth: 130, alignment: .leading)
@@ -32,11 +36,15 @@ internal struct GraphCompostRing: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier(AccessibilityID.graphCompostRingChip(entry.id))
-                    .accessibilityLabel(String.localizedStringWithFormat(
-                        NSLocalizedString("graph.compost.restore.accessibility",
-                                          comment: "Accessibility label for graph compost restore chip"),
-                        entry.subject
-                    ))
+                    .accessibilityLabel(
+                        String.localizedStringWithFormat(
+                            NSLocalizedString(entry.requiresRecovery
+                                              ? "graph.compost.recovery.accessibility"
+                                              : "graph.compost.restore.accessibility",
+                                              comment: "Accessibility label for graph compost restore chip"),
+                            entry.subject
+                        )
+                    )
                 }
             }
             .padding(10)

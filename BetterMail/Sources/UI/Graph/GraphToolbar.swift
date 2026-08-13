@@ -8,22 +8,20 @@ internal struct GraphToolbar: View {
 
     internal var body: some View {
         HStack(spacing: 6) {
-            toolbarButton(title: NSLocalizedString("graph.toolbar.snip", comment: "Graph snip mode"),
+            toolbarButton(title: viewModel.snipActionTitle,
                           systemImage: "scissors",
-                          isOn: viewModel.pruneMode == .snip,
+                          isOn: viewModel.snipPhase != .idle,
                           tint: DesignTokens.Graph.AppTheme.snip,
                           accessibilityID: AccessibilityID.graphToolbarSnip,
-                          help: selectedThreadID == nil
-                          ? NSLocalizedString("graph.toolbar.snip.help.mode",
-                                              comment: "Help for entering graph branch snip mode")
-                          : NSLocalizedString("graph.toolbar.snip.help.selected",
-                                              comment: "Help for snipping the selected graph thread"),
+                          help: NSLocalizedString("graph.toolbar.snip.help.mode",
+                                                  comment: "Help for entering graph branch snip mode"),
                           action: performSnip)
             toolbarButton(title: NSLocalizedString("graph.toolbar.archive", comment: "Graph archive mode"),
                           systemImage: "archivebox",
                           isOn: viewModel.pruneMode == .archive,
                           tint: DesignTokens.Graph.AppTheme.archive,
                           accessibilityID: AccessibilityID.graphToolbarArchive,
+                          isDisabled: viewModel.isArchiveDisabledForSnip,
                           help: selectedThreadID == nil
                           ? NSLocalizedString("graph.toolbar.archive.help.mode",
                                               comment: "Help for entering graph branch archive mode")
@@ -72,13 +70,15 @@ internal struct GraphToolbar: View {
                                isOn: Bool,
                                tint: Color,
                                accessibilityID: String,
+                               isDisabled: Bool = false,
                                help: String,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .labelStyle(.titleAndIcon)
                 .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
-                .frame(minWidth: 84, minHeight: 26)
+                .frame(width: 108)
+                .frame(minHeight: 26)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
                 .foregroundStyle(isOn ? Color.white : DesignTokens.Graph.AppTheme.inkSecondary)
@@ -92,12 +92,25 @@ internal struct GraphToolbar: View {
         .focusable()
         .focusEffectDisabled()
         .accessibilityLabel(title)
+        .accessibilityValue(accessibilityValue(for: accessibilityID))
         .accessibilityIdentifier(accessibilityID)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
         .help(help)
     }
 
+    private func accessibilityValue(for accessibilityID: String) -> String {
+        guard accessibilityID == AccessibilityID.graphToolbarSnip,
+              viewModel.stagedSnipCount > 0 else { return "" }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("graph.snip.staging.count",
+                              comment: "Number of staged graph branches"),
+            viewModel.stagedSnipCount
+        )
+    }
+
     private func performSnip() {
-        viewModel.activateSnip(selectedThreadID: selectedThreadID)
+        viewModel.activateSnip()
     }
 
     private func performArchive() {

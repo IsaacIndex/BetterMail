@@ -3,6 +3,42 @@ import XCTest
 
 @MainActor
 final class ThreadCanvasLayoutTests: XCTestCase {
+    func test_activityShelfBottomInset_noObstacle_usesDefaultInset() {
+        let inset = ProcessingActivityShelfLayout.bottomInset(
+            containerHeight: 720,
+            compostPanelTop: nil
+        )
+
+        XCTAssertEqual(inset, 18)
+    }
+
+    func test_activityShelfBottomInset_oneRowCompost_addsGapAbovePanelTop() {
+        let inset = ProcessingActivityShelfLayout.bottomInset(
+            containerHeight: 720,
+            compostPanelTop: 610
+        )
+
+        XCTAssertEqual(inset, 118)
+    }
+
+    func test_activityShelfBottomInset_multiRowCompost_tracksTallerPanelTop() {
+        let inset = ProcessingActivityShelfLayout.bottomInset(
+            containerHeight: 720,
+            compostPanelTop: 420
+        )
+
+        XCTAssertEqual(inset, 308)
+    }
+
+    func test_activityShelfBottomInset_obstacleBelowClearance_usesMinimumInset() {
+        let inset = ProcessingActivityShelfLayout.bottomInset(
+            containerHeight: 720,
+            compostPanelTop: 715
+        )
+
+        XCTAssertEqual(inset, 18)
+    }
+
     func testDayIndexForLastSevenDays() {
         let calendar = Calendar(identifier: .gregorian)
         var components = DateComponents()

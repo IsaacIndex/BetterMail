@@ -59,8 +59,8 @@ internal struct GraphRepresentable: NSViewRepresentable {
         scene.onToggleActionItem = onToggleActionItem
         scene.isActionItem = isActionItem
         scene.onMoveThreadToFolder = onMoveThreadToFolder
-        scene.onExpandRemainingBranches = {
-            graphViewModel.expandRemainingBranches()
+        scene.onExpandRemainingBranches = { parentID in
+            graphViewModel.expandRemainingBranches(parentID: parentID)
         }
         scene.onHoverItem = { item in
             graphViewModel.setHoverItem(item)
@@ -72,15 +72,17 @@ internal struct GraphRepresentable: NSViewRepresentable {
             graphViewModel.water(threadID: threadID, settings: settings)
             audio.play(.water, settings: settings)
         }
+        scene.onSnipTarget = { target in
+            graphViewModel.toggleSnipTarget(target)
+            audio.play(.snip, settings: settings)
+        }
         scene.onPruneThread = { threadID in
             let mode = graphViewModel.pruneMode
             graphViewModel.requestPrune(threadID: threadID)
             switch mode {
-            case .snip:
-                audio.play(.snip, settings: settings)
             case .archive:
                 audio.play(.archive, settings: settings)
-            case .idle:
+            case .snip, .idle:
                 break
             }
         }
@@ -119,6 +121,10 @@ internal struct GraphRepresentable: NSViewRepresentable {
                         textScale: textScale,
                         zoomScale: graphViewModel.zoomScale,
                         panOffset: graphViewModel.panOffset,
+                        stagedSnipThreadIDs: graphViewModel.stagedSnipThreadIDs,
+                        fullyStagedSnipGroupingIDs: graphViewModel.fullyStagedSnipGroupingIDs,
+                        partiallyStagedSnipGroupingIDs: graphViewModel.partiallyStagedSnipGroupingIDs,
+                        snipVisualTransition: graphViewModel.snipVisualTransition,
                         pruneAnimationRequest: graphViewModel.pruneAnimationRequest)
         nsView.preferredFramesPerSecond = scene.preferredFramesPerSecond
     }

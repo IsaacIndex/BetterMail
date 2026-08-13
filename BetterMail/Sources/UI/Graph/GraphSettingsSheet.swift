@@ -34,6 +34,21 @@ internal struct GraphSettingsSheet: View {
                                 .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
                         }
                     }
+                    .help(NSLocalizedString("graph.settings.visible_branches.help",
+                                            comment: "Help for the root graph branch limit"))
+                    Stepper(value: $settings.visibleBranchesPerNode,
+                            in: GraphCanvasSettings.visibleBranchesPerNodeRange) {
+                        HStack {
+                            Text(NSLocalizedString("graph.settings.visible_branches_per_node",
+                                                   comment: "Number of child branches shown per graph node"))
+                            Spacer()
+                            Text("\(settings.visibleBranchesPerNode)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+                        }
+                    }
+                    .help(NSLocalizedString("graph.settings.visible_branches_per_node.help",
+                                            comment: "Help for the per-node graph branch limit"))
                 }
                 displaySection
                 suggestionPreferencesSection

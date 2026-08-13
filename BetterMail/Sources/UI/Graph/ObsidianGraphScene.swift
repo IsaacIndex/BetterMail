@@ -15,12 +15,13 @@ internal final class ObsidianGraphScene: SKScene {
     private static let reducedMotionSettlingFrames = 48
 
     internal var onSelectGraphNode: ((String?, Bool) -> Void)?
-    internal var onExpandRemainingBranches: (() -> Void)?
+    internal var onExpandRemainingBranches: ((String) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
     internal var onToggleActionItem: ((String) -> Void)?
     internal var isActionItem: ((String) -> Bool)?
     internal var onMoveThreadToFolder: ((String, String) -> Void)?
+    internal var onSnipTarget: ((GraphSnipTarget) -> Void)?
     internal var onPruneThread: ((String) -> Void)?
     internal var onPruneAnimationFinished: ((UUID) -> Void)?
     internal var onViewportChanged: ((CGFloat, CGPoint) -> Void)?
@@ -65,6 +66,9 @@ internal final class ObsidianGraphScene: SKScene {
     private var reduceMotion = false
     private var textScale: CGFloat = 1
     private var sproutingMessageIDs: Set<String> = []
+    private var stagedSnipThreadIDs: Set<String> = []
+    private var fullyStagedSnipGroupingIDs: Set<String> = []
+    private var partiallyStagedSnipGroupingIDs: Set<String> = []
 
     private var lastUpdateTime: TimeInterval?
     private var lastInteractionTime: TimeInterval?
@@ -86,6 +90,7 @@ internal final class ObsidianGraphScene: SKScene {
     private var hasPendingSelection = false
 
     private var runningPruneAnimationID: UUID?
+    private var runningSnipVisualTransitionID: UUID?
     private var remainingPruneAnimationNodes = 0
     private let cameraNode = SKCameraNode()
 
@@ -113,6 +118,10 @@ internal final class ObsidianGraphScene: SKScene {
                             textScale: CGFloat = 1,
                             zoomScale: CGFloat,
                             panOffset: CGPoint,
+                            stagedSnipThreadIDs: Set<String> = [],
+                            fullyStagedSnipGroupingIDs: Set<String> = [],
+                            partiallyStagedSnipGroupingIDs: Set<String> = [],
+                            snipVisualTransition: GraphSnipVisualTransition? = nil,
                             pruneAnimationRequest: GraphPruneAnimationRequest? = nil) {
         let dataChanged = data != graphData
         let themeChanged = theme != self.theme
@@ -139,6 +148,9 @@ internal final class ObsidianGraphScene: SKScene {
         self.wateredCounts = wateredCounts
         self.reduceMotion = reduceMotion
         self.sproutingMessageIDs = sproutingMessageIDs
+        self.stagedSnipThreadIDs = stagedSnipThreadIDs
+        self.fullyStagedSnipGroupingIDs = fullyStagedSnipGroupingIDs
+        self.partiallyStagedSnipGroupingIDs = partiallyStagedSnipGroupingIDs
         self.forceConfig = forceConfig
         self.displayConfig = displayConfig
         self.theme = theme
@@ -157,6 +169,7 @@ internal final class ObsidianGraphScene: SKScene {
             renderGraph()
         }
         applyVisualState()
+        startSnipVisualTransitionIfNeeded(snipVisualTransition)
         startPruneAnimationIfNeeded(pruneAnimationRequest)
         publishFrameRatePreferenceIfNeeded()
     }
@@ -226,6 +239,7 @@ internal final class ObsidianGraphScene: SKScene {
         onToggleActionItem = nil
         isActionItem = nil
         onMoveThreadToFolder = nil
+        onSnipTarget = nil
         onPruneThread = nil
         onPruneAnimationFinished = nil
         onViewportChanged = nil
@@ -242,6 +256,10 @@ internal final class ObsidianGraphScene: SKScene {
         filteredNodeIDs = []
         wateredCounts = [:]
         sproutingMessageIDs = []
+        stagedSnipThreadIDs = []
+        fullyStagedSnipGroupingIDs = []
+        partiallyStagedSnipGroupingIDs = []
+        runningSnipVisualTransitionID = nil
         lastUpdateTime = nil
         lastInteractionTime = nil
         removeAllActions()
@@ -259,7 +277,13 @@ internal final class ObsidianGraphScene: SKScene {
         let location = event.location(in: self)
         let hitNodeID = hitTestNodeID(at: location)
 
-        if pruneMode != .idle {
+        if pruneMode == .snip {
+            if let target = nearestSnipTarget(to: location)
+                ?? hitNodeID.flatMap(snipTarget(forGraphNodeID:)) {
+                onSnipTarget?(target)
+                return
+            }
+        } else if pruneMode == .archive {
             if let threadID = nearestEdgeThreadID(to: location)
                 ?? hitNodeID.flatMap({ threadID(forGraphNodeID: $0) }) {
                 onPruneThread?(threadID)
@@ -268,8 +292,7 @@ internal final class ObsidianGraphScene: SKScene {
         }
 
         if let hitNodeID {
-            if hitNodeID == graphData.remainingBranch?.id {
-                onExpandRemainingBranches?()
+            if expandRemainingBranchIfPresent(nodeID: hitNodeID) {
                 return
             }
             if event.clickCount >= 2,
@@ -299,6 +322,13 @@ internal final class ObsidianGraphScene: SKScene {
             onSelectGraphNode?(nil, false)
             recenterCamera(animated: true)
         }
+    }
+
+    @discardableResult
+    internal func expandRemainingBranchIfPresent(nodeID: String) -> Bool {
+        guard let remaining = graphData.remainingBranchByID[nodeID] else { return false }
+        onExpandRemainingBranches?(remaining.parentID)
+        return true
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -471,7 +501,7 @@ internal final class ObsidianGraphScene: SKScene {
             onHoverItem?(.grouping(grouping, overlayLocation))
         } else if let thread = graphData.threadByID[nextHoveredID] {
             onHoverItem?(.thread(thread, overlayLocation))
-        } else if let remaining = graphData.remainingBranch, remaining.id == nextHoveredID {
+        } else if let remaining = graphData.remainingBranchByID[nextHoveredID] {
             onHoverItem?(.remaining(remaining, overlayLocation))
         } else if let message = graphData.messageByID[nextHoveredID] {
             onHoverItem?(.message(message, overlayLocation))
@@ -518,6 +548,11 @@ internal final class ObsidianGraphScene: SKScene {
                                               theme: theme)
             node.zPosition = 2
             node.position = physicsNode.position
+            if let remaining = graphData.remainingBranchByID[physicsNode.id] {
+                node.configureExpansionAccessibility(label: remaining.accessibilityLabel) { [weak self] in
+                    _ = self?.expandRemainingBranchIfPresent(nodeID: remaining.id)
+                }
+            }
             graphNodesByID[physicsNode.id] = node
             addChild(node)
             if sproutingMessageIDs.contains(physicsNode.id) {
@@ -576,11 +611,21 @@ internal final class ObsidianGraphScene: SKScene {
             let isHovered = hoveredGraphNodeID == id || activeFolderDropTarget?.graphNodeID == id
             let isNeighbor = neighbors.contains(id)
             let isFiltered = !filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(id)
+            let snipState: GraphSnipNodeState
+            if node.threadID.map(stagedSnipThreadIDs.contains) == true ||
+                fullyStagedSnipGroupingIDs.contains(id) {
+                snipState = .staged
+            } else if partiallyStagedSnipGroupingIDs.contains(id) {
+                snipState = .partial
+            } else {
+                snipState = .normal
+            }
             node.applyFocus(isSelected: isSelected,
                             isHovered: isHovered,
                             isNeighbor: isNeighbor,
                             isDimmed: isFiltered,
-                            hasFocusedNode: !focusedNodeIDs.isEmpty)
+                            hasFocusedNode: !focusedNodeIDs.isEmpty,
+                            snipState: snipState)
         }
         for edge in graphData.edges {
             guard let visual = edgeVisualsByID[edge.id] else { continue }
@@ -605,8 +650,25 @@ internal final class ObsidianGraphScene: SKScene {
         case .trunk, .grouping, .chain:
             baseColor = theme.inkTertiaryNS
         }
-        let alpha: CGFloat = isFiltered ? 0.08 : isConnected ? 0.58 : 0.10
-        let color = (isConnected && !focusedNodeIDs.isEmpty ? theme.accentNS : baseColor).withAlphaComponent(alpha)
+        let isStaged = stagedSnipThreadIDs.contains(edge.threadID) ||
+            fullyStagedSnipGroupingIDs.contains(edge.sourceID) ||
+            fullyStagedSnipGroupingIDs.contains(edge.targetID)
+        let isPartiallyStaged = partiallyStagedSnipGroupingIDs.contains(edge.sourceID) ||
+            partiallyStagedSnipGroupingIDs.contains(edge.targetID)
+        let alpha: CGFloat
+        if isFiltered {
+            alpha = 0.08
+        } else if isStaged {
+            alpha = 0.24
+        } else if isPartiallyStaged {
+            alpha = 0.38
+        } else {
+            alpha = isConnected ? 0.58 : 0.10
+        }
+        let activeBaseColor = isStaged || isPartiallyStaged
+            ? theme.snipNS
+            : (isConnected && !focusedNodeIDs.isEmpty ? theme.accentNS : baseColor)
+        let color = activeBaseColor.withAlphaComponent(alpha)
         visual.line.strokeColor = color
         visual.line.lineWidth = displayConfig.linkThickness * (isConnected && !focusedNodeIDs.isEmpty ? 1.35 : 1)
         visual.arrow.strokeColor = color
@@ -645,7 +707,7 @@ internal final class ObsidianGraphScene: SKScene {
             let stroke = thread.isLive ? theme.liveNS : strokeColor(for: thread.importance)
             return (thread.displayTitle, thread.id, theme.panelNS, stroke)
         }
-        if let remaining = graphData.remainingBranch, remaining.id == physicsNode.id {
+        if let remaining = graphData.remainingBranchByID[physicsNode.id] {
             return (remaining.title, nil, theme.panelSecondaryNS, theme.archiveNS)
         }
         if let message = graphData.messageByID[physicsNode.id] {
@@ -865,6 +927,39 @@ internal final class ObsidianGraphScene: SKScene {
         return true
     }
 
+    private func nearestSnipTarget(to location: CGPoint) -> GraphSnipTarget? {
+        let tolerance = Self.pruneEdgeHitTolerance * max(cameraNode.xScale, 0.2)
+        return graphData.edges.compactMap { edge -> (GraphSnipTarget, CGFloat)? in
+            guard let snipTarget = snipTarget(for: edge),
+                  let source = simulator.nodesByID[edge.sourceID],
+                  let target = simulator.nodesByID[edge.targetID] else { return nil }
+            return (snipTarget,
+                    Self.distanceToSegment(location,
+                                           source: source.position,
+                                           target: target.position))
+        }
+        .filter { $0.1 <= tolerance }
+        .min { $0.1 < $1.1 }?.0
+    }
+
+    internal func snipTarget(for edge: GraphEdge) -> GraphSnipTarget? {
+        guard edge.kind != .suggested, edge.kind != .remaining else { return nil }
+        if edge.kind == .trunk,
+           let grouping = graphData.groupingByID[edge.targetID],
+           grouping.kind == .folder {
+            return .confirmedGroup(grouping.id)
+        }
+        guard graphData.threadByID[edge.threadID] != nil else { return nil }
+        return .thread(edge.threadID)
+    }
+
+    internal func snipTarget(forGraphNodeID graphNodeID: String) -> GraphSnipTarget? {
+        if let grouping = graphData.groupingByID[graphNodeID], grouping.kind == .folder {
+            return .confirmedGroup(grouping.id)
+        }
+        return threadID(forGraphNodeID: graphNodeID).map(GraphSnipTarget.thread)
+    }
+
     private func nearestEdgeThreadID(to location: CGPoint) -> String? {
         let tolerance = Self.pruneEdgeHitTolerance * max(cameraNode.xScale, 0.2)
         return graphData.edges.compactMap { edge -> (String, CGFloat)? in
@@ -891,9 +986,49 @@ internal final class ObsidianGraphScene: SKScene {
         return graphData.messageByID[graphNodeID]?.rawThreadID
     }
 
+    private func startSnipVisualTransitionIfNeeded(_ transition: GraphSnipVisualTransition?) {
+        guard let transition,
+              runningSnipVisualTransitionID != transition.id else { return }
+        runningSnipVisualTransitionID = transition.id
+        let threadIDs = Set(transition.threadIDs)
+        let nodes = graphNodesByID.values
+            .filter { node in node.threadID.map(threadIDs.contains) == true }
+            .sorted { $0.graphID < $1.graphID }
+        for (index, node) in nodes.enumerated() {
+            let delay = transition.cascades ? min(Double(index) * 0.025, 0.18) : 0
+            node.runSnipTransition(transition.change,
+                                   reduceMotion: reduceMotion,
+                                   delay: delay)
+        }
+        for edge in graphData.edges where threadIDs.contains(edge.threadID) {
+            guard let visual = edgeVisualsByID[edge.id] else { continue }
+            visual.line.removeAction(forKey: "obsidian-snip-cut")
+            visual.arrow.removeAction(forKey: "obsidian-snip-cut")
+            let action: SKAction
+            if reduceMotion {
+                visual.line.alpha = 0
+                visual.arrow.alpha = 0
+                action = .fadeAlpha(to: 1, duration: 0.16)
+            } else if transition.change == .stage {
+                visual.line.alpha = 1
+                visual.arrow.alpha = 1
+                action = .sequence([.fadeOut(withDuration: 0.06),
+                                    .fadeIn(withDuration: 0.14)])
+            } else {
+                visual.line.alpha = 0.24
+                visual.arrow.alpha = 0.24
+                action = .fadeIn(withDuration: 0.18)
+            }
+            visual.line.run(action, withKey: "obsidian-snip-cut")
+            visual.arrow.run(action, withKey: "obsidian-snip-cut")
+        }
+    }
+
     private func startPruneAnimationIfNeeded(_ request: GraphPruneAnimationRequest?) {
         guard let request, runningPruneAnimationID != request.id else { return }
-        let branchNodes = graphNodesByID.values.filter { $0.threadID == request.threadID }
+        let branchNodes = graphNodesByID.values.filter { node in
+            node.threadID.map(request.threadIDs.contains) == true
+        }
         guard !branchNodes.isEmpty else {
             onPruneAnimationFinished?(request.id)
             return

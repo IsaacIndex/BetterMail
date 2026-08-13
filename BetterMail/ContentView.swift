@@ -25,31 +25,40 @@ internal struct ContentView: View {
     }
 
     internal var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            NavigationSplitView {
-                MailboxSidebarView(viewModel: viewModel)
-                    .frame(minWidth: 220, idealWidth: 260)
-            } detail: {
-
-                if viewModel.activeMailboxScope == .actionItems {
-                    ActionItemsView(viewModel: viewModel,
-                                    inspectorSettings: inspectorSettings,
-                                    textScale: displaySettings.textScale)
-                        .frame(minWidth: 480, minHeight: 400)
-                } else {
-                    ThreadListView(viewModel: viewModel,
-                                   settings: settings,
-                                   inspectorSettings: inspectorSettings,
-                                   displaySettings: displaySettings)
-                        .frame(minWidth: 720, minHeight: 520)
-                }
+        NavigationSplitView {
+            MailboxSidebarView(viewModel: viewModel)
+                .frame(minWidth: 220, idealWidth: 260)
+        } detail: {
+            if viewModel.activeMailboxScope == .actionItems {
+                ActionItemsView(viewModel: viewModel,
+                                inspectorSettings: inspectorSettings,
+                                textScale: displaySettings.textScale)
+                    .frame(minWidth: 480, minHeight: 400)
+            } else {
+                ThreadListView(viewModel: viewModel,
+                               settings: settings,
+                               inspectorSettings: inspectorSettings,
+                               displaySettings: displaySettings)
+                    .frame(minWidth: 720, minHeight: 520)
             }
-            .navigationSplitViewStyle(.balanced)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .overlayPreferenceValue(GraphCompostPanelAnchorPreferenceKey.self) { compostPanelAnchor in
+            GeometryReader { proxy in
+                let compostPanelTop = compostPanelAnchor.map { proxy[$0].minY }
+                let bottomInset = ProcessingActivityShelfLayout.bottomInset(
+                    containerHeight: proxy.size.height,
+                    compostPanelTop: compostPanelTop
+                )
 
-            ProcessingActivityShelf(activityCenter: activityCenter)
-                .padding(.trailing, 18)
-                .padding(.bottom, 18)
-                .zIndex(10)
+                ProcessingActivityShelf(activityCenter: activityCenter)
+                    .padding(.trailing, ProcessingActivityShelfLayout.defaultTrailingInset)
+                    .padding(.bottom, bottomInset)
+                    .frame(maxWidth: .infinity,
+                           maxHeight: .infinity,
+                           alignment: .bottomTrailing)
+                    .zIndex(10)
+            }
         }
         .accessibilityIdentifier(AccessibilityID.contentRoot)
         .focusedValue(\.canvasViewModel, viewModel)
@@ -57,5 +66,24 @@ internal struct ContentView: View {
         .task {
             viewModel.start()
         }
+    }
+}
+
+internal enum ProcessingActivityShelfLayout {
+    internal static let defaultTrailingInset: CGFloat = 18
+    internal static let defaultBottomInset: CGFloat = 18
+    internal static let compostGap: CGFloat = 8
+
+    internal static func bottomInset(containerHeight: CGFloat,
+                                    compostPanelTop: CGFloat?) -> CGFloat {
+        guard containerHeight.isFinite,
+              containerHeight > 0,
+              let compostPanelTop,
+              compostPanelTop.isFinite else {
+            return defaultBottomInset
+        }
+
+        return max(defaultBottomInset,
+                   containerHeight - compostPanelTop + compostGap)
     }
 }

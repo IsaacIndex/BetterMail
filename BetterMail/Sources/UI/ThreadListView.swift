@@ -38,7 +38,8 @@ internal struct ThreadListView: View {
     @State private var isShowingBackfillConfirmation = false
     @State private var backfillStartDate = Date()
     @State private var backfillEndDate = Date()
-    @State private var backfillLimit: Int = 10
+    @State private var isShowingCoverageCalendar = false
+    @State private var selectedDayFetch: DayFetchSelection?
     @State private var isInspectorVisible = false
     @State private var isShowingMailboxMoveSheet = false
     @State private var isSearchFieldVisible = false
@@ -71,6 +72,15 @@ internal struct ThreadListView: View {
             .onKeyPress(.escape) {
                 if isSearchFieldVisible {
                     hideSearchField()
+                    return .handled
+                }
+                // The allocation sheet owns Escape while it is presented. Its
+                // cancel action dismisses first, and GraphCanvasView's
+                // onDismiss callback restores staging without discarding the
+                // batch. Consuming the parent event prevents the same key press
+                // from falling through to the canvas cancellation handler.
+                if graphViewModel.snipPhase == .allocating ||
+                    graphViewModel.snipPhase == .moving {
                     return .handled
                 }
                 return handleGraphKey(.escape)
@@ -109,11 +119,20 @@ internal struct ThreadListView: View {
                 BackfillConfirmationSheet(
                     startDate: $backfillStartDate,
                     endDate: $backfillEndDate,
-                    limit: $backfillLimit,
                     onConfirm: confirmBackfillWithOverrides,
                     onCancel: { isShowingBackfillConfirmation = false }
                 )
                 .frame(minWidth: 360)
+            }
+            .sheet(item: $selectedDayFetch) { selection in
+                DayFetchConfirmationSheet(
+                    selection: selection,
+                    onConfirm: {
+                        selectedDayFetch = nil
+                        viewModel.fetchDay(selection.date)
+                    },
+                    onCancel: { selectedDayFetch = nil }
+                )
             }
             .sheet(isPresented: $isShowingMailboxMoveSheet) {
                 MailboxFolderMoveSheet(viewModel: viewModel)
@@ -367,7 +386,7 @@ internal struct ThreadListView: View {
                 zoomControls
             }
             searchBar
-            limitControl
+            coverageCalendarButton
             refreshButton
         }
     }
@@ -377,6 +396,7 @@ internal struct ThreadListView: View {
             HStack {
                 navigationStatusBlock
                 Spacer()
+                coverageCalendarButton
                 refreshButton
             }
             HStack {
@@ -386,7 +406,6 @@ internal struct ThreadListView: View {
                 }
                 Spacer(minLength: 8)
                 searchBar
-                limitControl
             }
         }
     }
@@ -399,15 +418,6 @@ internal struct ThreadListView: View {
                 .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
                 .foregroundStyle(navSecondaryForegroundStyle)
             refreshTimingView
-        }
-    }
-
-    private var limitControl: some View {
-        HStack(spacing: 6) {
-            Text(NSLocalizedString("threadlist.limit.label", comment: "Fetch limit label"))
-                .font(DesignTokens.font(size: 12, textScale: displaySettings.textScale))
-                .foregroundStyle(navSecondaryForegroundStyle)
-            limitField
         }
     }
 
@@ -732,39 +742,30 @@ internal struct ThreadListView: View {
     }
 
     @ViewBuilder
-    private var limitField: some View {
-        if isGlassNavEnabled {
-            let fieldFill = colorScheme == .light ? Color.white.opacity(0.55) : Color.white.opacity(0.18)
-            let fieldStroke = colorScheme == .light ? Color.black.opacity(0.2) : Color.white.opacity(0.55)
-            let fieldForeground = colorScheme == .light ? Color.black.opacity(0.9) : Color.white
-            TextField("Limit", value: $viewModel.fetchLimit, format: .number)
-                .font(DesignTokens.font(size: 13, textScale: displaySettings.textScale))
-                .textFieldStyle(.plain)
-                .controlSize(.small)
-                .padding(.horizontal, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(fieldFill)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(fieldStroke)
-                )
-                .foregroundStyle(fieldForeground)
-                .tint(fieldForeground)
-                .frame(width: 60, height: 24)
-                .accessibilityIdentifier(AccessibilityID.fetchLimitField)
-                .accessibilityLabel(NSLocalizedString("accessibility.threadlist.limit.field",
-                                                      comment: "Accessibility label for the fetch limit field"))
+    private var coverageCalendarButton: some View {
+        let button = Button {
+            isShowingCoverageCalendar.toggle()
+        } label: {
+            Label(NSLocalizedString("dayfetch.calendar.button",
+                                    comment: "Open day coverage calendar button"),
+                  systemImage: "calendar.badge.exclamationmark")
+        }
+        .popover(isPresented: $isShowingCoverageCalendar, arrowEdge: .bottom) {
+            DayCoverageCalendarView(scope: viewModel.activeDayFetchScope,
+                                    coverages: viewModel.dayFetchCoverages,
+                                    fetchingDate: viewModel.activeDayFetchDate) { selection in
+                isShowingCoverageCalendar = false
+                selectedDayFetch = selection
+            }
+        }
+        .accessibilityIdentifier(AccessibilityID.dayCoverageCalendarButton)
+        .accessibilityHint(NSLocalizedString("dayfetch.calendar.button.hint",
+                                            comment: "Coverage calendar button accessibility hint"))
+
+        if #available(macOS 26, *) {
+            button.buttonStyle(.glass)
         } else {
-            TextField("Limit", value: $viewModel.fetchLimit, format: .number)
-                .font(DesignTokens.font(size: 13, textScale: displaySettings.textScale))
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(width: 60, height: 24)
-                .accessibilityIdentifier(AccessibilityID.fetchLimitField)
-                .accessibilityLabel(NSLocalizedString("accessibility.threadlist.limit.field",
-                                                      comment: "Accessibility label for the fetch limit field"))
+            button
         }
     }
 
@@ -925,7 +926,7 @@ internal struct ThreadListView: View {
     }
 
     private var shouldShowBackfillAction: Bool {
-        !viewModel.visibleEmptyDayIntervals.isEmpty
+        !viewModel.visibleAtRiskDayIntervals.isEmpty
     }
 
     private var selectionActionBarInspectorReservation: CGFloat {
@@ -955,9 +956,9 @@ internal struct ThreadListView: View {
             .accessibilityLabel(NSLocalizedString(accessibilityKey, comment: "Selection action button"))
     }
 
-    private var mergedVisibleEmptyInterval: DateInterval? {
-        guard let first = viewModel.visibleEmptyDayIntervals.min(by: { $0.start < $1.start }),
-              let last = viewModel.visibleEmptyDayIntervals.max(by: { $0.end < $1.end }) else {
+    private var mergedVisibleRiskInterval: DateInterval? {
+        guard let first = viewModel.visibleAtRiskDayIntervals.min(by: { $0.start < $1.start }),
+              let last = viewModel.visibleAtRiskDayIntervals.max(by: { $0.end < $1.end }) else {
             return nil
         }
         return DateInterval(start: first.start, end: last.end)
@@ -1034,7 +1035,6 @@ private struct NavHeightPreferenceKey: PreferenceKey {
 private struct BackfillConfirmationSheet: View {
     @Binding var startDate: Date
     @Binding var endDate: Date
-    @Binding var limit: Int
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
@@ -1060,12 +1060,10 @@ private struct BackfillConfirmationSheet: View {
                                              comment: "Backfill end date"),
                            selection: $endDate,
                            displayedComponents: [.date])
-                Stepper(value: $limit, in: 1...5000, step: 10) {
-                    Text(String.localizedStringWithFormat(
-                        NSLocalizedString("threadlist.backfill.confirm.limit",
-                                          comment: "Backfill limit field label"),
-                        limit))
-                }
+                Text(NSLocalizedString("threadlist.backfill.confirm.exhaustive",
+                                       comment: "Backfill confirmation exhaustive fetching explanation"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             HStack {
@@ -1507,15 +1505,15 @@ private struct MailboxFolderMoveSheet: View {
 
 private extension ThreadListView {
     func presentBackfillConfirmation() {
-        guard let mergedInterval = mergedVisibleEmptyInterval else { return }
+        guard let mergedInterval = mergedVisibleRiskInterval else { return }
         backfillStartDate = mergedInterval.start
-        backfillEndDate = mergedInterval.end
-        backfillLimit = viewModel.fetchLimit
+        backfillEndDate = Calendar.current.date(byAdding: .day,
+                                                 value: -1,
+                                                 to: mergedInterval.end) ?? mergedInterval.start
         isShowingBackfillConfirmation = true
     }
 
     func confirmBackfillWithOverrides() {
-        let adjustedLimit = max(1, backfillLimit)
         let orderedRange = backfillStartDate <= backfillEndDate
             ? DateInterval(start: backfillStartDate, end: backfillEndDate)
             : DateInterval(start: backfillEndDate, end: backfillStartDate)
@@ -1523,7 +1521,7 @@ private extension ThreadListView {
         let inclusiveEnd = calendar.date(byAdding: .day, value: 1, to: orderedRange.end) ?? orderedRange.end
         let inclusiveRange = DateInterval(start: orderedRange.start, end: inclusiveEnd)
         isShowingBackfillConfirmation = false
-        viewModel.backfillVisibleRange(rangeOverride: inclusiveRange, limitOverride: adjustedLimit)
+        viewModel.backfillVisibleRange(rangeOverride: inclusiveRange)
     }
 
     // MARK: - Keyboard Navigation

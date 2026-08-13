@@ -45,6 +45,8 @@ internal enum GraphReduceMotionOverride: String, CaseIterable, Identifiable {
 internal final class GraphCanvasSettings: ObservableObject {
     internal static let visibleBranchCountRange = 4...24
     internal static let defaultVisibleBranchCount = 10
+    internal static let visibleBranchesPerNodeRange = 2...12
+    internal static let defaultVisibleBranchesPerNode = 6
 
     private enum StorageKey {
         static let mode = "graphCanvasMode"
@@ -77,6 +79,7 @@ internal final class GraphCanvasSettings: ObservableObject {
         static let obsidianNodeSize = "graphCanvasObsidianNodeSize"
         static let obsidianLinkThickness = "graphCanvasObsidianLinkThickness"
         static let visibleBranchCount = "graphCanvasVisibleBranchCount"
+        static let visibleBranchesPerNode = "graphCanvasVisibleBranchesPerNode"
         static let dismissedSuggestedTopicIDs = "graphCanvasDismissedSuggestedTopicIDs"
         static let hiddenSuggestedTopics = "graphCanvasHiddenSuggestedTopics"
         static let obsidianExpandedSpacingMigration = "graphCanvasObsidianExpandedSpacingMigrationV1"
@@ -128,6 +131,15 @@ internal final class GraphCanvasSettings: ObservableObject {
     }
     @Published internal var visibleBranchCount = GraphCanvasSettings.defaultVisibleBranchCount {
         didSet { userDefaults.set(visibleBranchCount, forKey: StorageKey.visibleBranchCount) }
+    }
+    @Published internal var visibleBranchesPerNode = GraphCanvasSettings.defaultVisibleBranchesPerNode {
+        didSet {
+            let clampedValue = Self.clampedVisibleBranchesPerNode(visibleBranchesPerNode)
+            if clampedValue != visibleBranchesPerNode {
+                visibleBranchesPerNode = clampedValue
+            }
+            userDefaults.set(clampedValue, forKey: StorageKey.visibleBranchesPerNode)
+        }
     }
     @Published internal var forceCenter: CGFloat = GraphForceConstants.defaults.center {
         didSet { storedForceCenter = Double(forceCenter) }
@@ -213,6 +225,10 @@ internal final class GraphCanvasSettings: ObservableObject {
         snipParentMailboxPath = storedSnipParentMailboxPath
         let storedVisibleBranchCount = userDefaults.object(forKey: StorageKey.visibleBranchCount) as? Int
         visibleBranchCount = Self.clampedVisibleBranchCount(storedVisibleBranchCount ?? Self.defaultVisibleBranchCount)
+        let storedVisibleBranchesPerNode = userDefaults.object(forKey: StorageKey.visibleBranchesPerNode) as? Int
+        visibleBranchesPerNode = Self.clampedVisibleBranchesPerNode(
+            storedVisibleBranchesPerNode ?? Self.defaultVisibleBranchesPerNode
+        )
         let storedForceConfig = GraphForceConfig(center: CGFloat(storedForceCenter),
                                                  repel: CGFloat(storedForceRepel),
                                                  repelCutoff: CGFloat(storedForceRepelCutoff),
@@ -358,6 +374,10 @@ internal final class GraphCanvasSettings: ObservableObject {
 
     internal static func clampedVisibleBranchCount(_ value: Int) -> Int {
         min(max(value, visibleBranchCountRange.lowerBound), visibleBranchCountRange.upperBound)
+    }
+
+    internal static func clampedVisibleBranchesPerNode(_ value: Int) -> Int {
+        min(max(value, visibleBranchesPerNodeRange.lowerBound), visibleBranchesPerNodeRange.upperBound)
     }
 
     private func applyForceConfig(_ config: GraphForceConfig) {

@@ -20,12 +20,6 @@ internal enum GraphHoverItem: Equatable {
     case message(GraphMessage, CGPoint)
 }
 
-internal struct SnipMoveRequest: Identifiable, Equatable {
-    internal let thread: GraphThread
-
-    internal var id: String { thread.id }
-}
-
 internal struct GraphThreadActionTarget: Equatable {
     internal let threadID: String
     internal let rawMessageID: String
@@ -35,13 +29,23 @@ internal struct GraphThreadActionTarget: Equatable {
 
 internal struct GraphPruneAnimationRequest: Identifiable, Equatable {
     internal let id: UUID
-    internal let threadID: String
+    internal let threadIDs: Set<String>
     internal let action: GraphCompostAction
 
     internal init(threadID: String, action: GraphCompostAction) {
         self.id = UUID()
-        self.threadID = threadID
+        self.threadIDs = [threadID]
         self.action = action
+    }
+
+    internal init(threadIDs: Set<String>, action: GraphCompostAction) {
+        self.id = UUID()
+        self.threadIDs = threadIDs
+        self.action = action
+    }
+
+    internal var threadID: String? {
+        threadIDs.count == 1 ? threadIDs.first : nil
     }
 }
 
@@ -60,16 +64,59 @@ private struct GraphTopicInput: Hashable {
     let fingerprint: String
 }
 
+private struct GraphMailboxTuple: Hashable {
+    let accountName: String
+    let mailboxPath: String
+
+    func matches(accountName: String, mailboxPath: String) -> Bool {
+        self.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(accountName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame &&
+        self.mailboxPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(mailboxPath.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+    }
+}
+
+private enum GraphSnipExecutionClassification {
+    case succeeded
+    case unchanged
+    case rolledBack
+    case recoveryNeeded
+}
+
+private struct GraphSnipRestoreTuple: Hashable {
+    let destination: GraphMailboxTuple
+    let origin: GraphMailboxTuple
+}
+
+private enum GraphSnipRestoreError: LocalizedError {
+    case incomplete
+
+    var errorDescription: String? {
+        NSLocalizedString("graph.snip.restore.incomplete",
+                          comment: "Some messages could not be restored from Snip Compost")
+    }
+}
+
 @MainActor
 internal final class GraphCanvasViewModel: ObservableObject {
     internal static let defaultBranchPageSize = 10
+    internal static let defaultPerNodeBranchPageSize = 6
     private static let messagePreviewLimitPerBranch = 10
 
     @Published internal private(set) var data: GraphData = .empty
     @Published internal var hoverItem: GraphHoverItem?
     @Published internal var pruneMode: GraphPruneMode = .idle
     @Published internal private(set) var compostEntries: [GraphCompostEntry] = []
-    @Published internal var snipMoveRequest: SnipMoveRequest?
+    @Published internal private(set) var snipPhase: GraphSnipPhase = .idle
+    @Published internal private(set) var stagedSnipItems: [GraphSnipItem] = []
+    @Published internal private(set) var snipLockedAccountName: String?
+    @Published internal var snipBatchRequest: GraphSnipBatchRequest?
+    @Published internal private(set) var snipAllocations: [String: GraphSnipAllocation] = [:]
+    @Published internal private(set) var snipVisualTransition: GraphSnipVisualTransition?
+    @Published internal private(set) var snipNotice: GraphSnipNotice?
+    @Published internal private(set) var snipMoveCompletedCount = 0
+    @Published internal private(set) var snipMoveTotalCount = 0
+    @Published internal private(set) var lastSnipBatchResult: GraphSnipBatchResult?
     @Published internal var isSettingsPresented = false
     @Published internal private(set) var zoomScale: CGFloat = 1.0
     @Published internal private(set) var panOffset: CGPoint = .zero
@@ -98,6 +145,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var showsArchivedThreads = false
     private var branchPageSize = GraphCanvasViewModel.defaultBranchPageSize
     private var visibleBranchLimit = GraphCanvasViewModel.defaultBranchPageSize
+    private var perNodeBranchPageSize = GraphCanvasViewModel.defaultPerNodeBranchPageSize
+    private var visibleChildLimitsByParentID: [String: Int] = [:]
     private var sourceThreadIDs: [String] = []
     private var previousMessageIDs: Set<String> = []
     private var archivedEntriesByThreadID: [String: ArchivedInGraphEntry] = [:]
@@ -110,12 +159,12 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var isGraphTitleGenerationActive = false
     private var isGraphTopicGenerationActive = false
     private let store: MessageStore
-    private let mailClient: MailAppleScriptClient
+    private let mailClient: any GraphSnipMailMoving
     private let graphTitleCapabilityProvider: (() -> GraphTitleCapability)?
     private let graphTopicCapabilityProvider: (() -> GraphTopicCapability)?
 
     internal init(store: MessageStore = .shared,
-                  mailClient: MailAppleScriptClient = MailAppleScriptClient(),
+                  mailClient: any GraphSnipMailMoving = MailAppleScriptClient(),
                   graphTitleCapabilityProvider: (() -> GraphTitleCapability)? = nil,
                   graphTopicCapabilityProvider: (() -> GraphTopicCapability)? = nil) {
         self.store = store
@@ -140,7 +189,54 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal var totalBranchCount: Int {
-        data.threads.count + (data.remainingBranch?.hiddenThreadCount ?? 0)
+        data.totalPrimaryBranchCount
+    }
+
+    internal var stagedSnipThreadIDs: Set<String> {
+        Set(stagedSnipItems.map(\.threadID))
+    }
+
+    internal var stagedSnipCount: Int {
+        stagedSnipItems.count
+    }
+
+    internal var snipActionTitle: String {
+        guard stagedSnipCount > 0 else {
+            return NSLocalizedString("graph.toolbar.snip", comment: "Graph snip mode")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("graph.toolbar.allocate_count",
+                              comment: "Allocate staged graph branches button"),
+            stagedSnipCount
+        )
+    }
+
+    internal var isArchiveDisabledForSnip: Bool {
+        !stagedSnipItems.isEmpty || snipPhase == .allocating || snipPhase == .moving
+    }
+
+    internal var canConfirmSnipAllocations: Bool {
+        !stagedSnipItems.isEmpty &&
+            stagedSnipItems.allSatisfy { snipAllocations[$0.threadID] != nil }
+    }
+
+    internal var fullyStagedSnipGroupingIDs: Set<String> {
+        Set(data.groupings.compactMap { grouping in
+            guard grouping.kind == .folder else { return nil }
+            let eligible = eligibleThreadIDs(in: grouping)
+            return !eligible.isEmpty && eligible.allSatisfy(stagedSnipThreadIDs.contains)
+                ? grouping.id
+                : nil
+        })
+    }
+
+    internal var partiallyStagedSnipGroupingIDs: Set<String> {
+        Set(data.groupings.compactMap { grouping in
+            guard grouping.kind == .folder else { return nil }
+            let eligible = eligibleThreadIDs(in: grouping)
+            let stagedCount = eligible.filter(stagedSnipThreadIDs.contains).count
+            return stagedCount > 0 && stagedCount < eligible.count ? grouping.id : nil
+        })
     }
 
     /// Keeps local-model work scoped to the mounted graph. In particular, a
@@ -183,16 +279,23 @@ internal final class GraphCanvasViewModel: ObservableObject {
                          dismissedSuggestedTopicIDs: Set<String> = [],
                          hiddenSuggestedTopics: Set<String> = [],
                          showsArchivedThreads: Bool = false,
-                         branchPageSize: Int = GraphCanvasViewModel.defaultBranchPageSize) {
+                         branchPageSize: Int = GraphCanvasViewModel.defaultBranchPageSize,
+                         perNodeBranchPageSize: Int = 6) {
         let clampedBranchPageSize = GraphCanvasSettings.clampedVisibleBranchCount(branchPageSize)
+        let clampedPerNodeBranchPageSize = GraphCanvasSettings.clampedVisibleBranchesPerNode(perNodeBranchPageSize)
         let nextSourceThreadIDs = roots.map { GraphData.threadNodeID(for: GraphData.rawThreadID(for: $0)) }
-        if nextSourceThreadIDs != sourceThreadIDs ||
-            showsArchivedThreads != self.showsArchivedThreads ||
-            clampedBranchPageSize != self.branchPageSize {
+        let sourceChanged = nextSourceThreadIDs != sourceThreadIDs
+        let archiveVisibilityChanged = showsArchivedThreads != self.showsArchivedThreads
+        if sourceChanged || archiveVisibilityChanged || clampedBranchPageSize != self.branchPageSize {
             visibleBranchLimit = clampedBranchPageSize
-            sourceThreadIDs = nextSourceThreadIDs
         }
+        if sourceChanged || archiveVisibilityChanged ||
+            clampedPerNodeBranchPageSize != self.perNodeBranchPageSize {
+            visibleChildLimitsByParentID = [:]
+        }
+        sourceThreadIDs = nextSourceThreadIDs
         self.branchPageSize = clampedBranchPageSize
+        self.perNodeBranchPageSize = clampedPerNodeBranchPageSize
         sourceRoots = roots
         currentSearchQuery = searchQuery
         currentTagsByNodeID = tagsByNodeID
@@ -209,9 +312,16 @@ internal final class GraphCanvasViewModel: ObservableObject {
         rebuildData()
     }
 
-    internal func expandRemainingBranches() {
-        guard data.remainingBranch != nil else { return }
-        visibleBranchLimit += branchPageSize
+    internal func expandRemainingBranches(parentID: String) {
+        guard data.remainingBranch(forParentID: parentID) != nil else { return }
+        if parentID == data.center.id {
+            visibleBranchLimit += branchPageSize
+        } else {
+            let currentVisibleChildCount = data.groupingByID[parentID]?.threadIDs.count
+                ?? perNodeBranchPageSize
+            visibleChildLimitsByParentID[parentID] =
+                (visibleChildLimitsByParentID[parentID] ?? currentVisibleChildCount) + perNodeBranchPageSize
+        }
         rebuildData()
     }
 
@@ -228,24 +338,47 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func toggleSnipMode() {
-        pruneMode = pruneMode == .snip ? .idle : .snip
-        _ = pruneStateMachine.send(pruneMode == .snip ? .enterSnip : .cancel)
+        activateSnip()
     }
 
     internal func toggleArchiveMode() {
+        guard !isArchiveDisabledForSnip else {
+            publishSnipNotice(
+                NSLocalizedString("graph.snip.notice.archive_disabled",
+                                  comment: "Archive is unavailable while snips are staged")
+            )
+            return
+        }
         pruneMode = pruneMode == .archive ? .idle : .archive
         _ = pruneStateMachine.send(pruneMode == .archive ? .enterArchive : .cancel)
     }
 
-    internal func activateSnip(selectedThreadID: String?) {
-        if let selectedThreadID {
-            requestSnip(threadID: selectedThreadID)
-        } else {
-            toggleSnipMode()
+    internal func activateSnip() {
+        switch snipPhase {
+        case .idle:
+            pruneMode = .snip
+            snipPhase = .staging
+            lastSnipBatchResult = nil
+            // Batch Snip is governed by `snipPhase`; the legacy prune state
+            // machine remains Archive-only in production.
+            _ = pruneStateMachine.send(.cancel)
+        case .staging where stagedSnipItems.isEmpty:
+            discardSnipSession()
+        case .staging:
+            presentSnipAllocation()
+        case .allocating, .moving:
+            break
         }
     }
 
+    /// Compatibility entry point for older command plumbing. A pre-existing
+    /// graph selection is deliberately ignored when a Snip session begins.
+    internal func activateSnip(selectedThreadID: String?) {
+        activateSnip()
+    }
+
     internal func activateArchive(selectedThreadID: String?) {
+        guard !isArchiveDisabledForSnip else { return }
         if let selectedThreadID {
             requestArchive(threadID: selectedThreadID)
         } else {
@@ -254,6 +387,17 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func exitPruneMode() {
+        switch snipPhase {
+        case .allocating, .moving:
+            // The allocation sheet owns Escape/dismissal. Let its onDismiss
+            // callback return to staging so the batch and drafts survive.
+            return
+        case .staging:
+            discardSnipSession()
+            return
+        case .idle:
+            break
+        }
         pruneMode = .idle
         _ = pruneStateMachine.send(.cancel)
     }
@@ -263,9 +407,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
         case .idle:
             break
         case .snip:
-            _ = pruneStateMachine.send(.edgeClicked(threadID: threadID))
-            guard let thread = data.threadByID[threadID] else { return }
-            snipMoveRequest = SnipMoveRequest(thread: thread)
+            toggleSnipTarget(.thread(threadID))
         case .archive:
             _ = pruneStateMachine.send(.edgeClicked(threadID: threadID))
             Task { await archiveThread(threadID: threadID) }
@@ -273,15 +415,14 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func requestSnip(threadID: String) {
-        if pruneMode != .snip {
-            _ = pruneStateMachine.send(.cancel)
-            pruneMode = .snip
-            _ = pruneStateMachine.send(.enterSnip)
+        if snipPhase == .idle {
+            activateSnip()
         }
-        requestPrune(threadID: threadID)
+        toggleSnipTarget(.thread(threadID))
     }
 
     internal func requestArchive(threadID: String) {
+        guard !isArchiveDisabledForSnip else { return }
         if pruneMode != .archive {
             _ = pruneStateMachine.send(.cancel)
             pruneMode = .archive
@@ -290,37 +431,434 @@ internal final class GraphCanvasViewModel: ObservableObject {
         requestPrune(threadID: threadID)
     }
 
-    internal func confirmSnip(request: SnipMoveRequest,
-                              destinationPath: String,
-                              account: String?) async throws {
-        let messageIDs = request.thread.messageIDs
-        guard !messageIDs.isEmpty else { return }
-        _ = pruneStateMachine.send(.folderPicked)
-        try await mailClient.moveMessages(messageIDs: messageIDs,
-                                          toMailboxPath: destinationPath,
-                                          account: account,
-                                          sourceMailboxPath: request.thread.mailboxPath,
-                                          sourceAccount: request.thread.accountName)
-        let entry = GraphCompostEntry(id: "snip-\(request.thread.id)-\(UUID().uuidString)",
-                                      threadID: request.thread.id,
-                                      rootNodeID: request.thread.rootNodeID,
-                                      subject: request.thread.subject,
-                                      action: .snip,
-                                      messageIDs: messageIDs,
-                                      priorMailboxPath: request.thread.mailboxPath,
-                                      priorAccountName: request.thread.accountName,
-                                      createdAt: Date())
-        compostEntries.removeAll { $0.threadID == request.thread.id }
-        compostEntries.append(entry)
-        snipMoveRequest = nil
+    internal func toggleSnipTarget(_ target: GraphSnipTarget) {
+        guard snipPhase == .staging, pruneMode == .snip else { return }
+        switch target {
+        case .thread(let threadID):
+            guard let item = snipItem(threadID: threadID) else { return }
+            toggleSnipItems([item], cascades: false)
+        case .confirmedGroup(let groupingID):
+            guard let grouping = data.groupingByID[groupingID], grouping.kind == .folder else { return }
+            toggleSnipGrouping(grouping)
+        }
+    }
+
+    internal func presentSnipAllocation() {
+        guard snipPhase == .staging,
+              !stagedSnipItems.isEmpty,
+              let accountName = snipLockedAccountName else { return }
+        snipBatchRequest = GraphSnipBatchRequest(accountName: accountName,
+                                                 items: stagedSnipItems)
+        snipPhase = .allocating
+    }
+
+    internal func returnToSnipStaging() {
+        guard snipPhase != .moving else { return }
+        snipBatchRequest = nil
+        snipPhase = stagedSnipItems.isEmpty ? .idle : .staging
+        pruneMode = stagedSnipItems.isEmpty ? .idle : .snip
+    }
+
+    internal func discardSnipSession() {
+        guard snipPhase != .moving else { return }
+        let unstagedThreadIDs = stagedSnipItems.map(\.threadID)
+        if !unstagedThreadIDs.isEmpty {
+            snipVisualTransition = GraphSnipVisualTransition(threadIDs: unstagedThreadIDs,
+                                                             change: .unstage,
+                                                             cascades: unstagedThreadIDs.count > 1)
+        }
+        stagedSnipItems = []
+        snipAllocations = [:]
+        snipLockedAccountName = nil
+        snipBatchRequest = nil
+        snipPhase = .idle
+        snipMoveCompletedCount = 0
+        snipMoveTotalCount = 0
+        _ = pruneStateMachine.send(.cancel)
         pruneMode = .idle
-        beginPruneAnimation(threadID: request.thread.id, action: .snip)
     }
 
     internal func cancelSnip() {
-        snipMoveRequest = nil
-        _ = pruneStateMachine.send(.cancel)
+        returnToSnipStaging()
+    }
+
+    internal func setSnipAllocation(threadID: String, destinationPath: String?) {
+        guard snipPhase == .allocating,
+              stagedSnipThreadIDs.contains(threadID),
+              let accountName = snipLockedAccountName else { return }
+        let trimmedPath = destinationPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedPath.isEmpty {
+            snipAllocations.removeValue(forKey: threadID)
+        } else {
+            snipAllocations[threadID] = GraphSnipAllocation(threadID: threadID,
+                                                            destinationMailboxPath: trimmedPath,
+                                                            destinationAccountName: accountName)
+        }
+    }
+
+    internal func applySnipDestinationToAll(_ destinationPath: String) {
+        for item in stagedSnipItems {
+            setSnipAllocation(threadID: item.threadID, destinationPath: destinationPath)
+        }
+    }
+
+    @discardableResult
+    internal func confirmSnipBatch(request: GraphSnipBatchRequest) async -> GraphSnipBatchResult? {
+        guard snipPhase == .allocating,
+              request.items.map(\.threadID) == stagedSnipItems.map(\.threadID),
+              canConfirmSnipAllocations else { return nil }
+        let frozenAllocations = snipAllocations
+        snipPhase = .moving
+        snipMoveCompletedCount = 0
+        snipMoveTotalCount = request.items.count
+        let result = await executeSnipBatch(items: request.items,
+                                            allocations: frozenAllocations)
+        completeSnipBatch(result)
+        return result
+    }
+
+    private func toggleSnipItems(_ items: [GraphSnipItem], cascades: Bool) {
+        guard let item = items.first else { return }
+        if stagedSnipThreadIDs.contains(item.threadID) {
+            unstageSnipItems(items, cascades: cascades)
+            return
+        }
+        if let lockedAccount = snipLockedAccountName,
+           !accountsMatch(lockedAccount, item.accountName) {
+            publishSnipNotice(
+                String.localizedStringWithFormat(
+                    NSLocalizedString("graph.snip.notice.account_mismatch",
+                                      comment: "A thread belongs to another Mail account"),
+                    lockedAccount
+                ),
+                style: .error
+            )
+            return
+        }
+        if snipLockedAccountName == nil {
+            snipLockedAccountName = item.accountName
+        }
+        stageSnipItems(items, cascades: cascades)
+    }
+
+    private func toggleSnipGrouping(_ grouping: GraphGrouping) {
+        let allItems = grouping.rawThreadIDs.compactMap(snipItem(rawThreadID:))
+        guard !allItems.isEmpty else { return }
+        let accountKeys = Set(allItems.map { normalizedAccount($0.accountName) })
+        if snipLockedAccountName == nil, accountKeys.count > 1 {
+            publishSnipNotice(
+                NSLocalizedString("graph.snip.notice.mixed_group_choose_thread",
+                                  comment: "A mixed-account group cannot start a Snip batch"),
+                style: .error
+            )
+            return
+        }
+        if snipLockedAccountName == nil {
+            snipLockedAccountName = allItems[0].accountName
+        }
+        guard let lockedAccount = snipLockedAccountName else { return }
+        let eligibleItems = allItems.filter { accountsMatch($0.accountName, lockedAccount) }
+        guard !eligibleItems.isEmpty else { return }
+        let eligibleIDs = Set(eligibleItems.map(\.threadID))
+        if eligibleIDs.isSubset(of: stagedSnipThreadIDs) {
+            unstageSnipItems(eligibleItems, cascades: true)
+        } else {
+            stageSnipItems(eligibleItems.filter { !stagedSnipThreadIDs.contains($0.threadID) },
+                           cascades: true)
+        }
+        let skippedCount = allItems.count - eligibleItems.count
+        if skippedCount > 0 {
+            publishSnipNotice(
+                String.localizedStringWithFormat(
+                    NSLocalizedString("graph.snip.notice.group_skipped_accounts",
+                                      comment: "Threads skipped because they belong to another account"),
+                    skippedCount
+                )
+            )
+        }
+    }
+
+    private func stageSnipItems(_ items: [GraphSnipItem], cascades: Bool) {
+        let newItems = items.filter { !stagedSnipThreadIDs.contains($0.threadID) }
+        guard !newItems.isEmpty else { return }
+        stagedSnipItems.append(contentsOf: newItems)
+        snipVisualTransition = GraphSnipVisualTransition(threadIDs: newItems.map(\.threadID),
+                                                         change: .stage,
+                                                         cascades: cascades)
+    }
+
+    private func unstageSnipItems(_ items: [GraphSnipItem], cascades: Bool) {
+        let IDs = Set(items.map(\.threadID))
+        guard !IDs.isEmpty else { return }
+        stagedSnipItems.removeAll { IDs.contains($0.threadID) }
+        for threadID in IDs {
+            snipAllocations.removeValue(forKey: threadID)
+        }
+        snipVisualTransition = GraphSnipVisualTransition(threadIDs: Array(IDs).sorted(),
+                                                         change: .unstage,
+                                                         cascades: cascades)
+        if stagedSnipItems.isEmpty {
+            snipLockedAccountName = nil
+        }
+    }
+
+    private func eligibleThreadIDs(in grouping: GraphGrouping) -> Set<String> {
+        let items = grouping.rawThreadIDs.compactMap(snipItem(rawThreadID:))
+        guard let lockedAccount = snipLockedAccountName else {
+            let accountKeys = Set(items.map { normalizedAccount($0.accountName) })
+            return accountKeys.count <= 1 ? Set(items.map(\.threadID)) : []
+        }
+        return Set(items.filter { accountsMatch($0.accountName, lockedAccount) }.map(\.threadID))
+    }
+
+    private func snipItem(threadID: String) -> GraphSnipItem? {
+        guard let thread = data.threadByID[threadID] else { return nil }
+        return snipItem(rawThreadID: thread.rawThreadID)
+    }
+
+    private func snipItem(rawThreadID: String) -> GraphSnipItem? {
+        guard let root = sourceRoots.first(where: { GraphData.rawThreadID(for: $0) == rawThreadID }) else {
+            return nil
+        }
+        var seenMessageLocations: Set<String> = []
+        let messages = Self.flatten(root).compactMap { node -> GraphSnipMessage? in
+            let messageID = node.message.messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedID = GraphMailMoveResult.normalizedMessageID(messageID)
+            let message = GraphSnipMessage(id: messageID,
+                                           sourceMailboxPath: node.message.mailboxID,
+                                           sourceAccountName: node.message.accountName)
+            guard !normalizedID.isEmpty,
+                  seenMessageLocations.insert(message.locationIdentity).inserted else { return nil }
+            return message
+        }
+        guard !messages.isEmpty else { return nil }
+        return GraphSnipItem(threadID: GraphData.threadNodeID(for: rawThreadID),
+                             rawThreadID: rawThreadID,
+                             rootNodeID: root.id,
+                             subject: root.message.subject,
+                             accountName: root.message.accountName,
+                             messages: messages)
+    }
+
+    private func accountsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        normalizedAccount(lhs) == normalizedAccount(rhs)
+    }
+
+    private func normalizedAccount(_ accountName: String) -> String {
+        accountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func flatten(_ node: ThreadNode) -> [ThreadNode] {
+        [node] + node.children.flatMap(flatten)
+    }
+
+    private func publishSnipNotice(_ message: String,
+                                   style: GraphSnipNotice.Style = .information) {
+        snipNotice = GraphSnipNotice(message: message, style: style)
+    }
+
+    private func executeSnipBatch(
+        items: [GraphSnipItem],
+        allocations: [String: GraphSnipAllocation]
+    ) async -> GraphSnipBatchResult {
+        var batchResult = GraphSnipBatchResult()
+        for item in items {
+            guard let allocation = allocations[item.threadID] else {
+                snipMoveCompletedCount += 1
+                continue
+            }
+            let (classification, outcome) = await executeSnipItem(item, allocation: allocation)
+            switch classification {
+            case .succeeded:
+                batchResult.succeeded.append(outcome)
+            case .unchanged:
+                batchResult.unchanged.append(outcome)
+            case .rolledBack:
+                batchResult.rolledBack.append(outcome)
+            case .recoveryNeeded:
+                batchResult.recoveryNeeded.append(outcome)
+            }
+            snipMoveCompletedCount += 1
+        }
+        return batchResult
+    }
+
+    private func executeSnipItem(
+        _ item: GraphSnipItem,
+        allocation: GraphSnipAllocation
+    ) async -> (GraphSnipExecutionClassification, GraphSnipBatchOutcome) {
+        let destination = GraphMailboxTuple(accountName: allocation.destinationAccountName,
+                                            mailboxPath: allocation.destinationMailboxPath)
+        let messagesToMove = item.messages.filter {
+            !destination.matches(accountName: $0.sourceAccountName,
+                                 mailboxPath: $0.sourceMailboxPath)
+        }
+        var messagesBySource: [GraphMailboxTuple: [GraphSnipMessage]] = [:]
+        var sourceOrder: [GraphMailboxTuple] = []
+        for message in messagesToMove {
+            let source = GraphMailboxTuple(accountName: message.sourceAccountName,
+                                           mailboxPath: message.sourceMailboxPath)
+            if messagesBySource[source] == nil {
+                sourceOrder.append(source)
+            }
+            messagesBySource[source, default: []].append(message)
+        }
+
+        var movedByLocation: [String: GraphSnipMovedMessage] = [:]
+        for source in sourceOrder {
+            let sourceMessages = messagesBySource[source] ?? []
+            do {
+                let result = try await mailClient.moveMessages(
+                    messageIDs: sourceMessages.map(\.id),
+                    toMailboxPath: allocation.destinationMailboxPath,
+                    account: allocation.destinationAccountName,
+                    sourceMailboxPath: source.mailboxPath,
+                    sourceAccount: source.accountName
+                )
+                for message in sourceMessages where result.contains(message.id) {
+                    let moved = GraphSnipMovedMessage(messageID: message.id,
+                                                      sourceMailboxPath: message.sourceMailboxPath,
+                                                      sourceAccountName: message.sourceAccountName,
+                                                      destinationMailboxPath: allocation.destinationMailboxPath,
+                                                      destinationAccountName: allocation.destinationAccountName)
+                    movedByLocation[message.locationIdentity] = moved
+                }
+            } catch {
+                Log.app.error("Graph batch snip move failed for thread \(item.threadID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        let requiredLocations = Set(messagesToMove.map(\.locationIdentity))
+        let movedLocations = Set(movedByLocation.keys)
+        let movedMessages = movedByLocation.values.sorted { $0.id < $1.id }
+        if requiredLocations.isSubset(of: movedLocations) {
+            return (.succeeded,
+                    GraphSnipBatchOutcome(item: item,
+                                          allocation: allocation,
+                                          displacedMessages: movedMessages))
+        }
+        if movedMessages.isEmpty {
+            return (.unchanged,
+                    GraphSnipBatchOutcome(item: item,
+                                          allocation: allocation,
+                                          displacedMessages: []))
+        }
+
+        let remainingDisplaced = await compensateMovedMessages(movedMessages,
+                                                                allocation: allocation)
+        if remainingDisplaced.isEmpty {
+            return (.rolledBack,
+                    GraphSnipBatchOutcome(item: item,
+                                          allocation: allocation,
+                                          displacedMessages: []))
+        }
+        return (.recoveryNeeded,
+                GraphSnipBatchOutcome(item: item,
+                                      allocation: allocation,
+                                      displacedMessages: remainingDisplaced))
+    }
+
+    private func compensateMovedMessages(
+        _ movedMessages: [GraphSnipMovedMessage],
+        allocation: GraphSnipAllocation
+    ) async -> [GraphSnipMovedMessage] {
+        var messagesByOrigin: [GraphMailboxTuple: [GraphSnipMovedMessage]] = [:]
+        var originOrder: [GraphMailboxTuple] = []
+        for message in movedMessages {
+            let origin = GraphMailboxTuple(accountName: message.sourceAccountName,
+                                           mailboxPath: message.sourceMailboxPath)
+            if messagesByOrigin[origin] == nil {
+                originOrder.append(origin)
+            }
+            messagesByOrigin[origin, default: []].append(message)
+        }
+
+        var restoredLocations: Set<String> = []
+        for origin in originOrder {
+            let messages = messagesByOrigin[origin] ?? []
+            do {
+                let result = try await mailClient.moveMessages(
+                    messageIDs: messages.map(\.messageID),
+                    toMailboxPath: origin.mailboxPath,
+                    account: origin.accountName,
+                    sourceMailboxPath: allocation.destinationMailboxPath,
+                    sourceAccount: allocation.destinationAccountName
+                )
+                for message in messages where result.contains(message.messageID) {
+                    restoredLocations.insert(message.id)
+                }
+            } catch {
+                Log.app.error("Graph batch snip rollback failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return movedMessages.filter {
+            !restoredLocations.contains($0.id)
+        }
+    }
+
+    private func completeSnipBatch(_ result: GraphSnipBatchResult) {
+        let now = Date()
+        for outcome in result.succeeded {
+            compostEntries.removeAll { $0.threadID == outcome.item.threadID && $0.action == .snip }
+            compostEntries.append(
+                GraphCompostEntry(id: "snip-\(outcome.item.threadID)-\(UUID().uuidString)",
+                                  threadID: outcome.item.threadID,
+                                  rootNodeID: outcome.item.rootNodeID,
+                                  subject: outcome.item.subject,
+                                  action: .snip,
+                                  messageIDs: outcome.displacedMessages.map(\.messageID),
+                                  priorMailboxPath: nil,
+                                  priorAccountName: nil,
+                                  movedMessages: outcome.displacedMessages,
+                                  createdAt: now)
+            )
+        }
+        for outcome in result.recoveryNeeded {
+            compostEntries.removeAll { $0.threadID == outcome.item.threadID && $0.action == .snip }
+            compostEntries.append(
+                GraphCompostEntry(id: "snip-recovery-\(outcome.item.threadID)-\(UUID().uuidString)",
+                                  threadID: outcome.item.threadID,
+                                  rootNodeID: outcome.item.rootNodeID,
+                                  subject: outcome.item.subject,
+                                  action: .snip,
+                                  messageIDs: outcome.displacedMessages.map(\.messageID),
+                                  priorMailboxPath: nil,
+                                  priorAccountName: nil,
+                                  movedMessages: outcome.displacedMessages,
+                                  requiresRecovery: true,
+                                  createdAt: now)
+            )
+        }
+
+        let successfulThreadIDs = Set(result.succeeded.map(\.item.threadID))
+        let visibleFailureThreadIDs = result.unchanged.map(\.item.threadID) +
+            result.rolledBack.map(\.item.threadID) + result.recoveryNeeded.map(\.item.threadID)
+        if !visibleFailureThreadIDs.isEmpty {
+            snipVisualTransition = GraphSnipVisualTransition(threadIDs: visibleFailureThreadIDs,
+                                                             change: .unstage,
+                                                             cascades: visibleFailureThreadIDs.count > 1)
+        }
+        lastSnipBatchResult = result
+        stagedSnipItems = []
+        snipAllocations = [:]
+        snipLockedAccountName = nil
+        snipBatchRequest = nil
+        snipPhase = .idle
         pruneMode = .idle
+        _ = pruneStateMachine.send(.cancel)
+        if !successfulThreadIDs.isEmpty {
+            beginPruneAnimation(threadIDs: successfulThreadIDs, action: .snip)
+        }
+        let summary = String.localizedStringWithFormat(
+            NSLocalizedString("graph.snip.completion.summary",
+                              comment: "Aggregate Batch Snip completion counts"),
+            result.succeeded.count,
+            result.unchanged.count,
+            result.rolledBack.count,
+            result.recoveryNeeded.count
+        )
+        publishSnipNotice(summary,
+                          style: result.recoveryNeeded.isEmpty ? .success : .error)
     }
 
     internal func archiveThread(threadID: String) async {
@@ -352,8 +890,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
         pruneCompletionTask?.cancel()
         pruneCompletionTask = nil
         pruneAnimationRequest = nil
-        _ = pruneStateMachine.send(.animationFinished)
-        archivedThreadIDs.insert(request.threadID)
+        if request.action == .archive {
+            _ = pruneStateMachine.send(.animationFinished)
+        }
+        archivedThreadIDs.formUnion(request.threadIDs)
         rebuildData()
         if request.action == .archive {
             onArchiveStateChanged?()
@@ -361,25 +901,93 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func restore(_ entry: GraphCompostEntry) async throws {
-        _ = pruneStateMachine.send(.restore(threadID: entry.threadID))
+        if entry.action == .archive {
+            _ = pruneStateMachine.send(.restore(threadID: entry.threadID))
+        }
         switch entry.action {
         case .archive:
             try await store.deleteArchivedInGraphEntry(threadID: entry.threadID)
             archivedEntriesByThreadID.removeValue(forKey: entry.threadID)
             archivedThreadIDs.remove(entry.threadID)
         case .snip:
-            if let priorMailboxPath = entry.priorMailboxPath {
-                try await mailClient.moveMessages(messageIDs: entry.messageIDs,
-                                                  toMailboxPath: priorMailboxPath,
-                                                  account: entry.priorAccountName)
+            if !entry.movedMessages.isEmpty {
+                let remainingMessages = await restoreMovedMessages(entry.movedMessages)
+                if !remainingMessages.isEmpty {
+                    let replacement = GraphCompostEntry(
+                        id: entry.id,
+                        threadID: entry.threadID,
+                        rootNodeID: entry.rootNodeID,
+                        subject: entry.subject,
+                        action: entry.action,
+                        messageIDs: remainingMessages.map(\.messageID),
+                        priorMailboxPath: nil,
+                        priorAccountName: nil,
+                        movedMessages: remainingMessages,
+                        requiresRecovery: true,
+                        createdAt: entry.createdAt
+                    )
+                    if let index = compostEntries.firstIndex(where: { $0.id == entry.id }) {
+                        compostEntries[index] = replacement
+                    }
+                    throw GraphSnipRestoreError.incomplete
+                }
+            } else if let priorMailboxPath = entry.priorMailboxPath {
+                _ = try await mailClient.moveMessages(messageIDs: entry.messageIDs,
+                                                      toMailboxPath: priorMailboxPath,
+                                                      account: entry.priorAccountName,
+                                                      sourceMailboxPath: nil,
+                                                      sourceAccount: nil)
             }
             archivedThreadIDs.remove(entry.threadID)
         }
         compostEntries.removeAll { $0.id == entry.id }
-        _ = pruneStateMachine.send(.restoreFinished)
+        if entry.action == .archive {
+            _ = pruneStateMachine.send(.restoreFinished)
+        }
         rebuildData()
         if entry.action == .archive {
             onArchiveStateChanged?()
+        }
+    }
+
+    private func restoreMovedMessages(
+        _ movedMessages: [GraphSnipMovedMessage]
+    ) async -> [GraphSnipMovedMessage] {
+        var groups: [GraphSnipRestoreTuple: [GraphSnipMovedMessage]] = [:]
+        var order: [GraphSnipRestoreTuple] = []
+        for message in movedMessages {
+            let tuple = GraphSnipRestoreTuple(
+                destination: GraphMailboxTuple(accountName: message.destinationAccountName,
+                                               mailboxPath: message.destinationMailboxPath),
+                origin: GraphMailboxTuple(accountName: message.sourceAccountName,
+                                          mailboxPath: message.sourceMailboxPath)
+            )
+            if groups[tuple] == nil {
+                order.append(tuple)
+            }
+            groups[tuple, default: []].append(message)
+        }
+
+        var restoredLocations: Set<String> = []
+        for tuple in order {
+            let messages = groups[tuple] ?? []
+            do {
+                let result = try await mailClient.moveMessages(
+                    messageIDs: messages.map(\.messageID),
+                    toMailboxPath: tuple.origin.mailboxPath,
+                    account: tuple.origin.accountName,
+                    sourceMailboxPath: tuple.destination.mailboxPath,
+                    sourceAccount: tuple.destination.accountName
+                )
+                for message in messages where result.contains(message.messageID) {
+                    restoredLocations.insert(message.id)
+                }
+            } catch {
+                Log.app.error("Graph Snip restore failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return movedMessages.filter {
+            !restoredLocations.contains($0.id)
         }
     }
 
@@ -545,6 +1153,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                      hiddenSuggestedTopics: hiddenSuggestedTopics,
                                      branchLimit: visibleBranchLimit,
                                      branchBatchSize: branchPageSize,
+                                     perNodeBranchPageSize: perNodeBranchPageSize,
+                                     visibleChildLimitsByParentID: visibleChildLimitsByParentID,
                                      messageLimitPerBranch: Self.messagePreviewLimitPerBranch)
         let nextMessageIDs = Set(rebuilt.messages.map(\.id))
         let newMessageIDs = nextMessageIDs.subtracting(previousMessageIDs)
@@ -1003,8 +1613,13 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     private func beginPruneAnimation(threadID: String, action: GraphCompostAction) {
+        beginPruneAnimation(threadIDs: [threadID], action: action)
+    }
+
+    private func beginPruneAnimation(threadIDs: Set<String>, action: GraphCompostAction) {
+        guard !threadIDs.isEmpty else { return }
         pruneCompletionTask?.cancel()
-        let request = GraphPruneAnimationRequest(threadID: threadID, action: action)
+        let request = GraphPruneAnimationRequest(threadIDs: threadIDs, action: action)
         pruneAnimationRequest = request
         pruneCompletionTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2.2))

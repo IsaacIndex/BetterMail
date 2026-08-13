@@ -23,7 +23,7 @@ internal struct GraphHoverCard: View {
                 Text(String.localizedStringWithFormat(
                     NSLocalizedString("graph.hover.group.detail",
                                       comment: "Graph hover grouping branch count"),
-                    grouping.threadIDs.count
+                    grouping.memberCount
                 ))
                     .font(DesignTokens.font(size: 11, textScale: textScale))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
@@ -51,6 +51,13 @@ internal struct GraphHoverCard: View {
                     .font(DesignTokens.font(size: 13, weight: .semibold, textScale: textScale))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
                     .lineLimit(2)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("graph.hover.remaining.parent",
+                                      comment: "Graph hover card remaining branch parent"),
+                    remainingBranch.parentTitle
+                ))
+                    .font(DesignTokens.font(size: 10.5, textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
                 Text(String.localizedStringWithFormat(
                     NSLocalizedString("graph.hover.remaining.detail",
                                       comment: "Graph hover card remaining branches detail"),

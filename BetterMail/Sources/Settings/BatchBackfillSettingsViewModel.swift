@@ -11,8 +11,8 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     }
 
     internal static let minimumPreferredBatchSize = 1
-    internal static let maximumPreferredBatchSize = 100
-    internal static let defaultPreferredBatchSize = 5
+    internal static let maximumPreferredBatchSize = DayFetchCoordinator.maximumRequestBatchSize
+    internal static let defaultPreferredBatchSize = DayFetchCoordinator.maximumRequestBatchSize
 
     @AppStorage("batchBackfillPreferredBatchSize")
     private var storedPreferredBatchSize = BatchBackfillSettingsViewModel.defaultPreferredBatchSize
@@ -34,7 +34,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     @Published internal private(set) var progressValue: Double?
     @Published internal private(set) var totalCount: Int?
     @Published internal private(set) var completedCount: Int = 0
-    @Published internal private(set) var currentBatchSize: Int = 5
+    @Published internal private(set) var currentBatchSize: Int = DayFetchCoordinator.maximumRequestBatchSize
     @Published internal private(set) var estimatedTimeRemainingText: String?
     @Published internal private(set) var isStopping = false
     @Published internal private(set) var errorMessage: String?
@@ -54,6 +54,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     private let snippetLineLimitProvider: () -> Int
     private let stopPhrasesProvider: () -> [String]
     private let activityCenter: ProcessingActivityCenter?
+    private let calendar: Calendar
     private let backfillMailbox: String = "inbox"
     private let regenerationMailbox: String? = nil
     private var runTask: Task<Void, Never>?
@@ -77,7 +78,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         return formatter
     }()
 
-    internal init(service: any BatchBackfillServicing = BatchBackfillService(),
+    internal init(service: any BatchBackfillServicing = BatchBackfillService(coordinator: DayFetchCoordinator.shared),
                   regenerationService: SummaryRegenerationServicing = SummaryRegenerationService(),
                   snippetLineLimitProvider: @escaping () -> Int = { InspectorViewSettings.defaultSnippetLineLimit },
                   stopPhrasesProvider: @escaping () -> [String] = { [] },
@@ -88,6 +89,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         self.snippetLineLimitProvider = snippetLineLimitProvider
         self.stopPhrasesProvider = stopPhrasesProvider
         self.activityCenter = activityCenter
+        self.calendar = calendar
         let now = Date()
         let startOfYear = calendar.date(from: DateComponents(year: calendar.component(.year, from: now), month: 1, day: 1)) ?? now
         let normalizedBatchSize = Self.clampPreferredBatchSize(_storedPreferredBatchSize.wrappedValue)
@@ -117,9 +119,11 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         runTask?.cancel()
         prepareForRun(action: .backfill)
 
-        let orderedRange = startDate <= endDate
-            ? DateInterval(start: startDate, end: endDate)
-            : DateInterval(start: endDate, end: startDate)
+        let orderedDates = startDate <= endDate ? (startDate, endDate) : (endDate, startDate)
+        let rangeStart = calendar.startOfDay(for: orderedDates.0)
+        let endDay = calendar.startOfDay(for: orderedDates.1)
+        let rangeEnd = calendar.date(byAdding: .day, value: 1, to: endDay) ?? endDay
+        let orderedRange = DateInterval(start: rangeStart, end: rangeEnd)
         let snippetLimit = snippetLineLimitProvider()
 
         runTask = Task { [weak self] in
@@ -130,8 +134,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                                                             mailbox: backfillMailbox,
                                                             account: backfillAccount)
                 try Task.checkCancellation()
-                await handleCountResult(total)
-                guard total > 0 else { return }
+                await handleCountResult(total, finishWhenEmpty: false)
 
                 let result = try await service.runBackfill(range: orderedRange,
                                                            mailbox: backfillMailbox,
@@ -333,14 +336,14 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         updateCurrentActivity(detail: statusText, progress: progressValue)
     }
 
-    private func handleCountResult(_ total: Int) async {
+    private func handleCountResult(_ total: Int, finishWhenEmpty: Bool = true) async {
         await MainActor.run {
             totalCount = total
             completedCount = 0
             progressValue = total > 0 ? 0 : nil
             estimatedTimeRemainingText = nil
             isStopping = false
-            if total == 0 {
+            if total == 0 && finishWhenEmpty {
                 let action = currentAction
                 let orderedRange = startDate <= endDate
                     ? DateInterval(start: startDate, end: endDate)

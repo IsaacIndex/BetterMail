@@ -2,6 +2,24 @@ import XCTest
 @testable import BetterMail
 
 final class MailControlTests: XCTestCase {
+    func test_decodeMovedMessageIDs_returnsExactAppleEventListItems() throws {
+        let descriptor = NSAppleEventDescriptor.list()
+        descriptor.insert(NSAppleEventDescriptor(string: "<Case@Example.com>"), at: 1)
+        descriptor.insert(NSAppleEventDescriptor(string: "second@example.com"), at: 2)
+
+        let movedIDs = try MailAppleScriptClient.decodeMovedMessageIDs(from: descriptor)
+
+        XCTAssertEqual(movedIDs, ["<Case@Example.com>", "second@example.com"])
+    }
+
+    func test_decodeMovedMessageIDs_rejectsNonListDescriptor() {
+        XCTAssertThrowsError(
+            try MailAppleScriptClient.decodeMovedMessageIDs(
+                from: NSAppleEventDescriptor(boolean: true)
+            )
+        )
+    }
+
     func test_filteredFallbackOutcome_acceptsTrueDescriptor() {
         let descriptor = NSAppleEventDescriptor(boolean: true)
 

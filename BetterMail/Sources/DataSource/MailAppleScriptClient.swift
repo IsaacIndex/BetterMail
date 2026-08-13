@@ -6,6 +6,7 @@ private enum MailAppleScriptClientError: LocalizedError {
     case malformedDescriptor
     case missingMessageID
     case noMessagesMoved
+    case invalidPayloadBatch
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +19,9 @@ private enum MailAppleScriptClientError: LocalizedError {
         case .noMessagesMoved:
             return NSLocalizedString("graph.snip.error.no_messages_moved",
                                      comment: "No messages matched a graph snip move")
+        case .invalidPayloadBatch:
+            return NSLocalizedString("dayfetch.error.invalid_payload_batch",
+                                     comment: "Error when a day fetch payload request is too large")
         }
     }
 }
@@ -27,7 +31,7 @@ internal enum MailFetchProfile: Equatable, Sendable {
     case full
 }
 
-internal actor MailAppleScriptClient {
+internal actor MailAppleScriptClient: GraphSnipMailMoving {
     private enum LogPrefix {
         static let backfillCount = "[BACKFILL][COUNT]"
         static let backfillFetch = "[BACKFILL][FETCH]"
@@ -66,6 +70,16 @@ internal actor MailAppleScriptClient {
         static let parentPath = 4
     }
 
+    private enum ManifestRowIndex {
+        static let internalMailID = 1
+        static let messageID = 2
+        static let subject = 3
+        static let mailbox = 4
+        static let account = 5
+        static let date = 6
+        static let read = 7
+    }
+
     internal func fetchMessages(since date: Date?,
                                 limit: Int = 10,
                                 mailbox: String = "inbox",
@@ -102,6 +116,45 @@ internal actor MailAppleScriptClient {
         let descriptor = try await scriptRunner.run(script, logPrefix: LogPrefix.backfillFetch)
         try Task.checkCancellation()
         return try decodeMessages(from: descriptor, mailbox: mailbox, snippetLineLimit: snippetLineLimit)
+    }
+
+    internal func fetchMessageManifest(in range: DateInterval,
+                                       mailbox: String = "inbox",
+                                       account: String? = nil) async throws -> [MessageReference] {
+        try Task.checkCancellation()
+        let script = buildManifestScript(range: range, mailbox: mailbox, account: account)
+        Log.appleScript.info("[DAYFETCH][MANIFEST] requested. mailbox=\(mailbox, privacy: .private) account=\(account ?? "all", privacy: .private) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private)")
+        let descriptor = try await scriptRunner.run(script, logPrefix: "[DAYFETCH][MANIFEST]")
+        try Task.checkCancellation()
+        return try decodeManifest(from: descriptor, fallbackMailbox: mailbox)
+    }
+
+    internal func resolveDayFetchScopes(mailbox: String = "inbox",
+                                        account: String? = nil) async throws -> [DayFetchScope] {
+        try Task.checkCancellation()
+        let descriptor = try await scriptRunner.run(
+            buildDayFetchScopeScript(mailbox: mailbox, account: account),
+            logPrefix: "[DAYFETCH][SCOPES]"
+        )
+        try Task.checkCancellation()
+        return try decodeDayFetchScopes(from: descriptor)
+    }
+
+    internal func fetchMessages(references: [MessageReference],
+                                profile: MailFetchProfile,
+                                snippetLineLimit: Int) async throws -> [EmailMessage] {
+        guard !references.isEmpty else { return [] }
+        guard references.count <= DayFetchCoordinator.maximumRequestBatchSize else {
+            throw MailAppleScriptClientError.invalidPayloadBatch
+        }
+        try Task.checkCancellation()
+        let script = buildPayloadScript(references: references, profile: profile)
+        Log.appleScript.info("[DAYFETCH][PAYLOAD] requested. count=\(references.count, privacy: .public) profile=\(String(describing: profile), privacy: .public)")
+        let descriptor = try await scriptRunner.run(script, logPrefix: "[DAYFETCH][PAYLOAD]")
+        try Task.checkCancellation()
+        return try decodeMessages(from: descriptor,
+                                  mailbox: references.first?.mailbox ?? "inbox",
+                                  snippetLineLimit: snippetLineLimit)
     }
 
     internal func countMessages(in range: DateInterval, mailbox: String = "inbox", account: String? = nil) async throws -> Int {
@@ -194,12 +247,12 @@ internal actor MailAppleScriptClient {
                                toMailboxPath mailboxPath: String,
                                account: String? = nil,
                                sourceMailboxPath: String? = nil,
-                               sourceAccount: String? = nil) async throws {
+                               sourceAccount: String? = nil) async throws -> GraphMailMoveResult {
         let cleanedIDs = Array(Set(messageIDs.map { MailControl.cleanMessageIDPreservingCase($0) }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }))
             .sorted()
-        guard !cleanedIDs.isEmpty else { return }
+        guard !cleanedIDs.isEmpty else { return GraphMailMoveResult(movedMessageIDs: []) }
         let trimmedMailboxPath = mailboxPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMailboxPath.isEmpty else { throw MailAppleScriptClientError.missingMessageID }
         let script = buildMoveMessagesByMessageIDScript(messageIDs: cleanedIDs,
@@ -210,15 +263,22 @@ internal actor MailAppleScriptClient {
         Log.appleScript.debug("Generated graph snip move AppleScript for \(cleanedIDs.count, privacy: .public) messages.")
         let descriptor = try await scriptRunner.run(script)
         try Task.checkCancellation()
-        guard descriptor.descriptorType == typeSInt32 || descriptor.descriptorType == typeSInt16 else {
+        let movedIDs = try Self.decodeMovedMessageIDs(from: descriptor)
+        let result = GraphMailMoveResult(movedMessageIDs: movedIDs)
+        Log.appleScript.info("Graph snip moved \(result.movedMessageIDs.count, privacy: .public) of \(cleanedIDs.count, privacy: .public) requested messages to mailbox=\(trimmedMailboxPath, privacy: .public) account=\(account ?? "", privacy: .public)")
+        return result
+    }
+
+    internal nonisolated static func decodeMovedMessageIDs(
+        from descriptor: NSAppleEventDescriptor
+    ) throws -> [String] {
+        guard descriptor.descriptorType == typeAEList else {
             throw MailAppleScriptClientError.malformedDescriptor
         }
-        let movedCount = Int(descriptor.int32Value)
-        guard movedCount > 0 else {
-            Log.appleScript.error("Graph snip found no matching messages; requested=\(cleanedIDs.count, privacy: .public) mailbox=\(trimmedMailboxPath, privacy: .public) account=\(account ?? "", privacy: .public)")
-            throw MailAppleScriptClientError.noMessagesMoved
+        guard descriptor.numberOfItems > 0 else { return [] }
+        return (1...descriptor.numberOfItems).compactMap { index in
+            descriptor.atIndex(index)?.stringValue
         }
-        Log.appleScript.info("Graph snip moved \(movedCount, privacy: .public) of \(cleanedIDs.count, privacy: .public) requested messages to mailbox=\(trimmedMailboxPath, privacy: .public) account=\(account ?? "", privacy: .public)")
     }
 
     private func mailboxPathHelpersScript() -> String {
@@ -396,12 +456,235 @@ internal actor MailAppleScriptClient {
           return missing value
         end resolveMailboxByPath
 
+        on resolveMailboxesByPath(_accountToken, _mailboxPathToken)
+          set _resolvedMailboxes to {}
+          set _accounts to my matchingAccounts(_accountToken)
+          tell application id "com.apple.mail"
+            repeat with _acct in _accounts
+              set _acctToken to ""
+              try
+                set _acctToken to (name of _acct as string)
+              on error
+                try
+                  set _acctToken to (id of _acct as string)
+                end try
+              end try
+              if _acctToken is not "" then
+                set _resolvedMailbox to my resolveMailboxByPath(_acctToken, _mailboxPathToken)
+                if _resolvedMailbox is not missing value then
+                  set _resolvedPath to my mailboxPathForMailbox(_resolvedMailbox)
+                  ignoring case
+                    if _resolvedPath is (my trimText(_mailboxPathToken)) then
+                      copy _resolvedMailbox to end of _resolvedMailboxes
+                    end if
+                  end ignoring
+                end if
+              end if
+            end repeat
+          end tell
+          return _resolvedMailboxes
+        end resolveMailboxesByPath
+
         set _mailboxPathToken to "\(safeMailboxPath)"
         set _accountToken to "\(safeAccount)"
         set _mbx to my resolveMailboxByPath(_accountToken, _mailboxPathToken)
         if _mbx is missing value then
           error "Mailbox not found for path: " & _mailboxPathToken & " account: " & _accountToken number -1728
         end if
+        """
+    }
+
+    private func exactDateHelpersScript() -> String {
+        """
+        on dateFromParts(_yearValue, _monthValue, _dayValue, _secondsValue)
+          set _dateValue to current date
+          set day of _dateValue to 1
+          set year of _dateValue to _yearValue
+          set month of _dateValue to _monthValue
+          set day of _dateValue to _dayValue
+          set time of _dateValue to _secondsValue
+          return _dateValue
+        end dateFromParts
+        """
+    }
+
+    private func exactDateExpression(_ date: Date) -> String {
+        let components = Calendar.autoupdatingCurrent.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: date
+        )
+        let year = components.year ?? 2001
+        let day = components.day ?? 1
+        let seconds = (components.hour ?? 0) * 3_600
+            + (components.minute ?? 0) * 60
+            + (components.second ?? 0)
+        let monthName: String
+        switch components.month ?? 1 {
+        case 2: monthName = "February"
+        case 3: monthName = "March"
+        case 4: monthName = "April"
+        case 5: monthName = "May"
+        case 6: monthName = "June"
+        case 7: monthName = "July"
+        case 8: monthName = "August"
+        case 9: monthName = "September"
+        case 10: monthName = "October"
+        case 11: monthName = "November"
+        case 12: monthName = "December"
+        default: monthName = "January"
+        }
+        return "my dateFromParts(\(year), \(monthName), \(day), \(seconds))"
+    }
+
+    private func buildManifestScript(range: DateInterval,
+                                     mailbox: String,
+                                     account: String?) -> String {
+        """
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
+        \(exactDateHelpersScript())
+        set _startDate to \(exactDateExpression(range.start))
+        set _endDate to \(exactDateExpression(range.end))
+        set _rows to {}
+        set _mailboxes to my resolveMailboxesByPath(_accountToken, _mailboxPathToken)
+        if (count of _mailboxes) is 0 then
+          error "Mailbox not found for path: " & _mailboxPathToken & " account: " & _accountToken number -1728
+        end if
+        tell application id "com.apple.mail"
+          with timeout of 300 seconds
+            repeat with _mailboxRef in _mailboxes
+              set _mailboxValue to contents of _mailboxRef
+              set _mailboxPath to my mailboxPathForMailbox(_mailboxValue)
+              set _accountName to ""
+              try
+                set _accountName to (name of account of _mailboxValue as string)
+              end try
+              set _messages to (messages of _mailboxValue whose date received is greater than or equal to _startDate and date received is less than _endDate)
+              repeat with _messageRef in _messages
+                set _messageValue to contents of _messageRef
+                set _internalID to ""
+                set _messageID to ""
+                set _subject to ""
+                try
+                  set _internalID to (id of _messageValue as string)
+                end try
+                try
+                  set _messageID to (message id of _messageValue as string)
+                end try
+                try
+                  set _subject to (subject of _messageValue as string)
+                end try
+                copy {_internalID, _messageID, _subject, _mailboxPath, _accountName, (date received of _messageValue), (read status of _messageValue)} to end of _rows
+              end repeat
+            end repeat
+          end timeout
+        end tell
+        return _rows
+        """
+    }
+
+    private func buildDayFetchScopeScript(mailbox: String,
+                                          account: String?) -> String {
+        """
+        \(mailboxResolverScript(mailbox: mailbox, account: account))
+        set _rows to {}
+        set _mailboxes to my resolveMailboxesByPath(_accountToken, _mailboxPathToken)
+        repeat with _mailboxRef in _mailboxes
+          set _mailboxValue to contents of _mailboxRef
+          set _mailboxPath to my mailboxPathForMailbox(_mailboxValue)
+          set _accountName to ""
+          try
+            tell application id "com.apple.mail" to set _accountName to (name of account of _mailboxValue as string)
+          end try
+          if _accountName is not "" then
+            copy {_mailboxPath, _accountName} to end of _rows
+          end if
+        end repeat
+        return _rows
+        """
+    }
+
+    private func buildPayloadScript(references: [MessageReference],
+                                    profile: MailFetchProfile) -> String {
+        let internalIDs = references.map { $0.internalMailID ?? "" }
+        let messageIDs = references.map(\.messageID)
+        let mailboxes = references.map(\.mailbox)
+        let accounts = references.map(\.account)
+        let contentFetchScript: String
+        switch profile {
+        case .refresh:
+            contentFetchScript = ""
+        case .full:
+            contentFetchScript = """
+                try
+                  set _body to (content of _messageValue as string)
+                end try
+            """
+        }
+
+        return """
+        \(mailboxResolverScript(mailbox: references.first?.mailbox ?? "inbox",
+                                account: references.first?.account))
+        set _internalIDs to \(appleScriptStringList(internalIDs))
+        set _messageIDs to \(appleScriptStringList(messageIDs))
+        set _mailboxPaths to \(appleScriptStringList(mailboxes))
+        set _accountNames to \(appleScriptStringList(accounts))
+        set _rows to {}
+        tell application id "com.apple.mail"
+          with timeout of 300 seconds
+            repeat with _index from 1 to (count of _internalIDs)
+              set _wantedInternalID to item _index of _internalIDs as string
+              set _wantedMessageID to item _index of _messageIDs as string
+              set _wantedMailboxPath to item _index of _mailboxPaths as string
+              set _wantedAccountName to item _index of _accountNames as string
+              set _sourceMailbox to my resolveMailboxByPath(_wantedAccountName, _wantedMailboxPath)
+              set _matches to {}
+              if _sourceMailbox is not missing value then
+                if _wantedInternalID is not "" then
+                  try
+                    set _matches to (messages of _sourceMailbox whose id is (_wantedInternalID as integer))
+                  end try
+                else if _wantedMessageID is not "" then
+                  try
+                    set _matches to (messages of _sourceMailbox whose message id is _wantedMessageID)
+                  end try
+                end if
+              end if
+              repeat with _messageRef in _matches
+                set _messageValue to contents of _messageRef
+                set _src to ""
+                set _body to ""
+                set _actualInternalID to _wantedInternalID
+                set _actualMessageID to _wantedMessageID
+                set _subject to ""
+                set _actualMailboxPath to _wantedMailboxPath
+                set _actualAccountName to _wantedAccountName
+                try
+                  set _actualInternalID to (id of _messageValue as string)
+                end try
+                try
+                  set _actualMessageID to (message id of _messageValue as string)
+                end try
+                try
+                  set _subject to (subject of _messageValue as string)
+                end try
+                try
+                  set _actualMailbox to mailbox of _messageValue
+                  set _actualMailboxPath to my mailboxPathForMailbox(_actualMailbox)
+                  try
+                    set _actualAccountName to (name of account of _actualMailbox as string)
+                  end try
+                end try
+                try
+                  set _src to (source of _messageValue as string)
+                end try
+        \(contentFetchScript)
+                copy {_actualInternalID, _actualMessageID, _subject, _actualMailboxPath, _actualAccountName, (date received of _messageValue), (read status of _messageValue), _src, _body} to end of _rows
+                exit repeat
+              end repeat
+            end repeat
+          end timeout
+        end tell
+        return _rows
         """
     }
 
@@ -492,6 +775,12 @@ internal actor MailAppleScriptClient {
     }
 
 #if DEBUG
+    internal func buildManifestScriptForTesting(range: DateInterval,
+                                                mailbox: String = "inbox",
+                                                account: String? = nil) -> String {
+        buildManifestScript(range: range, mailbox: mailbox, account: account)
+    }
+
     internal func buildRefreshScriptForTesting(mailbox: String = "inbox",
                                                account: String? = nil,
                                                limit: Int = 10,
@@ -963,7 +1252,7 @@ internal actor MailAppleScriptClient {
         \(mailboxResolverScript(mailbox: mailboxPath, account: account))
         set _destinationMailbox to _mbx
         set _targetMessageIDs to {\(escapedIDs)}
-        set _movedCount to 0
+        set _movedMessageIDs to {}
 
         on containsTargetMessageID(_messageID, _targetMessageIDs)
           if _messageID is "" then return false
@@ -1017,16 +1306,106 @@ internal actor MailAppleScriptClient {
                   set _messageID to (message id of _message as string)
                 end try
                 if my containsTargetMessageID(_messageID, _targetMessageIDs) then
-                  move _message to _destinationMailbox
-                  set _movedCount to _movedCount + 1
-                  if _movedCount is greater than or equal to (count of _targetMessageIDs) then exit repeat
+                  try
+                    move _message to _destinationMailbox
+                    copy _messageID to end of _movedMessageIDs
+                  end try
+                  if (count of _movedMessageIDs) is greater than or equal to (count of _targetMessageIDs) then exit repeat
                 end if
               end repeat
             end repeat
           end timeout
         end tell
-        return _movedCount
+        return _movedMessageIDs
         """
+    }
+
+    private func canonicalMessageID(rawMessageID: String,
+                                    internalMailID: String?,
+                                    account: String,
+                                    mailbox: String,
+                                    date: Date,
+                                    subject: String) -> String {
+        let normalizedID = JWZThreader.normalizeIdentifier(rawMessageID)
+        if !normalizedID.isEmpty {
+            return normalizedID
+        }
+        let cleanedRawMessageID = MailControl.cleanMessageIDPreservingCase(rawMessageID)
+        if !cleanedRawMessageID.isEmpty {
+            return cleanedRawMessageID
+        }
+        let normalizedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedMailbox = mailbox.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let internalMailID, !internalMailID.isEmpty {
+            return "mail-internal|\(normalizedAccount)|\(normalizedMailbox)|\(internalMailID)"
+        }
+        let normalizedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "mail-legacy|\(normalizedAccount)|\(normalizedMailbox)|\(date.timeIntervalSinceReferenceDate)|\(normalizedSubject)"
+    }
+
+    private func decodeManifest(from descriptor: NSAppleEventDescriptor,
+                                fallbackMailbox: String) throws -> [MessageReference] {
+        guard descriptor.descriptorType == typeAEList else {
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+        guard descriptor.numberOfItems > 0 else { return [] }
+
+        var references: [MessageReference] = []
+        references.reserveCapacity(descriptor.numberOfItems)
+        for index in 1...descriptor.numberOfItems {
+            guard let row = descriptor.atIndex(index),
+                  row.numberOfItems >= ManifestRowIndex.read,
+                  let date = row.atIndex(ManifestRowIndex.date)?.dateValue else {
+                continue
+            }
+            let rawInternalID = row.atIndex(ManifestRowIndex.internalMailID)?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let internalMailID = rawInternalID.isEmpty ? nil : rawInternalID
+            let rawMessageID = row.atIndex(ManifestRowIndex.messageID)?.stringValue ?? ""
+            let subject = row.atIndex(ManifestRowIndex.subject)?.stringValue ?? "(No Subject)"
+            let mailbox = row.atIndex(ManifestRowIndex.mailbox)?.stringValue ?? fallbackMailbox
+            let account = row.atIndex(ManifestRowIndex.account)?.stringValue ?? ""
+            let messageID = canonicalMessageID(rawMessageID: rawMessageID,
+                                               internalMailID: internalMailID,
+                                               account: account,
+                                               mailbox: mailbox,
+                                               date: date,
+                                               subject: subject)
+            let isRead = row.atIndex(ManifestRowIndex.read)?.booleanValue ?? true
+            references.append(MessageReference(internalMailID: internalMailID,
+                                               messageID: messageID,
+                                               mailbox: mailbox,
+                                               account: account,
+                                               subject: subject,
+                                               date: date,
+                                               isUnread: !isRead))
+        }
+        return references
+    }
+
+    private func decodeDayFetchScopes(from descriptor: NSAppleEventDescriptor) throws -> [DayFetchScope] {
+        guard descriptor.descriptorType == typeAEList else {
+            throw MailAppleScriptClientError.malformedDescriptor
+        }
+        guard descriptor.numberOfItems > 0 else { return [] }
+
+        var seen = Set<String>()
+        var scopes: [DayFetchScope] = []
+        for index in 1...descriptor.numberOfItems {
+            guard let row = descriptor.atIndex(index), row.numberOfItems >= 2 else { continue }
+            let mailbox = row.atIndex(1)?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let account = row.atIndex(2)?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !mailbox.isEmpty, !account.isEmpty else { continue }
+            let scope = DayFetchScope(mailbox: mailbox,
+                                      account: account,
+                                      displayName: "\(account) / \(mailbox)")
+            if seen.insert(scope.key).inserted {
+                scopes.append(scope)
+            }
+        }
+        return scopes.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
     private func decodeMessages(from descriptor: NSAppleEventDescriptor,
@@ -1050,21 +1429,17 @@ internal actor MailAppleScriptClient {
             guard let row = descriptor.atIndex(index), row.numberOfItems >= RowIndex.body else { continue }
             let internalMailID = row.atIndex(RowIndex.internalMailID)?.stringValue?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue else { continue }
-            let normalizedID = JWZThreader.normalizeIdentifier(rawMessageID)
-            let cleanedRawMessageID = MailControl.cleanMessageIDPreservingCase(rawMessageID)
-            let canonicalID: String
-            if !normalizedID.isEmpty {
-                canonicalID = normalizedID
-            } else if !cleanedRawMessageID.isEmpty {
-                canonicalID = cleanedRawMessageID
-            } else {
-                canonicalID = UUID().uuidString.lowercased()
-            }
+            let rawMessageID = row.atIndex(RowIndex.messageID)?.stringValue ?? ""
             let subject = row.atIndex(RowIndex.subject)?.stringValue ?? "(No Subject)"
             let mailboxID = row.atIndex(RowIndex.mailbox)?.stringValue ?? mailbox
             let accountName = row.atIndex(RowIndex.account)?.stringValue ?? ""
             let dateValue = row.atIndex(RowIndex.date)?.dateValue ?? Date()
+            let canonicalID = canonicalMessageID(rawMessageID: rawMessageID,
+                                                 internalMailID: internalMailID,
+                                                 account: accountName,
+                                                 mailbox: mailboxID,
+                                                 date: dateValue,
+                                                 subject: subject)
             let isRead = row.atIndex(RowIndex.read)?.booleanValue ?? true
             guard let source = row.atIndex(RowIndex.source)?.stringValue else { continue }
             let bodyText = row.atIndex(RowIndex.body)?.stringValue ?? ""
