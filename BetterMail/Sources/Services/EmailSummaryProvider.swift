@@ -3,7 +3,7 @@ import Foundation
 import FoundationModels
 #endif
 
-internal enum EmailSummaryError: LocalizedError {
+internal nonisolated enum EmailSummaryError: LocalizedError {
     case noSubjects
     case unavailable(String)
     case generationFailed(Error)
@@ -20,7 +20,7 @@ internal enum EmailSummaryError: LocalizedError {
     }
 }
 
-internal protocol EmailSummaryProviding {
+internal nonisolated protocol EmailSummaryProviding: Sendable {
     /// Inbox subject-line digest. Currently not wired into the UI.
     @available(*, deprecated, message: "Not wired into the UI. Use summarizeEmail(_:) or summarizeFolder(_:) instead.")
     func summarize(subjects: [String]) async throws -> String
@@ -28,49 +28,165 @@ internal protocol EmailSummaryProviding {
     func summarizeFolder(_ request: FolderSummaryRequest) async throws -> String
 }
 
-internal protocol GraphTitleProviding {
+internal nonisolated protocol GraphTitleProviding: Sendable {
     func makeGraphTitle(_ request: GraphTitleRequest) async throws -> String
 }
 
-internal struct EmailSummaryCapability {
-    internal let provider: EmailSummaryProviding?
+internal nonisolated struct EmailSummaryCapability: Sendable {
+    internal let provider: (any EmailSummaryProviding)?
     internal let statusMessage: String
     internal let providerID: String
 }
 
-internal struct GraphTitleCapability {
-    internal let provider: GraphTitleProviding?
+internal nonisolated struct GraphTitleCapability: Sendable {
+    internal let provider: (any GraphTitleProviding)?
     internal let statusMessage: String
     internal let providerID: String
     internal let shouldRetry: Bool
 }
 
-internal struct EmailSummaryContextEntry: Hashable {
+internal nonisolated enum EmailSummaryContextDirection: String, Hashable, Sendable {
+    case previous
+    case next
+}
+
+internal nonisolated enum EmailSummaryRelationshipKind: String, Hashable, Sendable {
+    case automaticReply
+    case manualThreadLink
+}
+
+internal nonisolated struct EmailSummaryContextEntry: Hashable, Sendable {
     internal let messageID: String
     internal let subject: String
     internal let bodySnippet: String
+    internal let direction: EmailSummaryContextDirection
+    internal let relationship: EmailSummaryRelationshipKind
 }
 
-internal struct EmailSummaryRequest: Hashable {
+internal nonisolated struct EmailSummaryThreadContext: Hashable, Sendable {
+    internal let position: Int
+    internal let totalMessages: Int
+    internal let previousMessage: EmailSummaryContextEntry?
+    internal let nextMessage: EmailSummaryContextEntry?
+
+    internal var neighbours: [EmailSummaryContextEntry] {
+        [previousMessage, nextMessage].compactMap { $0 }
+    }
+}
+
+internal nonisolated struct EmailSummaryRequest: Hashable, Sendable {
     internal let subject: String
     internal let body: String
-    internal let priorMessages: [EmailSummaryContextEntry]
+    internal let threadContext: EmailSummaryThreadContext
 }
 
-internal struct FolderSummaryRequest: Hashable {
+internal nonisolated struct FolderSummaryRequest: Hashable, Sendable {
     internal let title: String
     internal let messageSummaries: [String]
 }
 
-internal struct GraphTitleRequest: Hashable {
+internal nonisolated struct GraphTitleRequest: Hashable, Sendable {
     internal let subject: String
     internal let summary: String
+    internal let threadContext: EmailSummaryThreadContext
+    internal let effectiveThreadRevision: String
+}
+
+/// Builds the shared, versioned prompt used by automatic Graph title refreshes
+/// and explicit "Regenerate message title" requests.
+internal nonisolated enum GraphTitlePromptBuilder {
+    internal static let promptVersion = "graph-title-context-v2"
+
+    internal static let instructions = """
+    You create concise semantic titles for the CURRENT email in an email relationship graph.
+
+    Use the current email's completed content summary together with its chronological position and immediate neighbours to express what this specific email contributes to the conversation.
+
+    Context rules:
+    - Neighbouring emails are context only. Never attribute a neighbour's content, decision, or request to the current email.
+    - Make the email's conversational role clear: for example, what it introduces, requests, answers, clarifies, confirms, decides, follows up, or supersedes.
+    - Do not invent a conversation role when the supplied current summary does not support it.
+    - Automatic reply and manual thread-link labels describe only the adjacency, not the email's content.
+    - Express placement semantically through the current email's contribution, never as a sequence number.
+
+    Output rules:
+    - Output exactly one short plain-text phrase and nothing else.
+    - Use 2 to 5 words and no more than 32 characters.
+    - Do not output a numeric position, ordinal marker, email number, or position/total prefix.
+    - Do not use generic placement-only labels such as Opening message, Intermediate reply, Latest message, or Standalone message.
+    - Preserve the most identifying project name, acronym, ticket, or request number when present.
+    - Remove reply and forwarding prefixes such as Re, FW, and Fwd.
+    - Do not use quotation marks, headings, labels, a trailing period, or invented facts.
+    """
+
+    internal static func prompt(for request: GraphTitleRequest) -> String {
+        let context = request.threadContext
+        let position = clampedPosition(in: context)
+        let total = max(1, context.totalMessages)
+        let subject = boundedText(request.subject, maximumCharacters: 180, fallback: "No subject")
+        let summary = boundedText(request.summary, maximumCharacters: 700, fallback: "No summary available")
+        return """
+        Create the semantic conversational title for the CURRENT email.
+
+        Thread position: \(position) of \(total)
+        Placement: \(placement(position: position, total: total))
+        Current subject: \(subject)
+        Current summary: \(summary)
+
+        \(neighbourBlock(label: "Previous message", entry: context.previousMessage))
+
+        \(neighbourBlock(label: "Next message", entry: context.nextMessage))
+
+        Remember: neighbour details are context only and must not be attributed to the current email.
+        """
+    }
+
+    private static func clampedPosition(in context: EmailSummaryThreadContext) -> Int {
+        min(max(1, context.position), max(1, context.totalMessages))
+    }
+
+    private static func placement(position: Int, total: Int) -> String {
+        if total == 1 { return "Standalone message" }
+        if position == 1 { return "Opening message" }
+        if position == total { return "Latest message" }
+        return "Intermediate reply"
+    }
+
+    private static func neighbourBlock(label: String,
+                                       entry: EmailSummaryContextEntry?) -> String {
+        guard let entry else { return "\(label): None" }
+        let subject = boundedText(entry.subject, maximumCharacters: 180, fallback: "No subject")
+        let excerpt = boundedText(entry.bodySnippet, maximumCharacters: 220, fallback: "No excerpt")
+        let relationship = switch entry.relationship {
+        case .automaticReply:
+            "automatic reply"
+        case .manualThreadLink:
+            "manual thread link"
+        }
+        return """
+        \(label) (\(relationship)):
+        Subject: \(subject)
+        Excerpt: \(excerpt)
+        """
+    }
+
+    private static func boundedText(_ value: String,
+                                    maximumCharacters: Int,
+                                    fallback: String) -> String {
+        let collapsed = value
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = collapsed.isEmpty ? fallback : collapsed
+        guard resolved.count > maximumCharacters else { return resolved }
+        return String(resolved.prefix(maximumCharacters)) + "…"
+    }
 }
 
 /// Keeps the graph contract bounded even if a model returns extra prose.
 /// The model still performs the semantic compression; this formatter only
 /// removes response decoration and enforces a hard one-line safety limit.
-internal enum GraphTitleFormatter {
+internal nonisolated enum GraphTitleFormatter {
     internal static let maximumCharacterCount = 32
     internal static let maximumWordCount = 5
 
@@ -90,33 +206,65 @@ internal enum GraphTitleFormatter {
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-
+        let wrappingQuotes = CharacterSet(charactersIn: "\"'“”‘’")
         let responsePrefixes = ["title:", "label:", "graph title:"]
-        for prefix in responsePrefixes where value.lowercased().hasPrefix(prefix) {
-            value = String(value.dropFirst(prefix.count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            break
-        }
-
         let emailPrefixes = ["re:", "fw:", "fwd:"]
-        var removedPrefix = true
-        while removedPrefix {
-            removedPrefix = false
+        let leadingMarkerPatterns = [
+            #"^[0-9]+\s*(/|of)\s*[0-9]+\s*([·•:.\-–—]\s*)?"#,
+            #"^(email|message)\s+[0-9]+\s*((/|of)\s*[0-9]+)?\s*([·•:.\-–—]\s*)?"#,
+            #"^[0-9]+\s*[.)]\s*"#
+        ]
+
+        // Strip response decoration, wrapping quotes, legacy ordinal markers,
+        // and mail prefixes until stable. Repeating is important for persisted
+        // combinations such as `Title: "1/2 · 1. Opening message"`.
+        var previousValue: String?
+        while previousValue != value {
+            previousValue = value
+            value = value.trimmingCharacters(in: wrappingQuotes.union(.whitespacesAndNewlines))
+
+            for prefix in responsePrefixes where value.lowercased().hasPrefix(prefix) {
+                value = String(value.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+
+            for pattern in leadingMarkerPatterns {
+                if let range = value.range(of: pattern,
+                                           options: [.regularExpression, .caseInsensitive]) {
+                    value.removeSubrange(range)
+                    value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+            }
+
             for prefix in emailPrefixes where value.lowercased().hasPrefix(prefix) {
                 value = String(value.dropFirst(prefix.count))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                removedPrefix = true
                 break
             }
+
+            value = value.trimmingCharacters(in: wrappingQuotes.union(.whitespacesAndNewlines))
         }
 
-        let wrappingQuotes = CharacterSet(charactersIn: "\"'“”‘’")
-        value = value.trimmingCharacters(in: wrappingQuotes.union(.whitespacesAndNewlines))
         value = value.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?"))
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = value.trimmingCharacters(in: wrappingQuotes.union(.whitespacesAndNewlines))
+
+        let placementOnlyTitles: Set<String> = [
+            "email",
+            "message",
+            "reply",
+            "opening message",
+            "intermediate reply",
+            "latest message",
+            "standalone message"
+        ]
+        return placementOnlyTitles.contains(value.lowercased()) ? "" : value
     }
 
-    private static func bounded(_ value: String) -> String {
+    private static func bounded(_ value: String,
+                                maximumCharacterCount: Int = GraphTitleFormatter.maximumCharacterCount,
+                                maximumWordCount: Int = GraphTitleFormatter.maximumWordCount) -> String {
         var words = value
             .split(whereSeparator: \.isWhitespace)
             .map(String.init)
@@ -137,6 +285,32 @@ internal enum GraphTitleFormatter {
 
         let value = words.joined(separator: " ")
         guard value.count > maximumCharacterCount else { return value }
+        if let identifierIndex = words.lastIndex(where: containsIdentifier),
+           words[identifierIndex].count < maximumCharacterCount {
+            let identifier = words[identifierIndex]
+            let candidatePrefixWords = Array(words[..<identifierIndex])
+            var retainedPrefixWords: [String] = []
+            for word in candidatePrefixWords {
+                let omittedWords = retainedPrefixWords.count + 1 < candidatePrefixWords.count
+                let candidate = (
+                    retainedPrefixWords +
+                    [word] +
+                    (omittedWords ? ["…"] : []) +
+                    [identifier]
+                ).joined(separator: " ")
+                guard candidate.count <= maximumCharacterCount else { break }
+                retainedPrefixWords.append(word)
+            }
+            let omittedWords = retainedPrefixWords.count < candidatePrefixWords.count
+            let identifierPreservingValue = (
+                retainedPrefixWords +
+                (omittedWords ? ["…"] : []) +
+                [identifier]
+            ).joined(separator: " ")
+            if identifierPreservingValue.count <= maximumCharacterCount {
+                return identifierPreservingValue
+            }
+        }
         let prefixLimit = max(1, maximumCharacterCount - 1)
         let prefix = String(value.prefix(prefixLimit))
         if let boundary = prefix.lastIndex(where: \.isWhitespace),
@@ -151,7 +325,7 @@ internal enum GraphTitleFormatter {
     }
 }
 
-internal enum EmailSummaryProviderFactory {
+internal nonisolated enum EmailSummaryProviderFactory {
     internal static func makeCapability() -> EmailSummaryCapability {
 #if canImport(FoundationModels)
         if #available(macOS 15.2, *) {
@@ -175,7 +349,7 @@ internal enum EmailSummaryProviderFactory {
     }
 }
 
-internal enum GraphTitleProviderFactory {
+internal nonisolated enum GraphTitleProviderFactory {
     internal static func makeCapability() -> GraphTitleCapability {
 #if canImport(FoundationModels)
         if #available(macOS 15.2, *) {
@@ -216,7 +390,7 @@ internal enum GraphTitleProviderFactory {
 
 #if canImport(FoundationModels)
 @available(macOS 15.2, *)
-internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding, GraphTitleProviding {
+internal nonisolated final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding, GraphTitleProviding, @unchecked Sendable {
     private let model: SystemLanguageModel
     
     internal init(model: SystemLanguageModel = .default) {
@@ -263,7 +437,7 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
         do {
             let prompt = Self.nodePrompt(subject: cleanedSubject,
                                          body: cleanedBody,
-                                         prior: request.priorMessages)
+                                         context: request.threadContext)
             let session = LanguageModelSession(model: model,
                                                instructions: Self.nodeInstructions)
             var options = GenerationOptions()
@@ -320,12 +494,12 @@ internal final class FoundationModelsEmailSummaryProvider: EmailSummaryProviding
 
         do {
             let session = LanguageModelSession(model: model,
-                                               instructions: Self.graphTitleInstructions)
+                                               instructions: GraphTitlePromptBuilder.instructions)
             var options = GenerationOptions()
             options.temperature = 0.1
             options.maximumResponseTokens = 32
             let response = try await session.respond(
-                to: Self.graphTitlePrompt(subject: cleanedSubject, summary: cleanedSummary),
+                to: GraphTitlePromptBuilder.prompt(for: request),
                 options: options
             )
             return GraphTitleFormatter.normalizedGeneratedTitle(response.content,
@@ -396,20 +570,23 @@ Subjects:
     
     private static func nodePrompt(subject: String,
                                    body: String,
-                                   prior: [EmailSummaryContextEntry]) -> String {
-        let priorLines = prior.prefix(10).enumerated().map { index, entry in
+                                   context: EmailSummaryThreadContext) -> String {
+        func contextLine(_ entry: EmailSummaryContextEntry?) -> String {
+            guard let entry else { return "None" }
             let subjectLine = entry.subject.isEmpty ? "No subject" : entry.subject
             let snippetLine = entry.bodySnippet.isEmpty ? "" : " — \(entry.bodySnippet)"
-            return "\(index + 1). \(subjectLine)\(snippetLine)"
-        }.joined(separator: "\n")
-        
-        let priorSection = priorLines.isEmpty ? "None" : priorLines
+            let relationship = entry.relationship == .manualThreadLink
+                ? "manual thread link"
+                : "automatic email reply"
+            return "\(subjectLine)\(snippetLine) [\(relationship)]"
+        }
+
         let resolvedSubject = subject.isEmpty ? "No subject" : subject
         let resolvedBody = body.isEmpty ? "No body content available." : body
         
         return """
             ### TASK
-            Write a plain-language digest of what matters in the current email AND what is new compared to the prior thread context.
+            Summarize the content of the CURRENT email. Use its thread position and immediate neighbours only to clarify references and what is new in this email.
 
             ### RULES
             - Use ONLY the provided text.
@@ -417,14 +594,21 @@ Subjects:
             - No bullet points, headings, labels, greetings, apologies, or meta commentary.
             - Do NOT quote the email body; paraphrase and compress.
             - Do NOT add facts, speculate, or infer missing details.
-            - If the current email adds nothing meaningfully new or actionable, output: No new updates.
+            - Neighbouring emails are context only. Never attribute their claims, decisions, or actions to the current email.
+            - Focus on the current email's own information, request, decision, answer, confirmation, or action.
+            - Mention its relationship to the conversation only when that helps explain the current email's content.
+            - If the current email adds nothing meaningfully new, state what it acknowledges or repeats without inventing an update.
 
             ### CURRENT EMAIL
+            Position: \(context.position) of \(context.totalMessages)
             Subject: \(resolvedSubject)
             Body: \(resolvedBody)
 
-            ### PRIOR THREAD CONTEXT
-            \(priorSection)
+            ### IMMEDIATE PREVIOUS EMAIL
+            \(contextLine(context.previousMessage))
+
+            ### IMMEDIATE NEXT EMAIL
+            \(contextLine(context.nextMessage))
         """
     }
     
@@ -433,10 +617,10 @@ Subjects:
         let bullets = summaries.prefix(20).enumerated()
             .map { "\($0.offset + 1). \($0.element)" }
             .joined(separator: "\n")
-        let resolvedTitle = title.isEmpty ? "Folder" : title
+        let resolvedTitle = title.isEmpty ? "Group" : title
         
         return """
-        Transform the following email summaries into a concise folder overview.
+        Transform the following email summaries into a concise BetterMail Group overview.
         Use only the provided text; do not add new facts or assumptions.
         Highlight the main themes, decisions, or urgent follow ups.
         Keep the tone professional and actionable, in two or three sentences.
@@ -448,33 +632,10 @@ Subjects:
         """
     }
 
-    private static func graphTitlePrompt(subject: String, summary: String) -> String {
-        let resolvedSubject = subject.isEmpty ? "No subject" : subject
-        let resolvedSummary = summary.isEmpty ? "No summary available" : summary
-        return """
-        Create the graph label for this one email.
-
-        Subject: \(resolvedSubject)
-        Summary: \(resolvedSummary)
-        """
-    }
-
-    private static let graphTitleInstructions = """
-    You create concise labels for an email relationship graph using only the supplied subject and summary.
-
-    Output rules:
-    - Output exactly one plain-text noun phrase and nothing else.
-    - Use 2 to 5 words and no more than 30 characters.
-    - Preserve the most identifying project name, acronym, ticket, or request number when present.
-    - Prefer what the email is about over generic actions such as review, update, or discussion.
-    - Remove reply and forwarding prefixes such as Re, FW, and Fwd.
-    - Do not use quotation marks, headings, labels, a trailing period, or invented facts.
-    """
-    
     private static let nodeInstructions = """
     You are an executive assistant reviewing a user’s email thread.
     
-    Your job: summarize what matters in the CURRENT email and what is NEW compared to the prior thread context.
+    Your job: summarize the CURRENT email's own content, using its thread position and immediate neighbours only to clarify context.
     
     Rules:
     - Use ONLY the provided text.
@@ -482,7 +643,10 @@ Subjects:
     - Do NOT add facts, speculate, or infer missing details.
     - Do NOT include headings, bullet points, labels, greetings, apologies, or meta commentary.
     - Do NOT quote the email text; paraphrase and compress.
-    - If the current email adds nothing meaningfully new or actionable, output exactly: No new updates.
+    - Focus on the current email's information, request, decision, answer, confirmation, or action.
+    - Mention its conversational relationship only when it clarifies the current email's content.
+    - Treat neighbouring emails as context only; never attribute their content to the current email.
+    - If the current email adds nothing meaningfully new, state what it acknowledges or repeats without inventing an update.
     
     Write the digest directly as the final output.
     """
@@ -490,7 +654,7 @@ Subjects:
 
 @available(macOS 15.2, *)
 private extension FoundationModels.SystemLanguageModel.Availability {
-    var userFacingMessage: String {
+    nonisolated var userFacingMessage: String {
         switch self {
         case .available:
             return ""
@@ -502,7 +666,7 @@ private extension FoundationModels.SystemLanguageModel.Availability {
 
 @available(macOS 15.2, *)
 private extension FoundationModels.SystemLanguageModel.Availability.UnavailableReason {
-    var userFacingMessage: String {
+    nonisolated var userFacingMessage: String {
         switch self {
         case .deviceNotEligible:
             return "This Mac does not support Apple Intelligence summaries."
@@ -510,6 +674,8 @@ private extension FoundationModels.SystemLanguageModel.Availability.UnavailableR
             return "Enable Apple Intelligence in System Settings to see inbox summaries."
         case .modelNotReady:
             return "Apple Intelligence is preparing the on-device model. Try again shortly."
+        @unknown default:
+            return "Apple Intelligence summaries are currently unavailable."
         }
     }
 }

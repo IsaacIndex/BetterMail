@@ -122,7 +122,11 @@ internal enum GraphTopicRanker {
 
             let folderIDs = Set(deduplicated.compactMap { $0.0.existingFolderID })
             let ungroupedCount = deduplicated.filter { $0.0.existingFolderID == nil }.count
-            if folderIDs.count == 1, ungroupedCount == 0 {
+            // A confirmed destination owns this topic. Refresh-owned semantic
+            // automation now proposes attaching/appending the ungrouped
+            // conversations to that solid destination, so rendering another
+            // ghost folder hub would be both misleading and duplicative.
+            if folderIDs.count == 1 {
                 return nil
             }
 

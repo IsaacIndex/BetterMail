@@ -5,6 +5,12 @@ internal struct GraphToolbar: View {
     @ObservedObject internal var settings: GraphCanvasSettings
     internal let textScale: CGFloat
     internal let selectedThreadID: String?
+    internal let restoreHistoryEntries: [GraphCompostEntry]
+    internal let restoringHistoryEntryIDs: Set<String>
+    internal let automationAttentionCount: Int
+    internal let onRestoreHistoryEntry: (GraphCompostEntry) -> Void
+    internal let onDismissHistoryEntry: (GraphCompostEntry) -> Void
+    internal let onAutomation: () -> Void
 
     internal var body: some View {
         HStack(spacing: 6) {
@@ -28,6 +34,21 @@ internal struct GraphToolbar: View {
                           : NSLocalizedString("graph.toolbar.archive.help.selected",
                                               comment: "Help for archiving the selected graph thread"),
                           action: performArchive)
+            GraphRestoreHistoryControl(entries: restoreHistoryEntries,
+                                       restoringEntryIDs: restoringHistoryEntryIDs,
+                                       textScale: textScale,
+                                       onRestore: onRestoreHistoryEntry,
+                                       onDismiss: onDismissHistoryEntry)
+            toolbarButton(title: NSLocalizedString("graph.toolbar.automation",
+                                                   comment: "Open graph automation queue"),
+                          systemImage: "wand.and.stars",
+                          isOn: false,
+                          tint: DesignTokens.Graph.AppTheme.accent,
+                          accessibilityID: AccessibilityID.graphToolbarAutomation,
+                          badgeCount: automationAttentionCount,
+                          help: NSLocalizedString("graph.toolbar.automation.help",
+                                                  comment: "Help for graph automation queue"),
+                          action: onAutomation)
             Divider()
                 .frame(height: 18)
             plainButton(systemImage: "minus.magnifyingglass",
@@ -70,12 +91,24 @@ internal struct GraphToolbar: View {
                                isOn: Bool,
                                tint: Color,
                                accessibilityID: String,
+                               badgeCount: Int = 0,
                                isDisabled: Bool = false,
                                help: String,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
+            HStack(spacing: 5) {
+                Label(title, systemImage: systemImage)
+                    .labelStyle(.titleAndIcon)
+                if badgeCount > 0 {
+                    Text("\(badgeCount)")
+                        .font(.caption2.monospacedDigit().bold())
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.orange))
+                        .accessibilityHidden(true)
+                }
+            }
                 .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
                 .frame(width: 108)
                 .frame(minHeight: 26)
@@ -92,21 +125,30 @@ internal struct GraphToolbar: View {
         .focusable()
         .focusEffectDisabled()
         .accessibilityLabel(title)
-        .accessibilityValue(accessibilityValue(for: accessibilityID))
+        .accessibilityValue(accessibilityValue(for: accessibilityID, badgeCount: badgeCount))
         .accessibilityIdentifier(accessibilityID)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.45 : 1)
         .help(help)
     }
 
-    private func accessibilityValue(for accessibilityID: String) -> String {
-        guard accessibilityID == AccessibilityID.graphToolbarSnip,
-              viewModel.stagedSnipCount > 0 else { return "" }
-        return String.localizedStringWithFormat(
-            NSLocalizedString("graph.snip.staging.count",
-                              comment: "Number of staged graph branches"),
-            viewModel.stagedSnipCount
-        )
+    private func accessibilityValue(for accessibilityID: String, badgeCount: Int) -> String {
+        if accessibilityID == AccessibilityID.graphToolbarAutomation, badgeCount > 0 {
+            return String.localizedStringWithFormat(
+                NSLocalizedString("graph.automation.attention_count",
+                                  comment: "Automation items needing attention"),
+                badgeCount
+            )
+        }
+        if accessibilityID == AccessibilityID.graphToolbarSnip,
+           viewModel.stagedSnipCount > 0 {
+            return String.localizedStringWithFormat(
+                NSLocalizedString("graph.snip.staging.count",
+                                  comment: "Number of staged graph branches"),
+                viewModel.stagedSnipCount
+            )
+        }
+        return ""
     }
 
     private func performSnip() {

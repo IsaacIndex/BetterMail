@@ -1,6 +1,23 @@
 import AppKit
 import SpriteKit
 
+internal enum ObsidianGraphEdgeStyle {
+    internal static func dashPattern(for kind: GraphEdgeKind) -> [CGFloat]? {
+        switch kind {
+        case .manualChain:
+            return [4, 4]
+        case .suggested, .remaining:
+            return [7, 5]
+        case .trunk, .grouping, .chain:
+            return nil
+        }
+    }
+
+    internal static func usesManualThreadColor(_ kind: GraphEdgeKind) -> Bool {
+        kind == .manualChain
+    }
+}
+
 /// BetterMail's native Obsidian-style graph adapter. It consumes the existing
 /// GraphData projection and emits the same selection/action callbacks as the
 /// previous botanical renderer, while owning only layout and interaction.
@@ -15,7 +32,7 @@ internal final class ObsidianGraphScene: SKScene {
     private static let reducedMotionSettlingFrames = 48
 
     internal var onSelectGraphNode: ((String?, Bool) -> Void)?
-    internal var onExpandRemainingBranches: ((String) -> Void)?
+    internal var onExpandRemainingBranches: ((GraphRemainderScope) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
     internal var onToggleActionItem: ((String) -> Void)?
@@ -327,7 +344,7 @@ internal final class ObsidianGraphScene: SKScene {
     @discardableResult
     internal func expandRemainingBranchIfPresent(nodeID: String) -> Bool {
         guard let remaining = graphData.remainingBranchByID[nodeID] else { return false }
-        onExpandRemainingBranches?(remaining.parentID)
+        onExpandRemainingBranches?(remaining.scope)
         return true
     }
 
@@ -595,9 +612,14 @@ internal final class ObsidianGraphScene: SKScene {
               let source = simulator.nodesByID[edge.sourceID],
               let target = simulator.nodesByID[edge.targetID] else { return }
         let geometry = trimmedEdge(source: source, target: target)
-        visual.line.path = edge.kind == .suggested || edge.kind == .remaining
-            ? Self.dashedLinePath(from: geometry.start, to: geometry.end)
-            : Self.linePath(from: geometry.start, to: geometry.end)
+        if let dashPattern = ObsidianGraphEdgeStyle.dashPattern(for: edge.kind) {
+            visual.line.path = Self.dashedLinePath(from: geometry.start,
+                                                   to: geometry.end,
+                                                   dash: dashPattern[0],
+                                                   gap: dashPattern[1])
+        } else {
+            visual.line.path = Self.linePath(from: geometry.start, to: geometry.end)
+        }
         visual.arrow.path = Self.arrowPath(from: geometry.start, to: geometry.end)
         visual.arrow.isHidden = !displayConfig.showsArrows
         applyStyle(to: visual, edge: edge)
@@ -642,13 +664,19 @@ internal final class ObsidianGraphScene: SKScene {
         let isFiltered = !filteredNodeIDs.isEmpty
             && (!filteredNodeIDs.contains(edge.sourceID) || !filteredNodeIDs.contains(edge.targetID))
         let baseColor: NSColor
-        switch edge.kind {
-        case .suggested:
-            baseColor = theme.accentNS
-        case .remaining:
-            baseColor = theme.archiveNS
-        case .trunk, .grouping, .chain:
-            baseColor = theme.inkTertiaryNS
+        if ObsidianGraphEdgeStyle.usesManualThreadColor(edge.kind) {
+            baseColor = theme.manualThreadNS
+        } else {
+            switch edge.kind {
+            case .suggested:
+                baseColor = theme.accentNS
+            case .remaining:
+                baseColor = theme.archiveNS
+            case .trunk, .grouping, .chain:
+                baseColor = theme.inkTertiaryNS
+            case .manualChain:
+                baseColor = theme.manualThreadNS
+            }
         }
         let isStaged = stagedSnipThreadIDs.contains(edge.threadID) ||
             fullyStagedSnipGroupingIDs.contains(edge.sourceID) ||
@@ -665,9 +693,19 @@ internal final class ObsidianGraphScene: SKScene {
         } else {
             alpha = isConnected ? 0.58 : 0.10
         }
-        let activeBaseColor = isStaged || isPartiallyStaged
-            ? theme.snipNS
-            : (isConnected && !focusedNodeIDs.isEmpty ? theme.accentNS : baseColor)
+        let activeBaseColor: NSColor
+        if isStaged || isPartiallyStaged {
+            activeBaseColor = theme.snipNS
+        } else if ObsidianGraphEdgeStyle.usesManualThreadColor(edge.kind) {
+            // Manual provenance must remain visually distinct while its
+            // endpoints are selected or hovered; focus changes emphasis, not
+            // relationship meaning.
+            activeBaseColor = baseColor
+        } else {
+            activeBaseColor = isConnected && !focusedNodeIDs.isEmpty
+                ? theme.accentNS
+                : baseColor
+        }
         let color = activeBaseColor.withAlphaComponent(alpha)
         visual.line.strokeColor = color
         visual.line.lineWidth = displayConfig.linkThickness * (isConnected && !focusedNodeIDs.isEmpty ? 1.35 : 1)

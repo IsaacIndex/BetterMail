@@ -49,13 +49,6 @@ internal struct GraphPruneAnimationRequest: Identifiable, Equatable {
     }
 }
 
-private struct GraphTitleInput: Hashable {
-    let nodeID: String
-    let subject: String
-    let summary: String
-    let fingerprint: String
-}
-
 private struct GraphTopicInput: Hashable {
     let rawThreadID: String
     let subject: String
@@ -93,15 +86,25 @@ private enum GraphSnipRestoreError: LocalizedError {
 
     var errorDescription: String? {
         NSLocalizedString("graph.snip.restore.incomplete",
-                          comment: "Some messages could not be restored from Snip Compost")
+                          comment: "Some messages could not be restored from Snip history")
+    }
+}
+
+private enum GraphRestoreHistoryError: LocalizedError {
+    case operationInProgress
+
+    var errorDescription: String? {
+        NSLocalizedString("graph.restore_history.error.in_progress",
+                          comment: "A Restore History operation is already running")
     }
 }
 
 @MainActor
 internal final class GraphCanvasViewModel: ObservableObject {
-    internal static let defaultBranchPageSize = 10
-    internal static let defaultPerNodeBranchPageSize = 6
-    private static let messagePreviewLimitPerBranch = 10
+    internal nonisolated static let defaultBranchPageSize = 10
+    internal nonisolated static let defaultPerNodeBranchPageSize = 6
+    internal nonisolated static let defaultEmailPageSize = GraphCanvasSettings.defaultVisibleEmailsPerThread
+    internal nonisolated static let defaultSummaryContextSnippetLineLimit = 10
 
     @Published internal private(set) var data: GraphData = .empty
     @Published internal var hoverItem: GraphHoverItem?
@@ -132,11 +135,17 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var currentSearchQuery = ""
     private var currentTagsByNodeID: [String: [String]] = [:]
     private var currentSummariesByNodeID: [String: GraphMessageSummary] = [:]
+    private var currentManualAttachmentMessageIDs: Set<String> = []
+    private var currentJWZThreadMap: [String: String] = [:]
+    private var currentSnippetLineLimit = GraphCanvasViewModel.defaultSummaryContextSnippetLineLimit
+    private var currentStopPhrases: [String] = []
     private var graphTitlesByNodeID: [String: String] = [:]
     private var graphTopicSignalsByRawThreadID: [String: GraphTopicSignal] = [:]
+    private var currentAutomationProposals: [GraphAutomationProposal] = []
+    private var usesRefreshOwnedTopicSignals = false
     private var graphTitleFingerprintsByNodeID: [String: String] = [:]
     private var graphTopicFingerprintsByRawThreadID: [String: String] = [:]
-    private var currentGraphTitleInputs: [String: GraphTitleInput] = [:]
+    private var currentGraphTitleInputs: [String: GraphTitleGenerationInput] = [:]
     private var currentGraphTopicInputs: [String: GraphTopicInput] = [:]
     private var currentFolders: [ThreadFolder] = []
     private var currentFolderMembershipByThreadID: [String: String] = [:]
@@ -147,13 +156,23 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var visibleBranchLimit = GraphCanvasViewModel.defaultBranchPageSize
     private var perNodeBranchPageSize = GraphCanvasViewModel.defaultPerNodeBranchPageSize
     private var visibleChildLimitsByParentID: [String: Int] = [:]
+    private var emailPageSize = GraphCanvasViewModel.defaultEmailPageSize
+    private var visibleEmailLimitsByThreadID: [String: Int] = [:]
+    private var mailboxScopeID = ""
     private var sourceThreadIDs: [String] = []
     private var previousMessageIDs: Set<String> = []
     private var archivedEntriesByThreadID: [String: ArchivedInGraphEntry] = [:]
+    private var dismissedRestoreHistoryEntryIDs: Set<String> = []
+    private var restoringHistoryEntryID: String?
     private var pruneStateMachine = GraphPruneStateMachine()
     private var pruneCompletionTask: Task<Void, Never>?
     private var graphTitleRefreshTask: Task<Void, Never>?
     private var graphTitleRefreshID: UUID?
+#if DEBUG
+    /// Deterministic suspension seam for exercising supersession after a
+    /// non-cancellation-aware persistence continuation resumes.
+    internal var graphTitlePostPersistenceHookForTesting: (() async -> Void)?
+#endif
     private var graphTopicRefreshTask: Task<Void, Never>?
     private var graphTopicRefreshID: UUID?
     private var isGraphTitleGenerationActive = false
@@ -163,11 +182,11 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private let graphTitleCapabilityProvider: (() -> GraphTitleCapability)?
     private let graphTopicCapabilityProvider: (() -> GraphTopicCapability)?
 
-    internal init(store: MessageStore = .shared,
+    internal init(store: MessageStore? = nil,
                   mailClient: any GraphSnipMailMoving = MailAppleScriptClient(),
                   graphTitleCapabilityProvider: (() -> GraphTitleCapability)? = nil,
                   graphTopicCapabilityProvider: (() -> GraphTopicCapability)? = nil) {
-        self.store = store
+        self.store = store ?? .shared
         self.mailClient = mailClient
         self.graphTitleCapabilityProvider = graphTitleCapabilityProvider
         self.graphTopicCapabilityProvider = graphTopicCapabilityProvider
@@ -176,6 +195,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
     internal var filteredNodeIDs: Set<String> {
         data.matchingNodeIDs(query: currentSearchQuery)
+    }
+
+    internal var searchResultCount: Int? {
+        data.searchResultCount(query: currentSearchQuery)
     }
 
     internal var selectedGraphNodeIDs: Set<String> {
@@ -260,6 +283,12 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     private func setGraphTopicGenerationActive(_ isActive: Bool) {
+        if usesRefreshOwnedTopicSignals {
+            isGraphTopicGenerationActive = false
+            cancelGraphTopicRefresh()
+            currentGraphTopicInputs = [:]
+            return
+        }
         guard isActive != isGraphTopicGenerationActive else { return }
         isGraphTopicGenerationActive = isActive
         if isActive {
@@ -274,53 +303,95 @@ internal final class GraphCanvasViewModel: ObservableObject {
                          searchQuery: String,
                          tagsByNodeID: [String: [String]],
                          summariesByNodeID: [String: ThreadSummaryState],
+                         manualAttachmentMessageIDs: Set<String> = [],
+                         jwzThreadMap: [String: String] = [:],
+                         snippetLineLimit: Int = GraphCanvasViewModel.defaultSummaryContextSnippetLineLimit,
+                         stopPhrases: [String] = [],
                          folders: [ThreadFolder] = [],
                          folderMembershipByThreadID: [String: String] = [:],
+                         automationProposals: [GraphAutomationProposal] = [],
+                         topicSignalsOverride: [String: GraphTopicSignal]? = nil,
                          dismissedSuggestedTopicIDs: Set<String> = [],
                          hiddenSuggestedTopics: Set<String> = [],
                          showsArchivedThreads: Bool = false,
                          branchPageSize: Int = GraphCanvasViewModel.defaultBranchPageSize,
-                         perNodeBranchPageSize: Int = 6) {
+                         perNodeBranchPageSize: Int = 6,
+                         visibleEmailsPerThread: Int = GraphCanvasViewModel.defaultEmailPageSize,
+                         mailboxScopeID: String = "") {
         let clampedBranchPageSize = GraphCanvasSettings.clampedVisibleBranchCount(branchPageSize)
         let clampedPerNodeBranchPageSize = GraphCanvasSettings.clampedVisibleBranchesPerNode(perNodeBranchPageSize)
+        let clampedEmailPageSize = GraphCanvasSettings.clampedVisibleEmailsPerThread(visibleEmailsPerThread)
         let nextSourceThreadIDs = roots.map { GraphData.threadNodeID(for: GraphData.rawThreadID(for: $0)) }
         let sourceChanged = nextSourceThreadIDs != sourceThreadIDs
         let archiveVisibilityChanged = showsArchivedThreads != self.showsArchivedThreads
-        if sourceChanged || archiveVisibilityChanged || clampedBranchPageSize != self.branchPageSize {
+        let mailboxScopeChanged = mailboxScopeID != self.mailboxScopeID
+        if sourceChanged || archiveVisibilityChanged || mailboxScopeChanged ||
+            clampedBranchPageSize != self.branchPageSize {
             visibleBranchLimit = clampedBranchPageSize
         }
         if sourceChanged || archiveVisibilityChanged ||
+            mailboxScopeChanged ||
             clampedPerNodeBranchPageSize != self.perNodeBranchPageSize {
             visibleChildLimitsByParentID = [:]
+        }
+        if clampedEmailPageSize != self.emailPageSize || mailboxScopeChanged {
+            visibleEmailLimitsByThreadID = [:]
         }
         sourceThreadIDs = nextSourceThreadIDs
         self.branchPageSize = clampedBranchPageSize
         self.perNodeBranchPageSize = clampedPerNodeBranchPageSize
+        self.emailPageSize = clampedEmailPageSize
+        self.mailboxScopeID = mailboxScopeID
         sourceRoots = roots
         currentSearchQuery = searchQuery
         currentTagsByNodeID = tagsByNodeID
+        currentManualAttachmentMessageIDs = manualAttachmentMessageIDs
+        currentJWZThreadMap = jwzThreadMap
+        currentSnippetLineLimit = snippetLineLimit
+        currentStopPhrases = stopPhrases
         currentFolders = folders
         currentFolderMembershipByThreadID = folderMembershipByThreadID
+        currentAutomationProposals = automationProposals
+        if let topicSignalsOverride {
+            usesRefreshOwnedTopicSignals = true
+            cancelGraphTopicRefresh()
+            graphTopicSignalsByRawThreadID = topicSignalsOverride
+        } else {
+            usesRefreshOwnedTopicSignals = false
+        }
         self.dismissedSuggestedTopicIDs = dismissedSuggestedTopicIDs
         self.hiddenSuggestedTopics = hiddenSuggestedTopics
         self.showsArchivedThreads = showsArchivedThreads
         currentSummariesByNodeID = summariesByNodeID.mapValues {
             GraphMessageSummary(text: $0.text,
                                 statusMessage: $0.statusMessage,
-                                isSummarizing: $0.isSummarizing)
+                                isSummarizing: $0.isSummarizing,
+                                generationID: $0.generationID)
         }
         rebuildData()
     }
 
     internal func expandRemainingBranches(parentID: String) {
-        guard data.remainingBranch(forParentID: parentID) != nil else { return }
-        if parentID == data.center.id {
-            visibleBranchLimit += branchPageSize
-        } else {
-            let currentVisibleChildCount = data.groupingByID[parentID]?.threadIDs.count
-                ?? perNodeBranchPageSize
-            visibleChildLimitsByParentID[parentID] =
-                (visibleChildLimitsByParentID[parentID] ?? currentVisibleChildCount) + perNodeBranchPageSize
+        expandRemaining(scope: .branches(parentID: parentID))
+    }
+
+    internal func expandRemaining(scope: GraphRemainderScope) {
+        switch scope {
+        case .branches(let parentID):
+            guard data.remainingBranch(forParentID: parentID) != nil else { return }
+            if parentID == data.center.id {
+                visibleBranchLimit += branchPageSize
+            } else {
+                let currentVisibleChildCount = data.groupingByID[parentID]?.threadIDs.count
+                    ?? perNodeBranchPageSize
+                visibleChildLimitsByParentID[parentID] =
+                    (visibleChildLimitsByParentID[parentID] ?? currentVisibleChildCount) + perNodeBranchPageSize
+            }
+        case .messages(let threadID):
+            guard data.remainingEmails(forThreadID: threadID) != nil else { return }
+            let visibleCount = 1 + data.messages.lazy.filter { $0.threadID == threadID }.count
+            visibleEmailLimitsByThreadID[threadID] =
+                (visibleEmailLimitsByThreadID[threadID] ?? visibleCount) + emailPageSize
         }
         rebuildData()
     }
@@ -622,11 +693,12 @@ internal final class GraphCanvasViewModel: ObservableObject {
         }
         var seenMessageLocations: Set<String> = []
         let messages = Self.flatten(root).compactMap { node -> GraphSnipMessage? in
-            let messageID = node.message.messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let source = node.message.physicalSource
+            let messageID = source.messageID.trimmingCharacters(in: .whitespacesAndNewlines)
             let normalizedID = GraphMailMoveResult.normalizedMessageID(messageID)
             let message = GraphSnipMessage(id: messageID,
-                                           sourceMailboxPath: node.message.mailboxID,
-                                           sourceAccountName: node.message.accountName)
+                                           sourceMailboxPath: source.mailboxID,
+                                           sourceAccountName: source.accountName)
             guard !normalizedID.isEmpty,
                   seenMessageLocations.insert(message.locationIdentity).inserted else { return nil }
             return message
@@ -867,6 +939,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
             let entry = ArchivedInGraphEntry(threadID: threadID, archivedAt: Date())
             try await store.upsertArchivedInGraphEntry(entry)
             archivedEntriesByThreadID[threadID] = entry
+            dismissedRestoreHistoryEntryIDs.remove("archive-\(threadID)")
             compostEntries.removeAll { $0.threadID == threadID }
             compostEntries.append(GraphCompostEntry(id: "archive-\(threadID)",
                                                     threadID: threadID,
@@ -900,9 +973,24 @@ internal final class GraphCanvasViewModel: ObservableObject {
         }
     }
 
+    internal func dismissRestoreHistoryEntry(_ entry: GraphCompostEntry) {
+        dismissedRestoreHistoryEntryIDs.insert(entry.id)
+        compostEntries.removeAll { $0.id == entry.id }
+    }
+
     internal func restore(_ entry: GraphCompostEntry) async throws {
+        guard restoringHistoryEntryID == nil else {
+            throw GraphRestoreHistoryError.operationInProgress
+        }
+        restoringHistoryEntryID = entry.id
         if entry.action == .archive {
             _ = pruneStateMachine.send(.restore(threadID: entry.threadID))
+        }
+        defer {
+            restoringHistoryEntryID = nil
+            if entry.action == .archive {
+                _ = pruneStateMachine.send(.restoreFinished)
+            }
         }
         switch entry.action {
         case .archive:
@@ -940,10 +1028,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
             }
             archivedThreadIDs.remove(entry.threadID)
         }
+        dismissedRestoreHistoryEntryIDs.remove(entry.id)
         compostEntries.removeAll { $0.id == entry.id }
-        if entry.action == .archive {
-            _ = pruneStateMachine.send(.restoreFinished)
-        }
         rebuildData()
         if entry.action == .archive {
             onArchiveStateChanged?()
@@ -1073,7 +1159,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
         return nil
     }
 
-    private func graphTitleInputForRegeneration(for selectedNodeID: String?) -> GraphTitleInput? {
+    private func graphTitleInputForRegeneration(for selectedNodeID: String?) -> GraphTitleGenerationInput? {
         guard isGraphTitleGenerationActive,
               let graphTitleCapabilityProvider,
               let graphNodeID = selectedGraphNodeID(for: selectedNodeID),
@@ -1147,15 +1233,19 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                      topicSignalsByRawThreadID: graphTopicSignalsByRawThreadID,
                                      summariesByNodeID: currentSummariesByNodeID,
                                      titlesByNodeID: graphTitlesByNodeID,
+                                     manualAttachmentMessageIDs: currentManualAttachmentMessageIDs,
+                                     jwzThreadMap: currentJWZThreadMap,
                                      folders: currentFolders,
                                      folderMembershipByThreadID: currentFolderMembershipByThreadID,
+                                     automationProposals: currentAutomationProposals,
                                      dismissedSuggestedTopicIDs: dismissedSuggestedTopicIDs,
                                      hiddenSuggestedTopics: hiddenSuggestedTopics,
                                      branchLimit: visibleBranchLimit,
                                      branchBatchSize: branchPageSize,
                                      perNodeBranchPageSize: perNodeBranchPageSize,
                                      visibleChildLimitsByParentID: visibleChildLimitsByParentID,
-                                     messageLimitPerBranch: Self.messagePreviewLimitPerBranch)
+                                     messageLimitPerBranch: emailPageSize,
+                                     visibleEmailLimitsByThreadID: visibleEmailLimitsByThreadID)
         let nextMessageIDs = Set(rebuilt.messages.map(\.id))
         let newMessageIDs = nextMessageIDs.subtracting(previousMessageIDs)
         if !previousMessageIDs.isEmpty {
@@ -1168,7 +1258,9 @@ internal final class GraphCanvasViewModel: ObservableObject {
         }
         syncArchivedCompostEntries()
         refreshGraphTitles(for: rebuilt)
-        refreshGraphTopics()
+        if !usesRefreshOwnedTopicSignals {
+            refreshGraphTopics()
+        }
     }
 
     private func refreshGraphTitles(for graphData: GraphData) {
@@ -1208,43 +1300,70 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     private func graphTitleInputs(in graphData: GraphData,
-                                  providerID: String) -> [String: GraphTitleInput] {
-        var inputs: [String: GraphTitleInput] = [:]
-        inputs.reserveCapacity(graphData.visibleEmailNodeCount)
+                                  providerID: String) -> [String: GraphTitleGenerationInput] {
+        let contextBuild = graphTitleContextBuild(providerID: providerID)
+        var visibleNodeIDs = Set(graphData.threads.map(\.rootNodeID))
+        visibleNodeIDs.formUnion(graphData.messages.map(\.rawMessageID))
+        var inputs: [String: GraphTitleGenerationInput] = [:]
+        inputs.reserveCapacity(visibleNodeIDs.count)
 
-        for thread in graphData.threads {
-            let summary = (currentSummariesByNodeID[thread.rootNodeID]
-                ?? currentSummariesByNodeID[GraphData.messageNodeID(for: thread.rootNodeID)])?.text ?? ""
-            let subject = thread.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-            let cleanedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanedSummary.isEmpty else { continue }
-            inputs[thread.rootNodeID] = GraphTitleInput(
-                nodeID: thread.rootNodeID,
-                subject: subject,
-                summary: cleanedSummary,
-                fingerprint: ThreadSummaryFingerprint.makeGraphTitle(subject: subject,
-                                                                     summary: cleanedSummary,
-                                                                     providerID: providerID)
-            )
-        }
-
-        for message in graphData.messages {
-            let subject = message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-            let summary = message.summary?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !summary.isEmpty else { continue }
-            inputs[message.rawMessageID] = GraphTitleInput(
-                nodeID: message.rawMessageID,
-                subject: subject,
+        for nodeID in visibleNodeIDs.sorted() {
+            guard let contextInput = contextBuild.inputsByNodeID[nodeID],
+                  let summaryState = currentSummariesByNodeID[nodeID]
+                    ?? currentSummariesByNodeID[GraphData.messageNodeID(for: nodeID)],
+                  !summaryState.isSummarizing else {
+                continue
+            }
+            let summary = summaryState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !summary.isEmpty,
+                  let threadRevision = contextBuild.threadRevisionsByThreadID[contextInput.effectiveThreadID] else {
+                continue
+            }
+            inputs[nodeID] = GraphTitleGenerationInputBuilder.make(
+                nodeInput: contextInput,
                 summary: summary,
-                fingerprint: ThreadSummaryFingerprint.makeGraphTitle(subject: subject,
-                                                                     summary: summary,
-                                                                     providerID: providerID)
+                summaryGenerationID: summaryState.generationID,
+                threadRevision: threadRevision,
+                providerID: providerID
             )
         }
         return inputs
     }
 
-    private func loadAndGenerateGraphTitles(inputs: [String: GraphTitleInput],
+    /// Uses every message in each effective source thread, including messages
+    /// currently paged out of Graph, so visible title fingerprints still change
+    /// when a hidden neighbour changes the conversation position.
+    private func graphTitleContextBuild(providerID: String) -> ThreadSummaryContextBuild {
+        var sources: [ThreadSummaryMessageSource] = []
+        sources.reserveCapacity(sourceRoots.reduce(0) {
+            $0 + Self.flattenConversation($1).count
+        })
+
+        for root in sourceRoots {
+            let effectiveThreadID = GraphData.rawThreadID(for: root)
+            for node in Self.flattenConversation(root) {
+                let message = node.message
+                let automaticThreadID = currentJWZThreadMap[message.threadKey]
+                    ?? message.threadID
+                    ?? node.id
+                sources.append(ThreadSummaryMessageSourceBuilder.make(
+                    message: message,
+                    nodeID: node.id,
+                    cacheKey: node.id,
+                    effectiveThreadID: effectiveThreadID,
+                    automaticThreadID: automaticThreadID,
+                    isManualAttachment: currentManualAttachmentMessageIDs.contains(node.id),
+                    snippetLineLimit: currentSnippetLineLimit,
+                    stopPhrases: currentStopPhrases
+                ))
+            }
+        }
+
+        return ThreadSummaryContextBuilder.build(sources: sources,
+                                                 providerID: providerID)
+    }
+
+    private func loadAndGenerateGraphTitles(inputs: [String: GraphTitleGenerationInput],
                                             initialCapability: GraphTitleCapability,
                                             refreshID: UUID) async {
         var cachedByID: [String: SummaryCacheEntry] = [:]
@@ -1258,20 +1377,29 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
         guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs) else { return }
         var didApplyCachedTitle = false
-        var pendingInputs: [GraphTitleInput] = []
+        var pendingInputs: [GraphTitleGenerationInput] = []
         for input in inputs.values.sorted(by: { $0.nodeID < $1.nodeID }) {
             if let cached = cachedByID[input.nodeID],
                cached.fingerprint == input.fingerprint,
                cached.provider == initialCapability.providerID,
                !regeneratingGraphTitleNodeIDs.contains(input.nodeID) {
-                graphTitlesByNodeID[input.nodeID] = cached.summaryText
+                graphTitlesByNodeID[input.nodeID] = GraphTitleFormatter.normalizedGeneratedTitle(
+                    cached.summaryText,
+                    fallback: input.request.subject
+                )
                 graphTitleFingerprintsByNodeID[input.nodeID] = cached.fingerprint
                 didApplyCachedTitle = true
             } else {
-                if graphTitlesByNodeID[input.nodeID] == nil,
-                   let staleTitle = cachedByID[input.nodeID]?.summaryText,
-                   !staleTitle.isEmpty {
-                    graphTitlesByNodeID[input.nodeID] = staleTitle
+                // Keep a prior semantic phrase readable while generation is
+                // pending or unavailable. Legacy ordinal decoration is
+                // stripped immediately; position remains model context only.
+                let staleTitle = graphTitlesByNodeID[input.nodeID]
+                    ?? cachedByID[input.nodeID]?.summaryText
+                if let staleTitle, !staleTitle.isEmpty {
+                    graphTitlesByNodeID[input.nodeID] = GraphTitleFormatter.normalizedGeneratedTitle(
+                        staleTitle,
+                        fallback: input.request.subject
+                    )
                     didApplyCachedTitle = true
                 }
                 pendingInputs.append(input)
@@ -1311,8 +1439,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
             guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs),
                   currentGraphTitleInputs[input.nodeID]?.fingerprint == input.fingerprint else { return }
             do {
-                let title = try await provider.makeGraphTitle(
-                    GraphTitleRequest(subject: input.subject, summary: input.summary)
+                let semanticTitle = try await provider.makeGraphTitle(input.request)
+                let title = GraphTitleFormatter.normalizedGeneratedTitle(
+                    semanticTitle,
+                    fallback: input.request.subject
                 )
                 guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs),
                       currentGraphTitleInputs[input.nodeID]?.fingerprint == input.fingerprint else { return }
@@ -1322,11 +1452,12 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                               generatedAt: Date(),
                                               fingerprint: input.fingerprint,
                                               provider: capability.providerID)
-                do {
-                    try await store.upsertSummaries([entry])
-                } catch {
-                    Log.app.error("Failed to persist graph-title cache: \(error.localizedDescription, privacy: .public)")
-                }
+                try await store.upsertSummaries([entry])
+#if DEBUG
+                await graphTitlePostPersistenceHookForTesting?()
+#endif
+                guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs),
+                      currentGraphTitleInputs[input.nodeID]?.fingerprint == input.fingerprint else { return }
                 graphTitlesByNodeID[input.nodeID] = title
                 graphTitleFingerprintsByNodeID[input.nodeID] = input.fingerprint
                 regeneratingGraphTitleNodeIDs.remove(input.nodeID)
@@ -1351,7 +1482,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private static let maximumGraphTitleReadinessRetries = 20
 
     private func isCurrentGraphTitleRefresh(_ refreshID: UUID,
-                                            inputs: [String: GraphTitleInput]) -> Bool {
+                                            inputs: [String: GraphTitleGenerationInput]) -> Bool {
         !Task.isCancelled &&
             isGraphTitleGenerationActive &&
             graphTitleRefreshID == refreshID &&
@@ -1370,7 +1501,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
         graphTitleRefreshTask = nil
     }
 
-    private func finishGraphTitleRegeneration(for inputs: [String: GraphTitleInput]) {
+    private func finishGraphTitleRegeneration(for inputs: [String: GraphTitleGenerationInput]) {
         regeneratingGraphTitleNodeIDs.subtract(Set(inputs.keys))
     }
 
@@ -1634,11 +1765,17 @@ internal final class GraphCanvasViewModel: ObservableObject {
             return
         }
         let existingArchiveIDs = Set(compostEntries.filter { $0.action == .archive }.map(\.threadID))
-        let rootsData = GraphData.make(roots: sourceRoots, archivedThreadIDs: [], tagsByNodeID: currentTagsByNodeID)
+        let rootsData = GraphData.make(roots: sourceRoots,
+                                       archivedThreadIDs: [],
+                                       tagsByNodeID: currentTagsByNodeID,
+                                       manualAttachmentMessageIDs: currentManualAttachmentMessageIDs,
+                                       jwzThreadMap: currentJWZThreadMap)
         for threadID in archivedThreadIDs.subtracting(existingArchiveIDs) {
+            let entryID = "archive-\(threadID)"
+            guard !dismissedRestoreHistoryEntryIDs.contains(entryID) else { continue }
             guard let thread = rootsData.threadByID[threadID],
                   let archivedEntry = archivedEntriesByThreadID[threadID] else { continue }
-            compostEntries.append(GraphCompostEntry(id: "archive-\(threadID)",
+            compostEntries.append(GraphCompostEntry(id: entryID,
                                                     threadID: threadID,
                                                     rootNodeID: thread.rootNodeID,
                                                     subject: thread.subject,
@@ -1649,7 +1786,9 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                                     createdAt: archivedEntry.archivedAt))
         }
         compostEntries.removeAll { entry in
-            entry.action == .archive && !archivedThreadIDs.contains(entry.threadID)
+            entry.action == .archive &&
+                (!archivedThreadIDs.contains(entry.threadID) ||
+                 dismissedRestoreHistoryEntryIDs.contains(entry.id))
         }
     }
 

@@ -35,6 +35,12 @@ internal struct BetterMailApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
+                Button(NSLocalizedString("graph.automation.command.open",
+                                         comment: "Open graph automation queue app command")) {
+                    focusedViewModel?.presentGraphAutomation()
+                }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+
                 Divider()
 
                 Button("Toggle Inspector") {

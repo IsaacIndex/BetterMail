@@ -8,7 +8,7 @@
 Reimagine the canvas as an Obsidian-style **force-directed graph view** that
 sits alongside the existing horizontal timeline. A "You" node anchors the
 center; threads radiate outward as branches; pruning is a tactile gesture
-(Snip vs Archive) with a compost ring for restoration; the canvas feels alive
+(Snip vs Archive) with toolbar Restore History; the canvas feels alive
 through physics, breath, sway, water, and sprout-on-arrival.
 
 ## Design Input Summary
@@ -94,9 +94,10 @@ Animations:
 ### Responsive strategy
 
 This is a desktop-only macOS window. The window respects existing minimums
-(`minWidth: 480, minHeight: 400`). Toolbar collapses tool-sub labels under
-`720 px` width; the compost ring caps at `280 px` and wraps; the inspector
-panel keeps its existing 320 px width.
+(`minWidth: 480, minHeight: 400`). Toolbar controls remain compact at the
+minimum Graph width; Restore History uses a `344 px` popover capped at
+`360 px` of scrollable row content; the inspector panel keeps its existing
+320 px width.
 
 ### Interaction & animation notes
 
@@ -110,9 +111,11 @@ panel keeps its existing 320 px width.
 - **Snip mode** (toolbar): cursor swaps to ✂; clicking any edge in the thread
   prompts the **SnipMoveSheet** (folder picker), then animates wilt.
 - **Archive mode** (toolbar): cursor swaps to ⏚; clicking any edge in the
-  thread immediately settles + adds to compost (no Mail-side change).
-- **Compost chip** = click to restore (Mail move-back for snip; tag-remove for
-  archive).
+  thread immediately settles + adds to Restore History (no Mail-side change).
+- **History (N)** opens an inert detail popover. Row content never restores;
+  **Restore** / **Retry Restore** are the only recovery actions. **Dismiss**
+  requires confirmation, moves no messages, preserves archive persistence,
+  and hides the entry for the current app session.
 - **Sprout** = new message arrives → spawn at thread tip with sprout animation.
 
 ### Accessibility requirements
@@ -143,7 +146,7 @@ panel keeps its existing 320 px width.
 In:
 - New `Sources/UI/Graph/` module: `GraphCanvasView`, `GraphScene`,
   `GraphSceneNodes`, `GraphForceSimulator`, `GraphToolbar`, `GraphHoverCard`,
-  `GraphCompostRing`, `GraphCanvasViewModel`.
+  `GraphRestoreHistoryControl`, `GraphCanvasViewModel`.
 - Topbar segmented toggle: `Timeline | Graph` in `ThreadListView`.
 - New `Settings/GraphCanvasSettings.swift` (variant, soundOn,
   reduceMotionOverride, snipParentMailbox).
@@ -180,8 +183,9 @@ Out of scope:
    add a Barnes-Hut quadtree if N grows.
 3. **Snip = real Mail move**. Sub-folder is user-chosen each time, with a
    **default parent mailbox** ("Unimportant", configurable in settings).
-   Performed via AppleScript through `MailAppleScriptClient`. Compost chip
-   stores the prior folder so restore can move it back.
+   Performed via AppleScript through `MailAppleScriptClient`. The internal
+   history entry stores exact source/destination locations so explicit Restore
+   can move only the recorded messages back.
 4. **Archive = app-only**. Stored as a `ManualThreadGroup` overlay flag
    (`isArchivedInGraph`). No AppleScript side effects. Restore unsets flag.
 5. **Variant**: legacy botanical only.
@@ -217,8 +221,8 @@ ThreadListView
         └── GraphToolbar (SwiftUI overlay)              [NEW]
             ├── SnipModeButton
             ├── ArchiveModeButton
+            ├── RestoreHistoryControl
             ├── ZoomOut / ZoomLabel / ZoomIn / Recenter
-        └── GraphCompostRing (SwiftUI overlay)          [NEW]
 └── inspectorOverlay
     └── ThreadInspectorView                             [reused as-is]
 ```
@@ -230,20 +234,22 @@ idle ─(toolbar Archive)─> archiveMode
 snipMode ─(edge click)─> pickingFolder ─(picked)─> wilting ─(end)─> composted
 archiveMode ─(edge click)─> settling ─(end)─> composted
 {snipMode|archiveMode} ─(Esc / toolbar tap)─> idle
-composted ─(chip click)─> restoring ─(end)─> idle
+composted ─(explicit Restore)─> restoring ─(end)─> idle
 ```
 
 ## Layout grid / spacing
 
 - App padding unchanged. Topbar height `38 px`; bottom toolbar floats
   `24 px` from canvas bottom, centered.
-- Compost ring floats `24 px` from bottom-right. Max width `280 px`.
+- Restore History is a fixed compact slot inside the bottom toolbar. Its
+  popover is `344 px` wide, height-capped, and scrollable.
 - Inspector slides in over the canvas (existing animation: `spring(0.24,
   0.82)`). Graph reserves the visible 320 px inspector lane plus app chrome
   spacing so nodes and toolbar controls do not sit underneath it.
-- When the bottom selection/action bar is visible, the graph toolbar and
-  compost ring reserve the same bottom chrome lane before applying their
-  `24 px` floating offset.
+- When the bottom selection/action bar is visible, the graph toolbar reserves
+  that bottom chrome lane before applying its `24 px` floating offset. The
+  processing activity toast remains fixed at the root window's bottom-right
+  corner and does not participate in graph-overlay clearance.
 
 ## Milestones
 
@@ -435,29 +441,30 @@ composted ─(chip click)─> restoring ─(end)─> idle
     `GraphSettingsSheet.swift`; sound defaults off. Manual audible validation
     remains a follow-up.
 
-- [x] **M9: Compost ring + restore**
-  - **Intent**: Bottom-right floating panel listing pruned threads as chips.
-    Click chip = restore (route per action).
-  - **Files**: `Sources/UI/Graph/GraphCompostRing.swift` (new), wire into
-    `GraphCanvasViewModel`.
+- [x] **M9: Restore History**
+  - **Intent**: Compact **History (N)** toolbar control listing pruned threads
+    with enough detail to choose an explicit action safely.
+  - **Files**: `Sources/UI/Graph/GraphRestoreHistoryControl.swift`, wired into
+    `GraphToolbar`, `GraphCanvasView`, and `GraphCanvasViewModel`.
   - **Spec ref**: `styles.css` :572-636, `graph.jsx` :655-680.
-  - **Behavior**: chips render with the action color (snip = rust, archive
-    = slate); icon `✂` / `⏚`; subject ellipsized at `130 px`. Hover lifts
-    the chip `1 px`. Empty state hides the panel.
-  - **Validation**: Snip a thread → chip appears → click → thread reappears
-    in graph; archive a thread → chip appears → click → flag cleared. State
-    survives mode toggle (timeline ↔ graph).
-  - **Notes / blockers**: Implemented in `GraphCompostRing.swift` and
-    `GraphCanvasViewModel.swift`; archive restore is persisted via
-    `MessageStore`. Real Mail snip restore requires manual account-folder
-    validation.
+  - **Behavior**: a `344 px`, height-capped popover separates newest-first
+    Snipped and Archived entries and shows subject, timestamp, mailbox route,
+    and recovery warning. Row content is inert. **Restore** / **Retry Restore**
+    are explicit; **Dismiss** is confirmed and session-only.
+  - **Validation**: Opening History and clicking row details never restores;
+    explicit Restore routes per action. Dismiss performs no Mail move and does
+    not delete archive persistence; a dismissed archive entry returns after a
+    new app session.
+  - **Notes / blockers**: The internal `GraphCompostEntry` model and Mail
+    restore pipeline remain unchanged to avoid state/schema churn. Archive
+    history remains durable; Snip history remains session-scoped.
 
 - [x] **M10: Snip pipeline (real Mail.app move)**
   - **Intent**: Edge click in snip mode opens `SnipMoveSheet` rooted at the
     user's chosen "Unimportant" parent mailbox (settable in
     `GraphCanvasSettings`). Confirm → AppleScript move all messages of the
-    thread → wilt animation → compost chip stores `priorMailboxPath` for
-    restore.
+    thread → wilt animation → Restore History records the exact locations for
+    explicit restore.
   - **Files**: `Sources/UI/Graph/SnipMoveSheet.swift` (new),
     `Sources/DataSource/MailAppleScriptClient.swift` (extend with
     `func moveMessages(messageIDs: [String], toMailboxPath: String)
@@ -515,14 +522,15 @@ composted ─(chip click)─> restoring ─(end)─> idle
     remains a follow-up.
 
 - [x] **M13: VoiceOver labels + accessibility identifiers**
-  - **Intent**: Each node has VO labels; toolbar buttons + chips have
+  - **Intent**: Each node has VO labels; toolbar and history actions have
     accessibility identifiers for UI tests.
   - **Files**: `Sources/UI/AccessibilityIdentifiers.swift` (extend),
     `Sources/UI/Graph/GraphRepresentable.swift` (expose accessibility
     elements via `NSAccessibility`).
   - **Validation**: Existing UI test infra resolves new identifiers
     (`graphCanvas`, `graphToolbar.snip`, `graphToolbar.archive`,
-    `graphCompostRing.chip.<id>`). New unit tests for label generation.
+    `graphRestoreHistory.control`, `graphRestoreHistory.row.<id>`, and explicit
+    restore/dismiss action IDs). New unit tests cover presentation generation.
   - **Notes / blockers**: Implemented graph accessibility identifiers and
     node labels. UI-test identifier lookup was not run because no graph UI
     test target exists in the current suite.
@@ -632,9 +640,9 @@ composted ─(chip click)─> restoring ─(end)─> idle
    dark tokens up front), or fully defer? (Defaulting to defer.)
 5. **Mode persistence scope**: per-mailbox or app-global? (Default proposal:
    app-global.)
-6. **Compost retention**: should compost survive app restart? (Default
-   proposal: yes for archive, no for snip — snip is already reflected in
-   Mail.app.)
+6. **Restore History retention**: confirmed as archive history surviving app
+   restart and Snip history remaining session-only, because the Mail move is
+   already reflected in Mail.app.
 
 ## Design artifact links
 

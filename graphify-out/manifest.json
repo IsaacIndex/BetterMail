@@ -1,0 +1,1707 @@
+{
+  ".claude/settings.local.json": {
+    "mtime": 1778465536.5680356,
+    "ast_hash": "aa4bd089b72b629790725ecbed7c0238",
+    "semantic_hash": "aa4bd089b72b629790725ecbed7c0238"
+  },
+  "BetterMail/.swift-format.json": {
+    "mtime": 1767596967.2415237,
+    "ast_hash": "b2d80232bf86de15fe4728297518073f",
+    "semantic_hash": "b2d80232bf86de15fe4728297518073f"
+  },
+  "BetterMail/AppleScriptRunner.swift": {
+    "mtime": 1781714628.5094752,
+    "ast_hash": "062ebbe98cc662b9cbf7924ee8318c37",
+    "semantic_hash": "062ebbe98cc662b9cbf7924ee8318c37"
+  },
+  "BetterMail/Assets.xcassets/AccentColor.colorset/Contents.json": {
+    "mtime": 1762316711.7562382,
+    "ast_hash": "55019f7265dde0a78318b0807f98e847",
+    "semantic_hash": "55019f7265dde0a78318b0807f98e847"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/Contents.json": {
+    "mtime": 1781714628.52588,
+    "ast_hash": "dd9091a0e716150f83e037c69d4b30b0",
+    "semantic_hash": "dd9091a0e716150f83e037c69d4b30b0"
+  },
+  "BetterMail/Assets.xcassets/Contents.json": {
+    "mtime": 1762316711.7574024,
+    "ast_hash": "9deb2ada1cc834bbebf8bbad9c8978a1",
+    "semantic_hash": "9deb2ada1cc834bbebf8bbad9c8978a1"
+  },
+  "BetterMail/BetterMailApp.swift": {
+    "mtime": 1781714628.5261197,
+    "ast_hash": "c60ed426b861d2dbd91dbc6a12efad8d",
+    "semantic_hash": "c60ed426b861d2dbd91dbc6a12efad8d"
+  },
+  "BetterMail/ContentView.swift": {
+    "mtime": 1787198167.0123892,
+    "ast_hash": "d52014633cfc4d1b659b7e48b22603b5",
+    "semantic_hash": "d52014633cfc4d1b659b7e48b22603b5"
+  },
+  "BetterMail/MailControl.swift": {
+    "mtime": 1781714628.528608,
+    "ast_hash": "a9f9ff0fdadfef54128e9af8a2033cf7",
+    "semantic_hash": "a9f9ff0fdadfef54128e9af8a2033cf7"
+  },
+  "BetterMail/Sources/DataSource/MailAppleScriptClient.swift": {
+    "mtime": 1787209463.3482778,
+    "ast_hash": "691334d34458819e4cb1fccf7fd32fba",
+    "semantic_hash": "691334d34458819e4cb1fccf7fd32fba"
+  },
+  "BetterMail/Sources/Models/ActionItem.swift": {
+    "mtime": 1773910104.9616196,
+    "ast_hash": "4c07cae16316422d65c5d56b787b8217",
+    "semantic_hash": "4c07cae16316422d65c5d56b787b8217"
+  },
+  "BetterMail/Sources/Models/DayFetchModels.swift": {
+    "mtime": 1786608886.531792,
+    "ast_hash": "3112fc7c7f53f65c91e6a86aab72854f",
+    "semantic_hash": "3112fc7c7f53f65c91e6a86aab72854f"
+  },
+  "BetterMail/Sources/Models/EmailMessage.swift": {
+    "mtime": 1787207196.4551306,
+    "ast_hash": "33cfd10e3fd7d3f093cf928de1887848",
+    "semantic_hash": "33cfd10e3fd7d3f093cf928de1887848"
+  },
+  "BetterMail/Sources/Models/EmailThread.swift": {
+    "mtime": 1787112511.0286117,
+    "ast_hash": "54d481dfc3718ab6f6d3ff02375c6338",
+    "semantic_hash": "54d481dfc3718ab6f6d3ff02375c6338"
+  },
+  "BetterMail/Sources/Models/GraphFolderSuggestionImpact.swift": {
+    "mtime": 1786280510.9616992,
+    "ast_hash": "fc4b2e7a31ceb509d6e592b704dc0cf2",
+    "semantic_hash": "fc4b2e7a31ceb509d6e592b704dc0cf2"
+  },
+  "BetterMail/Sources/Models/GraphTopicSignal.swift": {
+    "mtime": 1786280398.0117087,
+    "ast_hash": "91cb874b25ed2523d1609275b2c45b2b",
+    "semantic_hash": "91cb874b25ed2523d1609275b2c45b2b"
+  },
+  "BetterMail/Sources/Models/MailboxHierarchy.swift": {
+    "mtime": 1786956735.163668,
+    "ast_hash": "c1ec6363865a1a11dab6988609c57b2e",
+    "semantic_hash": "c1ec6363865a1a11dab6988609c57b2e"
+  },
+  "BetterMail/Sources/Models/ManualThreadGroup.swift": {
+    "mtime": 1787112511.1596143,
+    "ast_hash": "cee9fc9eb16d4ef40ce5809e615186e4",
+    "semantic_hash": "cee9fc9eb16d4ef40ce5809e615186e4"
+  },
+  "BetterMail/Sources/Models/SummaryCacheEntry.swift": {
+    "mtime": 1787193177.768372,
+    "ast_hash": "7026df7ce57707c234992455ecb114ab",
+    "semantic_hash": "7026df7ce57707c234992455ecb114ab"
+  },
+  "BetterMail/Sources/Models/ThreadFolder.swift": {
+    "mtime": 1773643679.8008952,
+    "ast_hash": "9b5faf4dbad66942548f8e5e67c99628",
+    "semantic_hash": "9b5faf4dbad66942548f8e5e67c99628"
+  },
+  "BetterMail/Sources/Models/ThreadSummaryCacheEntry.swift": {
+    "mtime": 1769394117.2711568,
+    "ast_hash": "a91f020a088f3fc2f1f632a7f081f9d7",
+    "semantic_hash": "a91f020a088f3fc2f1f632a7f081f9d7"
+  },
+  "BetterMail/Sources/Services/BatchBackfillService.swift": {
+    "mtime": 1787032785.6406476,
+    "ast_hash": "9175e6ac942daec21172bb84046fc550",
+    "semantic_hash": "9175e6ac942daec21172bb84046fc550"
+  },
+  "BetterMail/Sources/Services/CalendarThreadRecoveryService.swift": {
+    "mtime": 1787033020.6300585,
+    "ast_hash": "eb2f8fd9f487bdc52ea60f39b0f39a0b",
+    "semantic_hash": "eb2f8fd9f487bdc52ea60f39b0f39a0b"
+  },
+  "BetterMail/Sources/Services/DayFetchCoordinator.swift": {
+    "mtime": 1786608886.7008877,
+    "ast_hash": "6fd1bc9b1012deb192b2c2a2df9dd537",
+    "semantic_hash": "6fd1bc9b1012deb192b2c2a2df9dd537"
+  },
+  "BetterMail/Sources/Services/EmailSummaryProvider.swift": {
+    "mtime": 1787196118.5617657,
+    "ast_hash": "79b40e550f7ec5f87e7cc46ce0dde5f4",
+    "semantic_hash": "79b40e550f7ec5f87e7cc46ce0dde5f4"
+  },
+  "BetterMail/Sources/Services/EmailTagProvider.swift": {
+    "mtime": 1770018528.9913564,
+    "ast_hash": "464c1c8d12102851cffcb7afc519521f",
+    "semantic_hash": "464c1c8d12102851cffcb7afc519521f"
+  },
+  "BetterMail/Sources/Services/FoundationModelsSupport.swift": {
+    "mtime": 1787112753.1299918,
+    "ast_hash": "a759b3ed24185a79b0a80fb1fdbd0db1",
+    "semantic_hash": "a759b3ed24185a79b0a80fb1fdbd0db1"
+  },
+  "BetterMail/Sources/Services/GraphTopicProvider.swift": {
+    "mtime": 1786282007.5315309,
+    "ast_hash": "e20d177a679e07579d714065e6b4d8c1",
+    "semantic_hash": "e20d177a679e07579d714065e6b4d8c1"
+  },
+  "BetterMail/Sources/Services/ProcessingActivityCenter.swift": {
+    "mtime": 1787198167.1578054,
+    "ast_hash": "1fc87f371301134a4297728d912cef36",
+    "semantic_hash": "1fc87f371301134a4297728d912cef36"
+  },
+  "BetterMail/Sources/Services/SummaryRegenerationService.swift": {
+    "mtime": 1787194268.9139392,
+    "ast_hash": "22b39e9301f6570c75c7214c7e908a22",
+    "semantic_hash": "22b39e9301f6570c75c7214c7e908a22"
+  },
+  "BetterMail/Sources/Services/ThreadSummaryContextBuilder.swift": {
+    "mtime": 1787194116.0186696,
+    "ast_hash": "a69134e68cad50a157db43a4952b1526",
+    "semantic_hash": "a69134e68cad50a157db43a4952b1526"
+  },
+  "BetterMail/Sources/Settings/AppearanceSettings.swift": {
+    "mtime": 1771209664.3816319,
+    "ast_hash": "9e66452c6cc60e463a82d29a5dcafb42",
+    "semantic_hash": "9e66452c6cc60e463a82d29a5dcafb42"
+  },
+  "BetterMail/Sources/Settings/AutoRefreshSettings.swift": {
+    "mtime": 1772616217.7591228,
+    "ast_hash": "59b653fd9f82ef35c8be22c2b58b199d",
+    "semantic_hash": "59b653fd9f82ef35c8be22c2b58b199d"
+  },
+  "BetterMail/Sources/Settings/BatchBackfillSettingsViewModel.swift": {
+    "mtime": 1787199100.0896084,
+    "ast_hash": "a467bd6c7599ed5239ce27be3f88f805",
+    "semantic_hash": "a467bd6c7599ed5239ce27be3f88f805"
+  },
+  "BetterMail/Sources/Settings/GraphCanvasSettings.swift": {
+    "mtime": 1786958448.9383245,
+    "ast_hash": "14a4fc45bd8ebe5c0a412c83a299d1ac",
+    "semantic_hash": "14a4fc45bd8ebe5c0a412c83a299d1ac"
+  },
+  "BetterMail/Sources/Settings/InspectorViewSettings.swift": {
+    "mtime": 1769394117.273271,
+    "ast_hash": "5c73a236a518d18d7d517a4d0071bc72",
+    "semantic_hash": "5c73a236a518d18d7d517a4d0071bc72"
+  },
+  "BetterMail/Sources/Settings/MailboxFolderOrderSettings.swift": {
+    "mtime": 1773643679.8176284,
+    "ast_hash": "40d26802a9fd58a26fc91f4c6a1c33fa",
+    "semantic_hash": "40d26802a9fd58a26fc91f4c6a1c33fa"
+  },
+  "BetterMail/Sources/Settings/MailboxSidebarExpansionSettings.swift": {
+    "mtime": 1773643679.8178504,
+    "ast_hash": "dcf38e9edc9e0ce673449e3d05021580",
+    "semantic_hash": "dcf38e9edc9e0ce673449e3d05021580"
+  },
+  "BetterMail/Sources/Settings/MailboxThreadAutoMoveSettings.swift": {
+    "mtime": 1773643679.818417,
+    "ast_hash": "75023f845b57d6a340ee0629b947a8b9",
+    "semantic_hash": "75023f845b57d6a340ee0629b947a8b9"
+  },
+  "BetterMail/Sources/Settings/PinnedFolderSettings.swift": {
+    "mtime": 1770713254.7861176,
+    "ast_hash": "10d04329fc799742dfee394db8fe901f",
+    "semantic_hash": "10d04329fc799742dfee394db8fe901f"
+  },
+  "BetterMail/Sources/Settings/ThreadCanvasDisplaySettings.swift": {
+    "mtime": 1781714628.5318933,
+    "ast_hash": "fdf0f0b159e5fe0ac52c9f09c42c4d84",
+    "semantic_hash": "fdf0f0b159e5fe0ac52c9f09c42c4d84"
+  },
+  "BetterMail/Sources/Storage/MessageStore.swift": {
+    "mtime": 1787207387.0963862,
+    "ast_hash": "800cc9ee869c2e2ef3ad7bd1a12c50e5",
+    "semantic_hash": "800cc9ee869c2e2ef3ad7bd1a12c50e5"
+  },
+  "BetterMail/Sources/Support/CalendarRSVPClassifier.swift": {
+    "mtime": 1786958544.9364989,
+    "ast_hash": "9a7876c8aa195e022f3285b6923d8517",
+    "semantic_hash": "9a7876c8aa195e022f3285b6923d8517"
+  },
+  "BetterMail/Sources/Support/Log.swift": {
+    "mtime": 1773643679.8197792,
+    "ast_hash": "6f3e5e7a6dfc57409c5930418a011a89",
+    "semantic_hash": "6f3e5e7a6dfc57409c5930418a011a89"
+  },
+  "BetterMail/Sources/Support/SnippetFormatter.swift": {
+    "mtime": 1787144002.193234,
+    "ast_hash": "4ea72a398b049bce6c3b05aac281c1e0",
+    "semantic_hash": "4ea72a398b049bce6c3b05aac281c1e0"
+  },
+  "BetterMail/Sources/Support/ThreadSummaryFingerprint.swift": {
+    "mtime": 1787192485.3686473,
+    "ast_hash": "c3438db4328c4835f0512ad9116d503c",
+    "semantic_hash": "c3438db4328c4835f0512ad9116d503c"
+  },
+  "BetterMail/Sources/Threading/JWZThreader.swift": {
+    "mtime": 1787207432.1696339,
+    "ast_hash": "11f13e44c57f95d14c3a32e069aca08a",
+    "semantic_hash": "11f13e44c57f95d14c3a32e069aca08a"
+  },
+  "BetterMail/Sources/UI/AccessibilityIdentifiers.swift": {
+    "mtime": 1787144139.719442,
+    "ast_hash": "91b0ae5c1bd33511ed505228f382b405",
+    "semantic_hash": "91b0ae5c1bd33511ed505228f382b405"
+  },
+  "BetterMail/Sources/UI/ActionItemsView.swift": {
+    "mtime": 1786085261.785988,
+    "ast_hash": "7848b8561dd22a8ef206123ceea89a5d",
+    "semantic_hash": "7848b8561dd22a8ef206123ceea89a5d"
+  },
+  "BetterMail/Sources/UI/AutoRefreshSettingsView.swift": {
+    "mtime": 1781714628.534031,
+    "ast_hash": "231d3341e60fc0ec30c0d700658bf7a1",
+    "semantic_hash": "231d3341e60fc0ec30c0d700658bf7a1"
+  },
+  "BetterMail/Sources/UI/DayCoverageCalendarView.swift": {
+    "mtime": 1786608196.2180822,
+    "ast_hash": "118e37d1b0067ed7511504073e626fd3",
+    "semantic_hash": "118e37d1b0067ed7511504073e626fd3"
+  },
+  "BetterMail/Sources/UI/DesignTokens.swift": {
+    "mtime": 1787110389.7604616,
+    "ast_hash": "1fc21f9f6fba0702165b1812f35500f9",
+    "semantic_hash": "1fc21f9f6fba0702165b1812f35500f9"
+  },
+  "BetterMail/Sources/UI/FocusedValues.swift": {
+    "mtime": 1781714628.5344636,
+    "ast_hash": "fb3934759ae71b5d54c991ceeab32d4d",
+    "semantic_hash": "fb3934759ae71b5d54c991ceeab32d4d"
+  },
+  "BetterMail/Sources/UI/Glassmorphism.swift": {
+    "mtime": 1781714628.5346594,
+    "ast_hash": "8a5d74e5031dc9114fdf7cebc6c1826e",
+    "semantic_hash": "8a5d74e5031dc9114fdf7cebc6c1826e"
+  },
+  "BetterMail/Sources/UI/GlobalMinimapOverlay.swift": {
+    "mtime": 1781714628.5347626,
+    "ast_hash": "f5b5f36af36e57a6c9a3b16fb0080741",
+    "semantic_hash": "f5b5f36af36e57a6c9a3b16fb0080741"
+  },
+  "BetterMail/Sources/UI/Graph/GraphAudio.swift": {
+    "mtime": 1781714628.5349023,
+    "ast_hash": "1bfecb623855eeccb1ac41d440d24b9c",
+    "semantic_hash": "1bfecb623855eeccb1ac41d440d24b9c"
+  },
+  "BetterMail/Sources/UI/Graph/GraphCanvasView.swift": {
+    "mtime": 1787207462.7580194,
+    "ast_hash": "60c08c95c91def1eb351b1ac1e318953",
+    "semantic_hash": "60c08c95c91def1eb351b1ac1e318953"
+  },
+  "BetterMail/Sources/UI/Graph/GraphData.swift": {
+    "mtime": 1787207462.600377,
+    "ast_hash": "bfca277057e8576006c2956858092803",
+    "semantic_hash": "bfca277057e8576006c2956858092803"
+  },
+  "BetterMail/Sources/UI/Graph/GraphForceSimulator.swift": {
+    "mtime": 1787110389.4558065,
+    "ast_hash": "cb19760eb6b9d5f1564b6bc1d88cc06a",
+    "semantic_hash": "cb19760eb6b9d5f1564b6bc1d88cc06a"
+  },
+  "BetterMail/Sources/UI/Graph/GraphHoverCard.swift": {
+    "mtime": 1786956818.411941,
+    "ast_hash": "5599651b14c8197265fa376195c44e3d",
+    "semantic_hash": "5599651b14c8197265fa376195c44e3d"
+  },
+  "BetterMail/Sources/UI/Graph/GraphRepresentable.swift": {
+    "mtime": 1786956751.4296064,
+    "ast_hash": "8fe21a3a5d3c20a445010e7d78ce879f",
+    "semantic_hash": "8fe21a3a5d3c20a445010e7d78ce879f"
+  },
+  "BetterMail/Sources/UI/Graph/GraphRestoreHistoryControl.swift": {
+    "mtime": 1786680261.4034839,
+    "ast_hash": "ae142b9d86972a711cf38794381fb9dc",
+    "semantic_hash": "ae142b9d86972a711cf38794381fb9dc"
+  },
+  "BetterMail/Sources/UI/Graph/GraphScene.swift": {
+    "mtime": 1787110406.3178668,
+    "ast_hash": "d0f6f502c6c48b40cc73841ee187e355",
+    "semantic_hash": "d0f6f502c6c48b40cc73841ee187e355"
+  },
+  "BetterMail/Sources/UI/Graph/GraphSceneNodes.swift": {
+    "mtime": 1786606500.9679084,
+    "ast_hash": "6a01a7a287345d46220fa5569710b10b",
+    "semantic_hash": "6a01a7a287345d46220fa5569710b10b"
+  },
+  "BetterMail/Sources/UI/Graph/GraphSettingsSheet.swift": {
+    "mtime": 1786956696.4294214,
+    "ast_hash": "61e059bcacec2960ba40f4dd83ce6045",
+    "semantic_hash": "61e059bcacec2960ba40f4dd83ce6045"
+  },
+  "BetterMail/Sources/UI/Graph/GraphSnipModels.swift": {
+    "mtime": 1786608163.5877836,
+    "ast_hash": "8618725ce3e51a0d01f6dc85240a5128",
+    "semantic_hash": "8618725ce3e51a0d01f6dc85240a5128"
+  },
+  "BetterMail/Sources/UI/Graph/GraphSuggestionReviewSheet.swift": {
+    "mtime": 1786282424.0433452,
+    "ast_hash": "f7736bf6f1fa900558e3c01be4e26280",
+    "semantic_hash": "f7736bf6f1fa900558e3c01be4e26280"
+  },
+  "BetterMail/Sources/UI/Graph/GraphToolbar.swift": {
+    "mtime": 1786679320.7624774,
+    "ast_hash": "eb272b50cc4572a005a1292d7fac082e",
+    "semantic_hash": "eb272b50cc4572a005a1292d7fac082e"
+  },
+  "BetterMail/Sources/UI/Graph/GraphTopicRanker.swift": {
+    "mtime": 1786282093.9569242,
+    "ast_hash": "5e9bd0cde8dcac5bf78fce4368f4e9e8",
+    "semantic_hash": "5e9bd0cde8dcac5bf78fce4368f4e9e8"
+  },
+  "BetterMail/Sources/UI/Graph/ObsidianGraphControls.swift": {
+    "mtime": 1786956696.539467,
+    "ast_hash": "35dd3571e63ecdda262e2b05af9cb088",
+    "semantic_hash": "35dd3571e63ecdda262e2b05af9cb088"
+  },
+  "BetterMail/Sources/UI/Graph/ObsidianGraphForceSimulator.swift": {
+    "mtime": 1787110389.5950763,
+    "ast_hash": "f9ae3e88d00c7699236ba6dd2e23ead4",
+    "semantic_hash": "f9ae3e88d00c7699236ba6dd2e23ead4"
+  },
+  "BetterMail/Sources/UI/Graph/ObsidianGraphScene.swift": {
+    "mtime": 1787195730.5372643,
+    "ast_hash": "5597389857af3268eb9bc85f211dd8f0",
+    "semantic_hash": "5597389857af3268eb9bc85f211dd8f0"
+  },
+  "BetterMail/Sources/UI/Graph/ObsidianGraphSceneNode.swift": {
+    "mtime": 1786607959.912988,
+    "ast_hash": "fd4b2ea860660f36bfe64af0359721b7",
+    "semantic_hash": "fd4b2ea860660f36bfe64af0359721b7"
+  },
+  "BetterMail/Sources/UI/Graph/SnipMoveSheet.swift": {
+    "mtime": 1786610005.866658,
+    "ast_hash": "9176db1142dcc6f106ab8dfe7d41f9c4",
+    "semantic_hash": "9176db1142dcc6f106ab8dfe7d41f9c4"
+  },
+  "BetterMail/Sources/UI/MailboxSidebarView.swift": {
+    "mtime": 1781714628.5411649,
+    "ast_hash": "4949917fcb679dfbefd8c21e171c19e2",
+    "semantic_hash": "4949917fcb679dfbefd8c21e171c19e2"
+  },
+  "BetterMail/Sources/UI/ProcessingActivityViews.swift": {
+    "mtime": 1787198281.9838712,
+    "ast_hash": "e5627582ccc8e90ac3cb2a48b8cbbcab",
+    "semantic_hash": "e5627582ccc8e90ac3cb2a48b8cbbcab"
+  },
+  "BetterMail/Sources/UI/ThreadCanvasLayout.swift": {
+    "mtime": 1781714628.5414474,
+    "ast_hash": "d7fcd5a34b6949dbf9b80d8dcea88570",
+    "semantic_hash": "d7fcd5a34b6949dbf9b80d8dcea88570"
+  },
+  "BetterMail/Sources/UI/ThreadCanvasView.swift": {
+    "mtime": 1787110390.2308252,
+    "ast_hash": "91c9f5d933a1158aa89ca78aeec116a2",
+    "semantic_hash": "91c9f5d933a1158aa89ca78aeec116a2"
+  },
+  "BetterMail/Sources/UI/ThreadFolderInspectorView.swift": {
+    "mtime": 1781714628.5432534,
+    "ast_hash": "1d3e3b74cdecab5c09ba470448359ee1",
+    "semantic_hash": "1d3e3b74cdecab5c09ba470448359ee1"
+  },
+  "BetterMail/Sources/UI/ThreadInspectorView.swift": {
+    "mtime": 1787144139.598399,
+    "ast_hash": "4ff0b6a0ee9728d9a518fffcdc462582",
+    "semantic_hash": "4ff0b6a0ee9728d9a518fffcdc462582"
+  },
+  "BetterMail/Sources/UI/ThreadListView.swift": {
+    "mtime": 1787195515.4677963,
+    "ast_hash": "7150c18d00f4b2e5bec28253e663ecbb",
+    "semantic_hash": "7150c18d00f4b2e5bec28253e663ecbb"
+  },
+  "BetterMail/Sources/UI/ThreadSummaryDisclosureView.swift": {
+    "mtime": 1786085309.4556859,
+    "ast_hash": "22802458508526dbe5c91797f8bbf6aa",
+    "semantic_hash": "22802458508526dbe5c91797f8bbf6aa"
+  },
+  "BetterMail/Sources/UI/ToastOverlay.swift": {
+    "mtime": 1781714628.5445712,
+    "ast_hash": "a4e1f3d7ff7fe71fef8fe7ceccebbf2b",
+    "semantic_hash": "a4e1f3d7ff7fe71fef8fe7ceccebbf2b"
+  },
+  "BetterMail/Sources/ViewModels/GraphCanvasViewModel.swift": {
+    "mtime": 1787207462.3644497,
+    "ast_hash": "17e3e333f70bdcd6a518b5b3b0b873a8",
+    "semantic_hash": "17e3e333f70bdcd6a518b5b3b0b873a8"
+  },
+  "BetterMail/Sources/ViewModels/ThreadCanvasViewModel.swift": {
+    "mtime": 1787207462.482634,
+    "ast_hash": "700659fc39e15439d7e8452c02612552",
+    "semantic_hash": "700659fc39e15439d7e8452c02612552"
+  },
+  "MailHelperExtension/ComposeSessionHandler.swift": {
+    "mtime": 1769394117.2849777,
+    "ast_hash": "1f70d0e5662c4e5f0ba32918e6ee73cb",
+    "semantic_hash": "1f70d0e5662c4e5f0ba32918e6ee73cb"
+  },
+  "MailHelperExtension/ComposeSessionViewController.swift": {
+    "mtime": 1769394117.285696,
+    "ast_hash": "28a3c95a6307dfa91a196b81d85f650e",
+    "semantic_hash": "28a3c95a6307dfa91a196b81d85f650e"
+  },
+  "MailHelperExtension/ContentBlocker.swift": {
+    "mtime": 1769394117.2860427,
+    "ast_hash": "a3d5a783c368e4203d3d494084a2f56b",
+    "semantic_hash": "a3d5a783c368e4203d3d494084a2f56b"
+  },
+  "MailHelperExtension/ContentBlockerRules.json": {
+    "mtime": 1762423969.5372355,
+    "ast_hash": "f14f3ec0f7e108b9fc7509e454f9859f",
+    "semantic_hash": "f14f3ec0f7e108b9fc7509e454f9859f"
+  },
+  "MailHelperExtension/MailExtension.swift": {
+    "mtime": 1769394117.2862537,
+    "ast_hash": "5a550c03c988a5da67fd5e8993069724",
+    "semantic_hash": "5a550c03c988a5da67fd5e8993069724"
+  },
+  "MailHelperExtension/MessageActionHandler.swift": {
+    "mtime": 1769394117.2864816,
+    "ast_hash": "89e5fadfa66fcc88a1fa21ba31dc7e5c",
+    "semantic_hash": "89e5fadfa66fcc88a1fa21ba31dc7e5c"
+  },
+  "MailHelperExtension/MessageSecurityHandler.swift": {
+    "mtime": 1769394117.2877162,
+    "ast_hash": "93aa222b076445f57f7d84e9b55a2902",
+    "semantic_hash": "93aa222b076445f57f7d84e9b55a2902"
+  },
+  "MailHelperExtension/MessageSecurityViewController.swift": {
+    "mtime": 1769394117.2881563,
+    "ast_hash": "f363b81e422d06acf27021c2b4e4635a",
+    "semantic_hash": "f363b81e422d06acf27021c2b4e4635a"
+  },
+  "Tests/ActionItemTests.swift": {
+    "mtime": 1773910254.5865254,
+    "ast_hash": "8f53c37111ae4b48e1706b54e1f93e42",
+    "semantic_hash": "8f53c37111ae4b48e1706b54e1f93e42"
+  },
+  "Tests/AppearanceSettingsTests.swift": {
+    "mtime": 1771209664.386671,
+    "ast_hash": "808d7cf6e829ad87b6b01f8a553559ab",
+    "semantic_hash": "808d7cf6e829ad87b6b01f8a553559ab"
+  },
+  "Tests/BatchBackfillServiceTests.swift": {
+    "mtime": 1787033052.986736,
+    "ast_hash": "debae55133e99a8b2993a5eb9ac7dea2",
+    "semantic_hash": "debae55133e99a8b2993a5eb9ac7dea2"
+  },
+  "Tests/CalendarThreadRecoveryTests.swift": {
+    "mtime": 1787194354.5775936,
+    "ast_hash": "e34eaa5d94323f7956f7223a781b6812",
+    "semantic_hash": "e34eaa5d94323f7956f7223a781b6812"
+  },
+  "Tests/GraphTests.swift": {
+    "mtime": 1787208133.289816,
+    "ast_hash": "03ae103aa93add21ae1779bf3da6fb79",
+    "semantic_hash": "03ae103aa93add21ae1779bf3da6fb79"
+  },
+  "Tests/MIMESnippetExtractionTests.swift": {
+    "mtime": 1787208689.6002305,
+    "ast_hash": "a63b8438c4d86b470d3a055ff0efa766",
+    "semantic_hash": "a63b8438c4d86b470d3a055ff0efa766"
+  },
+  "Tests/MailControlTests.swift": {
+    "mtime": 1786607403.4806428,
+    "ast_hash": "7702a58c713b15b54d78691244ec0cb0",
+    "semantic_hash": "7702a58c713b15b54d78691244ec0cb0"
+  },
+  "Tests/MailboxNavigationTests.swift": {
+    "mtime": 1784779256.2549167,
+    "ast_hash": "14331b1de1cf24669cefffb6b6cfb677",
+    "semantic_hash": "14331b1de1cf24669cefffb6b6cfb677"
+  },
+  "Tests/MailboxThreadAutoMoveSettingsTests.swift": {
+    "mtime": 1773643679.861452,
+    "ast_hash": "0eada1c864fc667e0d2eea5d2a758391",
+    "semantic_hash": "0eada1c864fc667e0d2eea5d2a758391"
+  },
+  "Tests/ManualThreadOverrideTests.swift": {
+    "mtime": 1787208133.0323827,
+    "ast_hash": "9ad6b9730428fcbe3a5a8549b906f755",
+    "semantic_hash": "9ad6b9730428fcbe3a5a8549b906f755"
+  },
+  "Tests/MessageStoreBoundaryTests.swift": {
+    "mtime": 1787208133.1590092,
+    "ast_hash": "26677e79dd35842948ecf976b3d2c575",
+    "semantic_hash": "26677e79dd35842948ecf976b3d2c575"
+  },
+  "Tests/NeedsAttentionTests.swift": {
+    "mtime": 1781714628.548894,
+    "ast_hash": "29b85925bc7d7e6666ff2dd00c79ca34",
+    "semantic_hash": "29b85925bc7d7e6666ff2dd00c79ca34"
+  },
+  "Tests/SummaryRegenerationServiceTests.swift": {
+    "mtime": 1787199127.7418106,
+    "ast_hash": "41994055206ea78c0fbd640ba7b3fe10",
+    "semantic_hash": "41994055206ea78c0fbd640ba7b3fe10"
+  },
+  "Tests/ThreadCanvasBackfillTests.swift": {
+    "mtime": 1781714628.5491037,
+    "ast_hash": "946e3bd57557c3f66e44f0e247194430",
+    "semantic_hash": "946e3bd57557c3f66e44f0e247194430"
+  },
+  "Tests/ThreadCanvasDisplaySettingsTests.swift": {
+    "mtime": 1773643679.8634512,
+    "ast_hash": "c0dac34de9daedd8ac93311a819b8d41",
+    "semantic_hash": "c0dac34de9daedd8ac93311a819b8d41"
+  },
+  "Tests/ThreadCanvasLayoutTests.swift": {
+    "mtime": 1787198222.7294304,
+    "ast_hash": "81e14547e743d49492ae8ef90df45429",
+    "semantic_hash": "81e14547e743d49492ae8ef90df45429"
+  },
+  "Tests/ThreadCanvasNodeTextVisibilityTests.swift": {
+    "mtime": 1769652529.6622655,
+    "ast_hash": "6f1bf57e447bce1a49e573e3e729292c",
+    "semantic_hash": "6f1bf57e447bce1a49e573e3e729292c"
+  },
+  "Tests/ThreadFolderColorTests.swift": {
+    "mtime": 1773643679.8640225,
+    "ast_hash": "4941eb9cb3f3c88c390d9cfbbbcfdffb",
+    "semantic_hash": "4941eb9cb3f3c88c390d9cfbbbcfdffb"
+  },
+  "Tests/ThreadFolderMailboxTests.swift": {
+    "mtime": 1787115019.4219186,
+    "ast_hash": "f869effff51a2e2015383846e72682cf",
+    "semantic_hash": "f869effff51a2e2015383846e72682cf"
+  },
+  "Tests/ThreadInspectorViewTests.swift": {
+    "mtime": 1787144249.544156,
+    "ast_hash": "fb544e865a2e89dfb615589dbf622b28",
+    "semantic_hash": "fb544e865a2e89dfb615589dbf622b28"
+  },
+  "Tests/ThreadSummaryCacheTests.swift": {
+    "mtime": 1787202936.2263992,
+    "ast_hash": "c98d6fc025d46452c39ffa7d44f6ba9a",
+    "semantic_hash": "c98d6fc025d46452c39ffa7d44f6ba9a"
+  },
+  "script/build_and_run.sh": {
+    "mtime": 1785087673.2390087,
+    "ast_hash": "425562f662bfabdf686c6f70e728e75e",
+    "semantic_hash": "425562f662bfabdf686c6f70e728e75e"
+  },
+  ".codex/skills/mail-applescript-triage/SKILL.md": {
+    "mtime": 1773643679.7814913,
+    "ast_hash": "8d769e427782e08f09b2de5bce5579b9",
+    "semantic_hash": "8d769e427782e08f09b2de5bce5579b9"
+  },
+  ".github/workflows/docs.yaml": {
+    "mtime": 1769394117.2622988,
+    "ast_hash": "9fda170dbed69cc2af7264e77f5376af",
+    "semantic_hash": "9fda170dbed69cc2af7264e77f5376af"
+  },
+  "AGENTS.md": {
+    "mtime": 1781714628.5081878,
+    "ast_hash": "791fdb8ae6ad8c9d361487ee3cd96eda",
+    "semantic_hash": "791fdb8ae6ad8c9d361487ee3cd96eda"
+  },
+  "BetterMail/AGENTS.md": {
+    "mtime": 1769394117.265925,
+    "ast_hash": "7d8a685de7e8e8077f1faf84dd2a34ab",
+    "semantic_hash": "7d8a685de7e8e8077f1faf84dd2a34ab"
+  },
+  "CLAUDE.md": {
+    "mtime": 1773801353.265296,
+    "ast_hash": "8988976d9625aa9ab24440359b792fec",
+    "semantic_hash": "8988976d9625aa9ab24440359b792fec"
+  },
+  "README.md": {
+    "mtime": 1787207593.9443657,
+    "ast_hash": "3d185db97c1cbef5329c34cd3572ece8",
+    "semantic_hash": "3d185db97c1cbef5329c34cd3572ece8"
+  },
+  "TechDocs/index.md": {
+    "mtime": 1787207594.0674212,
+    "ast_hash": "297de63ff409d00a8c30c19c26ea0843",
+    "semantic_hash": "297de63ff409d00a8c30c19c26ea0843"
+  },
+  "docs/AppleIntelligence.md": {
+    "mtime": 1787195900.428167,
+    "ast_hash": "401b86e61027fa94d9b26d7393d851d3",
+    "semantic_hash": "401b86e61027fa94d9b26d7393d851d3"
+  },
+  "docs/Architecture.md": {
+    "mtime": 1786608608.1240444,
+    "ast_hash": "795709846e1cef64fe95f32743f44730",
+    "semantic_hash": "795709846e1cef64fe95f32743f44730"
+  },
+  "docs/DataFlow.md": {
+    "mtime": 1786608598.9960623,
+    "ast_hash": "9801435be37e75c52215bfe2e4a9d534",
+    "semantic_hash": "9801435be37e75c52215bfe2e4a9d534"
+  },
+  "docs/DeveloperID-DMG-Release.md": {
+    "mtime": 1773643679.8648417,
+    "ast_hash": "78aa5cdaefaef463befd1a70b61f953d",
+    "semantic_hash": "78aa5cdaefaef463befd1a70b61f953d"
+  },
+  "docs/MailKitHelper.md": {
+    "mtime": 1769394117.2905798,
+    "ast_hash": "6f47e0f74bd43b2b2c815dfc14805b8e",
+    "semantic_hash": "6f47e0f74bd43b2b2c815dfc14805b8e"
+  },
+  "docs/MigrationLog.md": {
+    "mtime": 1769394117.290708,
+    "ast_hash": "166c64773cdfa504cdc0200e46ca286d",
+    "semantic_hash": "166c64773cdfa504cdc0200e46ca286d"
+  },
+  "docs/ModuleMap.md": {
+    "mtime": 1786608627.162725,
+    "ast_hash": "f560be4563c0edfe380a93f6d619b6a5",
+    "semantic_hash": "f560be4563c0edfe380a93f6d619b6a5"
+  },
+  "docs/RefactorAudit.md": {
+    "mtime": 1769394117.2909935,
+    "ast_hash": "e9b3cc8dffac0f3fc56d1f0bf6d79ff9",
+    "semantic_hash": "e9b3cc8dffac0f3fc56d1f0bf6d79ff9"
+  },
+  "docs/index.md": {
+    "mtime": 1773643679.8652034,
+    "ast_hash": "64901f2c85d59a98541634b897b3f4f0",
+    "semantic_hash": "64901f2c85d59a98541634b897b3f4f0"
+  },
+  "docs/mailbox-create-and-move-debug-notes.md": {
+    "mtime": 1773643679.865343,
+    "ast_hash": "5ddc6261ec05263767cf6a13c9bef95a",
+    "semantic_hash": "5ddc6261ec05263767cf6a13c9bef95a"
+  },
+  "docs/plans/graph-branch-edges.md": {
+    "mtime": 1781714628.5498593,
+    "ast_hash": "e462441e84c9b855daab3e551b0414e1",
+    "semantic_hash": "e462441e84c9b855daab3e551b0414e1"
+  },
+  "docs/plans/graph-redesign.md": {
+    "mtime": 1786680009.995452,
+    "ast_hash": "a0a72ab2ce1d8333568f7fcaba1cd745",
+    "semantic_hash": "a0a72ab2ce1d8333568f7fcaba1cd745"
+  },
+  "docs/plans/graph-view.md": {
+    "mtime": 1787198243.1587622,
+    "ast_hash": "0711df30fafaaa9235ba0b27015005eb",
+    "semantic_hash": "0711df30fafaaa9235ba0b27015005eb"
+  },
+  "docs/playgrounds/graph-branch-edges.html": {
+    "mtime": 1781714628.5504615,
+    "ast_hash": "728cd51040afd60523af69561d1ada59",
+    "semantic_hash": "728cd51040afd60523af69561d1ada59"
+  },
+  "docs/playgrounds/graph-redesign.html": {
+    "mtime": 1781714628.5507703,
+    "ast_hash": "de71fe8d38003d35e1d7ac4e06c782dd",
+    "semantic_hash": "de71fe8d38003d35e1d7ac4e06c782dd"
+  },
+  "docs/prompts/EmailSummary-Folder.md": {
+    "mtime": 1770018529.000173,
+    "ast_hash": "4f1db91ac7238530240151454046d557",
+    "semantic_hash": "4f1db91ac7238530240151454046d557"
+  },
+  "docs/prompts/EmailSummary-ThreadMessage.md": {
+    "mtime": 1787192794.3452485,
+    "ast_hash": "95bfce19807eeff6d21bc5b1fcbc6ec2",
+    "semantic_hash": "95bfce19807eeff6d21bc5b1fcbc6ec2"
+  },
+  "docs/prompts/EmailTags.md": {
+    "mtime": 1770018529.0020823,
+    "ast_hash": "80e7e1e31b8cbc1aa6cca03ac57a1008",
+    "semantic_hash": "80e7e1e31b8cbc1aa6cca03ac57a1008"
+  },
+  "docs/requirements.txt": {
+    "mtime": 1769394117.2913003,
+    "ast_hash": "b5396a8035d6e79ae001f1ce1262d8e6",
+    "semantic_hash": "b5396a8035d6e79ae001f1ce1262d8e6"
+  },
+  "docs/superpowers/plans/2026-03-19-action-items.md": {
+    "mtime": 1773904892.7890978,
+    "ast_hash": "a69d29a396ce7f0c5ce13a1f4a904bba",
+    "semantic_hash": "a69d29a396ce7f0c5ce13a1f4a904bba"
+  },
+  "docs/superpowers/plans/2026-03-24-minimap-beautification.md": {
+    "mtime": 1781714628.5509214,
+    "ast_hash": "c23376320d38758f99a843883a6c10f4",
+    "semantic_hash": "c23376320d38758f99a843883a6c10f4"
+  },
+  "docs/superpowers/plans/2026-03-26-mime-aware-snippet-extraction.md": {
+    "mtime": 1781714628.5510855,
+    "ast_hash": "d071d175e5488715c25fca880d6619a5",
+    "semantic_hash": "d071d175e5488715c25fca880d6619a5"
+  },
+  "docs/superpowers/specs/2026-03-19-action-items-design.md": {
+    "mtime": 1773899419.6746662,
+    "ast_hash": "7833b4721152f5ef7aa2d8befb2ce625",
+    "semantic_hash": "7833b4721152f5ef7aa2d8befb2ce625"
+  },
+  "docs/superpowers/specs/2026-03-24-empty-row-collapse-design.md": {
+    "mtime": 1781714628.551204,
+    "ast_hash": "a16411930493c315da9bab34014356d4",
+    "semantic_hash": "a16411930493c315da9bab34014356d4"
+  },
+  "docs/superpowers/specs/2026-03-24-minimap-beautification-design.md": {
+    "mtime": 1781714628.5513089,
+    "ast_hash": "24cf55223a6e12cb3b33485b6eff05a4",
+    "semantic_hash": "24cf55223a6e12cb3b33485b6eff05a4"
+  },
+  "docs/superpowers/specs/2026-03-26-mime-aware-snippet-extraction-design.md": {
+    "mtime": 1781714628.5515902,
+    "ast_hash": "f3e56f2bbed0b035bb0cd8914e3ddebd",
+    "semantic_hash": "f3e56f2bbed0b035bb0cd8914e3ddebd"
+  },
+  "docs/thread-canvas-zstack-components.md": {
+    "mtime": 1787195900.569164,
+    "ast_hash": "bd0b4bd339e71c05f01f0724381b7318",
+    "semantic_hash": "bd0b4bd339e71c05f01f0724381b7318"
+  },
+  "docs/thread-list-layered-content.md": {
+    "mtime": 1786612345.6902666,
+    "ast_hash": "881b18fb64e77b08bdeae095575731b5",
+    "semantic_hash": "881b18fb64e77b08bdeae095575731b5"
+  },
+  "mkdocs.yml": {
+    "mtime": 1770018529.0028067,
+    "ast_hash": "f26d337c9f872a12dc03b699d7ff41fa",
+    "semantic_hash": "f26d337c9f872a12dc03b699d7ff41fa"
+  },
+  "openspec/AGENTS.md": {
+    "mtime": 1770713254.7959363,
+    "ast_hash": "b80c09a2a9de94656c76d5da43a67d80",
+    "semantic_hash": "b80c09a2a9de94656c76d5da43a67d80"
+  },
+  "openspec/changes/add-appearance-settings/design.md": {
+    "mtime": 1771209664.3872638,
+    "ast_hash": "c7d0b837eecfc294ff8e5b0f881e5e8f",
+    "semantic_hash": "c7d0b837eecfc294ff8e5b0f881e5e8f"
+  },
+  "openspec/changes/add-appearance-settings/proposal.md": {
+    "mtime": 1771209664.3875947,
+    "ast_hash": "1dc78ad9c6e6d32fc4740ae8ebd9cac0",
+    "semantic_hash": "1dc78ad9c6e6d32fc4740ae8ebd9cac0"
+  },
+  "openspec/changes/add-appearance-settings/specs/app-appearance/spec.md": {
+    "mtime": 1771209664.3880086,
+    "ast_hash": "7216d0afd2d800e686aa1be598777163",
+    "semantic_hash": "7216d0afd2d800e686aa1be598777163"
+  },
+  "openspec/changes/add-appearance-settings/specs/ui-visual-style/spec.md": {
+    "mtime": 1771209664.388324,
+    "ast_hash": "b184a2b4b2e9c3700239db0ca8af478d",
+    "semantic_hash": "b184a2b4b2e9c3700239db0ca8af478d"
+  },
+  "openspec/changes/add-appearance-settings/tasks.md": {
+    "mtime": 1771209664.3887043,
+    "ast_hash": "84e2d2c12f7a7780447ea1bcf097540e",
+    "semantic_hash": "84e2d2c12f7a7780447ea1bcf097540e"
+  },
+  "openspec/changes/add-folder-inspector-minimap/design.md": {
+    "mtime": 1771159040.151696,
+    "ast_hash": "40a419d071ac1971c24efcd45393ff5b",
+    "semantic_hash": "40a419d071ac1971c24efcd45393ff5b"
+  },
+  "openspec/changes/add-folder-inspector-minimap/proposal.md": {
+    "mtime": 1771159040.151971,
+    "ast_hash": "dcb8015064766614eb1f3f633898d4f3",
+    "semantic_hash": "dcb8015064766614eb1f3f633898d4f3"
+  },
+  "openspec/changes/add-folder-inspector-minimap/specs/thread-canvas/spec.md": {
+    "mtime": 1771159040.152461,
+    "ast_hash": "33bf782caf9f4cb81a48e9ab079da528",
+    "semantic_hash": "33bf782caf9f4cb81a48e9ab079da528"
+  },
+  "openspec/changes/add-folder-inspector-minimap/specs/thread-folders/spec.md": {
+    "mtime": 1771159040.152801,
+    "ast_hash": "6a2e49fbd06ba222014aef20fefc628b",
+    "semantic_hash": "6a2e49fbd06ba222014aef20fefc628b"
+  },
+  "openspec/changes/add-folder-inspector-minimap/tasks.md": {
+    "mtime": 1771159040.1531715,
+    "ast_hash": "72cc3c2d30d75a1ec321d71299d9a3fa",
+    "semantic_hash": "72cc3c2d30d75a1ec321d71299d9a3fa"
+  },
+  "openspec/changes/add-mailbox-folder-management/design.md": {
+    "mtime": 1773643679.8661702,
+    "ast_hash": "22bb4041f323d311cd8d19f1fbac4094",
+    "semantic_hash": "22bb4041f323d311cd8d19f1fbac4094"
+  },
+  "openspec/changes/add-mailbox-folder-management/proposal.md": {
+    "mtime": 1773643679.866304,
+    "ast_hash": "9d2a5a61a68a739a0a814af082c599b6",
+    "semantic_hash": "9d2a5a61a68a739a0a814af082c599b6"
+  },
+  "openspec/changes/add-mailbox-folder-management/specs/mailbox-folder-actions/spec.md": {
+    "mtime": 1773643679.8665643,
+    "ast_hash": "741bbb8c92c2a519544109f3b7df5f44",
+    "semantic_hash": "741bbb8c92c2a519544109f3b7df5f44"
+  },
+  "openspec/changes/add-mailbox-folder-management/specs/mailbox-navigation/spec.md": {
+    "mtime": 1773643679.8667727,
+    "ast_hash": "62caead6add17599794886b20ac43632",
+    "semantic_hash": "62caead6add17599794886b20ac43632"
+  },
+  "openspec/changes/add-mailbox-folder-management/tasks.md": {
+    "mtime": 1773643679.8669026,
+    "ast_hash": "0301eb782061145f78ed0a84593cc932",
+    "semantic_hash": "0301eb782061145f78ed0a84593cc932"
+  },
+  "openspec/changes/archive/2026-01-05-add-auto-refresh-settings/proposal.md": {
+    "mtime": 1767596967.2441947,
+    "ast_hash": "43ab68e79847e6253820daae968ae56b",
+    "semantic_hash": "43ab68e79847e6253820daae968ae56b"
+  },
+  "openspec/changes/archive/2026-01-05-add-auto-refresh-settings/specs/auto-refresh/spec.md": {
+    "mtime": 1767596967.2445552,
+    "ast_hash": "66cae66853da5195514e595e64649f6e",
+    "semantic_hash": "66cae66853da5195514e595e64649f6e"
+  },
+  "openspec/changes/archive/2026-01-05-add-auto-refresh-settings/tasks.md": {
+    "mtime": 1767596967.2447636,
+    "ast_hash": "aa8153ba97961ecb42fb37646b330e04",
+    "semantic_hash": "aa8153ba97961ecb42fb37646b330e04"
+  },
+  "openspec/changes/archive/2026-01-05-refactor-refresh-concurrency/design.md": {
+    "mtime": 1767614915.5041773,
+    "ast_hash": "2cbead6d153321cbca56abbddbe7b5bb",
+    "semantic_hash": "2cbead6d153321cbca56abbddbe7b5bb"
+  },
+  "openspec/changes/archive/2026-01-05-refactor-refresh-concurrency/proposal.md": {
+    "mtime": 1767614915.5043845,
+    "ast_hash": "84ca8fe4a3fad05957a44a658a488b2d",
+    "semantic_hash": "84ca8fe4a3fad05957a44a658a488b2d"
+  },
+  "openspec/changes/archive/2026-01-05-refactor-refresh-concurrency/specs/auto-refresh/spec.md": {
+    "mtime": 1767614915.527472,
+    "ast_hash": "0d3a02937a6f0ae2f4c7bc6795b3f5b8",
+    "semantic_hash": "0d3a02937a6f0ae2f4c7bc6795b3f5b8"
+  },
+  "openspec/changes/archive/2026-01-05-refactor-refresh-concurrency/tasks.md": {
+    "mtime": 1767614915.5307758,
+    "ast_hash": "f77bb06476494285d49d4ac3ca8d5cd2",
+    "semantic_hash": "f77bb06476494285d49d4ac3ca8d5cd2"
+  },
+  "openspec/changes/archive/2026-01-07-add-glassmorphism-ui/design.md": {
+    "mtime": 1767773778.603126,
+    "ast_hash": "9bc7f3fc4fd798091d687bc37cc3658e",
+    "semantic_hash": "9bc7f3fc4fd798091d687bc37cc3658e"
+  },
+  "openspec/changes/archive/2026-01-07-add-glassmorphism-ui/proposal.md": {
+    "mtime": 1767773778.6035593,
+    "ast_hash": "05f8664e6eb9527fc61b58e7f3e22855",
+    "semantic_hash": "05f8664e6eb9527fc61b58e7f3e22855"
+  },
+  "openspec/changes/archive/2026-01-07-add-glassmorphism-ui/specs/ui-visual-style/spec.md": {
+    "mtime": 1767773778.6042657,
+    "ast_hash": "5f568c261d609c7f0c6b60728c34499e",
+    "semantic_hash": "5f568c261d609c7f0c6b60728c34499e"
+  },
+  "openspec/changes/archive/2026-01-07-add-glassmorphism-ui/tasks.md": {
+    "mtime": 1767773778.6072438,
+    "ast_hash": "8e072dacbb3c87d2349d45c721e7f752",
+    "semantic_hash": "8e072dacbb3c87d2349d45c721e7f752"
+  },
+  "openspec/changes/archive/2026-01-07-add-thread-canvas-ui/design.md": {
+    "mtime": 1767795183.0419536,
+    "ast_hash": "4cfa5b34fbc6901dd68d6798a1a6db96",
+    "semantic_hash": "4cfa5b34fbc6901dd68d6798a1a6db96"
+  },
+  "openspec/changes/archive/2026-01-07-add-thread-canvas-ui/proposal.md": {
+    "mtime": 1767795183.0421693,
+    "ast_hash": "294a9ad29008f5b206c80749bb5464bd",
+    "semantic_hash": "294a9ad29008f5b206c80749bb5464bd"
+  },
+  "openspec/changes/archive/2026-01-07-add-thread-canvas-ui/specs/thread-canvas/spec.md": {
+    "mtime": 1767795183.0424557,
+    "ast_hash": "de5444d918d4dd429fbf27bae1378f55",
+    "semantic_hash": "de5444d918d4dd429fbf27bae1378f55"
+  },
+  "openspec/changes/archive/2026-01-07-add-thread-canvas-ui/specs/ui-visual-style/spec.md": {
+    "mtime": 1767795183.0426779,
+    "ast_hash": "afe183c8b15c8cd5c4148fe164080625",
+    "semantic_hash": "afe183c8b15c8cd5c4148fe164080625"
+  },
+  "openspec/changes/archive/2026-01-07-add-thread-canvas-ui/tasks.md": {
+    "mtime": 1767795183.0428457,
+    "ast_hash": "470b18ad375ea45efa23d11726823313",
+    "semantic_hash": "470b18ad375ea45efa23d11726823313"
+  },
+  "openspec/changes/archive/2026-01-08-move-summary-to-inspector/proposal.md": {
+    "mtime": 1767862289.6390164,
+    "ast_hash": "6af3b72a50d7f0f4255843607135ce45",
+    "semantic_hash": "6af3b72a50d7f0f4255843607135ce45"
+  },
+  "openspec/changes/archive/2026-01-08-move-summary-to-inspector/specs/thread-canvas/spec.md": {
+    "mtime": 1767862289.6411517,
+    "ast_hash": "37c5b6c0e1ba5710db83e78a57943149",
+    "semantic_hash": "37c5b6c0e1ba5710db83e78a57943149"
+  },
+  "openspec/changes/archive/2026-01-08-move-summary-to-inspector/tasks.md": {
+    "mtime": 1767862289.6428413,
+    "ast_hash": "090c7bdc49c988ddc834f17d79871c67",
+    "semantic_hash": "090c7bdc49c988ddc834f17d79871c67"
+  },
+  "openspec/changes/archive/2026-01-08-update-thread-canvas-preview/proposal.md": {
+    "mtime": 1767862289.6435192,
+    "ast_hash": "fb668e11857b1401057a2e591722aa83",
+    "semantic_hash": "fb668e11857b1401057a2e591722aa83"
+  },
+  "openspec/changes/archive/2026-01-08-update-thread-canvas-preview/specs/thread-canvas/spec.md": {
+    "mtime": 1767862289.6438842,
+    "ast_hash": "8246050c5c1b979ed6ef667b1d52c6cd",
+    "semantic_hash": "8246050c5c1b979ed6ef667b1d52c6cd"
+  },
+  "openspec/changes/archive/2026-01-08-update-thread-canvas-preview/tasks.md": {
+    "mtime": 1767862289.6441023,
+    "ast_hash": "4091c6490a8909d9e1caf7c4d11967eb",
+    "semantic_hash": "4091c6490a8909d9e1caf7c4d11967eb"
+  },
+  "openspec/changes/archive/2026-01-11-add-manual-thread-overrides/design.md": {
+    "mtime": 1768222208.984804,
+    "ast_hash": "06692998e1992b110a0d0f3c9b284811",
+    "semantic_hash": "06692998e1992b110a0d0f3c9b284811"
+  },
+  "openspec/changes/archive/2026-01-11-add-manual-thread-overrides/proposal.md": {
+    "mtime": 1768222208.9852996,
+    "ast_hash": "13c4bfcb0b245f11a60594bb3fb17e23",
+    "semantic_hash": "13c4bfcb0b245f11a60594bb3fb17e23"
+  },
+  "openspec/changes/archive/2026-01-11-add-manual-thread-overrides/specs/manual-threading/spec.md": {
+    "mtime": 1768222208.985711,
+    "ast_hash": "6620f8e7205ef8f3e48623bec857c6ab",
+    "semantic_hash": "6620f8e7205ef8f3e48623bec857c6ab"
+  },
+  "openspec/changes/archive/2026-01-11-add-manual-thread-overrides/specs/thread-canvas/spec.md": {
+    "mtime": 1768222208.9860058,
+    "ast_hash": "8a33efb34bca753ab8b4b726d5aee10f",
+    "semantic_hash": "8a33efb34bca753ab8b4b726d5aee10f"
+  },
+  "openspec/changes/archive/2026-01-11-add-manual-thread-overrides/tasks.md": {
+    "mtime": 1768222208.9862423,
+    "ast_hash": "4c824d7f9943e7d11b5166262c14b2be",
+    "semantic_hash": "4c824d7f9943e7d11b5166262c14b2be"
+  },
+  "openspec/changes/archive/2026-01-12-update-threading-merge-rules/design.md": {
+    "mtime": 1768222208.9865427,
+    "ast_hash": "84138b109509985e9be817bbea97efbb",
+    "semantic_hash": "84138b109509985e9be817bbea97efbb"
+  },
+  "openspec/changes/archive/2026-01-12-update-threading-merge-rules/proposal.md": {
+    "mtime": 1768222208.9867651,
+    "ast_hash": "0e780258b9d7e7fad3457c97d44a54a1",
+    "semantic_hash": "0e780258b9d7e7fad3457c97d44a54a1"
+  },
+  "openspec/changes/archive/2026-01-12-update-threading-merge-rules/specs/manual-threading/spec.md": {
+    "mtime": 1768222208.987182,
+    "ast_hash": "705cf74c5894031b3eeb6db91075cf29",
+    "semantic_hash": "705cf74c5894031b3eeb6db91075cf29"
+  },
+  "openspec/changes/archive/2026-01-12-update-threading-merge-rules/specs/thread-canvas/spec.md": {
+    "mtime": 1768222208.9874625,
+    "ast_hash": "a1f3e5a1a8f4fe292d716e83d5a69940",
+    "semantic_hash": "a1f3e5a1a8f4fe292d716e83d5a69940"
+  },
+  "openspec/changes/archive/2026-01-12-update-threading-merge-rules/tasks.md": {
+    "mtime": 1768222208.9876883,
+    "ast_hash": "ab9de13be1e9e068146eb56ae5f46702",
+    "semantic_hash": "ab9de13be1e9e068146eb56ae5f46702"
+  },
+  "openspec/changes/archive/2026-01-14-add-canvas-infinite-scroll/design.md": {
+    "mtime": 1768529246.080761,
+    "ast_hash": "3d95d1b823f84a9c54c61df2dd881b22",
+    "semantic_hash": "3d95d1b823f84a9c54c61df2dd881b22"
+  },
+  "openspec/changes/archive/2026-01-14-add-canvas-infinite-scroll/proposal.md": {
+    "mtime": 1768529246.0811567,
+    "ast_hash": "eb43354e8d8b240b1d7bbc2f2f3c90e2",
+    "semantic_hash": "eb43354e8d8b240b1d7bbc2f2f3c90e2"
+  },
+  "openspec/changes/archive/2026-01-14-add-canvas-infinite-scroll/specs/thread-canvas/spec.md": {
+    "mtime": 1768529246.0817876,
+    "ast_hash": "1043188d6f65d7d2b774b6fae474b34f",
+    "semantic_hash": "1043188d6f65d7d2b774b6fae474b34f"
+  },
+  "openspec/changes/archive/2026-01-14-add-canvas-infinite-scroll/tasks.md": {
+    "mtime": 1768529246.0823243,
+    "ast_hash": "496cccb56058fbeef0caeb477df70b5e",
+    "semantic_hash": "496cccb56058fbeef0caeb477df70b5e"
+  },
+  "openspec/changes/archive/2026-01-16-add-settings-batch-backfill/proposal.md": {
+    "mtime": 1768544517.240267,
+    "ast_hash": "1fafdd430d3586f6cf61bd2bbbfffdfa",
+    "semantic_hash": "1fafdd430d3586f6cf61bd2bbbfffdfa"
+  },
+  "openspec/changes/archive/2026-01-16-add-settings-batch-backfill/specs/backfill/spec.md": {
+    "mtime": 1768544517.2407506,
+    "ast_hash": "41baf16e1ba1286be843c5b49fb55783",
+    "semantic_hash": "41baf16e1ba1286be843c5b49fb55783"
+  },
+  "openspec/changes/archive/2026-01-16-add-settings-batch-backfill/tasks.md": {
+    "mtime": 1768544517.2409904,
+    "ast_hash": "587ebe9e1f497ca3f6a7447beb443ab1",
+    "semantic_hash": "587ebe9e1f497ca3f6a7447beb443ab1"
+  },
+  "openspec/changes/archive/2026-01-20-add-custom-thread-drag/proposal.md": {
+    "mtime": 1768993394.543457,
+    "ast_hash": "4eae96e96440afe32cd6ff64338244b2",
+    "semantic_hash": "4eae96e96440afe32cd6ff64338244b2"
+  },
+  "openspec/changes/archive/2026-01-20-add-custom-thread-drag/specs/thread-canvas/spec.md": {
+    "mtime": 1768993394.543771,
+    "ast_hash": "f83b0f79d63ea9a540ba92193be43be5",
+    "semantic_hash": "f83b0f79d63ea9a540ba92193be43be5"
+  },
+  "openspec/changes/archive/2026-01-20-add-custom-thread-drag/tasks.md": {
+    "mtime": 1768993394.5439482,
+    "ast_hash": "63a8ed241ad7353bd83988c0036de4b7",
+    "semantic_hash": "63a8ed241ad7353bd83988c0036de4b7"
+  },
+  "openspec/changes/archive/2026-01-20-add-folder-drop-highlight/proposal.md": {
+    "mtime": 1768993394.5441892,
+    "ast_hash": "f5088cc9e33f354ba4d84e24172e826a",
+    "semantic_hash": "f5088cc9e33f354ba4d84e24172e826a"
+  },
+  "openspec/changes/archive/2026-01-20-add-folder-drop-highlight/specs/thread-canvas/spec.md": {
+    "mtime": 1768993394.5445125,
+    "ast_hash": "33c9d1c5842201e3b3b3712b171b43ed",
+    "semantic_hash": "33c9d1c5842201e3b3b3712b171b43ed"
+  },
+  "openspec/changes/archive/2026-01-20-add-folder-drop-highlight/tasks.md": {
+    "mtime": 1768993394.544703,
+    "ast_hash": "a3ea5909bebc62719df8e7dd09401a29",
+    "semantic_hash": "a3ea5909bebc62719df8e7dd09401a29"
+  },
+  "openspec/changes/archive/2026-01-20-add-thread-folders/proposal.md": {
+    "mtime": 1768993394.5449412,
+    "ast_hash": "fd0f756b3e9a50d9c227de6c09f660fc",
+    "semantic_hash": "fd0f756b3e9a50d9c227de6c09f660fc"
+  },
+  "openspec/changes/archive/2026-01-20-add-thread-folders/specs/thread-canvas/spec.md": {
+    "mtime": 1768993394.545234,
+    "ast_hash": "ae2586c47fee6c61fa88c111bbb8478d",
+    "semantic_hash": "ae2586c47fee6c61fa88c111bbb8478d"
+  },
+  "openspec/changes/archive/2026-01-20-add-thread-folders/specs/thread-folders/spec.md": {
+    "mtime": 1768993394.545454,
+    "ast_hash": "06050be7b761599d647a018c0b677f60",
+    "semantic_hash": "06050be7b761599d647a018c0b677f60"
+  },
+  "openspec/changes/archive/2026-01-20-add-thread-folders/tasks.md": {
+    "mtime": 1768993394.5456402,
+    "ast_hash": "cd5ba93fc55e4c0f49d9ea7ad43b5263",
+    "semantic_hash": "cd5ba93fc55e4c0f49d9ea7ad43b5263"
+  },
+  "openspec/changes/archive/2026-01-21-add-folder-inspector-panel/proposal.md": {
+    "mtime": 1768993394.5458605,
+    "ast_hash": "595214961a7330dd99acff30a6b60749",
+    "semantic_hash": "595214961a7330dd99acff30a6b60749"
+  },
+  "openspec/changes/archive/2026-01-21-add-folder-inspector-panel/specs/thread-canvas/spec.md": {
+    "mtime": 1768993394.5463376,
+    "ast_hash": "d4fb7a140a0defd99a2f004e0d81d6f1",
+    "semantic_hash": "d4fb7a140a0defd99a2f004e0d81d6f1"
+  },
+  "openspec/changes/archive/2026-01-21-add-folder-inspector-panel/specs/thread-folders/spec.md": {
+    "mtime": 1768993394.546582,
+    "ast_hash": "5dd44d0e51d53fb6bb44e0745915d72d",
+    "semantic_hash": "5dd44d0e51d53fb6bb44e0745915d72d"
+  },
+  "openspec/changes/archive/2026-01-21-add-folder-inspector-panel/tasks.md": {
+    "mtime": 1768993394.5467565,
+    "ast_hash": "6a41852da700575ea7f0611f85881bef",
+    "semantic_hash": "6a41852da700575ea7f0611f85881bef"
+  },
+  "openspec/changes/archive/2026-01-21-add-nested-thread-folders/proposal.md": {
+    "mtime": 1768993394.5469804,
+    "ast_hash": "02ce9432dc01d887a6c57256964da13f",
+    "semantic_hash": "02ce9432dc01d887a6c57256964da13f"
+  },
+  "openspec/changes/archive/2026-01-21-add-nested-thread-folders/specs/thread-canvas/spec.md": {
+    "mtime": 1768993394.5472722,
+    "ast_hash": "fb3ccf0e8fd38643498411678dd9f7ca",
+    "semantic_hash": "fb3ccf0e8fd38643498411678dd9f7ca"
+  },
+  "openspec/changes/archive/2026-01-21-add-nested-thread-folders/specs/thread-folders/spec.md": {
+    "mtime": 1768993394.5475032,
+    "ast_hash": "1b741630e2fef69a77f4aeb27ee0c010",
+    "semantic_hash": "1b741630e2fef69a77f4aeb27ee0c010"
+  },
+  "openspec/changes/archive/2026-01-21-add-nested-thread-folders/tasks.md": {
+    "mtime": 1768993394.547991,
+    "ast_hash": "43f4b9d2af66d3b85a8c614b66380d60",
+    "semantic_hash": "43f4b9d2af66d3b85a8c614b66380d60"
+  },
+  "openspec/changes/archive/2026-01-29-add-ai-node-folder-summaries/design.md": {
+    "mtime": 1770018529.0074365,
+    "ast_hash": "b0d0220bc357561c7ffc56f8354bf660",
+    "semantic_hash": "b0d0220bc357561c7ffc56f8354bf660"
+  },
+  "openspec/changes/archive/2026-01-29-add-ai-node-folder-summaries/proposal.md": {
+    "mtime": 1770018529.0077155,
+    "ast_hash": "dbf21338bced09516d3e7d36888d54c1",
+    "semantic_hash": "dbf21338bced09516d3e7d36888d54c1"
+  },
+  "openspec/changes/archive/2026-01-29-add-ai-node-folder-summaries/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770018529.008339,
+    "ast_hash": "e3eb892e16f289c75778687733c0a565",
+    "semantic_hash": "e3eb892e16f289c75778687733c0a565"
+  },
+  "openspec/changes/archive/2026-01-29-add-ai-node-folder-summaries/tasks.md": {
+    "mtime": 1770018529.0086064,
+    "ast_hash": "206c3bc6c75f9bae19cafc7c43878ef6",
+    "semantic_hash": "206c3bc6c75f9bae19cafc7c43878ef6"
+  },
+  "openspec/changes/archive/2026-01-29-add-summary-cache/design.md": {
+    "mtime": 1770018529.0088706,
+    "ast_hash": "ec442f36887d732174c4f11304a6a025",
+    "semantic_hash": "ec442f36887d732174c4f11304a6a025"
+  },
+  "openspec/changes/archive/2026-01-29-add-summary-cache/proposal.md": {
+    "mtime": 1770018529.0090477,
+    "ast_hash": "4cd681a18c29919e34c732ac21be70fd",
+    "semantic_hash": "4cd681a18c29919e34c732ac21be70fd"
+  },
+  "openspec/changes/archive/2026-01-29-add-summary-cache/specs/thread-summaries/spec.md": {
+    "mtime": 1770018529.0093615,
+    "ast_hash": "132438ce219bb80b1588e31428de8569",
+    "semantic_hash": "132438ce219bb80b1588e31428de8569"
+  },
+  "openspec/changes/archive/2026-01-29-add-summary-cache/tasks.md": {
+    "mtime": 1770018529.0095558,
+    "ast_hash": "80f2637bad76d9d97c83b9239684d274",
+    "semantic_hash": "80f2637bad76d9d97c83b9239684d274"
+  },
+  "openspec/changes/archive/2026-01-29-add-thread-canvas-zoom-threshold-settings/proposal.md": {
+    "mtime": 1770018529.0098186,
+    "ast_hash": "17ddb13cb3fe09681d0cdfd21f0a53e4",
+    "semantic_hash": "17ddb13cb3fe09681d0cdfd21f0a53e4"
+  },
+  "openspec/changes/archive/2026-01-29-add-thread-canvas-zoom-threshold-settings/specs/thread-canvas/spec.md": {
+    "mtime": 1770018529.010162,
+    "ast_hash": "8bc5d06f7c391beee791202b22be009a",
+    "semantic_hash": "8bc5d06f7c391beee791202b22be009a"
+  },
+  "openspec/changes/archive/2026-01-29-add-thread-canvas-zoom-threshold-settings/tasks.md": {
+    "mtime": 1770018529.0103605,
+    "ast_hash": "7c2acaf000853e81ce08f26992d71276",
+    "semantic_hash": "7c2acaf000853e81ce08f26992d71276"
+  },
+  "openspec/changes/archive/2026-01-29-add-timeline-view-toggle/proposal.md": {
+    "mtime": 1770018529.0106115,
+    "ast_hash": "068696ffe1a3d322c1053d1cd9ba255b",
+    "semantic_hash": "068696ffe1a3d322c1053d1cd9ba255b"
+  },
+  "openspec/changes/archive/2026-01-29-add-timeline-view-toggle/specs/thread-canvas/spec.md": {
+    "mtime": 1770018529.0109413,
+    "ast_hash": "a070629ead3e5b190d23bd95065a47ef",
+    "semantic_hash": "a070629ead3e5b190d23bd95065a47ef"
+  },
+  "openspec/changes/archive/2026-01-29-add-timeline-view-toggle/tasks.md": {
+    "mtime": 1770018529.0111556,
+    "ast_hash": "788229a1ce92d1b306f34a8e5bafe53c",
+    "semantic_hash": "788229a1ce92d1b306f34a8e5bafe53c"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-open-mail-targeting/proposal.md": {
+    "mtime": 1770018529.0114183,
+    "ast_hash": "667f60252067f331389114b227deb328",
+    "semantic_hash": "667f60252067f331389114b227deb328"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-open-mail-targeting/specs/thread-canvas/spec.md": {
+    "mtime": 1770018529.0117626,
+    "ast_hash": "a052764897b0c1aa0f2cf53802289ea4",
+    "semantic_hash": "a052764897b0c1aa0f2cf53802289ea4"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-open-mail-targeting/tasks.md": {
+    "mtime": 1770018529.011951,
+    "ast_hash": "ce60f3225ca39febfe952751e006093f",
+    "semantic_hash": "ce60f3225ca39febfe952751e006093f"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-repo-health-docs/design.md": {
+    "mtime": 1770018529.0121298,
+    "ast_hash": "2de86968dfe9cbd5a4b201533de26672",
+    "semantic_hash": "2de86968dfe9cbd5a4b201533de26672"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-repo-health-docs/proposal.md": {
+    "mtime": 1770018529.0122721,
+    "ast_hash": "7cdaa52a4c3b319327bc39eb69b6e362",
+    "semantic_hash": "7cdaa52a4c3b319327bc39eb69b6e362"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-repo-health-docs/specs/code-health/spec.md": {
+    "mtime": 1770018529.0124857,
+    "ast_hash": "7e18e3609b5bbbc465f1a18af3f67e0d",
+    "semantic_hash": "7e18e3609b5bbbc465f1a18af3f67e0d"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-repo-health-docs/specs/tech-docs/spec.md": {
+    "mtime": 1770018529.0126529,
+    "ast_hash": "ff86ffadfc8f0f8051fd89534952024e",
+    "semantic_hash": "ff86ffadfc8f0f8051fd89534952024e"
+  },
+  "openspec/changes/archive/2026-01-29-refactor-repo-health-docs/tasks.md": {
+    "mtime": 1770018529.0127633,
+    "ast_hash": "87433a788d147c8fbaf4b119c1475459",
+    "semantic_hash": "87433a788d147c8fbaf4b119c1475459"
+  },
+  "openspec/changes/archive/2026-01-29-update-mail-open-fallback/proposal.md": {
+    "mtime": 1770018529.0129254,
+    "ast_hash": "a487f4d2d0f376dacbf27ab8c854d418",
+    "semantic_hash": "a487f4d2d0f376dacbf27ab8c854d418"
+  },
+  "openspec/changes/archive/2026-01-29-update-mail-open-fallback/specs/thread-canvas/spec.md": {
+    "mtime": 1770018529.0131638,
+    "ast_hash": "c4efbc7756e4a2817cd9d1c526e2f31b",
+    "semantic_hash": "c4efbc7756e4a2817cd9d1c526e2f31b"
+  },
+  "openspec/changes/archive/2026-01-29-update-mail-open-fallback/tasks.md": {
+    "mtime": 1770018529.0132709,
+    "ast_hash": "e49b647e90a9fc65f6297d4a0d7c565e",
+    "semantic_hash": "e49b647e90a9fc65f6297d4a0d7c565e"
+  },
+  "openspec/changes/archive/2026-01-29-update-open-in-mail-filtered-fallback/proposal.md": {
+    "mtime": 1770018529.0135517,
+    "ast_hash": "d98f29647b8348a63efed013af9c1ae1",
+    "semantic_hash": "d98f29647b8348a63efed013af9c1ae1"
+  },
+  "openspec/changes/archive/2026-01-29-update-open-in-mail-filtered-fallback/specs/thread-canvas/spec.md": {
+    "mtime": 1770018529.014288,
+    "ast_hash": "468e59a855281712d98460a9c0668e36",
+    "semantic_hash": "468e59a855281712d98460a9c0668e36"
+  },
+  "openspec/changes/archive/2026-01-29-update-open-in-mail-filtered-fallback/tasks.md": {
+    "mtime": 1770018529.0146437,
+    "ast_hash": "1d75fb021d92a091a932de63ca8977bb",
+    "semantic_hash": "1d75fb021d92a091a932de63ca8977bb"
+  },
+  "openspec/changes/archive/2026-02-03-add-inspector-summary-regen-buttons/proposal.md": {
+    "mtime": 1770713250.4646554,
+    "ast_hash": "233e5c209d22f054311283956ffa0635",
+    "semantic_hash": "233e5c209d22f054311283956ffa0635"
+  },
+  "openspec/changes/archive/2026-02-03-add-inspector-summary-regen-buttons/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770713250.4655735,
+    "ast_hash": "e30f31b11d6ce262d15c21c9eebbec9c",
+    "semantic_hash": "e30f31b11d6ce262d15c21c9eebbec9c"
+  },
+  "openspec/changes/archive/2026-02-03-add-inspector-summary-regen-buttons/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.4660048,
+    "ast_hash": "fc93387300ca77ecc6d7f672b1a220b7",
+    "semantic_hash": "fc93387300ca77ecc6d7f672b1a220b7"
+  },
+  "openspec/changes/archive/2026-02-03-add-inspector-summary-regen-buttons/tasks.md": {
+    "mtime": 1770713250.4664505,
+    "ast_hash": "63bf99264636e76c63593a78a7cdb90b",
+    "semantic_hash": "63bf99264636e76c63593a78a7cdb90b"
+  },
+  "openspec/changes/archive/2026-02-03-add-pinned-folders/proposal.md": {
+    "mtime": 1770713250.4672012,
+    "ast_hash": "1991db87051a985dcd13f7f4937c0604",
+    "semantic_hash": "1991db87051a985dcd13f7f4937c0604"
+  },
+  "openspec/changes/archive/2026-02-03-add-pinned-folders/specs/thread-folders/spec.md": {
+    "mtime": 1770713250.4676373,
+    "ast_hash": "58f040f3553dd457201f3bcafb6d881d",
+    "semantic_hash": "58f040f3553dd457201f3bcafb6d881d"
+  },
+  "openspec/changes/archive/2026-02-03-add-pinned-folders/tasks.md": {
+    "mtime": 1770713250.4681177,
+    "ast_hash": "57f019743a58334abbef317b963f19d3",
+    "semantic_hash": "57f019743a58334abbef317b963f19d3"
+  },
+  "openspec/changes/archive/2026-02-03-add-regenai-backfill/design.md": {
+    "mtime": 1770713250.4686959,
+    "ast_hash": "33cc0ecedf28ed8d3fa0dbde85687e0f",
+    "semantic_hash": "33cc0ecedf28ed8d3fa0dbde85687e0f"
+  },
+  "openspec/changes/archive/2026-02-03-add-regenai-backfill/proposal.md": {
+    "mtime": 1770713250.4693222,
+    "ast_hash": "87a6d5a7a927b4d063e146f844944043",
+    "semantic_hash": "87a6d5a7a927b4d063e146f844944043"
+  },
+  "openspec/changes/archive/2026-02-03-add-regenai-backfill/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770713250.469974,
+    "ast_hash": "ee134dae3b73453ce6ebe07600a818e1",
+    "semantic_hash": "ee134dae3b73453ce6ebe07600a818e1"
+  },
+  "openspec/changes/archive/2026-02-03-add-regenai-backfill/specs/backfill/spec.md": {
+    "mtime": 1770713250.470423,
+    "ast_hash": "14e97c2b4151f9cd5d6319ffa414f8cc",
+    "semantic_hash": "14e97c2b4151f9cd5d6319ffa414f8cc"
+  },
+  "openspec/changes/archive/2026-02-03-add-regenai-backfill/tasks.md": {
+    "mtime": 1770713250.4708178,
+    "ast_hash": "aecbf254a7a00ace4063b19484c92b6e",
+    "semantic_hash": "aecbf254a7a00ace4063b19484c92b6e"
+  },
+  "openspec/changes/archive/2026-02-03-improve-timeline-responsiveness/proposal.md": {
+    "mtime": 1770713250.4718218,
+    "ast_hash": "b6be23d4d0800cc82ddfe3638956852e",
+    "semantic_hash": "b6be23d4d0800cc82ddfe3638956852e"
+  },
+  "openspec/changes/archive/2026-02-03-improve-timeline-responsiveness/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.4723582,
+    "ast_hash": "fafc8f29ff2f0c8de10e79ad53a93586",
+    "semantic_hash": "fafc8f29ff2f0c8de10e79ad53a93586"
+  },
+  "openspec/changes/archive/2026-02-03-improve-timeline-responsiveness/tasks.md": {
+    "mtime": 1770713250.4727836,
+    "ast_hash": "27ffc9ddc7178e92c42d467448d5542f",
+    "semantic_hash": "27ffc9ddc7178e92c42d467448d5542f"
+  },
+  "openspec/changes/archive/2026-02-03-restore-timeline-canvas-parity/proposal.md": {
+    "mtime": 1770713250.4733756,
+    "ast_hash": "75f8d150a00bea1b6129d89cd4c1d5df",
+    "semantic_hash": "75f8d150a00bea1b6129d89cd4c1d5df"
+  },
+  "openspec/changes/archive/2026-02-03-restore-timeline-canvas-parity/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.473996,
+    "ast_hash": "9b97f5c05c289439e5844f0032adcf73",
+    "semantic_hash": "9b97f5c05c289439e5844f0032adcf73"
+  },
+  "openspec/changes/archive/2026-02-03-restore-timeline-canvas-parity/tasks.md": {
+    "mtime": 1770713250.4745913,
+    "ast_hash": "db05d2b71614225c3ded20698ac97238",
+    "semantic_hash": "db05d2b71614225c3ded20698ac97238"
+  },
+  "openspec/changes/archive/2026-02-03-update-regen-mailbox-scope/proposal.md": {
+    "mtime": 1770713250.4751887,
+    "ast_hash": "c186fe492bfd79000dfbe7c5cf0f0cbe",
+    "semantic_hash": "c186fe492bfd79000dfbe7c5cf0f0cbe"
+  },
+  "openspec/changes/archive/2026-02-03-update-regen-mailbox-scope/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770713250.4757445,
+    "ast_hash": "24f2819df11a26fbee8515b7f3ef8934",
+    "semantic_hash": "24f2819df11a26fbee8515b7f3ef8934"
+  },
+  "openspec/changes/archive/2026-02-03-update-regen-mailbox-scope/tasks.md": {
+    "mtime": 1770713250.4762192,
+    "ast_hash": "5dc37810c357bb1524a6630406d51aa8",
+    "semantic_hash": "5dc37810c357bb1524a6630406d51aa8"
+  },
+  "openspec/changes/archive/2026-02-03-update-thread-canvas-floating-date-rail/proposal.md": {
+    "mtime": 1770713250.4766695,
+    "ast_hash": "353e46548e6d68a33c08ba71c82d80f5",
+    "semantic_hash": "353e46548e6d68a33c08ba71c82d80f5"
+  },
+  "openspec/changes/archive/2026-02-03-update-thread-canvas-floating-date-rail/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.4770439,
+    "ast_hash": "af7e6c9e183c8d8b600031c556e272a0",
+    "semantic_hash": "af7e6c9e183c8d8b600031c556e272a0"
+  },
+  "openspec/changes/archive/2026-02-03-update-thread-canvas-floating-date-rail/tasks.md": {
+    "mtime": 1770713250.4776087,
+    "ast_hash": "d6a97ed91d896f0881a1276068522dfa",
+    "semantic_hash": "d6a97ed91d896f0881a1276068522dfa"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-message-cards/proposal.md": {
+    "mtime": 1770713250.478036,
+    "ast_hash": "65abd422b02b8d38df994b08acb1f9b1",
+    "semantic_hash": "65abd422b02b8d38df994b08acb1f9b1"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-message-cards/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.4785903,
+    "ast_hash": "294f3844b5e016642ed0d3118586390a",
+    "semantic_hash": "294f3844b5e016642ed0d3118586390a"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-message-cards/tasks.md": {
+    "mtime": 1770713250.4789135,
+    "ast_hash": "3cac22088f669cc71c4a22294a37a5e4",
+    "semantic_hash": "3cac22088f669cc71c4a22294a37a5e4"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-rail-connectors/proposal.md": {
+    "mtime": 1770713250.4794636,
+    "ast_hash": "789c2c411ee3371d78f1defaf6db9447",
+    "semantic_hash": "789c2c411ee3371d78f1defaf6db9447"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-rail-connectors/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.48017,
+    "ast_hash": "3d499c2d38b009a1054132558c23cc22",
+    "semantic_hash": "3d499c2d38b009a1054132558c23cc22"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-rail-connectors/tasks.md": {
+    "mtime": 1770713250.4805965,
+    "ast_hash": "05fa989aed20143a6864bd6390dde455",
+    "semantic_hash": "05fa989aed20143a6864bd6390dde455"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-unbounded-cards/proposal.md": {
+    "mtime": 1770713250.4810584,
+    "ast_hash": "6832513e97f4f61bf14b4b7c9748ee38",
+    "semantic_hash": "6832513e97f4f61bf14b4b7c9748ee38"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-unbounded-cards/specs/thread-canvas/spec.md": {
+    "mtime": 1770713250.4818654,
+    "ast_hash": "c2594149c0089e7cd191dbae8e2a7b87",
+    "semantic_hash": "c2594149c0089e7cd191dbae8e2a7b87"
+  },
+  "openspec/changes/archive/2026-02-03-update-timeline-unbounded-cards/tasks.md": {
+    "mtime": 1770713250.4823828,
+    "ast_hash": "50f88f94cba208733cc7abd0cea5bd10",
+    "semantic_hash": "50f88f94cba208733cc7abd0cea5bd10"
+  },
+  "openspec/changes/archive/2026-02-10-add-folder-header-jump-buttons/design.md": {
+    "mtime": 1770713254.796605,
+    "ast_hash": "e6fa27fe459cbdaff9ba6ad947465880",
+    "semantic_hash": "e6fa27fe459cbdaff9ba6ad947465880"
+  },
+  "openspec/changes/archive/2026-02-10-add-folder-header-jump-buttons/proposal.md": {
+    "mtime": 1770713254.7968488,
+    "ast_hash": "ce9d222c243d2d1abc1b4be9bdf41a11",
+    "semantic_hash": "ce9d222c243d2d1abc1b4be9bdf41a11"
+  },
+  "openspec/changes/archive/2026-02-10-add-folder-header-jump-buttons/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.7974622,
+    "ast_hash": "831130f1d811ac52947a0f56d92d0513",
+    "semantic_hash": "831130f1d811ac52947a0f56d92d0513"
+  },
+  "openspec/changes/archive/2026-02-10-add-folder-header-jump-buttons/tasks.md": {
+    "mtime": 1770713254.7982113,
+    "ast_hash": "5e27436b51640ec97e9e5d11fcd99107",
+    "semantic_hash": "5e27436b51640ec97e9e5d11fcd99107"
+  },
+  "openspec/changes/archive/2026-02-10-add-inspector-summary-regen-buttons/proposal.md": {
+    "mtime": 1770713254.7986403,
+    "ast_hash": "233e5c209d22f054311283956ffa0635",
+    "semantic_hash": "233e5c209d22f054311283956ffa0635"
+  },
+  "openspec/changes/archive/2026-02-10-add-inspector-summary-regen-buttons/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770713254.799123,
+    "ast_hash": "e30f31b11d6ce262d15c21c9eebbec9c",
+    "semantic_hash": "e30f31b11d6ce262d15c21c9eebbec9c"
+  },
+  "openspec/changes/archive/2026-02-10-add-inspector-summary-regen-buttons/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.799494,
+    "ast_hash": "fc93387300ca77ecc6d7f672b1a220b7",
+    "semantic_hash": "fc93387300ca77ecc6d7f672b1a220b7"
+  },
+  "openspec/changes/archive/2026-02-10-add-inspector-summary-regen-buttons/tasks.md": {
+    "mtime": 1770713254.7997417,
+    "ast_hash": "63bf99264636e76c63593a78a7cdb90b",
+    "semantic_hash": "63bf99264636e76c63593a78a7cdb90b"
+  },
+  "openspec/changes/archive/2026-02-10-add-regenai-backfill/design.md": {
+    "mtime": 1770713254.8000438,
+    "ast_hash": "33cc0ecedf28ed8d3fa0dbde85687e0f",
+    "semantic_hash": "33cc0ecedf28ed8d3fa0dbde85687e0f"
+  },
+  "openspec/changes/archive/2026-02-10-add-regenai-backfill/proposal.md": {
+    "mtime": 1770713254.8002446,
+    "ast_hash": "87a6d5a7a927b4d063e146f844944043",
+    "semantic_hash": "87a6d5a7a927b4d063e146f844944043"
+  },
+  "openspec/changes/archive/2026-02-10-add-regenai-backfill/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770713254.800742,
+    "ast_hash": "ee134dae3b73453ce6ebe07600a818e1",
+    "semantic_hash": "ee134dae3b73453ce6ebe07600a818e1"
+  },
+  "openspec/changes/archive/2026-02-10-add-regenai-backfill/specs/backfill/spec.md": {
+    "mtime": 1770713254.8011196,
+    "ast_hash": "14e97c2b4151f9cd5d6319ffa414f8cc",
+    "semantic_hash": "14e97c2b4151f9cd5d6319ffa414f8cc"
+  },
+  "openspec/changes/archive/2026-02-10-add-regenai-backfill/tasks.md": {
+    "mtime": 1770713254.8013403,
+    "ast_hash": "aecbf254a7a00ace4063b19484c92b6e",
+    "semantic_hash": "aecbf254a7a00ace4063b19484c92b6e"
+  },
+  "openspec/changes/archive/2026-02-10-improve-timeline-responsiveness/proposal.md": {
+    "mtime": 1770713254.8015983,
+    "ast_hash": "b6be23d4d0800cc82ddfe3638956852e",
+    "semantic_hash": "b6be23d4d0800cc82ddfe3638956852e"
+  },
+  "openspec/changes/archive/2026-02-10-improve-timeline-responsiveness/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.8025053,
+    "ast_hash": "fafc8f29ff2f0c8de10e79ad53a93586",
+    "semantic_hash": "fafc8f29ff2f0c8de10e79ad53a93586"
+  },
+  "openspec/changes/archive/2026-02-10-improve-timeline-responsiveness/tasks.md": {
+    "mtime": 1770713254.8027453,
+    "ast_hash": "27ffc9ddc7178e92c42d467448d5542f",
+    "semantic_hash": "27ffc9ddc7178e92c42d467448d5542f"
+  },
+  "openspec/changes/archive/2026-02-10-restore-timeline-canvas-parity/proposal.md": {
+    "mtime": 1770713254.8030357,
+    "ast_hash": "75f8d150a00bea1b6129d89cd4c1d5df",
+    "semantic_hash": "75f8d150a00bea1b6129d89cd4c1d5df"
+  },
+  "openspec/changes/archive/2026-02-10-restore-timeline-canvas-parity/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.803439,
+    "ast_hash": "9b97f5c05c289439e5844f0032adcf73",
+    "semantic_hash": "9b97f5c05c289439e5844f0032adcf73"
+  },
+  "openspec/changes/archive/2026-02-10-restore-timeline-canvas-parity/tasks.md": {
+    "mtime": 1770713254.8038614,
+    "ast_hash": "db05d2b71614225c3ded20698ac97238",
+    "semantic_hash": "db05d2b71614225c3ded20698ac97238"
+  },
+  "openspec/changes/archive/2026-02-10-update-folder-latest-jump-reliability/design.md": {
+    "mtime": 1770713254.8042486,
+    "ast_hash": "91f7cfcbea7dddfbb8e24b462f8957bb",
+    "semantic_hash": "91f7cfcbea7dddfbb8e24b462f8957bb"
+  },
+  "openspec/changes/archive/2026-02-10-update-folder-latest-jump-reliability/proposal.md": {
+    "mtime": 1770713254.8052647,
+    "ast_hash": "57d1650fd360d63465b26286884768e9",
+    "semantic_hash": "57d1650fd360d63465b26286884768e9"
+  },
+  "openspec/changes/archive/2026-02-10-update-folder-latest-jump-reliability/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.8059213,
+    "ast_hash": "a9fbd9251c64fc317eed18420b221424",
+    "semantic_hash": "a9fbd9251c64fc317eed18420b221424"
+  },
+  "openspec/changes/archive/2026-02-10-update-folder-latest-jump-reliability/tasks.md": {
+    "mtime": 1770713254.8061981,
+    "ast_hash": "fa8985473e076dcb516ea7ac751a2256",
+    "semantic_hash": "fa8985473e076dcb516ea7ac751a2256"
+  },
+  "openspec/changes/archive/2026-02-10-update-thread-canvas-floating-date-rail/proposal.md": {
+    "mtime": 1770713254.8065047,
+    "ast_hash": "353e46548e6d68a33c08ba71c82d80f5",
+    "semantic_hash": "353e46548e6d68a33c08ba71c82d80f5"
+  },
+  "openspec/changes/archive/2026-02-10-update-thread-canvas-floating-date-rail/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.806906,
+    "ast_hash": "af7e6c9e183c8d8b600031c556e272a0",
+    "semantic_hash": "af7e6c9e183c8d8b600031c556e272a0"
+  },
+  "openspec/changes/archive/2026-02-10-update-thread-canvas-floating-date-rail/tasks.md": {
+    "mtime": 1770713254.8071463,
+    "ast_hash": "d6a97ed91d896f0881a1276068522dfa",
+    "semantic_hash": "d6a97ed91d896f0881a1276068522dfa"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-message-cards/proposal.md": {
+    "mtime": 1770713254.8074732,
+    "ast_hash": "65abd422b02b8d38df994b08acb1f9b1",
+    "semantic_hash": "65abd422b02b8d38df994b08acb1f9b1"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-message-cards/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.8083491,
+    "ast_hash": "294f3844b5e016642ed0d3118586390a",
+    "semantic_hash": "294f3844b5e016642ed0d3118586390a"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-message-cards/tasks.md": {
+    "mtime": 1770713254.8085835,
+    "ast_hash": "3cac22088f669cc71c4a22294a37a5e4",
+    "semantic_hash": "3cac22088f669cc71c4a22294a37a5e4"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-rail-connectors/proposal.md": {
+    "mtime": 1770713254.809103,
+    "ast_hash": "789c2c411ee3371d78f1defaf6db9447",
+    "semantic_hash": "789c2c411ee3371d78f1defaf6db9447"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-rail-connectors/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.8097034,
+    "ast_hash": "3d499c2d38b009a1054132558c23cc22",
+    "semantic_hash": "3d499c2d38b009a1054132558c23cc22"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-rail-connectors/tasks.md": {
+    "mtime": 1770713254.810068,
+    "ast_hash": "05fa989aed20143a6864bd6390dde455",
+    "semantic_hash": "05fa989aed20143a6864bd6390dde455"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-unbounded-cards/proposal.md": {
+    "mtime": 1770713254.8104246,
+    "ast_hash": "6832513e97f4f61bf14b4b7c9748ee38",
+    "semantic_hash": "6832513e97f4f61bf14b4b7c9748ee38"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-unbounded-cards/specs/thread-canvas/spec.md": {
+    "mtime": 1770713254.8110926,
+    "ast_hash": "c2594149c0089e7cd191dbae8e2a7b87",
+    "semantic_hash": "c2594149c0089e7cd191dbae8e2a7b87"
+  },
+  "openspec/changes/archive/2026-02-10-update-timeline-unbounded-cards/tasks.md": {
+    "mtime": 1770713254.8120315,
+    "ast_hash": "50f88f94cba208733cc7abd0cea5bd10",
+    "semantic_hash": "50f88f94cba208733cc7abd0cea5bd10"
+  },
+  "openspec/project.md": {
+    "mtime": 1769394117.3073897,
+    "ast_hash": "35a3e45fc0514c45fb54d5bb208b9331",
+    "semantic_hash": "35a3e45fc0514c45fb54d5bb208b9331"
+  },
+  "openspec/specs/apple-intelligence-summaries/spec.md": {
+    "mtime": 1770713250.4832776,
+    "ast_hash": "d5ee312a0b53661355cb0a1a36cc5b57",
+    "semantic_hash": "d5ee312a0b53661355cb0a1a36cc5b57"
+  },
+  "openspec/specs/auto-refresh/spec.md": {
+    "mtime": 1786608746.5143461,
+    "ast_hash": "8a0205dff1751514a8288c02e177fd79",
+    "semantic_hash": "8a0205dff1751514a8288c02e177fd79"
+  },
+  "openspec/specs/backfill/spec.md": {
+    "mtime": 1786608657.8411825,
+    "ast_hash": "2edd912bc35fbeb16758dc5be346ab0e",
+    "semantic_hash": "2edd912bc35fbeb16758dc5be346ab0e"
+  },
+  "openspec/specs/code-health/spec.md": {
+    "mtime": 1770018529.0207894,
+    "ast_hash": "230dc4706f954039ea3256d7303846cb",
+    "semantic_hash": "230dc4706f954039ea3256d7303846cb"
+  },
+  "openspec/specs/manual-threading/spec.md": {
+    "mtime": 1768222208.987965,
+    "ast_hash": "158f57e16a674b8007865ae10656aff1",
+    "semantic_hash": "158f57e16a674b8007865ae10656aff1"
+  },
+  "openspec/specs/tech-docs/spec.md": {
+    "mtime": 1770018529.0224054,
+    "ast_hash": "ad4043d0c5f9905fba9c1b61fc5201d9",
+    "semantic_hash": "ad4043d0c5f9905fba9c1b61fc5201d9"
+  },
+  "openspec/specs/thread-canvas/spec.md": {
+    "mtime": 1783313055.7549872,
+    "ast_hash": "51eefed0397ac3ac6244fb82a0c14fe4",
+    "semantic_hash": "51eefed0397ac3ac6244fb82a0c14fe4"
+  },
+  "openspec/specs/thread-folders/spec.md": {
+    "mtime": 1771159040.1547718,
+    "ast_hash": "a8737d4f03ce6af6ca96bb746a11d5cf",
+    "semantic_hash": "a8737d4f03ce6af6ca96bb746a11d5cf"
+  },
+  "openspec/specs/thread-summaries/spec.md": {
+    "mtime": 1770018529.0230803,
+    "ast_hash": "f6a2db3c8cf3e9a86abc7206930ce711",
+    "semantic_hash": "f6a2db3c8cf3e9a86abc7206930ce711"
+  },
+  "openspec/specs/ui-visual-style/spec.md": {
+    "mtime": 1767795183.0432887,
+    "ast_hash": "fca4279aed7061c64ddb6d9ca3287eed",
+    "semantic_hash": "fca4279aed7061c64ddb6d9ca3287eed"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-128.png": {
+    "mtime": 1781714628.510065,
+    "ast_hash": "49c6f91c4dbcf927a2d4e8ddb59a8b33",
+    "semantic_hash": "49c6f91c4dbcf927a2d4e8ddb59a8b33"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-128@2x.png": {
+    "mtime": 1781714628.5123484,
+    "ast_hash": "4ec78a0f7bb4c791c11fdfdb2d667b47",
+    "semantic_hash": "4ec78a0f7bb4c791c11fdfdb2d667b47"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-16.png": {
+    "mtime": 1781714628.5127325,
+    "ast_hash": "91653a804812891a10ef95685a07e01e",
+    "semantic_hash": "91653a804812891a10ef95685a07e01e"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-16@2x.png": {
+    "mtime": 1781714628.512854,
+    "ast_hash": "f0ae422ab8031811c11d90c8f8ca737a",
+    "semantic_hash": "f0ae422ab8031811c11d90c8f8ca737a"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-256.png": {
+    "mtime": 1781714628.5134037,
+    "ast_hash": "4ec78a0f7bb4c791c11fdfdb2d667b47",
+    "semantic_hash": "4ec78a0f7bb4c791c11fdfdb2d667b47"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-256@2x.png": {
+    "mtime": 1781714628.5149739,
+    "ast_hash": "3458f2c2a9f66e83dc954cabc2e83541",
+    "semantic_hash": "3458f2c2a9f66e83dc954cabc2e83541"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-32.png": {
+    "mtime": 1781714628.5151484,
+    "ast_hash": "f0ae422ab8031811c11d90c8f8ca737a",
+    "semantic_hash": "f0ae422ab8031811c11d90c8f8ca737a"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-32@2x.png": {
+    "mtime": 1781714628.5152473,
+    "ast_hash": "28916c13c5b65025dac3c3961a644df9",
+    "semantic_hash": "28916c13c5b65025dac3c3961a644df9"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-512.png": {
+    "mtime": 1781714628.51616,
+    "ast_hash": "3458f2c2a9f66e83dc954cabc2e83541",
+    "semantic_hash": "3458f2c2a9f66e83dc954cabc2e83541"
+  },
+  "BetterMail/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png": {
+    "mtime": 1781714628.5253303,
+    "ast_hash": "9396c6db904c90030331da98111ca404",
+    "semantic_hash": "9396c6db904c90030331da98111ca404"
+  }
+}

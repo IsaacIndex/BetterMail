@@ -49,6 +49,7 @@ internal enum GraphEdgeKind: String, Codable, Hashable {
     case grouping
     case suggested
     case chain
+    case manualChain
     case remaining
 }
 
@@ -150,6 +151,9 @@ internal struct GraphThread: Identifiable, Codable, Hashable {
     internal let rootNodeID: String
     internal let subject: String
     internal let displayTitle: String
+    /// Content summary remains searchable without being reused as the node's
+    /// semantic title fallback.
+    internal let summaryPreviewText: String?
     internal let snippet: String
     internal let sender: String
     internal let mailboxPath: String
@@ -186,11 +190,19 @@ internal struct GraphThread: Identifiable, Codable, Hashable {
     }
 }
 
+internal enum GraphRemainderScope: Codable, Hashable {
+    case branches(parentID: String)
+    case messages(threadID: String)
+}
+
 internal struct GraphRemainingBranch: Identifiable, Codable, Hashable {
     internal static let graphID = "remaining:threads"
 
     internal let id: String
-    internal let parentID: String
+    internal let scope: GraphRemainderScope
+    /// The graph node after which this remainder should be laid out. Message
+    /// paging anchors to the last visible email rather than the thread root.
+    internal let layoutAnchorID: String
     internal let parentTitle: String
     internal let hiddenCount: Int
     internal let nextBatchCount: Int
@@ -202,15 +214,42 @@ internal struct GraphRemainingBranch: Identifiable, Codable, Hashable {
                   nextBatchCount: Int,
                   angle: Double) {
         self.id = Self.graphID(for: parentID)
-        self.parentID = parentID
+        self.scope = .branches(parentID: parentID)
+        self.layoutAnchorID = parentID
         self.parentTitle = parentTitle
         self.hiddenCount = hiddenCount
         self.nextBatchCount = nextBatchCount
         self.angle = angle
     }
 
+    internal init(threadID: String,
+                  layoutAnchorID: String,
+                  parentTitle: String,
+                  hiddenCount: Int,
+                  nextBatchCount: Int,
+                  angle: Double) {
+        self.id = Self.messageGraphID(for: threadID)
+        self.scope = .messages(threadID: threadID)
+        self.layoutAnchorID = layoutAnchorID
+        self.parentTitle = parentTitle
+        self.hiddenCount = hiddenCount
+        self.nextBatchCount = nextBatchCount
+        self.angle = angle
+    }
+
+    internal var parentID: String {
+        switch scope {
+        case .branches(let parentID): return parentID
+        case .messages(let threadID): return threadID
+        }
+    }
+
     internal static func graphID(for parentID: String) -> String {
         parentID == GraphCenter.you.id ? graphID : "remaining:children:\(parentID)"
+    }
+
+    internal static func messageGraphID(for threadID: String) -> String {
+        "remaining:messages:\(threadID)"
     }
 
     internal var radius: CGFloat {
@@ -218,20 +257,39 @@ internal struct GraphRemainingBranch: Identifiable, Codable, Hashable {
     }
 
     internal var title: String {
-        String.localizedStringWithFormat(
-            NSLocalizedString("graph.remaining.title", comment: "Remaining graph branches node title"),
-            hiddenCount
-        )
+        switch scope {
+        case .branches:
+            return String.localizedStringWithFormat(
+                NSLocalizedString("graph.remaining.title", comment: "Remaining graph branches node title"),
+                hiddenCount
+            )
+        case .messages:
+            return String.localizedStringWithFormat(
+                NSLocalizedString("graph.remaining.emails.title", comment: "Remaining graph emails node title"),
+                hiddenCount
+            )
+        }
     }
 
     internal var accessibilityLabel: String {
-        String.localizedStringWithFormat(
-            NSLocalizedString("graph.remaining.accessibility",
-                              comment: "VoiceOver label for expanding remaining graph branches"),
-            hiddenCount,
-            parentTitle,
-            nextBatchCount
-        )
+        switch scope {
+        case .branches:
+            return String.localizedStringWithFormat(
+                NSLocalizedString("graph.remaining.accessibility",
+                                  comment: "VoiceOver label for expanding remaining graph branches"),
+                hiddenCount,
+                parentTitle,
+                nextBatchCount
+            )
+        case .messages:
+            return String.localizedStringWithFormat(
+                NSLocalizedString("graph.remaining.emails.accessibility",
+                                  comment: "VoiceOver label for expanding remaining graph emails"),
+                hiddenCount,
+                parentTitle,
+                nextBatchCount
+            )
+        }
     }
 }
 
@@ -239,6 +297,17 @@ internal struct GraphMessageSummary: Codable, Hashable {
     internal let text: String
     internal let statusMessage: String
     internal let isSummarizing: Bool
+    internal let generationID: String?
+
+    internal init(text: String,
+                  statusMessage: String,
+                  isSummarizing: Bool,
+                  generationID: String? = nil) {
+        self.text = text
+        self.statusMessage = statusMessage
+        self.isSummarizing = isSummarizing
+        self.generationID = generationID
+    }
 
     internal var previewText: String {
         let cleanedSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -373,7 +442,11 @@ internal struct GraphData: Codable, Hashable {
     }
 
     internal func remainingBranch(forParentID parentID: String) -> GraphRemainingBranch? {
-        remainingBranches.first { $0.parentID == parentID }
+        remainingBranches.first { $0.scope == .branches(parentID: parentID) }
+    }
+
+    internal func remainingEmails(forThreadID threadID: String) -> GraphRemainingBranch? {
+        remainingBranches.first { $0.scope == .messages(threadID: threadID) }
     }
 
     internal var allNodeIDs: Set<String> {
@@ -409,14 +482,27 @@ internal struct GraphData: Codable, Hashable {
         return matches
     }
 
+    /// Direct graph-node matches for the shared top-bar search. Related nodes
+    /// may remain visible as context, but are intentionally excluded here.
+    internal func searchResultCount(query rawQuery: String) -> Int? {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return nil }
+        return groupings.filter { $0.title.lowercased().contains(query) }.count
+            + threads.filter { $0.matches(query: query) }.count
+            + messages.filter { $0.matches(query: query) }.count
+    }
+
     internal static func make(roots: [ThreadNode],
                               archivedThreadIDs: Set<String> = [],
                               tagsByNodeID: [String: [String]] = [:],
                               topicSignalsByRawThreadID: [String: GraphTopicSignal] = [:],
                               summariesByNodeID: [String: GraphMessageSummary] = [:],
                               titlesByNodeID: [String: String] = [:],
+                              manualAttachmentMessageIDs: Set<String> = [],
+                              jwzThreadMap: [String: String] = [:],
                               folders: [ThreadFolder] = [],
                               folderMembershipByThreadID: [String: String] = [:],
+                              automationProposals: [GraphAutomationProposal] = [],
                               dismissedSuggestedTopicIDs: Set<String> = [],
                               hiddenSuggestedTopics: Set<String> = [],
                               branchLimit: Int? = nil,
@@ -424,6 +510,7 @@ internal struct GraphData: Codable, Hashable {
                               perNodeBranchPageSize: Int = 6,
                               visibleChildLimitsByParentID: [String: Int] = [:],
                               messageLimitPerBranch: Int? = nil,
+                              visibleEmailLimitsByThreadID: [String: Int] = [:],
                               now: Date = Date()) -> GraphData {
         var threads: [GraphThread] = []
         var messages: [GraphMessage] = []
@@ -496,7 +583,21 @@ internal struct GraphData: Codable, Hashable {
             }
         }
         let visibleLimit = branchLimit.map { max(0, $0) } ?? primaryBranches.count
-        let visiblePrimaryBranches = Array(primaryBranches.prefix(visibleLimit))
+        let pendingAutomationProposals = automationProposals.filter { $0.status == .pendingReview }
+        let automationRawThreadIDs = Set(pendingAutomationProposals.flatMap { proposal in
+            [proposal.source.rawThreadID, proposal.target.threadID].compactMap { $0 }
+        })
+        let automationFolderBranchIDs = Set(pendingAutomationProposals.compactMap { proposal in
+            proposal.target.folderID.map { "folder:\($0)" }
+        })
+        var visiblePrimaryBranches = Array(primaryBranches.prefix(visibleLimit))
+        var admittedPrimaryBranchIDs = Set(visiblePrimaryBranches.map(\.id))
+        for branch in primaryBranches where
+            automationFolderBranchIDs.contains(branch.id) ||
+                branch.candidates.contains(where: { automationRawThreadIDs.contains($0.rawThreadID) }) {
+            guard admittedPrimaryBranchIDs.insert(branch.id).inserted else { continue }
+            visiblePrimaryBranches.append(branch)
+        }
         let childPageSize = max(1, perNodeBranchPageSize)
 
         let rankedSuggestions = GraphTopicRanker.rank(
@@ -528,7 +629,12 @@ internal struct GraphData: Codable, Hashable {
             let limit = branch.folder == nil
                 ? 1
                 : max(0, visibleChildLimitsByParentID[branch.id] ?? childPageSize)
-            let visibleChildren = Array(branch.candidates.prefix(limit))
+            var visibleChildren = Array(branch.candidates.prefix(limit))
+            let visibleRawThreadIDs = Set(visibleChildren.map(\.rawThreadID))
+            visibleChildren.append(contentsOf: branch.candidates.filter {
+                automationRawThreadIDs.contains($0.rawThreadID) &&
+                    !visibleRawThreadIDs.contains($0.rawThreadID)
+            })
             visibleCandidatesByPrimaryBranchID[branch.id] = visibleChildren
             admittedThreadIDs.formUnion(visibleChildren.map(\.threadID))
         }
@@ -547,21 +653,21 @@ internal struct GraphData: Codable, Hashable {
             let rawThreadID = candidate.rawThreadID
             let threadID = candidate.threadID
             let flattened = candidate.nodes
+            let orderedEmailNodes = Self.newestFirstEmailNodes(from: flattened)
             let allMessageIDs = flattened.map(\.id)
-            let visibleEmails: [ThreadNode] = if let messageLimitPerBranch {
-                Array(flattened.prefix(max(1, messageLimitPerBranch)))
+            let configuredEmailLimit = visibleEmailLimitsByThreadID[threadID] ?? messageLimitPerBranch
+            let visibleEmails: [ThreadNode] = if let configuredEmailLimit {
+                Array(orderedEmailNodes.prefix(max(1, configuredEmailLimit)))
             } else {
-                flattened
+                orderedEmailNodes
             }
             let visibleMessages = visibleEmails.dropFirst().enumerated().map { offset, node in
                 let summary = summariesByNodeID[node.id] ?? summariesByNodeID[messageNodeID(for: node.id)]
                 let generatedTitle = (titlesByNodeID[node.id]
                     ?? titlesByNodeID[messageNodeID(for: node.id)] ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                let summaryTitle = summary?.previewText
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let subjectTitle = node.message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-                let displayTitle = [generatedTitle, summaryTitle, subjectTitle, node.message.from]
+                let displayTitle = [generatedTitle, subjectTitle, node.message.from]
                     .first { !$0.isEmpty } ?? ""
                 return GraphMessage(id: messageNodeID(for: node.id),
                                     rawMessageID: node.id,
@@ -577,7 +683,7 @@ internal struct GraphData: Codable, Hashable {
                                     date: node.message.date,
                                     unread: node.message.isUnread,
                                     tags: tagsByNodeID[node.id] ?? tagsByNodeID[messageNodeID(for: node.id)] ?? [],
-                                    internalMailID: node.message.internalMailID,
+                                    internalMailID: node.message.physicalSource.internalMailID,
                                     summary: summary)
             }
             let lastUpdated = flattened.map(\.message.date).max() ?? root.message.date
@@ -594,13 +700,14 @@ internal struct GraphData: Codable, Hashable {
             let generatedTitle = (titlesByNodeID[root.id]
                 ?? titlesByNodeID[messageNodeID(for: root.id)] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let displayTitle = [generatedTitle, rootSummary, fallbackTitle, root.message.from]
+            let displayTitle = [generatedTitle, fallbackTitle, root.message.from]
                 .first { !$0.isEmpty } ?? ""
             let thread = GraphThread(id: threadID,
                                      rawThreadID: rawThreadID,
                                      rootNodeID: root.id,
                                      subject: root.message.subject,
                                      displayTitle: displayTitle,
+                                     summaryPreviewText: rootSummary.nonEmpty,
                                      snippet: root.message.snippet,
                                      sender: root.message.from,
                                      mailboxPath: root.message.mailboxID,
@@ -616,12 +723,36 @@ internal struct GraphData: Codable, Hashable {
             threads.append(thread)
             messages.append(contentsOf: visibleMessages)
             var previousID = threadID
-            for message in visibleMessages {
+            for (index, message) in visibleMessages.enumerated() {
+                let edgeKind: GraphEdgeKind
+                if index == 0 {
+                    // The graph thread node represents the first visible email.
+                    // Keep its synthetic connector visually standard.
+                    edgeKind = .chain
+                } else {
+                    edgeKind = isManualBoundary(between: visibleEmails[index],
+                                                and: visibleEmails[index + 1],
+                                                manualAttachmentMessageIDs: manualAttachmentMessageIDs,
+                                                jwzThreadMap: jwzThreadMap)
+                        ? .manualChain
+                        : .chain
+                }
                 edges.append(GraphEdge(sourceID: previousID,
                                        targetID: message.id,
                                        threadID: threadID,
-                                       kind: .chain))
+                                       kind: edgeKind))
                 previousID = message.id
+            }
+            if let configuredEmailLimit {
+                appendRemainingEmails(threadID: threadID,
+                                      threadTitle: displayTitle,
+                                      layoutAnchorID: previousID,
+                                      totalEmailCount: flattened.count,
+                                      visibleEmailCount: visibleEmails.count,
+                                      nextPageSize: messageLimitPerBranch ?? configuredEmailLimit,
+                                      angleSeed: index + visibleEmails.count,
+                                      remainingBranches: &remainingBranches,
+                                      edges: &edges)
             }
         }
 
@@ -697,6 +828,36 @@ internal struct GraphData: Codable, Hashable {
                                   edges: &edges)
         }
 
+        var automationEdgeIDs = Set<String>()
+        for proposal in pendingAutomationProposals {
+            let sourceThreadNodeID = Self.threadNodeID(for: proposal.source.rawThreadID)
+            let anchorID: String?
+            switch proposal.action {
+            case .attachToThread:
+                if let targetThreadID = proposal.target.threadID {
+                    anchorID = Self.threadNodeID(for: targetThreadID)
+                } else if let folderID = proposal.target.folderID {
+                    anchorID = "folder:\(folderID)"
+                } else {
+                    anchorID = nil
+                }
+            case .appendToFolder:
+                anchorID = proposal.target.folderID.map { "folder:\($0)" }
+            }
+            guard let anchorID,
+                  anchorID != sourceThreadNodeID,
+                  threads.contains(where: { $0.id == sourceThreadNodeID }),
+                  (threads.contains(where: { $0.id == anchorID }) || groupings.contains(where: { $0.id == anchorID })) else {
+                continue
+            }
+            let edgeID = "\(anchorID)|\(sourceThreadNodeID)|\(proposal.action.rawValue)"
+            guard automationEdgeIDs.insert(edgeID).inserted else { continue }
+            edges.append(GraphEdge(sourceID: anchorID,
+                                   targetID: sourceThreadNodeID,
+                                   threadID: sourceThreadNodeID,
+                                   kind: .suggested))
+        }
+
         appendRemainingBranch(parentID: GraphCenter.you.id,
                               parentTitle: GraphCenter.you.title,
                               totalChildCount: primaryBranches.count,
@@ -714,6 +875,18 @@ internal struct GraphData: Codable, Hashable {
                          edges: edges,
                          visiblePrimaryBranchCount: visiblePrimaryBranches.count,
                          totalPrimaryBranchCount: primaryBranches.count)
+    }
+
+    private static func isManualBoundary(between lhs: ThreadNode,
+                                         and rhs: ThreadNode,
+                                         manualAttachmentMessageIDs: Set<String>,
+                                         jwzThreadMap: [String: String]) -> Bool {
+        if manualAttachmentMessageIDs.contains(lhs.id) || manualAttachmentMessageIDs.contains(rhs.id) {
+            return true
+        }
+        let lhsAutomaticThreadID = jwzThreadMap[lhs.message.threadKey] ?? lhs.message.threadID ?? lhs.id
+        let rhsAutomaticThreadID = jwzThreadMap[rhs.message.threadKey] ?? rhs.message.threadID ?? rhs.id
+        return lhsAutomaticThreadID != rhsAutomaticThreadID
     }
 
     private static func appendRemainingBranch(parentID: String,
@@ -738,6 +911,32 @@ internal struct GraphData: Codable, Hashable {
                                kind: .remaining))
     }
 
+    private static func appendRemainingEmails(threadID: String,
+                                              threadTitle: String,
+                                              layoutAnchorID: String,
+                                              totalEmailCount: Int,
+                                              visibleEmailCount: Int,
+                                              nextPageSize: Int,
+                                              angleSeed: Int,
+                                              remainingBranches: inout [GraphRemainingBranch],
+                                              edges: inout [GraphEdge]) {
+        let hiddenCount = max(0, totalEmailCount - visibleEmailCount)
+        guard hiddenCount > 0 else { return }
+        let remainder = GraphRemainingBranch(
+            threadID: threadID,
+            layoutAnchorID: layoutAnchorID,
+            parentTitle: threadTitle,
+            hiddenCount: hiddenCount,
+            nextBatchCount: min(max(1, nextPageSize), hiddenCount),
+            angle: fmod(Double(angleSeed) * 137.5, 360)
+        )
+        remainingBranches.append(remainder)
+        edges.append(GraphEdge(sourceID: layoutAnchorID,
+                               targetID: remainder.id,
+                               threadID: threadID,
+                               kind: .remaining))
+    }
+
     internal static func suggestionDismissalID(forTopic topic: String,
                                                rawThreadIDs: [String]) -> String? {
         GraphTopicPreferenceID.exact(normalizedTopic: topic,
@@ -750,6 +949,20 @@ internal struct GraphData: Codable, Hashable {
 
     private static func flatten(_ node: ThreadNode) -> [ThreadNode] {
         [node] + node.children.flatMap { flatten($0) }
+    }
+
+    /// The thread node stays first because it represents the conversation's
+    /// latest activity. Its visible email descendants then run newest-to-oldest
+    /// so each rendered chain moves consistently away from `You` over time.
+    private static func newestFirstEmailNodes(from flattened: [ThreadNode]) -> [ThreadNode] {
+        guard let root = flattened.first else { return [] }
+        let descendants = flattened.dropFirst().sorted { left, right in
+            if left.message.date == right.message.date {
+                return left.id < right.id
+            }
+            return left.message.date > right.message.date
+        }
+        return [root] + descendants
     }
 }
 
@@ -866,6 +1079,7 @@ internal extension GraphThread {
     func matches(query: String) -> Bool {
         displayTitle.lowercased().contains(query) ||
         subject.lowercased().contains(query) ||
+        (summaryPreviewText ?? "").lowercased().contains(query) ||
         snippet.lowercased().contains(query) ||
         sender.lowercased().contains(query) ||
         tags.contains { $0.lowercased().contains(query) }

@@ -1,8 +1,16 @@
 import Foundation
 import OSLog
 
-internal struct SummaryRegenerationProgress {
-    internal enum State {
+internal extension Notification.Name {
+    /// Published only after a batch Re-GenAI run has committed its requested
+    /// node summaries and semantic titles and refreshed affected Group summaries.
+    static let summaryRegenerationDidComplete = Notification.Name(
+        "SummaryRegenerationService.summaryRegenerationDidComplete"
+    )
+}
+
+internal nonisolated struct SummaryRegenerationProgress: Sendable {
+    internal nonisolated enum State: Sendable {
         case running
         case finished
     }
@@ -14,12 +22,21 @@ internal struct SummaryRegenerationProgress {
     internal let errorMessage: String?
 }
 
-internal struct SummaryRegenerationResult {
+internal nonisolated struct SummaryRegenerationResult: Sendable {
     internal let total: Int
     internal let regenerated: Int
+    internal let graphTitlesRegenerated: Int
+
+    internal init(total: Int,
+                  regenerated: Int,
+                  graphTitlesRegenerated: Int = 0) {
+        self.total = total
+        self.regenerated = regenerated
+        self.graphTitlesRegenerated = graphTitlesRegenerated
+    }
 }
 
-internal protocol SummaryRegenerationServicing {
+internal nonisolated protocol SummaryRegenerationServicing: Sendable {
     func countMessages(in range: DateInterval, mailbox: String?) async throws -> Int
     func runRegeneration(range: DateInterval,
                          mailbox: String?,
@@ -31,14 +48,6 @@ internal protocol SummaryRegenerationServicing {
 }
 
 internal actor SummaryRegenerationService: SummaryRegenerationServicing {
-    private struct NodeSummaryInput {
-        let messageID: String
-        let subject: String
-        let body: String
-        let priorMessages: [EmailSummaryContextEntry]
-        let fingerprint: String
-    }
-
     private struct FolderSummaryInput {
         let folderID: String
         let title: String
@@ -47,12 +56,18 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
     }
 
     private let store: MessageStore
-    private let capabilityProvider: () -> EmailSummaryCapability
+    private let threader: JWZThreader
+    private let graphTitleCapabilityProvider: @Sendable () -> GraphTitleCapability
+    private let capabilityProvider: @Sendable () -> EmailSummaryCapability
     private let logger = Log.refresh
 
     internal init(store: MessageStore = .shared,
-                  capabilityProvider: @escaping () -> EmailSummaryCapability = { EmailSummaryProviderFactory.makeCapability() }) {
+                  threader: JWZThreader = JWZThreader(),
+                  graphTitleCapabilityProvider: @escaping @Sendable () -> GraphTitleCapability = { GraphTitleProviderFactory.makeCapability() },
+                  capabilityProvider: @escaping @Sendable () -> EmailSummaryCapability = { EmailSummaryProviderFactory.makeCapability() }) {
         self.store = store
+        self.threader = threader
+        self.graphTitleCapabilityProvider = graphTitleCapabilityProvider
         self.capabilityProvider = capabilityProvider
     }
 
@@ -83,6 +98,8 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
             logger.error("RegenAI run: provider unavailable; status=\(capability.statusMessage, privacy: .public)")
             throw EmailSummaryError.unavailable(capability.statusMessage)
         }
+        let graphTitleCapability = graphTitleCapabilityProvider()
+        let graphTitleProvider = graphTitleCapability.provider
 
         let now = Date()
         if range.start > now || totalExpected == 0 {
@@ -101,92 +118,167 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         let mailboxLabel = mailbox ?? "all-mailboxes"
         logger.info("RegenAI run: mailbox=\(mailboxLabel, privacy: .public) totalExpected=\(totalExpected, privacy: .public) preferredBatchSize=\(preferredBatchSize, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
 
-        var completed = 0
-        var batchSize = max(1, preferredBatchSize)
-        var offset = 0
-
-        while completed < totalExpected {
-            let messages = try await store.fetchMessages(in: clampedRange,
-                                                         mailbox: mailbox,
-                                                         limit: batchSize,
-                                                         offset: offset)
-            guard !messages.isEmpty else {
-                logger.info("RegenAI run: no messages from store; completed=\(completed, privacy: .public) totalExpected=\(totalExpected, privacy: .public) offset=\(offset, privacy: .public) batchSize=\(batchSize, privacy: .public)")
-                break
-            }
-
-            let inputs = Self.nodeSummaryInputs(from: messages,
-                                                snippetLineLimit: snippetLineLimit,
-                                                stopPhrases: stopPhrases)
-            for input in inputs {
-                do {
-                    let request = EmailSummaryRequest(subject: input.subject,
-                                                      body: input.body,
-                                                      priorMessages: input.priorMessages)
-                    let text = try await provider.summarizeEmail(request)
-                    let entry = SummaryCacheEntry(scope: .emailNode,
-                                                  scopeID: input.messageID,
-                                                  summaryText: text,
-                                                  generatedAt: Date(),
-                                                  fingerprint: input.fingerprint,
-                                                  provider: capability.providerID)
-                    try await store.upsertSummaries([entry])
-                } catch {
-                    progressHandler(SummaryRegenerationProgress(total: totalExpected,
-                                                                completed: completed,
-                                                                currentBatchSize: batchSize,
-                                                                state: .finished,
-                                                                errorMessage: error.localizedDescription))
-                    throw error
-                }
-                completed += 1
-                progressHandler(SummaryRegenerationProgress(total: totalExpected,
-                                                            completed: completed,
-                                                            currentBatchSize: batchSize,
-                                                            state: .running,
-                                                            errorMessage: nil))
-            }
-
-            let skipped = messages.count - inputs.count
-            if skipped > 0 {
-                completed += skipped
-                progressHandler(SummaryRegenerationProgress(total: totalExpected,
-                                                            completed: completed,
-                                                            currentBatchSize: batchSize,
-                                                            state: .running,
-                                                            errorMessage: nil))
-            }
-
-            try await refreshFolderSummaries(using: provider,
-                                             providerID: capability.providerID,
-                                             messages: messages)
-            offset += messages.count
+        let targetMessages = try await store.fetchMessages(in: clampedRange, mailbox: mailbox)
+        guard !targetMessages.isEmpty else {
+            progressHandler(SummaryRegenerationProgress(total: totalExpected,
+                                                        completed: 0,
+                                                        currentBatchSize: max(1, preferredBatchSize),
+                                                        state: .finished,
+                                                        errorMessage: nil))
+            return SummaryRegenerationResult(total: totalExpected, regenerated: 0)
         }
+        guard let graphTitleProvider else {
+            logger.error("RegenAI run: semantic-title provider unavailable; status=\(graphTitleCapability.statusMessage, privacy: .public)")
+            throw EmailSummaryError.unavailable(graphTitleCapability.statusMessage)
+        }
+
+        // Hydrate the complete effective-thread graph so messages at a range
+        // boundary still receive their true immediate neighbours. Only the
+        // target range is written below.
+        let allMessages = try await store.fetchMessages()
+        let baseResult = threader.buildThreads(from: allMessages)
+        let manualGroups = try await store.fetchManualThreadGroups()
+        let appliedResult = threader.applyManualGroups(manualGroups, to: baseResult).result
+        let build = Self.nodeSummaryBuild(from: appliedResult,
+                                          snippetLineLimit: snippetLineLimit,
+                                          stopPhrases: stopPhrases,
+                                          providerID: capability.providerID)
+        let targetMessageIDs = Set(targetMessages.map(\.messageID))
+        let targetInputs = build.inputsByNodeID.values
+            .filter { targetMessageIDs.contains($0.cacheKey) }
+            .sorted {
+                if $0.effectiveThreadID == $1.effectiveThreadID {
+                    return $0.request.threadContext.position < $1.request.threadContext.position
+                }
+                return $0.effectiveThreadID < $1.effectiveThreadID
+            }
+
+        var completed = max(0, targetMessages.count - targetInputs.count)
+        var regenerated = 0
+        var graphTitlesRegenerated = 0
+        let batchSize = max(1, preferredBatchSize)
+        var didCommitNodeSummaries = false
+        defer {
+            if didCommitNodeSummaries {
+                // Node batches are durable before Group refresh begins. Make
+                // active Graph state observe those generations even if a
+                // later node batch or Group summary fails.
+                NotificationCenter.default.post(name: .summaryRegenerationDidComplete,
+                                                object: store)
+            }
+        }
+        for start in stride(from: 0, to: targetInputs.count, by: batchSize) {
+            let end = min(start + batchSize, targetInputs.count)
+            let batch = Array(targetInputs[start..<end])
+            var entries: [SummaryCacheEntry] = []
+            entries.reserveCapacity(batch.count * 2)
+            var batchTitleCount = 0
+            do {
+                for input in batch {
+                    try Task.checkCancellation()
+                    let text = try await provider.summarizeEmail(input.request)
+                    let summaryEntry = SummaryCacheEntry(scope: .emailNode,
+                                                         scopeID: input.cacheKey,
+                                                         summaryText: text,
+                                                         generatedAt: Date(),
+                                                         fingerprint: input.fingerprint,
+                                                         provider: capability.providerID)
+                    entries.append(summaryEntry)
+
+                    guard let threadRevision = build.threadRevisionsByThreadID[input.effectiveThreadID] else {
+                        throw EmailSummaryError.unavailable("The effective thread context could not be prepared for title generation.")
+                    }
+                    let titleInput = GraphTitleGenerationInputBuilder.make(
+                        nodeInput: input,
+                        summary: text,
+                        summaryGenerationID: summaryEntry.generationID,
+                        threadRevision: threadRevision,
+                        providerID: graphTitleCapability.providerID
+                    )
+                    let generatedTitle = try await graphTitleProvider.makeGraphTitle(titleInput.request)
+                    let title = GraphTitleFormatter.normalizedGeneratedTitle(
+                        generatedTitle,
+                        fallback: titleInput.request.subject
+                    )
+                    entries.append(SummaryCacheEntry(scope: .graphTitle,
+                                                     scopeID: titleInput.nodeID,
+                                                     summaryText: title,
+                                                     generatedAt: Date(),
+                                                     fingerprint: titleInput.fingerprint,
+                                                     provider: graphTitleCapability.providerID))
+                    batchTitleCount += 1
+                }
+                try Task.checkCancellation()
+                try await store.upsertSummaries(entries)
+                didCommitNodeSummaries = true
+                completed += batch.count
+                regenerated += batch.count
+                graphTitlesRegenerated += batchTitleCount
+                progressHandler(SummaryRegenerationProgress(total: totalExpected,
+                                                            completed: completed,
+                                                            currentBatchSize: batchSize,
+                                                            state: .running,
+                                                            errorMessage: nil))
+            } catch {
+                progressHandler(SummaryRegenerationProgress(total: totalExpected,
+                                                            completed: completed,
+                                                            currentBatchSize: batchSize,
+                                                            state: .finished,
+                                                            errorMessage: error.localizedDescription))
+                throw error
+            }
+        }
+
+        let touchedThreadIDs = Set(targetInputs.map(\.effectiveThreadID))
+        let effectiveMessages = appliedResult.roots.flatMap(Self.flattenMessages)
+        let effectiveThreadIDByMessageID = Dictionary(
+            uniqueKeysWithValues: build.inputsByNodeID.values.map { ($0.cacheKey, $0.effectiveThreadID) }
+        )
+        try await refreshFolderSummaries(using: provider,
+                                         providerID: capability.providerID,
+                                         touchedThreadIDs: touchedThreadIDs,
+                                         messages: effectiveMessages,
+                                         effectiveThreadIDByMessageID: effectiveThreadIDByMessageID)
 
         progressHandler(SummaryRegenerationProgress(total: totalExpected,
                                                     completed: completed,
                                                     currentBatchSize: batchSize,
                                                     state: .finished,
                                                     errorMessage: nil))
-        return SummaryRegenerationResult(total: totalExpected, regenerated: completed)
+        return SummaryRegenerationResult(total: totalExpected,
+                                         regenerated: regenerated,
+                                         graphTitlesRegenerated: graphTitlesRegenerated)
     }
 
     private func refreshFolderSummaries(using provider: EmailSummaryProviding,
                                         providerID: String,
-                                        messages: [EmailMessage]) async throws {
-        let threadIDs = Set(messages.compactMap { $0.threadID ?? $0.threadKey })
-        guard !threadIDs.isEmpty else { return }
+                                        touchedThreadIDs: Set<String>,
+                                        messages: [EmailMessage],
+                                        effectiveThreadIDByMessageID: [String: String]) async throws {
+        guard !touchedThreadIDs.isEmpty else { return }
 
         let folders = try await store.fetchThreadFolders()
-        let touchedFolders = folders.filter { folder in
-            !folder.threadIDs.isDisjoint(with: threadIDs)
-        }
+        let foldersByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        let threadIDsByFolder = Self.folderThreadIDsByFolder(folders: folders)
+        let touchedFolders = folders
+            .filter { folder in
+                !(threadIDsByFolder[folder.id] ?? []).isDisjoint(with: touchedThreadIDs)
+            }
+            .sorted {
+                let lhsDepth = Self.folderDepth($0, foldersByID: foldersByID)
+                let rhsDepth = Self.folderDepth($1, foldersByID: foldersByID)
+                if lhsDepth == rhsDepth { return $0.id < $1.id }
+                return lhsDepth > rhsDepth
+            }
         guard !touchedFolders.isEmpty else { return }
 
-        let touchedThreadIDs = touchedFolders.reduce(into: Set<String>()) { result, folder in
-            result.formUnion(folder.threadIDs)
+        let includedThreadIDs = touchedFolders.reduce(into: Set<String>()) { result, folder in
+            result.formUnion(threadIDsByFolder[folder.id] ?? [])
         }
-        let folderMessages = try await store.fetchMessages(threadIDs: touchedThreadIDs)
+        let folderMessages = messages.filter {
+            guard let effectiveThreadID = effectiveThreadIDByMessageID[$0.messageID] else { return false }
+            return includedThreadIDs.contains(effectiveThreadID)
+        }
         guard !folderMessages.isEmpty else { return }
 
         let nodeIDs = Set(folderMessages.map(\.messageID))
@@ -195,7 +287,10 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
 
         let inputs = Self.folderSummaryInputs(for: touchedFolders,
                                               messages: folderMessages,
-                                              cachedNodeSummaries: cachedByID)
+                                              cachedNodeSummaries: cachedByID,
+                                              threadIDsByFolder: threadIDsByFolder,
+                                              effectiveThreadIDByMessageID: effectiveThreadIDByMessageID,
+                                              providerID: providerID)
 
         for input in inputs {
             let request = FolderSummaryRequest(title: input.title,
@@ -211,67 +306,52 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         }
     }
 
-    private static func nodeSummaryInputs(from messages: [EmailMessage],
-                                          snippetLineLimit: Int,
-                                          stopPhrases: [String]) -> [NodeSummaryInput] {
-        let formatter = SnippetFormatter(lineLimit: snippetLineLimit,
-                                         stopPhrases: stopPhrases)
-        let grouped = Dictionary(grouping: messages) { message in
-            message.threadID ?? message.threadKey
-        }
-
-        var inputs: [NodeSummaryInput] = []
-        inputs.reserveCapacity(messages.count)
-
-        for (_, threadMessages) in grouped {
-            let sorted = threadMessages.sorted {
-                if $0.date == $1.date {
-                    return $0.messageID < $1.messageID
-                }
-                return $0.date < $1.date
-            }
-            var priorEntries: [EmailSummaryContextEntry] = []
-            priorEntries.reserveCapacity(sorted.count)
-
-            for message in sorted {
-                let subject = normalizedText(message.subject, maxCharacters: 140)
-                let body = normalizedText(formatter.format(message.snippet), maxCharacters: 600)
-                let priorContext = Array(priorEntries.suffix(8))
-                if !subject.isEmpty || !body.isEmpty {
-                    let fingerprintEntries = priorContext.map {
-                        NodeSummaryFingerprintEntry(messageID: $0.messageID,
-                                                    subject: $0.subject,
-                                                    bodySnippet: $0.bodySnippet)
-                    }
-                    let fingerprint = ThreadSummaryFingerprint.makeNode(subject: subject,
-                                                                        body: body,
-                                                                        priorEntries: fingerprintEntries)
-                    inputs.append(NodeSummaryInput(messageID: message.messageID,
-                                                   subject: subject,
-                                                   body: body,
-                                                   priorMessages: priorContext,
-                                                   fingerprint: fingerprint))
-                }
-
-                let priorSnippet = normalizedText(formatter.format(message.snippet), maxCharacters: 220)
-                if !subject.isEmpty || !priorSnippet.isEmpty {
-                    priorEntries.append(EmailSummaryContextEntry(messageID: message.messageID,
-                                                                 subject: subject,
-                                                                 bodySnippet: priorSnippet))
-                }
+    private static func nodeSummaryBuild(from result: ThreadingResult,
+                                         snippetLineLimit: Int,
+                                         stopPhrases: [String],
+                                         providerID: String) -> ThreadSummaryContextBuild {
+        var sources: [ThreadSummaryMessageSource] = []
+        for root in result.roots {
+            let messages = flattenMessages(root)
+            guard let first = messages.first else { continue }
+            let effectiveThreadID = result.manualGroupByMessageKey[first.threadKey]
+                ?? first.threadID
+                ?? result.jwzThreadMap[first.threadKey]
+                ?? first.messageID
+            for message in messages {
+                let messageKey = message.threadKey
+                let automaticThreadID = result.jwzThreadMap[messageKey]
+                    ?? (result.manualGroupByMessageKey[messageKey] == nil ? message.threadID : nil)
+                    ?? message.messageID
+                sources.append(ThreadSummaryMessageSourceBuilder.make(
+                    message: message,
+                    nodeID: message.messageID,
+                    cacheKey: message.messageID,
+                    effectiveThreadID: result.manualGroupByMessageKey[messageKey] ?? effectiveThreadID,
+                    automaticThreadID: automaticThreadID,
+                    isManualAttachment: result.manualAttachmentMessageIDs.contains(message.messageID),
+                    snippetLineLimit: snippetLineLimit,
+                    stopPhrases: stopPhrases
+                ))
             }
         }
+        return ThreadSummaryContextBuilder.build(sources: sources, providerID: providerID)
+    }
 
-        return inputs
+    private static func flattenMessages(_ root: ThreadNode) -> [EmailMessage] {
+        [root.message] + root.children.flatMap(flattenMessages)
     }
 
     private static func folderSummaryInputs(for folders: [ThreadFolder],
                                             messages: [EmailMessage],
-                                            cachedNodeSummaries: [String: SummaryCacheEntry]) -> [FolderSummaryInput] {
+                                            cachedNodeSummaries: [String: SummaryCacheEntry],
+                                            threadIDsByFolder: [String: Set<String>],
+                                            effectiveThreadIDByMessageID: [String: String],
+                                            providerID: String) -> [FolderSummaryInput] {
         var messagesByThreadID: [String: [EmailMessage]] = [:]
         messagesByThreadID.reserveCapacity(messages.count)
         for message in messages {
-            let threadID = message.threadID ?? message.threadKey
+            guard let threadID = effectiveThreadIDByMessageID[message.messageID] else { continue }
             messagesByThreadID[threadID, default: []].append(message)
         }
 
@@ -279,7 +359,7 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         inputs.reserveCapacity(folders.count)
 
         for folder in folders {
-            let folderMessages = folder.threadIDs
+            let folderMessages = (threadIDsByFolder[folder.id] ?? folder.threadIDs)
                 .compactMap { messagesByThreadID[$0] }
                 .flatMap { $0 }
             let sortedMessages = folderMessages.sorted {
@@ -297,7 +377,9 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
                 FolderSummaryFingerprintEntry(nodeID: message.messageID,
                                               nodeFingerprint: cachedNodeSummaries[message.messageID]?.fingerprint ?? "missing")
             }
-            let fingerprint = ThreadSummaryFingerprint.makeFolder(nodeEntries: fingerprintEntries)
+            let fingerprint = ThreadSummaryFingerprint.makeFolder(title: folder.title,
+                                                                  nodeEntries: fingerprintEntries,
+                                                                  providerID: providerID)
 
             inputs.append(FolderSummaryInput(folderID: folder.id,
                                              title: folder.title,
@@ -308,12 +390,37 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         return inputs
     }
 
-    private static func normalizedText(_ text: String, maxCharacters: Int) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        let collapsed = trimmed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard collapsed.count > maxCharacters else { return collapsed }
-        let endIndex = collapsed.index(collapsed.startIndex, offsetBy: maxCharacters)
-        return String(collapsed[..<endIndex]) + "…"
+    private static func folderDepth(_ folder: ThreadFolder,
+                                    foldersByID: [String: ThreadFolder]) -> Int {
+        var depth = 0
+        var parentID = folder.parentID
+        var visited: Set<String> = []
+        while let currentID = parentID,
+              !visited.contains(currentID),
+              let parent = foldersByID[currentID] {
+            visited.insert(currentID)
+            depth += 1
+            parentID = parent.parentID
+        }
+        return depth
     }
+
+    private static func folderThreadIDsByFolder(folders: [ThreadFolder]) -> [String: Set<String>] {
+        let foldersByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        let childrenByParentID = Dictionary(grouping: folders.compactMap { folder -> (String, String)? in
+            guard let parentID = folder.parentID else { return nil }
+            return (parentID, folder.id)
+        }, by: \.0).mapValues { $0.map(\.1) }
+
+        func collect(for folderID: String) -> Set<String> {
+            var result = foldersByID[folderID]?.threadIDs ?? []
+            for childID in childrenByParentID[folderID] ?? [] {
+                result.formUnion(collect(for: childID))
+            }
+            return result
+        }
+
+        return Dictionary(uniqueKeysWithValues: folders.map { ($0.id, collect(for: $0.id)) })
+    }
+
 }

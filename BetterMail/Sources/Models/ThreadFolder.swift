@@ -1,6 +1,6 @@
 import Foundation
 
-internal struct ThreadFolderColor: Hashable {
+internal nonisolated struct ThreadFolderColor: Hashable, Sendable {
     internal let red: Double
     internal let green: Double
     internal let blue: Double
@@ -93,7 +93,7 @@ internal struct ThreadFolderColor: Hashable {
     }
 }
 
-internal struct ThreadFolder: Identifiable, Hashable {
+internal nonisolated struct ThreadFolder: Identifiable, Hashable, Sendable {
     internal let id: String
     internal var title: String
     internal var color: ThreadFolderColor

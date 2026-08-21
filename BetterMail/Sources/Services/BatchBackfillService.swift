@@ -21,6 +21,12 @@ internal protocol MailMessageFetching: Sendable {
     func fetchMessages(references: [MessageReference],
                        profile: MailFetchProfile,
                        snippetLineLimit: Int) async throws -> [EmailMessage]
+    func fetchMessages(messageIDs: [String],
+                       account: String,
+                       snippetLineLimit: Int) async throws -> [EmailMessage]
+    func fetchMessages(references: [MessageReference],
+                       account: String,
+                       snippetLineLimit: Int) async throws -> [EmailMessage]
     func resolveDayFetchScopes(mailbox: String,
                                account: String?) async throws -> [DayFetchScope]
 }
@@ -45,6 +51,20 @@ internal extension MailMessageFetching {
                        profile: MailFetchProfile,
                        snippetLineLimit: Int) async throws -> [EmailMessage] {
         throw MailMessageFetchingError.dayFetchUnsupported
+    }
+
+    func fetchMessages(messageIDs: [String],
+                       account: String,
+                       snippetLineLimit: Int) async throws -> [EmailMessage] {
+        throw MailMessageFetchingError.dayFetchUnsupported
+    }
+
+    func fetchMessages(references: [MessageReference],
+                       account: String,
+                       snippetLineLimit: Int) async throws -> [EmailMessage] {
+        try await fetchMessages(messageIDs: references.map(\.messageID),
+                                account: account,
+                                snippetLineLimit: snippetLineLimit)
     }
 
     func resolveDayFetchScopes(mailbox: String,

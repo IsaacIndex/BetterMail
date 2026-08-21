@@ -3,6 +3,7 @@ import SwiftUI
 internal struct GraphCanvasView: View {
     @ObservedObject internal var threadViewModel: ThreadCanvasViewModel
     @ObservedObject internal var graphViewModel: GraphCanvasViewModel
+    @ObservedObject internal var automationCoordinator: GraphAutomationCoordinator
     @ObservedObject internal var graphSettings: GraphCanvasSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     internal let topInset: CGFloat
@@ -13,6 +14,7 @@ internal struct GraphCanvasView: View {
     @State private var audio = GraphAudio()
     @State private var isLegendExpanded = false
     @State private var reviewedGrouping: GraphGrouping?
+    @State private var restoringHistoryEntryIDs: Set<String> = []
 
     internal var body: some View {
         GeometryReader { proxy in
@@ -38,13 +40,12 @@ internal struct GraphCanvasView: View {
                     .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
                                                           comment: "Accessibility label for graph canvas"))
                 VStack {
-                    HStack {
+                    HStack(alignment: .top) {
                         GraphLegend(isExpanded: $isLegendExpanded)
                             .padding(.top, 16)
                             .padding(.leading, 18)
                         Spacer(minLength: 0)
                         ObsidianGraphControls(settings: graphSettings,
-                                              searchQuery: $threadViewModel.searchQuery,
                                               data: graphViewModel.data,
                                               textScale: displaySettings.textScale)
                             .padding(.top, 16)
@@ -63,14 +64,29 @@ internal struct GraphCanvasView: View {
                 VStack {
                     Spacer()
                     if let grouping = graphViewModel.selectedGrouping {
-                        GraphGroupingActionBar(grouping: grouping,
-                                               textScale: displaySettings.textScale,
-                                               onReview: { reviewedGrouping = grouping },
-                                               onNotThisGroup: { rejectGrouping(grouping) },
-                                               onHideTopic: { hideGrouping(grouping) },
-                                               onOpenFolder: { openFolder(grouping) })
-                            .padding(.bottom, 8)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        if grouping.isSuggestion {
+                            GraphGroupingActionBar(grouping: grouping,
+                                                  textScale: displaySettings.textScale,
+                                                  onReview: { reviewedGrouping = grouping },
+                                                  onNotThisGroup: { rejectGrouping(grouping) },
+                                                  onHideTopic: { hideGrouping(grouping) },
+                                                  onOpenFolder: { openFolder(grouping) })
+                                .anchorPreference(key: GraphBottomOverlayAnchorPreferenceKey.self,
+                                                  value: .bounds) {
+                                    GraphBottomOverlayAnchors(suggestionActionBar: $0)
+                                }
+                                .padding(.bottom, 8)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        } else {
+                            GraphGroupingActionBar(grouping: grouping,
+                                                  textScale: displaySettings.textScale,
+                                                  onReview: { reviewedGrouping = grouping },
+                                                  onNotThisGroup: { rejectGrouping(grouping) },
+                                                  onHideTopic: { hideGrouping(grouping) },
+                                                  onOpenFolder: { openFolder(grouping) })
+                                .padding(.bottom, 8)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
                     if graphViewModel.snipPhase == .staging {
                         HStack(spacing: 10) {
@@ -126,23 +142,18 @@ internal struct GraphCanvasView: View {
                     GraphToolbar(viewModel: graphViewModel,
                                  settings: graphSettings,
                                  textScale: displaySettings.textScale,
-                                 selectedThreadID: selectedActionTarget?.threadID)
-                    .padding(.bottom, overlayBottomPadding)
-                }
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        if !graphViewModel.compostEntries.isEmpty {
-                            GraphCompostRing(entries: graphViewModel.compostEntries,
-                                             textScale: displaySettings.textScale,
-                                             onRestore: restore)
-                                .padding(.trailing, 24)
-                                .padding(.bottom, overlayBottomPadding)
-                                .anchorPreference(key: GraphCompostPanelAnchorPreferenceKey.self,
-                                                  value: .bounds) { $0 }
+                                 selectedThreadID: selectedActionTarget?.threadID,
+                                 restoreHistoryEntries: graphViewModel.compostEntries,
+                                 restoringHistoryEntryIDs: restoringHistoryEntryIDs,
+                                 automationAttentionCount: automationCoordinator.attentionCount,
+                                 onRestoreHistoryEntry: restore,
+                                 onDismissHistoryEntry: dismiss,
+                                 onAutomation: threadViewModel.presentGraphAutomation)
+                        .padding(.bottom, overlayBottomPadding)
+                        .anchorPreference(key: GraphBottomOverlayAnchorPreferenceKey.self,
+                                          value: .bounds) {
+                            GraphBottomOverlayAnchors(toolbar: $0)
                         }
-                    }
                 }
             }
         }
@@ -163,6 +174,7 @@ internal struct GraphCanvasView: View {
         }
         .onChange(of: graphSettings.visibleBranchCount) { _, _ in syncData() }
         .onChange(of: graphSettings.visibleBranchesPerNode) { _, _ in syncData() }
+        .onChange(of: graphSettings.visibleEmailsPerThread) { _, _ in syncData() }
         .onChange(of: graphSettings.dismissedSuggestedTopicIDs) { _, _ in syncData() }
         .onChange(of: graphSettings.hiddenSuggestedTopics) { _, _ in syncData() }
         .onReceive(threadViewModel.$roots) { _ in syncData() }
@@ -175,6 +187,8 @@ internal struct GraphCanvasView: View {
         .onReceive(threadViewModel.$nodeSummaries) { _ in syncData() }
         .onReceive(threadViewModel.$threadFolders) { _ in syncData() }
         .onReceive(threadViewModel.$folderMembershipByThreadID) { _ in syncData() }
+        .onReceive(automationCoordinator.$proposals) { _ in syncData() }
+        .onReceive(automationCoordinator.$topicSignalsByRawThreadID) { _ in syncData() }
         .onChange(of: graphViewModel.snipNotice) { _, notice in
             guard let notice else { return }
             switch notice.style {
@@ -194,7 +208,9 @@ internal struct GraphCanvasView: View {
                           viewModel: graphViewModel)
         }
         .sheet(isPresented: $graphViewModel.isSettingsPresented) {
-            GraphSettingsSheet(settings: graphSettings)
+            GraphSettingsSheet(settings: graphSettings,
+                               automationCoordinator: automationCoordinator,
+                               onScanCurrentMail: threadViewModel.scanCurrentMailForGraphAutomation)
         }
         .sheet(item: $reviewedGrouping) { grouping in
             GraphSuggestionReviewSheet(
@@ -304,24 +320,53 @@ internal struct GraphCanvasView: View {
         return nil
     }
 
+    private func sourceMessage(matching source: EmailMessageSource) -> EmailMessage? {
+        for root in threadViewModel.roots {
+            if let message = sourceMessage(matching: source, in: root) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    private func sourceMessage(matching source: EmailMessageSource,
+                               in node: ThreadNode) -> EmailMessage? {
+        if source.matches(node.message) {
+            return node.message
+        }
+        for child in node.children {
+            if let message = sourceMessage(matching: source, in: child) {
+                return message
+            }
+        }
+        return nil
+    }
+
     private func isActionItem(forGraphNodeID graphNodeID: String) -> Bool {
         guard let target = graphViewModel.actionTarget(for: graphNodeID),
-              let message = sourceMessage(withID: target.rawMessageID) else {
+              let selectedMessage = sourceMessage(withID: target.rawMessageID) else {
             return false
         }
-        return threadViewModel.actionItemIDs.contains(message.messageID)
+        let message = physicalSourceMessage(for: selectedMessage)
+        return threadViewModel.isActionItem(message: message)
     }
 
     private func toggleActionItem(forGraphNodeID graphNodeID: String) {
         guard let target = graphViewModel.actionTarget(for: graphNodeID),
-              let message = sourceMessage(withID: target.rawMessageID) else {
+              let selectedMessage = sourceMessage(withID: target.rawMessageID) else {
             return
         }
+        let message = physicalSourceMessage(for: selectedMessage)
         toggleActionItem(message: message, target: target)
     }
 
+    private func physicalSourceMessage(for message: EmailMessage) -> EmailMessage {
+        guard message.isEmbeddedHistory else { return message }
+        return sourceMessage(matching: message.physicalSource) ?? message
+    }
+
     private func toggleActionItem(message: EmailMessage, target: GraphThreadActionTarget) {
-        if threadViewModel.actionItemIDs.contains(message.messageID) {
+        if threadViewModel.isActionItem(message: message) {
             threadViewModel.removeActionItem(message: message)
             return
         }
@@ -367,13 +412,21 @@ internal struct GraphCanvasView: View {
                               searchQuery: threadViewModel.searchQuery,
                               tagsByNodeID: threadViewModel.timelineTagsByNodeID,
                               summariesByNodeID: threadViewModel.nodeSummaries,
+                              manualAttachmentMessageIDs: threadViewModel.manualAttachmentMessageIDs,
+                              jwzThreadMap: threadViewModel.jwzThreadMap,
+                              snippetLineLimit: threadViewModel.summaryContextSnippetLineLimit,
+                              stopPhrases: threadViewModel.summaryContextStopPhrases,
                               folders: threadViewModel.threadFolders,
                               folderMembershipByThreadID: threadViewModel.folderMembershipByThreadID,
+                              automationProposals: automationCoordinator.proposals,
+                              topicSignalsOverride: automationCoordinator.topicSignalsByRawThreadID,
                               dismissedSuggestedTopicIDs: graphSettings.dismissedSuggestedTopicIDs,
                               hiddenSuggestedTopics: graphSettings.hiddenSuggestedTopics,
                               showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive,
                               branchPageSize: graphSettings.visibleBranchCount,
-                              perNodeBranchPageSize: graphSettings.visibleBranchesPerNode)
+                              perNodeBranchPageSize: graphSettings.visibleBranchesPerNode,
+                              visibleEmailsPerThread: graphSettings.visibleEmailsPerThread,
+                              mailboxScopeID: threadViewModel.activeMailboxScope.graphPagingScopeID)
         for root in threadViewModel.roots.prefix(10) {
             threadViewModel.requestTimelineTagsIfNeeded(for: root)
         }
@@ -391,7 +444,10 @@ internal struct GraphCanvasView: View {
     }
 
     private func restore(_ entry: GraphCompostEntry) {
+        guard restoringHistoryEntryIDs.isEmpty else { return }
+        restoringHistoryEntryIDs.insert(entry.id)
         Task {
+            defer { restoringHistoryEntryIDs.remove(entry.id) }
             do {
                 try await graphViewModel.restore(entry)
                 threadViewModel.showToast(NSLocalizedString("graph.restore.success",
@@ -401,6 +457,14 @@ internal struct GraphCanvasView: View {
                 threadViewModel.showError(error.localizedDescription)
             }
         }
+    }
+
+    private func dismiss(_ entry: GraphCompostEntry) {
+        graphViewModel.dismissRestoreHistoryEntry(entry)
+        threadViewModel.showToast(NSLocalizedString(
+            "graph.restore_history.dismiss.success",
+            comment: "Restore History dismissal confirmation toast"
+        ))
     }
 
     private func rejectGrouping(_ grouping: GraphGrouping) {
@@ -440,12 +504,19 @@ internal struct GraphCanvasView: View {
     }
 }
 
-internal struct GraphCompostPanelAnchorPreferenceKey: PreferenceKey {
-    internal static var defaultValue: Anchor<CGRect>? = nil
+internal struct GraphBottomOverlayAnchors {
+    internal var toolbar: Anchor<CGRect>? = nil
+    internal var suggestionActionBar: Anchor<CGRect>? = nil
+}
 
-    internal static func reduce(value: inout Anchor<CGRect>?,
-                                nextValue: () -> Anchor<CGRect>?) {
-        value = nextValue() ?? value
+internal struct GraphBottomOverlayAnchorPreferenceKey: PreferenceKey {
+    internal static var defaultValue = GraphBottomOverlayAnchors()
+
+    internal static func reduce(value: inout GraphBottomOverlayAnchors,
+                                nextValue: () -> GraphBottomOverlayAnchors) {
+        let next = nextValue()
+        value.toolbar = next.toolbar ?? value.toolbar
+        value.suggestionActionBar = next.suggestionActionBar ?? value.suggestionActionBar
     }
 }
 
@@ -634,6 +705,18 @@ private struct GraphLegend: View {
                                                                    lineWidth: 0.8))
                             .frame(width: 21, height: 15)
                     }
+                }
+                legendRow(title: NSLocalizedString("graph.legend.manual.title",
+                                                   comment: "Graph legend manual thread link title"),
+                          detail: NSLocalizedString("graph.legend.manual.detail",
+                                                    comment: "Graph legend manual thread link detail")) {
+                    GraphLegendCurve()
+                        .stroke(DesignTokens.Graph.AppTheme.manualThread,
+                                style: StrokeStyle(lineWidth: 1.6,
+                                                   lineCap: .round,
+                                                   lineJoin: .round,
+                                                   dash: [4, 4]))
+                        .frame(width: 30, height: 18)
                 }
                 legendRow(title: NSLocalizedString("graph.legend.remaining.title",
                                                    comment: "Graph legend remaining branch title"),

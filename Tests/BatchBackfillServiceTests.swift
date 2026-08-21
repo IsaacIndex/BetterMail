@@ -539,6 +539,72 @@ final class BatchBackfillServiceTests: XCTestCase {
         XCTAssertFalse(script.contains("set _limit to"))
     }
 
+    func test_PayloadScript_UnresolvedFirstMailboxDoesNotAbortRemainingReferences() async throws {
+        let client = MailAppleScriptClient()
+        let date = Self.date(year: 2026, month: 8, day: 18)
+        let unresolved = MessageReference(internalMailID: nil,
+                                          messageID: "legacy-unscoped",
+                                          mailbox: "All Inboxes",
+                                          account: "",
+                                          subject: "Legacy",
+                                          date: date,
+                                          isUnread: false)
+        let scoped = MessageReference(internalMailID: "123",
+                                      messageID: "scoped-message",
+                                      mailbox: "Inbox",
+                                      account: "Work",
+                                      subject: "Scoped",
+                                      date: date,
+                                      isUnread: false)
+
+        let script = await client.buildPayloadScriptForTesting(references: [unresolved, scoped])
+        var compilationError: NSDictionary?
+        let compiledScript = try XCTUnwrap(NSAppleScript(source: script))
+
+        XCTAssertTrue(script.contains("set _sourceMailbox to my resolveMailboxByPath(_wantedAccountName, _wantedMailboxPath)"))
+        XCTAssertTrue(script.contains("if ((count of _matches) is 0) and (_wantedMessageID is not \"\") then"))
+        XCTAssertTrue(script.contains("set _alternateMessageID to \"<\" & _wantedMessageID & \">\""))
+        XCTAssertFalse(script.contains("set _mbx to my resolveMailboxByPath"))
+        XCTAssertFalse(script.contains("error \"Mailbox not found for path:"))
+        XCTAssertTrue(compiledScript.compileAndReturnError(&compilationError),
+                      "Generated payload AppleScript did not compile: \(String(describing: compilationError))")
+    }
+
+    func test_MessageIDLookupScript_RemainsScopedToNamedAccount() async {
+        let client = MailAppleScriptClient()
+
+        let script = await client.buildMessageIDLookupScriptForTesting(messageIDs: ["message-id"],
+                                                                       account: "Work")
+
+        XCTAssertTrue(script.contains("set _accountRef to my matchingAccount(_accountToken)"))
+        XCTAssertTrue(script.contains("set _mailboxesToScan to my allMailboxes(_accountRef)"))
+        XCTAssertFalse(script.contains("set _accountRefs to every account"))
+    }
+
+    func test_ReferenceLookupScript_UsesStoredInternalIDThenSameAccountMessageIDFallback() async throws {
+        let client = MailAppleScriptClient()
+        let reference = MessageReference(internalMailID: "987654",
+                                         messageID: "calendar-response@example.com",
+                                         mailbox: "All Inboxes",
+                                         account: "Work",
+                                         subject: "Accepted: Internal Regroup",
+                                         date: Self.date(year: 2026, month: 8, day: 18),
+                                         isUnread: false)
+
+        let script = await client.buildReferenceLookupScriptForTesting(references: [reference],
+                                                                        account: "Work")
+        var compilationError: NSDictionary?
+        let compiledScript = try XCTUnwrap(NSAppleScript(source: script))
+
+        XCTAssertTrue(script.contains("set _wantedInternalIDs to {\"987654\"}"))
+        XCTAssertTrue(script.contains("whose id is (_wantedInternalID as integer)"))
+        XCTAssertTrue(script.contains("whose message id is _wantedMessageID"))
+        XCTAssertTrue(script.contains("set _mailboxesToScan to my allMailboxes(_accountRef)"))
+        XCTAssertFalse(script.contains("set _accountRefs to every account"))
+        XCTAssertTrue(compiledScript.compileAndReturnError(&compilationError),
+                      "Generated reference lookup AppleScript did not compile: \(String(describing: compilationError))")
+    }
+
     private func makeStore(name: String) -> MessageStore {
         let defaults = UserDefaults(suiteName: "BatchBackfillServiceTests-\(name)-\(UUID().uuidString)")!
         return MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)

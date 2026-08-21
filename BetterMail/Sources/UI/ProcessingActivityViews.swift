@@ -42,56 +42,61 @@ internal struct ProcessingActivityMenuContent: View {
     }
 }
 
+@MainActor
 internal struct ProcessingActivityShelf: View {
     @ObservedObject internal var activityCenter: ProcessingActivityCenter
-    @State private var isPopoverPresented = false
+    @State private var referenceDate = Date()
+
+    private var activity: ProcessingActivity? {
+        activityCenter.shelfActivity(at: referenceDate)
+    }
 
     internal var body: some View {
-        if let activity = activityCenter.primaryActivity {
-            Button {
-                isPopoverPresented.toggle()
-            } label: {
-                HStack(spacing: 8) {
+        Group {
+            if let activity {
+                HStack(spacing: 7) {
                     activityIcon(for: activity)
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(activity.title)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        Text(activity.detail ?? activity.state.localizedTitle)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    if activityCenter.activeCount > 1 {
-                        Text(String(activityCenter.activeCount))
-                            .font(.caption2.weight(.bold))
-                            .monospacedDigit()
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
-                    }
+                    Text(activity.title)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: 300, alignment: .leading)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.vertical, 7)
+                .frame(width: 224, alignment: .leading)
+                .background(.thinMaterial, in: Capsule())
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                    Capsule()
+                        .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.14), radius: 12, x: 0, y: 6)
+                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(AccessibilityID.processingActivityShelf)
+                .accessibilityLabel(NSLocalizedString("accessibility.activity.shelf.label",
+                                                      comment: "Accessibility label for processing activity shelf"))
+                .accessibilityValue(activity.detail ?? activity.state.localizedTitle)
+                .allowsHitTesting(false)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(AccessibilityID.processingActivityShelf)
-            .accessibilityLabel(NSLocalizedString("accessibility.activity.shelf.label",
-                                                  comment: "Accessibility label for processing activity shelf"))
-            .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
-                ProcessingActivityMenuContent(activityCenter: activityCenter)
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+        .task(id: activityCenter.shelfPresentationVersion) {
+            let presentationVersion = activityCenter.shelfPresentationVersion
+            referenceDate = Date()
+            guard activityCenter.shelfActivity(at: referenceDate) != nil else { return }
+
+            do {
+                try await Task.sleep(nanoseconds: ProcessingActivityShelfPolicy.displayDurationNanoseconds)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled,
+                  presentationVersion == activityCenter.shelfPresentationVersion else { return }
+            referenceDate = Date()
+        }
+        .animation(.easeInOut(duration: 0.18), value: activity?.id)
     }
 
     @ViewBuilder
@@ -107,10 +112,36 @@ internal struct ProcessingActivityShelf: View {
                     .frame(width: 18)
             }
         } else {
-            Image(systemName: activity.state == .failed ? "exclamationmark.triangle.fill" : activity.kind.systemImage)
+            Image(systemName: statusImage(for: activity.state))
                 .font(.caption)
-                .foregroundStyle(activity.state == .failed ? Color.red : Color.secondary)
+                .foregroundStyle(statusColor(for: activity.state))
                 .frame(width: 18)
+        }
+    }
+
+    private func statusImage(for state: ProcessingActivityState) -> String {
+        switch state {
+        case .running:
+            return "circle"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .cancelled:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private func statusColor(for state: ProcessingActivityState) -> Color {
+        switch state {
+        case .running:
+            return .accentColor
+        case .completed:
+            return .green
+        case .failed:
+            return .red
+        case .cancelled:
+            return .secondary
         }
     }
 }

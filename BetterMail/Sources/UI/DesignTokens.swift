@@ -149,6 +149,7 @@ internal enum DesignTokens {
                 internal var inkQuaternaryNS: NSColor { isDark ? NSColor(hex: 0x707784) : NSColor(hex: 0xB8BAC0) }
                 internal var accentNS: NSColor { isDark ? NSColor(hex: 0x8B86FF) : NSColor(hex: 0x4F46E5) }
                 internal var accentSoftNS: NSColor { isDark ? NSColor(hex: 0x2D2B54) : NSColor(hex: 0xEEF0FF) }
+                internal var manualThreadNS: NSColor { isDark ? NSColor(hex: 0xFF7676) : NSColor(hex: 0xC53030) }
                 internal var snipNS: NSColor { isDark ? NSColor(hex: 0xE09172) : NSColor(hex: 0xB45A3C) }
                 internal var snipSoftNS: NSColor { isDark ? NSColor(hex: 0x3A241F) : NSColor(hex: 0xFBEFE8) }
                 internal var archiveNS: NSColor { isDark ? NSColor(hex: 0xA8AFBA) : NSColor(hex: 0x6B7280) }
@@ -171,6 +172,7 @@ internal enum DesignTokens {
             internal static var inkQuaternary: Color { Color(nsColor: inkQuaternaryNS) }
             internal static var accent: Color { Color(nsColor: accentNS) }
             internal static var accentSoft: Color { Color(nsColor: accentSoftNS) }
+            internal static var manualThread: Color { Color(nsColor: manualThreadNS) }
             internal static var snip: Color { Color(nsColor: snipNS) }
             internal static var snipSoft: Color { Color(nsColor: snipSoftNS) }
             internal static var archive: Color { Color(nsColor: archiveNS) }
@@ -198,6 +200,8 @@ internal enum DesignTokens {
                                                         dark: NSColor(hex: 0x8B86FF))
             internal static let accentSoftNS = dynamicColor(light: NSColor(hex: 0xEEF0FF),
                                                             dark: NSColor(hex: 0x2D2B54))
+            internal static let manualThreadNS = dynamicColor(light: NSColor(hex: 0xC53030),
+                                                              dark: NSColor(hex: 0xFF7676))
             internal static let snipNS = dynamicColor(light: NSColor(hex: 0xB45A3C),
                                                       dark: NSColor(hex: 0xE09172))
             internal static let snipSoftNS = dynamicColor(light: NSColor(hex: 0xFBEFE8),
@@ -228,6 +232,7 @@ internal enum DesignTokens {
         internal static let inkQuinaryNS = NSColor(hex: 0xB8BAC0)
         internal static let accentNS = NSColor(hex: 0x4F46E5)
         internal static let accentSoftNS = NSColor(hex: 0xEEF0FF)
+        internal static let manualThreadNS = NSColor(hex: 0xC53030)
         internal static let snipNS = NSColor(hex: 0xB45A3C)
         internal static let snipSoftNS = NSColor(hex: 0xFBEFE8)
         internal static let archiveNS = NSColor(hex: 0x6B7280)

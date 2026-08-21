@@ -16,7 +16,6 @@ internal enum AccessibilityID {
     internal static let canvasViewModeControl = "bettermail.thread-list.canvas-view-mode-control"
     internal static let viewModeToggle = "bettermail.thread-list.view-mode-toggle"
     internal static let graphModeToggle = "bettermail.thread-list.graph-mode-toggle"
-    internal static let searchButton = "bettermail.thread-list.search-button"
     internal static let searchField = "bettermail.thread-list.search-field"
     internal static let dayCoverageCalendarButton = "bettermail.thread-list.day-coverage-calendar-button"
     internal static let refreshButton = "bettermail.thread-list.refresh-button"
@@ -32,6 +31,9 @@ internal enum AccessibilityID {
     internal static let mailboxMoveCancelButton = "bettermail.mailbox-move.cancel-button"
 
     internal static let threadInspector = "bettermail.thread-inspector"
+    internal static let threadInspectorFromField = "bettermail.thread-inspector.from"
+    internal static let threadInspectorToField = "bettermail.thread-inspector.to"
+    internal static let threadInspectorEmailContent = "bettermail.thread-inspector.email-content"
     internal static let threadInspectorOpenInMailButton = "bettermail.thread-inspector.open-in-mail"
     internal static let threadInspectorCopySubjectButton = "bettermail.thread-inspector.copy-subject"
     internal static let threadInspectorCopyMailboxButton = "bettermail.thread-inspector.copy-mailbox"
@@ -57,11 +59,11 @@ internal enum AccessibilityID {
     internal static let threadCanvasScrollView = "bettermail.thread-canvas.scroll-view"
     internal static let graphCanvas = "bettermail.graph-canvas"
     internal static let graphControls = "bettermail.graph-controls"
-    internal static let graphControlsSearch = "bettermail.graph-controls.search"
     internal static let graphToolbar = "bettermail.graph-toolbar"
     internal static let graphToolbarSnip = "bettermail.graph-toolbar.snip"
     internal static let graphToolbarArchive = "bettermail.graph-toolbar.archive"
     internal static let graphToolbarSettings = "bettermail.graph-toolbar.settings"
+    internal static let graphToolbarAutomation = "bettermail.graph-toolbar.automation"
     internal static let graphToolbarZoomOut = "bettermail.graph-toolbar.zoom-out"
     internal static let graphToolbarZoomIn = "bettermail.graph-toolbar.zoom-in"
     internal static let graphToolbarRecenter = "bettermail.graph-toolbar.recenter"
@@ -75,7 +77,8 @@ internal enum AccessibilityID {
     internal static let graphActionItem = "bettermail.graph-thread-actions.action-item"
     internal static let graphNotImportant = "bettermail.graph-thread-actions.not-important"
     internal static let graphDone = "bettermail.graph-thread-actions.done"
-    internal static let graphCompostRing = "bettermail.graph-compost-ring"
+    internal static let graphRestoreHistoryControl = "bettermail.graph-restore-history.control"
+    internal static let graphRestoreHistoryPopover = "bettermail.graph-restore-history.popover"
     internal static let graphSuggestionReviewAction = "bettermail.graph-suggestion.review"
     internal static let graphSuggestionNotThisGroupAction = "bettermail.graph-suggestion.not-this-group"
     internal static let graphSuggestionHideTopicAction = "bettermail.graph-suggestion.hide-topic"
@@ -89,6 +92,12 @@ internal enum AccessibilityID {
     internal static let graphSuggestionReviewCancel = "bettermail.graph-suggestion-review.cancel"
     internal static let graphSuggestionReviewError = "bettermail.graph-suggestion-review.error"
     internal static let graphSuggestionPreferencesReset = "bettermail.graph-suggestion-preferences.reset"
+    internal static let graphAutomationSheet = "bettermail.graph-automation.sheet"
+    internal static let graphAutomationApproveSelected = "bettermail.graph-automation.approve-selected"
+    internal static let graphAutomationRejectSelected = "bettermail.graph-automation.reject-selected"
+    internal static let graphAutomationMasterPause = "bettermail.graph-automation.master-pause"
+    internal static let graphAutomationScanCurrentMail = "bettermail.graph-automation.scan-current-mail"
+    internal static let graphAutomationFollowMailbox = "bettermail.graph-automation.follow-mailbox"
 
     internal static let settingsView = "bettermail.settings.view"
     internal static let settingsAppearancePicker = "bettermail.settings.appearance-picker"
@@ -149,8 +158,24 @@ internal enum AccessibilityID {
         "bettermail.thread-canvas.folder-header.\(stable(id))"
     }
 
-    internal static func graphCompostRingChip(_ id: String) -> String {
-        "bettermail.graph-compost-ring.chip.\(stable(id))"
+    internal static func graphRestoreHistoryRow(_ id: String) -> String {
+        "bettermail.graph-restore-history.row.\(stable(id))"
+    }
+
+    internal static func graphRestoreHistoryRestore(_ id: String) -> String {
+        "bettermail.graph-restore-history.restore.\(stable(id))"
+    }
+
+    internal static func graphRestoreHistoryDismiss(_ id: String) -> String {
+        "bettermail.graph-restore-history.dismiss.\(stable(id))"
+    }
+
+    internal static func graphAutomationRow(_ id: String) -> String {
+        "bettermail.graph-automation.row.\(stable(id))"
+    }
+
+    internal static func graphAutomationApproveAll(_ folderID: String) -> String {
+        "bettermail.graph-automation.approve-all.\(stable(folderID))"
     }
 
     internal static func graphModeSegment(_ mode: GraphCanvasMode) -> String {

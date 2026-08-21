@@ -14,12 +14,17 @@
 		63654992E5B34382AE3799B6 /* BetterMail.app in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AD2C65B2EBB0927004783B6 /* BetterMail.app */; };
 		6A0C9D4E7F8A4B1C92D3E405 /* Tests/GraphTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A0C9D4E7F8A4B1C92D3E404 /* Tests/GraphTests.swift */; };
 		7A8B9C0D1E2F3A4B5C6D7E8F /* Tests/ThreadFolderColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5E4D3C2B1A098765432110 /* Tests/ThreadFolderColorTests.swift */; };
+		9F11A2B3C4D5E6F708192A3C /* Tests/GraphAutomationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F11A2B3C4D5E6F708192A3B /* Tests/GraphAutomationTests.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* Tests/ActionItemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */; };
 		A64EDBDE1DB046A6BF5FCE02 /* Tests/ThreadInspectorViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64EDBDE1DB046A6BF5FCE01 /* Tests/ThreadInspectorViewTests.swift */; };
 		B713C9A82F7D4E6B91A503D2 /* Tests/MailControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B713C9A72F7D4E6B91A503D2 /* Tests/MailControlTests.swift */; };
+		C4A1E2D3F40516273849A5B7 /* Tests/CalendarThreadRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A1E2D3F40516273849A5B6 /* Tests/CalendarThreadRecoveryTests.swift */; };
 		CA32DC8C96F34952A33D8F16 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08CE01DE8A1C40779BF22717 /* XCTest.framework */; };
 		D3E4F5061728394A5B6C7D8E /* Tests/NeedsAttentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */; };
+		D0A1B2C3D4E5F60718293A4C /* Tests/ThreadSummaryCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A1B2C3D4E5F60718293A4B /* Tests/ThreadSummaryCacheTests.swift */; };
+		E0A1B2C3D4E5F60718293A4C /* Tests/SummaryRegenerationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0A1B2C3D4E5F60718293A4B /* Tests/SummaryRegenerationServiceTests.swift */; };
 		E9F8A7B6C5D4E3F2A1B0C9D8 /* Tests/MIMESnippetExtractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F7089A1B2C3D /* Tests/MIMESnippetExtractionTests.swift */; };
+		F0A1B2C3D4E5F60718293A4C /* Tests/ThreadFolderMailboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293A4B /* Tests/ThreadFolderMailboxTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,12 +72,17 @@
 		6A0C9D4E7F8A4B1C92D3E404 /* Tests/GraphTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/GraphTests.swift; sourceTree = SOURCE_ROOT; };
 		6F5E4D3C2B1A098765432110 /* Tests/ThreadFolderColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadFolderColorTests.swift; sourceTree = SOURCE_ROOT; };
 		8C7D6E5F4A3B2C1D0E9F8A7B /* Tests/BatchBackfillServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/BatchBackfillServiceTests.swift; sourceTree = SOURCE_ROOT; };
+		9F11A2B3C4D5E6F708192A3B /* Tests/GraphAutomationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/GraphAutomationTests.swift; sourceTree = SOURCE_ROOT; };
 		A64EDBDE1DB046A6BF5FCE01 /* Tests/ThreadInspectorViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadInspectorViewTests.swift; sourceTree = SOURCE_ROOT; };
 		B713C9A72F7D4E6B91A503D2 /* Tests/MailControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MailControlTests.swift; sourceTree = SOURCE_ROOT; };
 		B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ActionItemTests.swift; sourceTree = SOURCE_ROOT; };
+		C4A1E2D3F40516273849A5B6 /* Tests/CalendarThreadRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CalendarThreadRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
 		C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasLayoutTests.swift; sourceTree = SOURCE_ROOT; };
+		D0A1B2C3D4E5F60718293A4B /* Tests/ThreadSummaryCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadSummaryCacheTests.swift; sourceTree = SOURCE_ROOT; };
+		E0A1B2C3D4E5F60718293A4B /* Tests/SummaryRegenerationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SummaryRegenerationServiceTests.swift; sourceTree = SOURCE_ROOT; };
 		E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/NeedsAttentionTests.swift; sourceTree = SOURCE_ROOT; };
 		F1A2B3C4D5E6F7089A1B2C3D /* Tests/MIMESnippetExtractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MIMESnippetExtractionTests.swift; sourceTree = SOURCE_ROOT; };
+		F0A1B2C3D4E5F60718293A4B /* Tests/ThreadFolderMailboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadFolderMailboxTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -144,13 +154,18 @@
 				1E2D3C4B5A69788796A5B4C3 /* Tests/AppearanceSettingsTests.swift */,
 				8C7D6E5F4A3B2C1D0E9F8A7B /* Tests/BatchBackfillServiceTests.swift */,
 				6A0C9D4E7F8A4B1C92D3E404 /* Tests/GraphTests.swift */,
+				9F11A2B3C4D5E6F708192A3B /* Tests/GraphAutomationTests.swift */,
 				6F5E4D3C2B1A098765432110 /* Tests/ThreadFolderColorTests.swift */,
 				C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */,
 				A64EDBDE1DB046A6BF5FCE01 /* Tests/ThreadInspectorViewTests.swift */,
 				B713C9A72F7D4E6B91A503D2 /* Tests/MailControlTests.swift */,
 				B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */,
+				C4A1E2D3F40516273849A5B6 /* Tests/CalendarThreadRecoveryTests.swift */,
+				D0A1B2C3D4E5F60718293A4B /* Tests/ThreadSummaryCacheTests.swift */,
+				E0A1B2C3D4E5F60718293A4B /* Tests/SummaryRegenerationServiceTests.swift */,
 				E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */,
 				F1A2B3C4D5E6F7089A1B2C3D /* Tests/MIMESnippetExtractionTests.swift */,
+				F0A1B2C3D4E5F60718293A4B /* Tests/ThreadFolderMailboxTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -362,13 +377,18 @@
 				2F1C5C8C1B3D4E5F6A7B8C9D /* Tests/AppearanceSettingsTests.swift in Sources */,
 				4B7C2D1E9F8A76543210FEDC /* Tests/BatchBackfillServiceTests.swift in Sources */,
 				6A0C9D4E7F8A4B1C92D3E405 /* Tests/GraphTests.swift in Sources */,
+				9F11A2B3C4D5E6F708192A3C /* Tests/GraphAutomationTests.swift in Sources */,
 				7A8B9C0D1E2F3A4B5C6D7E8F /* Tests/ThreadFolderColorTests.swift in Sources */,
 				22F837F5A55C486AB0F0F200 /* Tests/ThreadCanvasLayoutTests.swift in Sources */,
 				A64EDBDE1DB046A6BF5FCE02 /* Tests/ThreadInspectorViewTests.swift in Sources */,
 				B713C9A82F7D4E6B91A503D2 /* Tests/MailControlTests.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* Tests/ActionItemTests.swift in Sources */,
+				C4A1E2D3F40516273849A5B7 /* Tests/CalendarThreadRecoveryTests.swift in Sources */,
+				D0A1B2C3D4E5F60718293A4C /* Tests/ThreadSummaryCacheTests.swift in Sources */,
+				E0A1B2C3D4E5F60718293A4C /* Tests/SummaryRegenerationServiceTests.swift in Sources */,
 				D3E4F5061728394A5B6C7D8E /* Tests/NeedsAttentionTests.swift in Sources */,
 				E9F8A7B6C5D4E3F2A1B0C9D8 /* Tests/MIMESnippetExtractionTests.swift in Sources */,
+				F0A1B2C3D4E5F60718293A4C /* Tests/ThreadFolderMailboxTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

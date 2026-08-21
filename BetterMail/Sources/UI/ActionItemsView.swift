@@ -130,8 +130,8 @@ internal struct ActionItemsView: View {
                     ForEach(group.items) { item in
                         ActionItemRow(item: item,
                                       displayTitle: displayTitle(for: item),
-                                      onToggleDone: { viewModel.toggleActionItemDone(item.id) },
-                                      onSelect: { viewModel.selectNode(id: item.id) })
+                                      onToggleDone: { viewModel.toggleActionItemDone(item) },
+                                      onSelect: { viewModel.selectNode(id: item.messageID) })
                     }
                 } header: {
                     HStack {
@@ -158,7 +158,7 @@ internal struct ActionItemsView: View {
     // MARK: - Helpers
 
     private func displayTitle(for item: ActionItem) -> String {
-        let summary = viewModel.summaryState(for: item.id)?.text
+        let summary = viewModel.summaryState(for: item.messageID)?.text
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !summary.isEmpty { return summary }
         return item.subject.isEmpty ? "(no subject)" : item.subject

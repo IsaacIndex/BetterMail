@@ -43,10 +43,12 @@ internal enum GraphReduceMotionOverride: String, CaseIterable, Identifiable {
 
 @MainActor
 internal final class GraphCanvasSettings: ObservableObject {
-    internal static let visibleBranchCountRange = 4...24
-    internal static let defaultVisibleBranchCount = 10
-    internal static let visibleBranchesPerNodeRange = 2...12
-    internal static let defaultVisibleBranchesPerNode = 6
+    internal nonisolated static let visibleBranchCountRange = 4...24
+    internal nonisolated static let defaultVisibleBranchCount = 10
+    internal nonisolated static let visibleBranchesPerNodeRange = 2...12
+    internal nonisolated static let defaultVisibleBranchesPerNode = 6
+    internal nonisolated static let visibleEmailsPerThreadRange = 2...50
+    internal nonisolated static let defaultVisibleEmailsPerThread = 10
 
     private enum StorageKey {
         static let mode = "graphCanvasMode"
@@ -80,6 +82,7 @@ internal final class GraphCanvasSettings: ObservableObject {
         static let obsidianLinkThickness = "graphCanvasObsidianLinkThickness"
         static let visibleBranchCount = "graphCanvasVisibleBranchCount"
         static let visibleBranchesPerNode = "graphCanvasVisibleBranchesPerNode"
+        static let visibleEmailsPerThread = "graphCanvasVisibleEmailsPerThread"
         static let dismissedSuggestedTopicIDs = "graphCanvasDismissedSuggestedTopicIDs"
         static let hiddenSuggestedTopics = "graphCanvasHiddenSuggestedTopics"
         static let obsidianExpandedSpacingMigration = "graphCanvasObsidianExpandedSpacingMigrationV1"
@@ -139,6 +142,15 @@ internal final class GraphCanvasSettings: ObservableObject {
                 visibleBranchesPerNode = clampedValue
             }
             userDefaults.set(clampedValue, forKey: StorageKey.visibleBranchesPerNode)
+        }
+    }
+    @Published internal var visibleEmailsPerThread = GraphCanvasSettings.defaultVisibleEmailsPerThread {
+        didSet {
+            let clampedValue = Self.clampedVisibleEmailsPerThread(visibleEmailsPerThread)
+            if clampedValue != visibleEmailsPerThread {
+                visibleEmailsPerThread = clampedValue
+            }
+            userDefaults.set(clampedValue, forKey: StorageKey.visibleEmailsPerThread)
         }
     }
     @Published internal var forceCenter: CGFloat = GraphForceConstants.defaults.center {
@@ -228,6 +240,10 @@ internal final class GraphCanvasSettings: ObservableObject {
         let storedVisibleBranchesPerNode = userDefaults.object(forKey: StorageKey.visibleBranchesPerNode) as? Int
         visibleBranchesPerNode = Self.clampedVisibleBranchesPerNode(
             storedVisibleBranchesPerNode ?? Self.defaultVisibleBranchesPerNode
+        )
+        let storedVisibleEmailsPerThread = userDefaults.object(forKey: StorageKey.visibleEmailsPerThread) as? Int
+        visibleEmailsPerThread = Self.clampedVisibleEmailsPerThread(
+            storedVisibleEmailsPerThread ?? Self.defaultVisibleEmailsPerThread
         )
         let storedForceConfig = GraphForceConfig(center: CGFloat(storedForceCenter),
                                                  repel: CGFloat(storedForceRepel),
@@ -372,12 +388,16 @@ internal final class GraphCanvasSettings: ObservableObject {
         applyObsidianDisplayConfig(.defaults)
     }
 
-    internal static func clampedVisibleBranchCount(_ value: Int) -> Int {
+    internal nonisolated static func clampedVisibleBranchCount(_ value: Int) -> Int {
         min(max(value, visibleBranchCountRange.lowerBound), visibleBranchCountRange.upperBound)
     }
 
-    internal static func clampedVisibleBranchesPerNode(_ value: Int) -> Int {
+    internal nonisolated static func clampedVisibleBranchesPerNode(_ value: Int) -> Int {
         min(max(value, visibleBranchesPerNodeRange.lowerBound), visibleBranchesPerNodeRange.upperBound)
+    }
+
+    internal nonisolated static func clampedVisibleEmailsPerThread(_ value: Int) -> Int {
+        min(max(value, visibleEmailsPerThreadRange.lowerBound), visibleEmailsPerThreadRange.upperBound)
     }
 
     private func applyForceConfig(_ config: GraphForceConfig) {

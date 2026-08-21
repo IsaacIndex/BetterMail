@@ -24,9 +24,9 @@ ZStack draw order (back to front):
 - Notes: Uses a spring transition and keeps a fixed width; offset down by `navInsetHeight` so it clears the nav bar. It overlays the canvas rather than reserving graph width, so selection does not resize or reflow the graph.
 
 ### 3) navigationBarOverlay
-- Role: Top navigation bar with status, refresh controls, and limit settings.
-- Key inputs: `navHeight` (measured via preference), `isGlassNavEnabled` (based on `reduceTransparency`).
-- Notes: Highest zIndex among overlays (1) so it sits above inspector; adjusts canvas padding via `canvasTopPadding`.
+- Role: Shared top navigation bar for Default, Timeline, and Graph, with status, persistent search, mode/zoom controls, Coverage, and Refresh.
+- Key inputs: `navHeight` (measured via preference), `isGlassNavEnabled` (based on `reduceTransparency`), `viewModel.searchQuery`, and the selected canvas mode.
+- Notes: Wide, compact, and narrow rows reuse the same 30-point control surfaces. Search filters whole threads in Default/Timeline and highlights Graph matches. The bar has zIndex 1 so it sits above the inspector and adjusts canvas padding via `canvasTopPadding`.
 
 ### 4) selectionActionBar
 - Role: Action bar tied to selection state (e.g., actions for selected nodes).

@@ -1,6 +1,6 @@
 import Foundation
 
-internal struct ThreadingResult {
+internal nonisolated struct ThreadingResult: Sendable {
     internal let roots: [ThreadNode]
     internal let threads: [EmailThread]
     internal let messageThreadMap: [String: String]
@@ -9,7 +9,12 @@ internal struct ThreadingResult {
     internal let manualAttachmentMessageIDs: Set<String>
 }
 
-internal final class JWZThreader {
+internal nonisolated final class JWZThreader: @unchecked Sendable {
+    private struct ScopedMessageID: Hashable {
+        let account: String
+        let messageID: String
+    }
+
     private final class Container: Hashable {
         let identifier: String
         weak var parent: Container?
@@ -21,10 +26,25 @@ internal final class JWZThreader {
         }
 
         func adopt(_ child: Container) {
+            // Real-world clients occasionally append an In-Reply-To value that
+            // already appears earlier in References. Without this ancestry
+            // check, a chain such as A -> B -> A creates a parent cycle, so the
+            // component has no structural root and every email in it vanishes
+            // from threading, Graph, and retrospective regeneration.
+            guard child !== self, !isDescendant(of: child) else { return }
             guard !children.contains(where: { $0 === child }) else { return }
             child.parent?.remove(child: child)
             child.parent = self
             children.append(child)
+        }
+
+        private func isDescendant(of candidateAncestor: Container) -> Bool {
+            var cursor: Container? = self
+            while let container = cursor {
+                if container === candidateAncestor { return true }
+                cursor = container.parent
+            }
+            return false
         }
 
         func remove(child: Container) {
@@ -42,6 +62,12 @@ internal final class JWZThreader {
 
     internal func buildThreads(from messages: [EmailMessage]) -> ThreadingResult {
         var containers: [String: Container] = [:]
+        let physicalMessageIDs = Set(messages.compactMap { message -> ScopedMessageID? in
+            let normalizedID = Self.normalizeIdentifier(message.messageID)
+            guard !normalizedID.isEmpty else { return nil }
+            return ScopedMessageID(account: Self.normalizeAccount(message.accountName),
+                                   messageID: normalizedID)
+        })
 
         func container(for identifier: String) -> Container {
             if let existing = containers[identifier] { return existing }
@@ -50,6 +76,8 @@ internal final class JWZThreader {
             return container
         }
 
+        // Suppressed attendance replies still participate in the container
+        // graph so their descendants retain the real References ancestry.
         for message in messages {
             let normalizedID = Self.normalizeIdentifier(message.messageID)
             let identifier = normalizedID.isEmpty ? message.id.uuidString.lowercased() : normalizedID
@@ -74,26 +102,37 @@ internal final class JWZThreader {
             }
         }
 
-        let roots = containers.values.filter { $0.parent == nil }
-        var threadRoots: [ThreadNode] = []
-        for root in roots {
-            threadRoots.append(contentsOf: flatten(container: root))
-        }
-
-        let sortedRoots = threadRoots.sorted { lhs, rhs in
-            if lhs.message.date == rhs.message.date {
-                return lhs.message.subject.localizedCaseInsensitiveCompare(rhs.message.subject) == .orderedAscending
+        let structuralRoots = containers.values.filter { $0.parent == nil }
+        var materializedComponents: [(container: Container, root: ThreadNode)] = []
+        var hiddenOnlyComponents: [Container] = []
+        for structuralRoot in structuralRoots {
+            let visibleRoots = flatten(container: structuralRoot)
+            guard let root = coalescedRoot(from: visibleRoots) else {
+                hiddenOnlyComponents.append(structuralRoot)
+                continue
             }
-            return lhs.message.date > rhs.message.date
+            materializedComponents.append((structuralRoot,
+                                           addingEmbeddedHistory(to: root,
+                                                                 excluding: physicalMessageIDs)))
+        }
+        materializedComponents.sort { lhs, rhs in
+            if lhs.root.message.date == rhs.root.message.date {
+                return lhs.root.message.subject.localizedCaseInsensitiveCompare(rhs.root.message.subject) == .orderedAscending
+            }
+            return lhs.root.message.date > rhs.root.message.date
         }
 
         var annotatedRoots: [ThreadNode] = []
         var messageMap: [String: String] = [:]
         var threads: [EmailThread] = []
 
-        for root in sortedRoots {
+        for component in materializedComponents {
+            let root = component.root
             let threadID = Self.threadIdentifier(for: root)
             let summary = annotate(node: root, threadID: threadID, map: &messageMap)
+            mapStructuralMembership(from: component.container,
+                                    threadID: threadID,
+                                    into: &messageMap)
             annotatedRoots.append(summary.node)
             let thread = EmailThread(id: threadID,
                                      rootMessageID: root.message.messageID,
@@ -102,6 +141,15 @@ internal final class JWZThreader {
                                      unreadCount: summary.unreadCount,
                                      messageCount: summary.count)
             threads.append(thread)
+        }
+
+        // Hidden-only RSVP chains do not materialize a thread or Graph node,
+        // but their source records still keep a stable structural membership.
+        for component in hiddenOnlyComponents {
+            let threadID = structuralThreadIdentifier(for: component)
+            mapStructuralMembership(from: component,
+                                    threadID: threadID,
+                                    into: &messageMap)
         }
 
         return ThreadingResult(roots: annotatedRoots,
@@ -114,11 +162,124 @@ internal final class JWZThreader {
 
     private func flatten(container: Container) -> [ThreadNode] {
         let childNodes = container.children.flatMap { flatten(container: $0) }
-        guard let message = container.message else {
+        guard let message = container.message, !message.isCalendarRSVP else {
             return childNodes
         }
         let sortedChildren = childNodes.sorted { $0.message.date < $1.message.date }
         return [ThreadNode(message: message, children: sortedChildren)]
+    }
+
+    private func addingEmbeddedHistory(to node: ThreadNode,
+                                       excluding physicalMessageIDs: Set<ScopedMessageID>) -> ThreadNode {
+        var children = node.children.map {
+            addingEmbeddedHistory(to: $0, excluding: physicalMessageIDs)
+        }
+        let history = node.message.embeddedMessages
+            .filter { embedded in
+                guard let originalMessageID = embedded.originalMessageID else { return true }
+                let scopedID = ScopedMessageID(
+                    account: Self.normalizeAccount(node.message.accountName),
+                    messageID: Self.normalizeIdentifier(originalMessageID)
+                )
+                return !physicalMessageIDs.contains(scopedID)
+            }
+            .sorted { lhs, rhs in
+                if lhs.sourceOrder == rhs.sourceOrder { return lhs.id < rhs.id }
+                return lhs.sourceOrder < rhs.sourceOrder
+            }
+
+        var chain: ThreadNode?
+        for embedded in history.reversed() {
+            let projected = projectedMessage(from: embedded, parent: node.message)
+            chain = ThreadNode(message: projected,
+                               children: chain.map { [$0] } ?? [])
+        }
+        if let chain {
+            children.append(chain)
+        }
+        return ThreadNode(message: node.message, children: children)
+    }
+
+    private func projectedMessage(from embedded: EmbeddedEmailMessage,
+                                  parent: EmailMessage) -> EmailMessage {
+        let fallbackDate = parent.date.addingTimeInterval(-Double(embedded.sourceOrder + 1))
+        return EmailMessage(id: Self.deterministicUUID(for: embedded.id),
+                            messageID: embedded.id,
+                            internalMailID: nil,
+                            mailboxID: parent.mailboxID,
+                            accountName: parent.accountName,
+                            subject: embedded.subject,
+                            from: embedded.from,
+                            to: embedded.to,
+                            date: embedded.date ?? fallbackDate,
+                            snippet: embedded.snippet,
+                            isUnread: false,
+                            calendarMessageKind: .ordinaryMessage,
+                            inReplyTo: nil,
+                            references: [],
+                            embeddedSource: parent.physicalSource)
+    }
+
+    private static func deterministicUUID(for value: String) -> UUID {
+        let first = stableHash(value)
+        let second = stableHash("embedded|\(value)")
+        let hex = String(format: "%016llx%016llx", first, second)
+        let uuidString = "\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
+        return UUID(uuidString: uuidString) ?? UUID()
+    }
+
+    private static func stableHash(_ value: String) -> UInt64 {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return hash
+    }
+
+    /// A missing or hidden root can expose several visible descendants. Keep
+    /// them in one structural thread by using the oldest visible message as a
+    /// temporary root until the real invitation is recovered.
+    private func coalescedRoot(from roots: [ThreadNode]) -> ThreadNode? {
+        guard !roots.isEmpty else { return nil }
+        guard roots.count > 1 else { return roots[0] }
+        let ordered = roots.sorted { lhs, rhs in
+            if lhs.message.date == rhs.message.date {
+                return lhs.message.messageID < rhs.message.messageID
+            }
+            return lhs.message.date < rhs.message.date
+        }
+        let root = ordered[0]
+        let children = (root.children + Array(ordered.dropFirst())).sorted { lhs, rhs in
+            if lhs.message.date == rhs.message.date {
+                return lhs.message.messageID < rhs.message.messageID
+            }
+            return lhs.message.date < rhs.message.date
+        }
+        return ThreadNode(message: root.message, children: children)
+    }
+
+    private func mapStructuralMembership(from container: Container,
+                                         threadID: String,
+                                         into map: inout [String: String]) {
+        if let message = container.message {
+            let key = message.normalizedMessageID.isEmpty
+                ? message.id.uuidString.lowercased()
+                : message.normalizedMessageID
+            map[key] = threadID
+        }
+        for child in container.children {
+            mapStructuralMembership(from: child, threadID: threadID, into: &map)
+        }
+    }
+
+    private func structuralThreadIdentifier(for container: Container) -> String {
+        if let message = container.message {
+            let normalized = Self.normalizeIdentifier(message.messageID)
+            if !normalized.isEmpty { return normalized }
+            return message.id.uuidString.lowercased()
+        }
+        return container.identifier
     }
 
     private func annotate(node: ThreadNode, threadID: String, map: inout [String: String]) -> (node: ThreadNode, lastUpdated: Date, unreadCount: Int, count: Int) {
@@ -142,7 +303,7 @@ internal final class JWZThreader {
         return (updatedNode, latest, unread, total)
     }
 
-    internal static func normalizeIdentifier(_ raw: String) -> String {
+    internal nonisolated static func normalizeIdentifier(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         var candidate = trimmed
@@ -152,6 +313,10 @@ internal final class JWZThreader {
         return candidate.lowercased()
     }
 
+    private nonisolated static func normalizeAccount(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     internal static func threadIdentifier(for node: ThreadNode) -> String {
         let normalized = normalizeIdentifier(node.message.messageID)
         return normalized.isEmpty ? node.message.id.uuidString.lowercased() : normalized
@@ -159,13 +324,13 @@ internal final class JWZThreader {
 }
 
 extension JWZThreader {
-    internal struct ManualGroupApplication {
+    internal nonisolated struct ManualGroupApplication: Sendable {
         internal let result: ThreadingResult
         internal let updatedGroups: [ManualThreadGroup]
     }
 
-    internal func applyManualGroups(_ groups: [ManualThreadGroup],
-                                    to result: ThreadingResult) -> ManualGroupApplication {
+    internal nonisolated func applyManualGroups(_ groups: [ManualThreadGroup],
+                                                to result: ThreadingResult) -> ManualGroupApplication {
         guard !groups.isEmpty else {
             let updatedResult = ThreadingResult(roots: result.roots,
                                                 threads: result.threads,

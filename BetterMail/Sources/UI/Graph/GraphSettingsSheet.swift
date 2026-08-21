@@ -3,6 +3,8 @@ import SwiftUI
 
 internal struct GraphSettingsSheet: View {
     @ObservedObject internal var settings: GraphCanvasSettings
+    @ObservedObject internal var automationCoordinator: GraphAutomationCoordinator
+    internal let onScanCurrentMail: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     internal var body: some View {
@@ -49,9 +51,25 @@ internal struct GraphSettingsSheet: View {
                     }
                     .help(NSLocalizedString("graph.settings.visible_branches_per_node.help",
                                             comment: "Help for the per-node graph branch limit"))
+                    Stepper(value: $settings.visibleEmailsPerThread,
+                            in: GraphCanvasSettings.visibleEmailsPerThreadRange) {
+                        HStack {
+                            Text(NSLocalizedString("graph.settings.visible_emails_per_thread",
+                                                   comment: "Number of email nodes shown per thread page"))
+                            Spacer()
+                            Text("\(settings.visibleEmailsPerThread)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+                        }
+                    }
+                    .help(NSLocalizedString("graph.settings.visible_emails_per_thread.help",
+                                            comment: "Help for the per-thread email node limit"))
                 }
                 displaySection
                 suggestionPreferencesSection
+                GraphAutomationSettingsSection(settings: automationCoordinator.settings,
+                                               coordinator: automationCoordinator,
+                                               onScanCurrentMail: onScanCurrentMail)
                 forcesSection
                 HStack {
                     Spacer()
@@ -64,7 +82,7 @@ internal struct GraphSettingsSheet: View {
             .padding(18)
         }
         .frame(width: 440)
-        .frame(maxHeight: 620)
+        .frame(maxHeight: 720)
         .background(DesignTokens.Graph.AppTheme.background)
     }
 
@@ -208,5 +226,111 @@ internal struct GraphSettingsSheet: View {
 
     private static func formatted(_ value: CGFloat, precision: Int) -> String {
         String(format: "%.\(precision)f", Double(value))
+    }
+}
+
+private struct GraphAutomationSettingsSection: View {
+    @ObservedObject var settings: GraphAutomationSettings
+    @ObservedObject var coordinator: GraphAutomationCoordinator
+    let onScanCurrentMail: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(NSLocalizedString("graph.automation.settings.title",
+                                       comment: "Graph automation settings heading"))
+                    .font(.headline)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                Spacer()
+                if coordinator.isEvaluating {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            Toggle(NSLocalizedString("graph.automation.settings.pause",
+                                     comment: "Pause graph automation"),
+                   isOn: Binding(get: { settings.isPaused },
+                                 set: coordinator.setPaused))
+                .accessibilityIdentifier(AccessibilityID.graphAutomationMasterPause)
+            actionControls(title: NSLocalizedString("graph.automation.settings.attach",
+                                                     comment: "Same-conversation automation settings"),
+                           mode: $settings.attachMode,
+                           strictness: $settings.attachStrictness)
+            actionControls(title: NSLocalizedString("graph.automation.settings.append",
+                                                     comment: "Same-topic automation settings"),
+                           mode: $settings.appendMode,
+                           strictness: $settings.appendStrictness)
+            Toggle(NSLocalizedString("graph.automation.settings.follow_mailbox",
+                                     comment: "Follow folder mailbox mapping setting"),
+                   isOn: $settings.followsFolderMailboxMapping)
+                .accessibilityIdentifier(AccessibilityID.graphAutomationFollowMailbox)
+            Text(NSLocalizedString("graph.automation.settings.mailbox_note",
+                                   comment: "Mailbox mapping automation explanation"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !coordinator.providerStatusMessage.isEmpty {
+                Text(coordinator.providerStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button(NSLocalizedString("graph.automation.settings.scan_current",
+                                         comment: "Scan current mail for automation")) {
+                    onScanCurrentMail()
+                }
+                .disabled(coordinator.isEvaluating || settings.isPaused)
+                .accessibilityIdentifier(AccessibilityID.graphAutomationScanCurrentMail)
+                Spacer()
+                Menu(NSLocalizedString("graph.automation.settings.history",
+                                       comment: "Automation history controls")) {
+                    Button(NSLocalizedString("graph.automation.settings.clear_history",
+                                             comment: "Clear automation history")) {
+                        Task { await coordinator.resetHistory(includeObservations: false) }
+                    }
+                    Button(NSLocalizedString("graph.automation.settings.reset_baseline",
+                                             comment: "Reset automation history and evaluated baseline"),
+                           role: .destructive) {
+                        Task { await coordinator.resetHistory(includeObservations: true) }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+    }
+
+    private func actionControls(title: String,
+                                mode: Binding<GraphAutomationMode>,
+                                strictness: Binding<GraphAutomationStrictness>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.callout.weight(.semibold))
+            HStack {
+                Picker(NSLocalizedString("graph.automation.settings.mode",
+                                         comment: "Automation action mode picker"),
+                       selection: mode) {
+                    ForEach(GraphAutomationMode.allCases) { value in
+                        Text(value.localizedTitle).tag(value)
+                    }
+                }
+                Picker(NSLocalizedString("graph.automation.settings.strictness",
+                                         comment: "Automation strictness picker"),
+                       selection: strictness) {
+                    ForEach(GraphAutomationStrictness.allCases) { value in
+                        Text(value.localizedTitle).tag(value)
+                    }
+                }
+                .disabled(mode.wrappedValue == .off)
+            }
+            .labelsHidden()
+        }
     }
 }

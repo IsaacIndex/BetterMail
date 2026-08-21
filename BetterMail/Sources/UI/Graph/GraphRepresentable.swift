@@ -59,8 +59,8 @@ internal struct GraphRepresentable: NSViewRepresentable {
         scene.onToggleActionItem = onToggleActionItem
         scene.isActionItem = isActionItem
         scene.onMoveThreadToFolder = onMoveThreadToFolder
-        scene.onExpandRemainingBranches = { parentID in
-            graphViewModel.expandRemainingBranches(parentID: parentID)
+        scene.onExpandRemainingBranches = { scope in
+            graphViewModel.expandRemaining(scope: scope)
         }
         scene.onHoverItem = { item in
             graphViewModel.setHoverItem(item)

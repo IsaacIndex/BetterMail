@@ -5,7 +5,7 @@ BetterMail uses Apple's Foundation Models (Apple Intelligence) to generate email
 
 ## Where It Is Used
 - Single email summary (thread context aware)
-- Folder summary (rollup of per-message summaries)
+- Group summary (rollup of per-message summaries)
 - Message tags (three short labels per message)
 
 ## Availability Behavior

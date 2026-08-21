@@ -43,22 +43,11 @@ internal struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .overlayPreferenceValue(GraphCompostPanelAnchorPreferenceKey.self) { compostPanelAnchor in
-            GeometryReader { proxy in
-                let compostPanelTop = compostPanelAnchor.map { proxy[$0].minY }
-                let bottomInset = ProcessingActivityShelfLayout.bottomInset(
-                    containerHeight: proxy.size.height,
-                    compostPanelTop: compostPanelTop
-                )
-
-                ProcessingActivityShelf(activityCenter: activityCenter)
-                    .padding(.trailing, ProcessingActivityShelfLayout.defaultTrailingInset)
-                    .padding(.bottom, bottomInset)
-                    .frame(maxWidth: .infinity,
-                           maxHeight: .infinity,
-                           alignment: .bottomTrailing)
-                    .zIndex(10)
-            }
+        .overlay(alignment: .bottomTrailing) {
+            ProcessingActivityShelf(activityCenter: activityCenter)
+                .padding(.trailing, ProcessingActivityShelfLayout.trailingInset)
+                .padding(.bottom, ProcessingActivityShelfLayout.bottomInset)
+                .zIndex(10)
         }
         .accessibilityIdentifier(AccessibilityID.contentRoot)
         .focusedValue(\.canvasViewModel, viewModel)
@@ -70,20 +59,6 @@ internal struct ContentView: View {
 }
 
 internal enum ProcessingActivityShelfLayout {
-    internal static let defaultTrailingInset: CGFloat = 18
-    internal static let defaultBottomInset: CGFloat = 18
-    internal static let compostGap: CGFloat = 8
-
-    internal static func bottomInset(containerHeight: CGFloat,
-                                    compostPanelTop: CGFloat?) -> CGFloat {
-        guard containerHeight.isFinite,
-              containerHeight > 0,
-              let compostPanelTop,
-              compostPanelTop.isFinite else {
-            return defaultBottomInset
-        }
-
-        return max(defaultBottomInset,
-                   containerHeight - compostPanelTop + compostGap)
-    }
+    internal static let trailingInset: CGFloat = 18
+    internal static let bottomInset: CGFloat = 18
 }

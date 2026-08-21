@@ -44,7 +44,39 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertTrue(graph.matchingNodeIDs(query: "deployment").contains(GraphData.messageNodeID(for: "root-msg-1")))
     }
 
-    func test_mapping_usesRootSummaryAsThreadDisplayTitle() {
+    func test_searchResultCount_whenMessageMatches_countsDirectMatchOnly() {
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 3)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        XCTAssertNil(graph.searchResultCount(query: "  "))
+        XCTAssertEqual(graph.searchResultCount(query: "Snippet root-a-msg-1"), 1)
+        XCTAssertEqual(graph.searchResultCount(query: "no matching graph node"), 0)
+        XCTAssertTrue(graph.matchingNodeIDs(query: "Snippet root-a-msg-1")
+            .contains(GraphData.threadNodeID(for: "root-a")))
+    }
+
+    func test_searchResultCount_whenGroupingMatches_excludesContextThreads() {
+        let folder = ThreadFolder(id: "release-folder",
+                                  title: "Release planning",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["root-a", "root-b"],
+                                  parentID: nil)
+        let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 1),
+                                           makeThread(rootID: "root-b", messageCount: 1)],
+                                   folders: [folder],
+                                   folderMembershipByThreadID: ["root-a": folder.id,
+                                                                "root-b": folder.id],
+                                   now: Date(timeIntervalSince1970: 10_000))
+
+        let matchingIDs = graph.matchingNodeIDs(query: "release planning")
+
+        XCTAssertEqual(graph.searchResultCount(query: "release planning"), 1)
+        XCTAssertTrue(matchingIDs.contains("folder:release-folder"))
+        XCTAssertTrue(matchingIDs.contains(GraphData.threadNodeID(for: "root-a")))
+        XCTAssertTrue(matchingIDs.contains(GraphData.threadNodeID(for: "root-b")))
+    }
+
+    func test_mapping_keepsContentSummarySeparateFromFallbackNodeTitle() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 2)],
                                    summariesByNodeID: [
                                        "root": GraphMessageSummary(text: "Approve the release plan and confirm its owner.",
@@ -53,8 +85,7 @@ final class GraphMappingTests: XCTestCase {
                                    ],
                                    now: Date(timeIntervalSince1970: 10_000))
 
-        XCTAssertEqual(graph.threads.first?.displayTitle,
-                       "Approve the release plan and confirm its owner.")
+        XCTAssertEqual(graph.threads.first?.displayTitle, "Subject root")
         XCTAssertTrue(graph.matchingNodeIDs(query: "release plan")
             .contains(GraphData.threadNodeID(for: "root")))
     }
@@ -92,6 +123,69 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertEqual(three.threads.count, 1)
         XCTAssertEqual(three.messages.count, 2)
         XCTAssertFalse(three.messages.contains { $0.rawMessageID == "three" })
+    }
+
+    func test_mapping_ordersVisibleConversationEmailsNewestToOldest() {
+        let threadID = "chronological"
+        let oldest = ThreadNode(message: makeMessage(id: "oldest",
+                                                     date: Date(timeIntervalSince1970: 1_000),
+                                                     threadID: threadID))
+        let newest = ThreadNode(message: makeMessage(id: "newest",
+                                                     date: Date(timeIntervalSince1970: 9_000),
+                                                     threadID: threadID))
+        let middle = ThreadNode(message: makeMessage(id: "middle",
+                                                     date: Date(timeIntervalSince1970: 5_000),
+                                                     threadID: threadID))
+        let root = ThreadNode(message: makeMessage(id: "root",
+                                                    date: Date(timeIntervalSince1970: 10_000),
+                                                    threadID: threadID),
+                              children: [oldest, newest, middle])
+
+        let graph = GraphData.make(roots: [root], now: Date(timeIntervalSince1970: 11_000))
+        let graphThreadID = GraphData.threadNodeID(for: threadID)
+        let newestID = GraphData.messageNodeID(for: "newest")
+        let middleID = GraphData.messageNodeID(for: "middle")
+        let oldestID = GraphData.messageNodeID(for: "oldest")
+        let chain = graph.edges.filter { $0.kind == .chain }
+
+        XCTAssertEqual(graph.messages.map(\.rawMessageID), ["newest", "middle", "oldest"])
+        XCTAssertEqual(chain.map(\.sourceID), [graphThreadID, newestID, middleID])
+        XCTAssertEqual(chain.map(\.targetID), [newestID, middleID, oldestID])
+    }
+
+    func test_mapping_marksOnlyEmailAdjacencyCrossingManualBoundary() {
+        let root = makeThread(rootID: "manual", messageCount: 4)
+        let graph = GraphData.make(
+            roots: [root],
+            jwzThreadMap: [
+                "manual": "automatic-a",
+                "manual-msg-1": "automatic-a",
+                "manual-msg-2": "automatic-b",
+                "manual-msg-3": "automatic-b"
+            ],
+            now: Date(timeIntervalSince1970: 11_000)
+        )
+        let threadID = GraphData.threadNodeID(for: "manual")
+        let firstMessageID = GraphData.messageNodeID(for: "manual-msg-1")
+        let secondMessageID = GraphData.messageNodeID(for: "manual-msg-2")
+        let thirdMessageID = GraphData.messageNodeID(for: "manual-msg-3")
+
+        XCTAssertEqual(graph.edges.first {
+            $0.sourceID == threadID && $0.targetID == firstMessageID
+        }?.kind, .chain, "The synthetic thread-to-message connector remains standard")
+        XCTAssertEqual(graph.edges.first {
+            $0.sourceID == firstMessageID && $0.targetID == secondMessageID
+        }?.kind, .manualChain)
+        XCTAssertEqual(graph.edges.first {
+            $0.sourceID == secondMessageID && $0.targetID == thirdMessageID
+        }?.kind, .chain)
+    }
+
+    func test_manualGraphEdgeStyle_usesRedDashedManualPresentationOnly() {
+        XCTAssertEqual(ObsidianGraphEdgeStyle.dashPattern(for: .manualChain), [4, 4])
+        XCTAssertNil(ObsidianGraphEdgeStyle.dashPattern(for: .chain))
+        XCTAssertTrue(ObsidianGraphEdgeStyle.usesManualThreadColor(.manualChain))
+        XCTAssertFalse(ObsidianGraphEdgeStyle.usesManualThreadColor(.chain))
     }
 
     func test_mapping_whenBranchLimitIsSmallerThanThreadCount_addsRemainingBranch() {
@@ -140,7 +234,10 @@ final class GraphMappingTests: XCTestCase {
         XCTAssertEqual(graph.threads.first?.messageIDs.count, 25)
         XCTAssertEqual(graph.visibleEmailNodeCount, 10)
         XCTAssertEqual(graph.messages.count, 9)
-        XCTAssertEqual(graph.edges.count, 10)
+        XCTAssertEqual(graph.edges.count, 11)
+        let threadID = try? XCTUnwrap(graph.threads.first?.id)
+        XCTAssertEqual(threadID.flatMap { graph.remainingEmails(forThreadID: $0)?.hiddenCount }, 15)
+        XCTAssertEqual(threadID.flatMap { graph.remainingEmails(forThreadID: $0)?.nextBatchCount }, 10)
     }
 
     func test_mapping_withConfirmedFolder_routesThreadsThroughFolderBranch() {
@@ -461,6 +558,25 @@ final class GraphSuggestionDismissalSettingsTests: XCTestCase {
         defaults.set(-3, forKey: "graphCanvasVisibleBranchesPerNode")
         XCTAssertEqual(GraphCanvasSettings(userDefaults: defaults).visibleBranchesPerNode, 2)
     }
+
+    @MainActor
+    func test_visibleEmailsPerThread_defaultsClampsAndPersists() throws {
+        let suiteName = "GraphVisibleEmailsPerThreadSettingsTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(GraphCanvasSettings.visibleEmailsPerThreadRange, 2...50)
+        XCTAssertEqual(GraphCanvasSettings.defaultVisibleEmailsPerThread, 10)
+        let settings = GraphCanvasSettings(userDefaults: defaults)
+        XCTAssertEqual(settings.visibleEmailsPerThread, 10)
+
+        settings.visibleEmailsPerThread = 99
+        XCTAssertEqual(settings.visibleEmailsPerThread, 50)
+        XCTAssertEqual(GraphCanvasSettings(userDefaults: defaults).visibleEmailsPerThread, 50)
+
+        defaults.set(-3, forKey: "graphCanvasVisibleEmailsPerThread")
+        XCTAssertEqual(GraphCanvasSettings(userDefaults: defaults).visibleEmailsPerThread, 2)
+    }
 }
 
 final class GraphTopicQualityTests: XCTestCase {
@@ -618,7 +734,8 @@ final class GraphTopicQualityTests: XCTestCase {
         XCTAssertEqual(initialSuggestion.id, expandedSuggestion.id)
         XCTAssertEqual(initialSuggestion.rawThreadIDs, expandedSuggestion.rawThreadIDs)
         XCTAssertEqual(initialSuggestion.reviewMembers, expandedSuggestion.reviewMembers)
-        XCTAssertTrue(initialSuggestion.threadIDs.isEmpty)
+        XCTAssertEqual(Set(initialSuggestion.threadIDs),
+                       [GraphData.threadNodeID(for: "root-c"), GraphData.threadNodeID(for: "root-d")])
         XCTAssertEqual(Set(expandedSuggestion.threadIDs),
                        [GraphData.threadNodeID(for: "root-c"), GraphData.threadNodeID(for: "root-d")])
     }
@@ -792,6 +909,90 @@ final class GraphSuggestionReviewViewModelTests: XCTestCase {
 }
 
 final class GraphBranchPagingTests: XCTestCase {
+    func test_expandRemainingEmails_revealsConfiguredBatchesAndRetainsStableRemainder() async {
+        await MainActor.run {
+            let suiteName = "GraphEmailPagingTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let viewModel = GraphCanvasViewModel(
+                store: MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            )
+            let roots = [makeThread(rootID: "event", messageCount: 25)]
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             visibleEmailsPerThread: 10,
+                             mailboxScopeID: "all-emails")
+
+            let threadID = GraphData.threadNodeID(for: "event")
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 10)
+            XCTAssertEqual(viewModel.data.remainingEmails(forThreadID: threadID)?.hiddenCount, 15)
+            XCTAssertEqual(viewModel.data.remainingEmails(forThreadID: threadID)?.nextBatchCount, 10)
+            let stableRemainderID = viewModel.data.remainingEmails(forThreadID: threadID)?.id
+
+            viewModel.expandRemaining(scope: .messages(threadID: threadID))
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 20)
+            XCTAssertEqual(viewModel.data.remainingEmails(forThreadID: threadID)?.hiddenCount, 5)
+            XCTAssertEqual(viewModel.data.remainingEmails(forThreadID: threadID)?.nextBatchCount, 5)
+            XCTAssertEqual(viewModel.data.remainingEmails(forThreadID: threadID)?.id, stableRemainderID)
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: ["event": ["refreshed"]],
+                             summariesByNodeID: [:],
+                             visibleEmailsPerThread: 10,
+                             mailboxScopeID: "all-emails")
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 20,
+                           "Ordinary metadata refreshes should retain email expansion")
+
+            viewModel.expandRemaining(scope: .messages(threadID: threadID))
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 25)
+            XCTAssertNil(viewModel.data.remainingEmails(forThreadID: threadID))
+        }
+    }
+
+    func test_emailPaging_settingOrMailboxScopeChange_resetsExpansion() async {
+        await MainActor.run {
+            let suiteName = "GraphEmailPagingResetTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let viewModel = GraphCanvasViewModel(
+                store: MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            )
+            let roots = [makeThread(rootID: "event", messageCount: 25)]
+            let threadID = GraphData.threadNodeID(for: "event")
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             visibleEmailsPerThread: 10,
+                             mailboxScopeID: "all-emails")
+            viewModel.expandRemaining(scope: .messages(threadID: threadID))
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 20)
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             visibleEmailsPerThread: 5,
+                             mailboxScopeID: "all-emails")
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 5)
+
+            viewModel.expandRemaining(scope: .messages(threadID: threadID))
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 10)
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             visibleEmailsPerThread: 5,
+                             mailboxScopeID: "mailbox:work|inbox")
+            XCTAssertEqual(viewModel.data.visibleEmailNodeCount, 5)
+        }
+    }
+
     func test_expandRemainingBranches_revealsNextTenAtATime() async {
         await MainActor.run {
             let suiteName = "GraphBranchPagingTests-\(UUID().uuidString)"
@@ -818,6 +1019,37 @@ final class GraphBranchPagingTests: XCTestCase {
             viewModel.expandRemainingBranches(parentID: GraphCenter.you.id)
             XCTAssertEqual(viewModel.data.threads.count, 25)
             XCTAssertNil(viewModel.data.rootRemainingBranch)
+        }
+    }
+
+    func test_branchPaging_mailboxScopeChange_resetsRootExpansion() async {
+        await MainActor.run {
+            let suiteName = "GraphBranchScopeResetTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let viewModel = GraphCanvasViewModel(
+                store: MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            )
+            let roots = (0..<25).map { index in
+                makeThread(rootID: "root-\(index)", messageCount: 1)
+            }
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             mailboxScopeID: "all-emails")
+            viewModel.expandRemainingBranches(parentID: GraphCenter.you.id)
+            XCTAssertEqual(viewModel.data.threads.count, 20)
+
+            viewModel.update(roots: roots,
+                             searchQuery: "",
+                             tagsByNodeID: [:],
+                             summariesByNodeID: [:],
+                             mailboxScopeID: "mailbox:work|inbox")
+
+            XCTAssertEqual(viewModel.data.threads.count, 10)
+            XCTAssertEqual(viewModel.data.rootRemainingBranch?.hiddenCount, 15)
         }
     }
 
@@ -1801,25 +2033,29 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
         XCTAssertTrue(first.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
     }
 
-    func test_resetAndSettling_placeNewerThreadsFartherFromGraphCenter() throws {
+    func test_resetAndSettling_ordersThreadsFromNewestToOldestRegardlessOfInputOrder() throws {
         let oldestDate = Date(timeIntervalSince1970: 1_000)
+        let middleDate = Date(timeIntervalSince1970: 5_000)
         let newestDate = Date(timeIntervalSince1970: 9_000)
         let graph = GraphData.make(roots: [
+            makeThread(rootID: "oldest", messageCount: 1, rootDate: oldestDate),
             makeThread(rootID: "newest", messageCount: 1, rootDate: newestDate),
-            makeThread(rootID: "oldest", messageCount: 1, rootDate: oldestDate)
+            makeThread(rootID: "middle", messageCount: 1, rootDate: middleDate)
         ], now: Date(timeIntervalSince1970: 10_000))
         let oldestID = GraphData.threadNodeID(for: "oldest")
+        let middleID = GraphData.threadNodeID(for: "middle")
         let newestID = GraphData.threadNodeID(for: "newest")
         var simulator = ObsidianGraphForceSimulator()
 
         simulator.reset(data: graph, size: CGSize(width: 900, height: 620))
 
-        XCTAssertEqual(simulator.nodesByID[oldestID]?.chronologyRank, 0)
-        XCTAssertEqual(simulator.nodesByID[newestID]?.chronologyRank, 1)
-        XCTAssertGreaterThan(pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
-                                           simulator.nodesByID[newestID]?.position),
-                             pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
-                                           simulator.nodesByID[oldestID]?.position))
+        XCTAssertEqual(simulator.nodesByID[newestID]?.chronologyRank, 0)
+        XCTAssertEqual(simulator.nodesByID[middleID]?.chronologyRank, 0.5)
+        XCTAssertEqual(simulator.nodesByID[oldestID]?.chronologyRank, 1)
+        assertChronologicalDistanceOrder(simulator,
+                                         newestID: newestID,
+                                         middleID: middleID,
+                                         oldestID: oldestID)
 
         for _ in 0..<240 {
             simulator.step(deltaTime: 1.0 / 60.0,
@@ -1827,10 +2063,59 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
                            config: .defaults)
         }
 
-        XCTAssertGreaterThan(pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
-                                           simulator.nodesByID[newestID]?.position),
-                             pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
-                                           simulator.nodesByID[oldestID]?.position))
+        assertChronologicalDistanceOrder(simulator,
+                                         newestID: newestID,
+                                         middleID: middleID,
+                                         oldestID: oldestID)
+    }
+
+    func test_resetAndSettling_ordersVisibleConversationNodesNewestToOldest() throws {
+        let threadID = "chronological"
+        let oldest = ThreadNode(message: makeMessage(id: "oldest",
+                                                     date: Date(timeIntervalSince1970: 1_000),
+                                                     threadID: threadID))
+        let newest = ThreadNode(message: makeMessage(id: "newest",
+                                                     date: Date(timeIntervalSince1970: 9_000),
+                                                     threadID: threadID))
+        let middle = ThreadNode(message: makeMessage(id: "middle",
+                                                     date: Date(timeIntervalSince1970: 5_000),
+                                                     threadID: threadID))
+        let root = ThreadNode(message: makeMessage(id: "root",
+                                                    date: Date(timeIntervalSince1970: 10_000),
+                                                    threadID: threadID),
+                              children: [oldest, newest, middle])
+        let graph = GraphData.make(roots: [root], now: Date(timeIntervalSince1970: 11_000))
+        let threadNodeID = GraphData.threadNodeID(for: threadID)
+        let newestID = GraphData.messageNodeID(for: "newest")
+        let middleID = GraphData.messageNodeID(for: "middle")
+        let oldestID = GraphData.messageNodeID(for: "oldest")
+        var simulator = ObsidianGraphForceSimulator()
+
+        simulator.reset(data: graph, size: CGSize(width: 900, height: 620))
+
+        assertChronologicalDistanceOrder(simulator,
+                                         newestID: threadNodeID,
+                                         middleID: newestID,
+                                         oldestID: middleID)
+        XCTAssertLessThan(pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                        simulator.nodesByID[middleID]?.position),
+                          pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                        simulator.nodesByID[oldestID]?.position))
+
+        for _ in 0..<240 {
+            simulator.step(deltaTime: 1.0 / 60.0,
+                           reduceMotion: false,
+                           config: .defaults)
+        }
+
+        assertChronologicalDistanceOrder(simulator,
+                                         newestID: threadNodeID,
+                                         middleID: newestID,
+                                         oldestID: middleID)
+        XCTAssertLessThan(pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                        simulator.nodesByID[middleID]?.position),
+                          pointDistance(simulator.nodesByID[GraphCenter.you.id]?.position,
+                                        simulator.nodesByID[oldestID]?.position))
     }
 
     func test_repelForce_pushesFolderCorpusBeyondNormalRepulsionRange() throws {
@@ -2089,6 +2374,116 @@ final class GraphTitleFormatterTests: XCTestCase {
 
         XCTAssertEqual(title, "HKJC CRC Review")
     }
+
+    func test_normalizedGeneratedTitle_stripsLegacyPositionMarkers() {
+        let fixtures = [
+            "2/3 · Confirms CR#60 scope",
+            "2/3 - Confirms CR#60 scope",
+            "2 of 3 — Confirms CR#60 scope",
+            "Email 2: Confirms CR#60 scope",
+            "Email 2 of 3: Confirms CR#60 scope",
+            "Message 2/3: Confirms CR#60 scope",
+            "\"1/2 · Confirms CR#60 scope\"",
+            "Title: \"1/2 · Confirms CR#60 scope\"",
+            "2. Confirms CR#60 scope"
+        ]
+
+        for fixture in fixtures {
+            XCTAssertEqual(
+                GraphTitleFormatter.normalizedGeneratedTitle(fixture,
+                                                             fallback: "Original subject"),
+                "Confirms CR#60 scope"
+            )
+        }
+    }
+
+    func test_normalizedGeneratedTitle_rejectsGenericPlacementOnlyTitle() {
+        let title = GraphTitleFormatter.normalizedGeneratedTitle(
+            "1/2 · 1. Opening message",
+            fallback: "Re: CR#60 review materials"
+        )
+
+        XCTAssertEqual(title, "CR#60 review materials")
+    }
+
+    func test_contextPrompt_describesPositionAndManualNeighboursAsContextOnly() {
+        let previous = EmailSummaryContextEntry(
+            messageID: "previous",
+            subject: "Original booking request",
+            bodySnippet: "Please confirm the rollout owner.",
+            direction: .previous,
+            relationship: .manualThreadLink
+        )
+        let request = GraphTitleRequest(
+            subject: "Re: Booking request",
+            summary: "Confirms that Mei owns the rollout.",
+            threadContext: EmailSummaryThreadContext(position: 2,
+                                                     totalMessages: 3,
+                                                     previousMessage: previous,
+                                                     nextMessage: nil),
+            effectiveThreadRevision: "revision"
+        )
+
+        let prompt = GraphTitlePromptBuilder.prompt(for: request)
+
+        XCTAssertTrue(prompt.contains("Thread position: 2 of 3"))
+        XCTAssertTrue(prompt.contains("Placement: Intermediate reply"))
+        XCTAssertTrue(prompt.contains("Previous message (manual thread link)"))
+        XCTAssertTrue(prompt.contains("Original booking request"))
+        XCTAssertTrue(prompt.contains("context only and must not be attributed"))
+        XCTAssertTrue(GraphTitlePromptBuilder.instructions.contains("never as a sequence number"))
+        XCTAssertTrue(GraphTitlePromptBuilder.instructions.contains("Do not use generic placement-only labels"))
+    }
+
+    func test_graphTitleFingerprint_changesWithPositionAndRelationship() {
+        let automaticNeighbour = EmailSummaryContextEntry(
+            messageID: "previous",
+            subject: "Original request",
+            bodySnippet: "Please confirm scope.",
+            direction: .previous,
+            relationship: .automaticReply
+        )
+        let manualNeighbour = EmailSummaryContextEntry(
+            messageID: "previous",
+            subject: "Original request",
+            bodySnippet: "Please confirm scope.",
+            direction: .previous,
+            relationship: .manualThreadLink
+        )
+        let firstContext = EmailSummaryThreadContext(position: 1,
+                                                     totalMessages: 2,
+                                                     previousMessage: nil,
+                                                     nextMessage: automaticNeighbour)
+        let automaticContext = EmailSummaryThreadContext(position: 2,
+                                                         totalMessages: 2,
+                                                         previousMessage: automaticNeighbour,
+                                                         nextMessage: nil)
+        let manualContext = EmailSummaryThreadContext(position: 2,
+                                                      totalMessages: 2,
+                                                      previousMessage: manualNeighbour,
+                                                      nextMessage: nil)
+
+        func fingerprint(_ context: EmailSummaryThreadContext) -> String {
+            ThreadSummaryFingerprint.makeGraphTitle(subject: "Scope",
+                                                    summary: "Confirms scope.",
+                                                    summaryGenerationID: "generation-a",
+                                                    threadRevision: "same-revision",
+                                                    context: context,
+                                                    providerID: "test")
+        }
+
+        XCTAssertNotEqual(fingerprint(firstContext), fingerprint(automaticContext))
+        XCTAssertNotEqual(fingerprint(automaticContext), fingerprint(manualContext))
+        XCTAssertNotEqual(
+            fingerprint(automaticContext),
+            ThreadSummaryFingerprint.makeGraphTitle(subject: "Scope",
+                                                    summary: "Confirms scope.",
+                                                    summaryGenerationID: "generation-b",
+                                                    threadRevision: "same-revision",
+                                                    context: automaticContext,
+                                                    providerID: "test")
+        )
+    }
 }
 
 final class GraphTitleGenerationTests: XCTestCase {
@@ -2117,19 +2512,25 @@ final class GraphTitleGenerationTests: XCTestCase {
                          tagsByNodeID: [:],
                          summariesByNodeID: ["root": summary])
 
+        let expectedTitle = "CR60 Booking Flow"
         var generatedTitle: String?
         for _ in 0..<150 {
             generatedTitle = viewModel.data.threads.first?.displayTitle
-            if generatedTitle == "CR60 Booking Flow" { break }
+            if generatedTitle == expectedTitle { break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        XCTAssertEqual(generatedTitle, "CR60 Booking Flow")
-        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "CR60 Booking Flow")
+        XCTAssertEqual(generatedTitle, expectedTitle)
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), expectedTitle)
         let firstCallCount = await provider.callCount
         XCTAssertEqual(firstCallCount, 1)
+        let requests = await provider.requests
+        XCTAssertEqual(requests.first?.threadContext.position, 1)
+        XCTAssertEqual(requests.first?.threadContext.totalMessages, 1)
+        XCTAssertNil(requests.first?.threadContext.previousMessage)
+        XCTAssertNil(requests.first?.threadContext.nextMessage)
 
         let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
-        XCTAssertEqual(cached.first?.summaryText, "CR60 Booking Flow")
+        XCTAssertEqual(cached.first?.summaryText, expectedTitle)
         XCTAssertEqual(cached.first?.provider, "test-graph-title-v1")
 
         viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
@@ -2142,14 +2543,174 @@ final class GraphTitleGenerationTests: XCTestCase {
     }
 
     @MainActor
+    func test_viewModel_identicalSummaryTextWithNewGenerationIDRegeneratesTitle() async throws {
+        let suiteName = "GraphTitleSameSummaryRegenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = SequentialGraphTitleProvider(titles: [
+            "Introduces CR#60 scope",
+            "Reframes CR#60 scope"
+        ])
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let roots = [makeThread(rootID: "root", messageCount: 1)]
+        let summaryText = "The generated summary is intentionally unchanged."
+
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [
+                            "root": ThreadSummaryState(text: summaryText,
+                                                       statusMessage: "Ready",
+                                                       isSummarizing: false,
+                                                       generationID: "regen-1")
+                         ])
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "Introduces CR#60 scope" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [
+                            "root": ThreadSummaryState(text: summaryText,
+                                                       statusMessage: "Ready",
+                                                       isSummarizing: false,
+                                                       generationID: "regen-2")
+                         ])
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "Reframes CR#60 scope" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"),
+                       "Reframes CR#60 scope")
+        let callCount = await provider.callCount
+        XCTAssertEqual(callCount, 2)
+        let requests = await provider.requests
+        XCTAssertEqual(requests.first, requests.last,
+                       "Generation identity invalidates the cache without changing title context")
+    }
+
+    @MainActor
+    func test_viewModel_unavailableProviderStripsLegacyMarkerFromStaleCachedTitle() async throws {
+        let suiteName = "GraphTitleUnavailableRepositionTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        try await store.upsertSummaries([
+            SummaryCacheEntry(scope: .graphTitle,
+                              scopeID: "root",
+                              summaryText: "1/1 · Confirms CR#60 scope",
+                              generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                              fingerprint: "stale-fingerprint",
+                              provider: "test-graph-title-v1")
+        ])
+        let capability = GraphTitleCapability(provider: nil,
+                                              statusMessage: "Unavailable",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "Confirms the CR#60 rollout scope.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false,
+                                         generationID: "regen-2")
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 3)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary])
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "Confirms CR#60 scope" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"),
+                       "Confirms CR#60 scope")
+    }
+
+    @MainActor
+    func test_viewModel_supersededAfterPersistenceCannotPublishLateTitle() async throws {
+        let suiteName = "GraphTitlePostPersistenceSupersessionTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = SequentialGraphTitleProvider(titles: [
+            "Superseded CR#60 role",
+            "Current CR#60 role"
+        ])
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let gate = FirstGraphTitlePersistenceGate()
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.graphTitlePostPersistenceHookForTesting = {
+            await gate.suspendFirstCall()
+        }
+        viewModel.setGraphTitleGenerationActive(true)
+        let roots = [makeThread(rootID: "root", messageCount: 1)]
+        let summaryText = "Same text across a superseded persistence continuation."
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [
+                            "root": ThreadSummaryState(text: summaryText,
+                                                       statusMessage: "Ready",
+                                                       isSummarizing: false,
+                                                       generationID: "regen-1")
+                         ])
+        for _ in 0..<150 {
+            if await gate.hasSuspendedFirstCall { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let didSuspendFirstCall = await gate.hasSuspendedFirstCall
+        XCTAssertTrue(didSuspendFirstCall)
+
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [
+                            "root": ThreadSummaryState(text: summaryText,
+                                                       statusMessage: "Ready",
+                                                       isSummarizing: false,
+                                                       generationID: "regen-2")
+                         ])
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "Current CR#60 role" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"),
+                       "Current CR#60 role")
+
+        await gate.releaseFirstCall()
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"),
+                       "Current CR#60 role")
+        let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
+        XCTAssertEqual(cached.first?.summaryText, "Current CR#60 role")
+    }
+
+    @MainActor
     func test_viewModel_regenerateGraphTitle_bypassesMatchingCachedTitle() async throws {
         let suiteName = "GraphTitleGenerationTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let provider = SequentialGraphTitleProvider(titles: [
-            "HKJC CRC Review Materials CR#60",
-            "HKJC CRC Booking Review CR#60"
+            "Reviews CR#60 materials",
+            "Confirms CR#60 booking"
         ])
         let capability = GraphTitleCapability(provider: provider,
                                               statusMessage: "Ready",
@@ -2166,23 +2727,29 @@ final class GraphTitleGenerationTests: XCTestCase {
                          searchQuery: "",
                          tagsByNodeID: [:],
                          summariesByNodeID: ["root": summary])
+        let initialTitle = "Reviews CR#60 materials"
+        let regeneratedTitle = "Confirms CR#60 booking"
         for _ in 0..<150 {
-            if viewModel.generatedGraphTitle(for: "root") == "HKJC CRC Review Materials CR#60" { break }
+            if viewModel.generatedGraphTitle(for: "root") == initialTitle { break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "HKJC CRC Review Materials CR#60")
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), initialTitle)
 
         viewModel.regenerateGraphTitle(for: "root")
         for _ in 0..<150 {
-            if viewModel.generatedGraphTitle(for: "root") == "HKJC CRC Booking Review CR#60" { break }
+            if viewModel.generatedGraphTitle(for: "root") == regeneratedTitle { break }
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "HKJC CRC Booking Review CR#60")
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), regeneratedTitle)
         let regenerationCallCount = await provider.callCount
         XCTAssertEqual(regenerationCallCount, 2)
+        let requests = await provider.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0], requests[1],
+                       "Manual regeneration must reuse the same complete thread context")
         let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
-        XCTAssertEqual(cached.first?.summaryText, "HKJC CRC Booking Review CR#60")
+        XCTAssertEqual(cached.first?.summaryText, regeneratedTitle)
     }
 
     @MainActor
@@ -2219,8 +2786,8 @@ final class GraphTitleGenerationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let provider = SequentialGraphTitleProvider(titles: [
-            "Initial title CR#60",
-            "Regenerated title CR#60"
+            "Initial CR#60 scope",
+            "Confirms CR#60 scope"
         ], delayFirstTitle: .seconds(5))
         let capability = GraphTitleCapability(provider: provider,
                                               statusMessage: "Ready",
@@ -2245,12 +2812,13 @@ final class GraphTitleGenerationTests: XCTestCase {
         XCTAssertEqual(initialCallCount, 1)
 
         viewModel.regenerateGraphTitle(for: "root")
+        let regeneratedTitle = "Confirms CR#60 scope"
         for _ in 0..<150 {
-            if viewModel.generatedGraphTitle(for: "root") == "Regenerated title CR#60" { break }
+            if viewModel.generatedGraphTitle(for: "root") == regeneratedTitle { break }
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), "Regenerated title CR#60")
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), regeneratedTitle)
         XCTAssertFalse(viewModel.isRegeneratingGraphTitle(for: "root"))
         let regenerationCallCount = await provider.callCount
         XCTAssertEqual(regenerationCallCount, 2)
@@ -2280,6 +2848,220 @@ final class GraphTitleGenerationTests: XCTestCase {
         let callCount = await provider.callCount
         XCTAssertEqual(callCount, 0)
         XCTAssertEqual(viewModel.data.threads.first?.displayTitle, "Subject root")
+    }
+
+    @MainActor
+    func test_viewModel_hiddenRepliesInvalidateVisibleRootUsingFullThreadContext() async throws {
+        let suiteName = "GraphTitleHiddenReplyTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "Confirms CR#60 scope")
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "Confirms the CR#60 rollout scope.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 1)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary],
+                         visibleEmailsPerThread: 1)
+        for _ in 0..<150 {
+            if viewModel.generatedGraphTitle(for: "root") == "Confirms CR#60 scope" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 3)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary],
+                         visibleEmailsPerThread: 1)
+        for _ in 0..<150 {
+            if await provider.callCount == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"),
+                       "Confirms CR#60 scope")
+        XCTAssertEqual(viewModel.data.messages.count, 1,
+                       "The configured page is clamped to the two-email minimum")
+        XCTAssertFalse(viewModel.data.messages.contains {
+            $0.rawMessageID == "root-msg-2"
+        }, "The oldest reply should remain paged out for this regression")
+        let requests = await provider.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests.last?.threadContext.position, 3)
+        XCTAssertEqual(requests.last?.threadContext.totalMessages, 3)
+        XCTAssertEqual(requests.last?.threadContext.previousMessage?.messageID, "root-msg-1")
+        XCTAssertEqual(requests.last?.threadContext.previousMessage?.relationship, .automaticReply)
+        XCTAssertNotEqual(requests.first?.effectiveThreadRevision,
+                          requests.last?.effectiveThreadRevision)
+    }
+
+    @MainActor
+    func test_viewModel_manualThreadBoundaryReachesBothTitleRequests() async throws {
+        let suiteName = "GraphTitleManualBoundaryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "CR#60 scope")
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "Discusses the CR#60 scope.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(
+            roots: [makeThread(rootID: "root", messageCount: 2)],
+            searchQuery: "",
+            tagsByNodeID: [:],
+            summariesByNodeID: ["root": summary, "root-msg-1": summary],
+            jwzThreadMap: ["root": "automatic-new", "root-msg-1": "automatic-old"]
+        )
+        for _ in 0..<150 {
+            if await provider.callCount == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let requests = await provider.requests
+        XCTAssertEqual(requests.count, 2)
+        let older = try XCTUnwrap(requests.first {
+            $0.threadContext.position == 1
+        })
+        let newer = try XCTUnwrap(requests.first {
+            $0.threadContext.position == 2
+        })
+        XCTAssertEqual(older.threadContext.nextMessage?.relationship, .manualThreadLink)
+        XCTAssertEqual(newer.threadContext.previousMessage?.relationship, .manualThreadLink)
+    }
+
+    @MainActor
+    func test_regenerateChildGraphTitle_reusesSelectedMessagesContext() async throws {
+        let suiteName = "GraphTitleChildRegenerationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = TestGraphTitleProvider(title: "CR#60 response")
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let summary = ThreadSummaryState(text: "Responds about the CR#60 scope.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(roots: [makeThread(rootID: "root", messageCount: 2)],
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": summary, "root-msg-1": summary])
+        for _ in 0..<150 {
+            if await provider.callCount == 2,
+               viewModel.generatedGraphTitle(for: "root") == "CR#60 response",
+               viewModel.generatedGraphTitle(for: "root-msg-1") == "CR#60 response" {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(viewModel.canRegenerateGraphTitle(for: "root-msg-1"))
+
+        viewModel.regenerateGraphTitle(for: "root-msg-1")
+        for _ in 0..<150 {
+            if await provider.callCount == 3,
+               !viewModel.isRegeneratingGraphTitle(for: "root-msg-1") {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let requests = await provider.requests
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.last?.threadContext.position, 1)
+        XCTAssertEqual(requests.last?.threadContext.totalMessages, 2)
+        XCTAssertEqual(requests.last?.threadContext.nextMessage?.messageID, "root")
+        XCTAssertEqual(requests.last?.threadContext.nextMessage?.relationship, .automaticReply)
+    }
+
+    @MainActor
+    func test_viewModel_waitsForCompletedSummaryBeforeRefreshingSemanticTitle() async throws {
+        let suiteName = "GraphTitleSummaryHandoffTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let provider = SequentialGraphTitleProvider(titles: [
+            "Initial CR#60 scope",
+            "Confirms CR#60 scope"
+        ])
+        let capability = GraphTitleCapability(provider: provider,
+                                              statusMessage: "Ready",
+                                              providerID: "test-graph-title-v1",
+                                              shouldRetry: false)
+        let viewModel = GraphCanvasViewModel(store: store,
+                                             graphTitleCapabilityProvider: { capability })
+        viewModel.setGraphTitleGenerationActive(true)
+        let roots = [makeThread(rootID: "root", messageCount: 1)]
+        let initial = ThreadSummaryState(text: "Initial CR#60 scope.",
+                                         statusMessage: "Ready",
+                                         isSummarizing: false)
+
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": initial])
+        for _ in 0..<150 {
+            if await provider.callCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let oldTitle = "Initial CR#60 scope"
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), oldTitle)
+
+        let rebuilding = ThreadSummaryState(text: initial.text,
+                                            statusMessage: "Updating summary",
+                                            isSummarizing: true)
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": rebuilding])
+        try await Task.sleep(for: .milliseconds(100))
+        let rebuildingCallCount = await provider.callCount
+        XCTAssertEqual(rebuildingCallCount, 1)
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"), oldTitle,
+                       "The prior title should remain readable while its summary rebuilds")
+        XCTAssertFalse(viewModel.canRegenerateGraphTitle(for: "root"))
+
+        let completed = ThreadSummaryState(text: "Confirms the revised CR#60 scope.",
+                                           statusMessage: "Ready",
+                                           isSummarizing: false)
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: ["root": completed])
+        for _ in 0..<150 {
+            if await provider.callCount == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(viewModel.generatedGraphTitle(for: "root"),
+                       "Confirms CR#60 scope")
+        let requests = await provider.requests
+        XCTAssertEqual(requests.last?.summary, completed.text)
+        XCTAssertEqual(requests.last?.threadContext.position, 1)
+        XCTAssertEqual(requests.last?.threadContext.totalMessages, 1)
     }
 
     @MainActor
@@ -2316,7 +3098,7 @@ final class GraphTitleGenerationTests: XCTestCase {
         viewModel.setGraphTitleGenerationActive(false)
         try await Task.sleep(for: .milliseconds(100))
 
-        XCTAssertEqual(viewModel.data.threads.first?.displayTitle, summary.text)
+        XCTAssertEqual(viewModel.data.threads.first?.displayTitle, "Subject root")
         let cached = try await store.fetchSummaries(scope: .graphTitle, ids: ["root"])
         XCTAssertTrue(cached.isEmpty)
     }
@@ -2471,8 +3253,8 @@ final class ObsidianGraphSceneTests: XCTestCase {
         let childRemainderID = GraphRemainingBranch.graphID(for: childParentID)
         let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
         configure(scene, data: graph)
-        var expandedParentIDs: [String] = []
-        scene.onExpandRemainingBranches = { expandedParentIDs.append($0) }
+        var expandedScopes: [GraphRemainderScope] = []
+        scene.onExpandRemainingBranches = { expandedScopes.append($0) }
 
         let remainingNodes = scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
             .filter { $0.kind == .remaining }
@@ -2482,13 +3264,41 @@ final class ObsidianGraphSceneTests: XCTestCase {
         XCTAssertEqual(childRemainderNode.accessibilityRole, NSAccessibility.Role.button.rawValue)
         XCTAssertEqual(childRemainderNode.accessibilityLabel, childRemainder.accessibilityLabel)
         XCTAssertTrue(childRemainderNode.accessibilityPerformPress())
-        XCTAssertEqual(expandedParentIDs, [childParentID])
-        expandedParentIDs.removeAll()
+        XCTAssertEqual(expandedScopes, [.branches(parentID: childParentID)])
+        expandedScopes.removeAll()
 
         XCTAssertTrue(scene.expandRemainingBranchIfPresent(nodeID: GraphRemainingBranch.graphID))
         XCTAssertTrue(scene.expandRemainingBranchIfPresent(nodeID: childRemainderID))
         XCTAssertFalse(scene.expandRemainingBranchIfPresent(nodeID: GraphData.threadNodeID(for: "unhandled-0")))
-        XCTAssertEqual(expandedParentIDs, [GraphCenter.you.id, childParentID])
+        XCTAssertEqual(expandedScopes, [
+            .branches(parentID: GraphCenter.you.id),
+            .branches(parentID: childParentID)
+        ])
+    }
+
+    func test_remainingEmailNodeActivation_usesMessageScopeAndAccessibleStableIdentity() throws {
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "event", messageCount: 12)],
+            messageLimitPerBranch: 5,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let threadID = GraphData.threadNodeID(for: "event")
+        let remainderID = GraphRemainingBranch.messageGraphID(for: threadID)
+        let remainder = try XCTUnwrap(graph.remainingEmails(forThreadID: threadID))
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        var expandedScopes: [GraphRemainderScope] = []
+        scene.onExpandRemainingBranches = { expandedScopes.append($0) }
+
+        let node = try XCTUnwrap(scene.children
+            .compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == remainderID })
+        XCTAssertEqual(remainder.id, remainderID)
+        XCTAssertEqual(remainder.layoutAnchorID, GraphData.messageNodeID(for: "event-msg-4"))
+        XCTAssertEqual(node.accessibilityRole, NSAccessibility.Role.button.rawValue)
+        XCTAssertEqual(node.accessibilityLabel, remainder.accessibilityLabel)
+        XCTAssertTrue(node.accessibilityPerformPress())
+        XCTAssertEqual(expandedScopes, [.messages(threadID: threadID)])
     }
 
     func test_hitTest_whenPointerIsOnLabel_selectsOnlyTheNodeShape() throws {
@@ -3418,6 +4228,205 @@ final class GraphSelectionTests: XCTestCase {
     }
 }
 
+@MainActor
+final class GraphRestoreHistoryTests: XCTestCase {
+    func test_presentation_mixedEntries_sortsNewestFirstAndShowsMailboxRecoveryDetails() {
+        let olderSnip = GraphCompostEntry(
+            id: "snip-older",
+            threadID: "thread-older",
+            rootNodeID: "root-older",
+            subject: "Older snip",
+            action: .snip,
+            messageIDs: ["message-older"],
+            priorMailboxPath: nil,
+            priorAccountName: nil,
+            movedMessages: [
+                GraphSnipMovedMessage(messageID: "message-older",
+                                      sourceMailboxPath: "Inbox",
+                                      sourceAccountName: "Work",
+                                      destinationMailboxPath: "Filed",
+                                      destinationAccountName: "Work")
+            ],
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let archived = GraphCompostEntry(
+            id: "archive-middle",
+            threadID: "thread-archive",
+            rootNodeID: "root-archive",
+            subject: "Archived thread",
+            action: .archive,
+            messageIDs: ["message-archive"],
+            priorMailboxPath: nil,
+            priorAccountName: nil,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let recovery = GraphCompostEntry(
+            id: "snip-newest",
+            threadID: "thread-newest",
+            rootNodeID: "root-newest",
+            subject: "Recovery needed",
+            action: .snip,
+            messageIDs: ["message-one", "message-two"],
+            priorMailboxPath: nil,
+            priorAccountName: nil,
+            movedMessages: [
+                GraphSnipMovedMessage(messageID: "message-one",
+                                      sourceMailboxPath: "Inbox",
+                                      sourceAccountName: "Work",
+                                      destinationMailboxPath: "Filed",
+                                      destinationAccountName: "Work"),
+                GraphSnipMovedMessage(messageID: "message-two",
+                                      sourceMailboxPath: "Inbox",
+                                      sourceAccountName: "Work",
+                                      destinationMailboxPath: "Filed",
+                                      destinationAccountName: "Work")
+            ],
+            requiresRecovery: true,
+            createdAt: Date(timeIntervalSince1970: 300)
+        )
+
+        let sections = GraphRestoreHistorySection.make(from: [olderSnip, archived, recovery])
+
+        XCTAssertEqual(sections.map(\.action), [.snip, .archive])
+        XCTAssertEqual(sections[0].entries.map(\.id), ["snip-newest", "snip-older"])
+        XCTAssertEqual(sections[1].entries.map(\.id), ["archive-middle"])
+        XCTAssertEqual(GraphRestoreHistoryPresentation.mailboxSummary(for: recovery),
+                       "Inbox → Filed")
+        XCTAssertEqual(GraphRestoreHistoryPresentation.mailboxSummary(for: archived),
+                       "Graph → Graph Archive")
+        XCTAssertEqual(GraphRestoreHistoryPresentation.recoveryWarning(for: recovery),
+                       "2 messages are still displaced. Retry restores only those messages.")
+        XCTAssertNil(GraphRestoreHistoryPresentation.recoveryWarning(for: olderSnip))
+    }
+
+    func test_dismissSnipEntry_removesHistoryWithoutAnotherMailMove() async throws {
+        let mover = TestGraphSnipMailMover([.moved(["root"])])
+        let setup = makeGraphSnipViewModel(
+            roots: [makeThread(rootID: "root", messageCount: 1)],
+            mailMover: mover
+        )
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try stageGraphSnipBatch(
+            setup.viewModel,
+            destinations: [GraphData.threadNodeID(for: "root"): "Filed"]
+        )
+        _ = await setup.viewModel.confirmSnipBatch(request: request)
+        let entry = try XCTUnwrap(setup.viewModel.compostEntries.first)
+        let callsBeforeDismiss = await mover.recordedCalls()
+
+        setup.viewModel.dismissRestoreHistoryEntry(entry)
+
+        XCTAssertTrue(setup.viewModel.compostEntries.isEmpty)
+        let callsAfterDismiss = await mover.recordedCalls()
+        XCTAssertEqual(callsAfterDismiss, callsBeforeDismiss)
+    }
+
+    func test_restore_whenAnotherEntryIsRunning_rejectsDuplicateOperationAndKeepsEntry() async throws {
+        let mover = RestoreGateGraphSnipMailMover(immediateMoveCount: 2)
+        let setup = makeGraphSnipViewModel(
+            roots: [makeThread(rootID: "first", messageCount: 1),
+                    makeThread(rootID: "second", messageCount: 1)],
+            mailMover: mover
+        )
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let firstThreadID = GraphData.threadNodeID(for: "first")
+        let secondThreadID = GraphData.threadNodeID(for: "second")
+        let request = try stageGraphSnipBatch(
+            setup.viewModel,
+            destinations: [firstThreadID: "Filed", secondThreadID: "Filed"]
+        )
+        _ = await setup.viewModel.confirmSnipBatch(request: request)
+        let firstEntry = try XCTUnwrap(
+            setup.viewModel.compostEntries.first { $0.threadID == firstThreadID }
+        )
+        let secondEntry = try XCTUnwrap(
+            setup.viewModel.compostEntries.first { $0.threadID == secondThreadID }
+        )
+
+        let firstRestore = Task { try await setup.viewModel.restore(firstEntry) }
+        await mover.waitUntilRestoreStarted()
+
+        do {
+            try await setup.viewModel.restore(secondEntry)
+            XCTFail("Expected a concurrent Restore History operation to be rejected")
+        } catch {
+            XCTAssertEqual(error.localizedDescription,
+                           NSLocalizedString("graph.restore_history.error.in_progress",
+                                             comment: "Restore already running"))
+        }
+        XCTAssertTrue(setup.viewModel.compostEntries.contains(where: { $0.id == secondEntry.id }))
+        let callsWhileBlocked = await mover.recordedCallCount()
+        XCTAssertEqual(callsWhileBlocked, 3)
+
+        await mover.releaseRestore()
+        try await firstRestore.value
+
+        XCTAssertFalse(setup.viewModel.compostEntries.contains(where: { $0.id == firstEntry.id }))
+        XCTAssertTrue(setup.viewModel.compostEntries.contains(where: { $0.id == secondEntry.id }))
+    }
+
+    func test_dismissArchiveEntry_isSessionOnlyAndDoesNotDeleteArchivedState() async throws {
+        let suiteName = "GraphRestoreHistoryTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Expected isolated defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let mover = TestGraphSnipMailMover([])
+        let root = makeThread(rootID: "root", messageCount: 1)
+        let threadID = GraphData.threadNodeID(for: "root")
+        try await store.upsertArchivedInGraphEntry(
+            ArchivedInGraphEntry(threadID: threadID,
+                                 archivedAt: Date(timeIntervalSince1970: 400))
+        )
+        let viewModel = GraphCanvasViewModel(store: store, mailClient: mover)
+        updateForArchiveHistory(viewModel, roots: [root])
+        let initialHistoryLoaded = await waitForRestoreHistoryEntry("archive-\(threadID)",
+                                                                    in: viewModel)
+        XCTAssertTrue(initialHistoryLoaded)
+        let entry = try XCTUnwrap(viewModel.compostEntries.first)
+
+        viewModel.dismissRestoreHistoryEntry(entry)
+        updateForArchiveHistory(viewModel, roots: [root])
+
+        XCTAssertTrue(viewModel.compostEntries.isEmpty)
+        let callsAfterDismiss = await mover.recordedCalls()
+        let storedAfterDismiss = try await store.fetchArchivedInGraphEntries()
+        XCTAssertTrue(callsAfterDismiss.isEmpty)
+        XCTAssertEqual(storedAfterDismiss.map(\.threadID), [threadID])
+
+        let relaunchedViewModel = GraphCanvasViewModel(store: store, mailClient: mover)
+        updateForArchiveHistory(relaunchedViewModel, roots: [root])
+
+        let relaunchedHistoryLoaded = await waitForRestoreHistoryEntry("archive-\(threadID)",
+                                                                       in: relaunchedViewModel)
+        XCTAssertTrue(relaunchedHistoryLoaded)
+        XCTAssertEqual(relaunchedViewModel.compostEntries.map(\.threadID), [threadID])
+        let storedAfterRelaunch = try await store.fetchArchivedInGraphEntries()
+        XCTAssertEqual(storedAfterRelaunch.map(\.threadID), [threadID])
+    }
+
+    private func updateForArchiveHistory(_ viewModel: GraphCanvasViewModel,
+                                         roots: [ThreadNode]) {
+        viewModel.update(roots: roots,
+                         searchQuery: "",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:],
+                         showsArchivedThreads: true)
+    }
+
+    private func waitForRestoreHistoryEntry(_ entryID: String,
+                                            in viewModel: GraphCanvasViewModel) async -> Bool {
+        for _ in 0..<100 {
+            if viewModel.compostEntries.contains(where: { $0.id == entryID }) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
+    }
+}
+
 final class GraphBatchSnipTests: XCTestCase {
     func test_firstSnipClick_entersStagingWithoutConsumingSelection() async {
         let mover = TestGraphSnipMailMover([])
@@ -3907,7 +4916,7 @@ final class GraphBatchSnipTests: XCTestCase {
             try await setup.viewModel.restore(entry)
             XCTFail("Expected an incomplete source-scoped restore")
         } catch {
-            // The residual Compost entry is the user-visible recovery contract.
+            // The residual Restore History entry is the user-visible recovery contract.
         }
         let residual = try await MainActor.run {
             try XCTUnwrap(setup.viewModel.compostEntries.first)
@@ -4137,6 +5146,54 @@ private actor BlockingGraphSnipMailMover: GraphSnipMailMoving {
     }
 }
 
+private actor RestoreGateGraphSnipMailMover: GraphSnipMailMoving {
+    private let immediateMoveCount: Int
+    private var callCount = 0
+    private var restoreStarted = false
+    private var restoreStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var restoreReleaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(immediateMoveCount: Int) {
+        self.immediateMoveCount = immediateMoveCount
+    }
+
+    func moveMessages(messageIDs: [String],
+                      toMailboxPath mailboxPath: String,
+                      account: String?,
+                      sourceMailboxPath: String?,
+                      sourceAccount: String?) async throws -> GraphMailMoveResult {
+        callCount += 1
+        guard callCount > immediateMoveCount else {
+            return GraphMailMoveResult(movedMessageIDs: messageIDs)
+        }
+
+        restoreStarted = true
+        let waiters = restoreStartWaiters
+        restoreStartWaiters = []
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            restoreReleaseContinuation = continuation
+        }
+        return GraphMailMoveResult(movedMessageIDs: messageIDs)
+    }
+
+    func waitUntilRestoreStarted() async {
+        guard !restoreStarted else { return }
+        await withCheckedContinuation { continuation in
+            restoreStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseRestore() {
+        restoreReleaseContinuation?.resume()
+        restoreReleaseContinuation = nil
+    }
+
+    func recordedCallCount() -> Int {
+        callCount
+    }
+}
+
 private nonisolated enum TestGraphSnipMailMoverError: Error {
     case moveFailed
 }
@@ -4211,10 +5268,55 @@ private func pointDistance(_ lhs: CGPoint?, _ rhs: CGPoint?) -> CGFloat {
     return hypot(lhs.x - rhs.x, lhs.y - rhs.y)
 }
 
+private func assertChronologicalDistanceOrder(_ simulator: ObsidianGraphForceSimulator,
+                                              newestID: String,
+                                              middleID: String,
+                                              oldestID: String,
+                                              file: StaticString = #filePath,
+                                              line: UInt = #line) {
+    let center = simulator.nodesByID[GraphCenter.you.id]?.position
+    let newestDistance = pointDistance(center, simulator.nodesByID[newestID]?.position)
+    let middleDistance = pointDistance(center, simulator.nodesByID[middleID]?.position)
+    let oldestDistance = pointDistance(center, simulator.nodesByID[oldestID]?.position)
+
+    XCTAssertLessThan(newestDistance,
+                      middleDistance,
+                      "The newest node should be nearer to You than the middle node.",
+                      file: file,
+                      line: line)
+    XCTAssertLessThan(middleDistance,
+                      oldestDistance,
+                      "The middle node should be nearer to You than the oldest node.",
+                      file: file,
+                      line: line)
+}
+
+private actor FirstGraphTitlePersistenceGate {
+    private var didHandleFirstCall = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var hasSuspendedFirstCall = false
+
+    func suspendFirstCall() async {
+        guard !didHandleFirstCall else { return }
+        didHandleFirstCall = true
+        hasSuspendedFirstCall = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func releaseFirstCall() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 private actor TestGraphTitleProvider: GraphTitleProviding {
     private let title: String
     private let delay: Duration?
-    private(set) var callCount = 0
+    private(set) var requests: [GraphTitleRequest] = []
+
+    var callCount: Int { requests.count }
 
     init(title: String, delay: Duration? = nil) {
         self.title = title
@@ -4222,7 +5324,7 @@ private actor TestGraphTitleProvider: GraphTitleProviding {
     }
 
     func makeGraphTitle(_ request: GraphTitleRequest) async throws -> String {
-        callCount += 1
+        requests.append(request)
         if let delay {
             try await Task.sleep(for: delay)
         }
@@ -4233,7 +5335,9 @@ private actor TestGraphTitleProvider: GraphTitleProviding {
 private actor SequentialGraphTitleProvider: GraphTitleProviding {
     private let titles: [String]
     private let delayFirstTitle: Duration?
-    private(set) var callCount = 0
+    private(set) var requests: [GraphTitleRequest] = []
+
+    var callCount: Int { requests.count }
 
     init(titles: [String], delayFirstTitle: Duration? = nil) {
         precondition(!titles.isEmpty)
@@ -4242,8 +5346,8 @@ private actor SequentialGraphTitleProvider: GraphTitleProviding {
     }
 
     func makeGraphTitle(_ request: GraphTitleRequest) async throws -> String {
-        let titleIndex = callCount
-        callCount += 1
+        let titleIndex = requests.count
+        requests.append(request)
         if titleIndex == 0, let delayFirstTitle {
             try await Task.sleep(for: delayFirstTitle)
         }
@@ -4376,4 +5480,232 @@ private func makeMessage(id: String,
                  inReplyTo: nil,
                  references: [],
                  threadID: threadID)
+}
+
+@MainActor
+final class CollapsedEmailGraphTests: XCTestCase {
+    func test_threadingAndGraph_withEmbeddedHistory_projectsStableIndividualNodes() throws {
+        let sourceDate = Date(timeIntervalSince1970: 1_700_200_000)
+        let history = [
+            EmbeddedEmailMessage(id: "embedded-history|parent|newer",
+                                 originalMessageID: nil,
+                                 subject: "First forwarded message",
+                                 from: "alice@example.com",
+                                 to: "team@example.com",
+                                 date: sourceDate.addingTimeInterval(-120),
+                                 snippet: "First forwarded body",
+                                 sourceOrder: 0),
+            EmbeddedEmailMessage(id: "embedded-history|parent|older",
+                                 originalMessageID: nil,
+                                 subject: "Original request",
+                                 from: "bob@example.com",
+                                 to: "alice@example.com",
+                                 date: sourceDate.addingTimeInterval(-240),
+                                 snippet: "Original request body",
+                                 sourceOrder: 1)
+        ]
+        let parent = EmailMessage(messageID: "parent@example.com",
+                                  internalMailID: "physical-123",
+                                  mailboxID: "Inbox",
+                                  accountName: "Work",
+                                  subject: "Fwd: First forwarded message",
+                                  from: "sender@example.com",
+                                  to: "me@example.com",
+                                  date: sourceDate,
+                                  snippet: "FYI",
+                                  isUnread: true,
+                                  inReplyTo: nil,
+                                  references: [],
+                                  embeddedMessages: history)
+
+        let first = JWZThreader().buildThreads(from: [parent])
+        let second = JWZThreader().buildThreads(from: [parent])
+        let firstRoot = try XCTUnwrap(first.roots.first)
+        let firstEmbedded = try XCTUnwrap(firstRoot.children.first)
+        let secondEmbedded = try XCTUnwrap(firstEmbedded.children.first)
+        let graph = GraphData.make(roots: first.roots, now: sourceDate)
+
+        XCTAssertEqual(first.threads.first?.messageCount, 3)
+        XCTAssertEqual(first.threads.first?.unreadCount, 1)
+        XCTAssertEqual(firstEmbedded.id, history[0].id)
+        XCTAssertEqual(secondEmbedded.id, history[1].id)
+        XCTAssertEqual(firstEmbedded.message.physicalSource.messageID, parent.messageID)
+        XCTAssertEqual(firstEmbedded.message.physicalSource.internalMailID, parent.internalMailID)
+        XCTAssertEqual(firstEmbedded.message.id,
+                       second.roots.first?.children.first?.message.id)
+        XCTAssertEqual(graph.visibleEmailNodeCount, 3)
+        XCTAssertEqual(graph.messages.map(\.rawMessageID), history.map(\.id))
+    }
+
+    func test_threading_whenEmbeddedMessageAlreadyFetched_doesNotDuplicatePhysicalSource() {
+        let date = Date(timeIntervalSince1970: 1_700_200_000)
+        let embedded = EmbeddedEmailMessage(id: "embedded-history|parent|duplicate",
+                                            originalMessageID: "real@example.com",
+                                            subject: "Real message",
+                                            from: "alice@example.com",
+                                            to: "me@example.com",
+                                            date: date.addingTimeInterval(-60),
+                                            snippet: "Quoted copy",
+                                            sourceOrder: 0)
+        let parent = EmailMessage(messageID: "parent@example.com",
+                                  mailboxID: "Inbox",
+                                  accountName: "Work",
+                                  subject: "Fwd: Real message",
+                                  from: "sender@example.com",
+                                  to: "me@example.com",
+                                  date: date,
+                                  snippet: "FYI",
+                                  isUnread: false,
+                                  inReplyTo: nil,
+                                  references: [],
+                                  embeddedMessages: [embedded])
+        let physical = EmailMessage(messageID: "real@example.com",
+                                    mailboxID: "Archive",
+                                    accountName: "Work",
+                                    subject: "Real message",
+                                    from: "alice@example.com",
+                                    to: "me@example.com",
+                                    date: date.addingTimeInterval(-60),
+                                    snippet: "Original body",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+
+        let result = JWZThreader().buildThreads(from: [parent, physical])
+        let allIDs = result.roots.flatMap(flattenNodeIDs)
+
+        XCTAssertEqual(allIDs.filter { $0 == physical.messageID }.count, 1)
+        XCTAssertFalse(allIDs.contains(embedded.id))
+    }
+
+    func test_threading_whenMatchingPhysicalMessageIsInDifferentAccount_keepsEmbeddedNode() {
+        let date = Date(timeIntervalSince1970: 1_700_200_000)
+        let embedded = EmbeddedEmailMessage(id: "embedded-history|work-parent|shared",
+                                            originalMessageID: "shared@example.com",
+                                            subject: "Shared message",
+                                            from: "alice@example.com",
+                                            to: "me@example.com",
+                                            date: date.addingTimeInterval(-60),
+                                            snippet: "Work account quoted copy",
+                                            sourceOrder: 0)
+        let parent = EmailMessage(messageID: "work-parent@example.com",
+                                  mailboxID: "Inbox",
+                                  accountName: "Work",
+                                  subject: "Fwd: Shared message",
+                                  from: "sender@example.com",
+                                  to: "me@example.com",
+                                  date: date,
+                                  snippet: "FYI",
+                                  isUnread: false,
+                                  inReplyTo: nil,
+                                  references: [],
+                                  embeddedMessages: [embedded])
+        let personalPhysical = EmailMessage(messageID: "shared@example.com",
+                                            mailboxID: "Inbox",
+                                            accountName: "Personal",
+                                            subject: "Shared message",
+                                            from: "alice@example.com",
+                                            to: "me@example.com",
+                                            date: date.addingTimeInterval(-60),
+                                            snippet: "Personal account body",
+                                            isUnread: false,
+                                            inReplyTo: nil,
+                                            references: [])
+
+        let result = JWZThreader().buildThreads(from: [parent, personalPhysical])
+        let allIDs = result.roots.flatMap(flattenNodeIDs)
+
+        XCTAssertTrue(allIDs.contains(embedded.id))
+        XCTAssertTrue(allIDs.contains(personalPhysical.messageID))
+    }
+
+    func test_physicalSourceRouting_withDuplicateRFCID_selectsMatchingAccount() throws {
+        let date = Date(timeIntervalSince1970: 1_700_200_000)
+        let work = EmailMessage(messageID: "shared@example.com",
+                                internalMailID: "work-internal",
+                                mailboxID: "Inbox",
+                                accountName: "Work",
+                                subject: "Work copy",
+                                from: "alice@example.com",
+                                to: "me@example.com",
+                                date: date,
+                                snippet: "Work",
+                                isUnread: false,
+                                inReplyTo: nil,
+                                references: [])
+        let personal = EmailMessage(messageID: "shared@example.com",
+                                    internalMailID: "personal-internal",
+                                    mailboxID: "Inbox",
+                                    accountName: "Personal",
+                                    subject: "Personal copy",
+                                    from: "alice@example.com",
+                                    to: "me@example.com",
+                                    date: date,
+                                    snippet: "Personal",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [])
+        let source = work.physicalSource
+        let embedded = EmailMessage(messageID: "embedded-history|work|shared",
+                                    mailboxID: "Inbox",
+                                    accountName: "Work",
+                                    subject: "Quoted work copy",
+                                    from: "alice@example.com",
+                                    to: "me@example.com",
+                                    date: date,
+                                    snippet: "Quoted",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    embeddedSource: source)
+
+        let match = try XCTUnwrap(ThreadCanvasViewModel.node(
+            matching: source,
+            in: [ThreadNode(message: personal), ThreadNode(message: work)]
+        ))
+
+        XCTAssertEqual(match.message.accountName, "Work")
+        XCTAssertFalse(source.matches(personal))
+        XCTAssertEqual(ThreadCanvasViewModel.actionItemSourceID(for: embedded),
+                       ActionItem.scopedID(for: work))
+    }
+
+    func test_messageStore_withEmbeddedHistory_roundTripsStructuredRecords() async throws {
+        let suiteName = "MessageStoreEmbeddedHistoryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let embedded = EmbeddedEmailMessage(id: "embedded-history|parent|one",
+                                            originalMessageID: "prior@example.com",
+                                            subject: "Prior decision",
+                                            from: "alice@example.com",
+                                            to: "team@example.com",
+                                            date: Date(timeIntervalSince1970: 1_700_000_000),
+                                            snippet: "The prior decision remains approved.",
+                                            sourceOrder: 0)
+        let parent = EmailMessage(messageID: "parent@example.com",
+                                  internalMailID: "12345",
+                                  mailboxID: "Inbox",
+                                  accountName: "Work",
+                                  subject: "Fwd: Prior decision",
+                                  from: "sender@example.com",
+                                  to: "me@example.com",
+                                  date: Date(timeIntervalSince1970: 1_700_100_000),
+                                  snippet: "FYI",
+                                  isUnread: false,
+                                  inReplyTo: nil,
+                                  references: [],
+                                  embeddedMessages: [embedded])
+
+        try await store.upsert(messages: [parent])
+        let fetched = try await store.fetchMessages()
+
+        XCTAssertEqual(fetched.count, 1)
+        XCTAssertEqual(fetched.first?.embeddedMessages, [embedded])
+        XCTAssertFalse(try XCTUnwrap(fetched.first).isEmbeddedHistory)
+    }
+
+    private func flattenNodeIDs(_ node: ThreadNode) -> [String] {
+        [node.id] + node.children.flatMap(flattenNodeIDs)
+    }
 }

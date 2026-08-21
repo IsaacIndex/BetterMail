@@ -343,7 +343,7 @@ internal struct ObsidianGraphForceSimulator {
             return base * 1.25
         case .grouping, .suggested:
             return base
-        case .chain:
+        case .chain, .manualChain:
             return base * 0.72
         case .remaining:
             return base * 1.15
@@ -398,10 +398,19 @@ internal struct ObsidianGraphForceSimulator {
              thread.id)
         })
         result.append(contentsOf: data.remainingBranches.map { remaining in
-            let branchID = remaining.parentID == data.center.id
-                ? nil
-                : (data.groupingByID[remaining.parentID]?.sourceFolderID ?? remaining.parentID)
-            return (remaining.id, .remaining, 8.5, branchID, nil)
+            switch remaining.scope {
+            case .branches(let parentID):
+                let branchID = parentID == data.center.id
+                    ? nil
+                    : (data.groupingByID[parentID]?.sourceFolderID ?? parentID)
+                return (remaining.id, .remaining, 8.5, branchID, nil)
+            case .messages(let threadID):
+                return (remaining.id,
+                        .remaining,
+                        8.5,
+                        branchIDByThreadID[threadID],
+                        threadID)
+            }
         })
         result.append(contentsOf: data.messages.map { message in
             (message.id,
@@ -445,7 +454,9 @@ internal struct ObsidianGraphForceSimulator {
             return Dictionary(uniqueKeysWithValues: threads.map { ($0.id, 0) })
         }
         return Dictionary(uniqueKeysWithValues: threads.map { thread in
-            let elapsed = thread.lastUpdated.timeIntervalSince(oldest)
+            // Smaller ranks sit nearer to You, so the most recent discussion
+            // is closest and distance increases steadily with age.
+            let elapsed = newest.timeIntervalSince(thread.lastUpdated)
             return (thread.id, CGFloat(elapsed / span))
         })
     }

@@ -9,6 +9,17 @@ internal struct ThreadSummaryState: Equatable {
     internal var text: String
     internal var statusMessage: String
     internal var isSummarizing: Bool
+    internal var generationID: String?
+
+    internal init(text: String,
+                  statusMessage: String,
+                  isSummarizing: Bool,
+                  generationID: String? = nil) {
+        self.text = text
+        self.statusMessage = statusMessage
+        self.isSummarizing = isSummarizing
+        self.generationID = generationID
+    }
 }
 
 internal enum OpenInMailTargetingPath: Equatable {
@@ -91,20 +102,16 @@ private struct DeferredCanvasScrollPublication: Equatable {
     let minimapViewportSnapshot: FolderMinimapViewportSnapshot
 }
 
-private struct NodeSummaryInput {
-    let nodeID: String
-    let cacheKey: String
-    let subject: String
-    let body: String
-    let priorMessages: [EmailSummaryContextEntry]
-    let fingerprint: String
-}
-
 private struct FolderSummaryInput {
     let folderID: String
     let title: String
     let summaryTexts: [String]
     let fingerprint: String
+}
+
+private struct NodeSummaryRebuildPlan {
+    let threadInputsByID: [String: [ThreadSummaryNodeInput]]
+    let cachedByKey: [String: SummaryCacheEntry]
 }
 
 private struct NodeTagInput {
@@ -140,12 +147,6 @@ private struct PendingFolderJumpScrollContext {
     let folderID: String
     let boundary: MessageStore.ThreadMessageBoundary
     let targetNodeID: String
-}
-
-private struct PendingManualAttachmentMailboxMove {
-    let targetMessageKey: String
-    let destinationAccount: String
-    let destinationPath: String
 }
 
 private struct MailboxRecoveryContext {
@@ -376,16 +377,17 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private actor SidebarBackgroundWorker {
-        private let client: any MailCanvasClient
         private let store: MessageStore
         private let threader: JWZThreader
+        private let calendarRecovery: CalendarThreadRecoveryService
 
-        init(client: any MailCanvasClient,
+        init(calendarRecoveryClient: any MailMessageFetching,
              store: MessageStore,
              threader: JWZThreader) {
-            self.client = client
             self.store = store
             self.threader = threader
+            self.calendarRecovery = CalendarThreadRecoveryService(client: calendarRecoveryClient,
+                                                                   store: store)
         }
 
         struct RethreadOutcome {
@@ -398,6 +400,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let manualGroups: [String: ManualThreadGroup]
             let jwzThreadMap: [String: String]
             let folders: [ThreadFolder]
+            let calendarRecoveryFingerprint: String
+        }
+
+        struct CalendarRecoveryOutcome {
+            let didPersistMessages: Bool
+            let hadTransientFailure: Bool
         }
 
         func performRethread(cutoffDate: Date?,
@@ -405,16 +413,44 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                              account: String?,
                              includeAllInboxesAliases: Bool,
                              includeThreadIDs: Set<String> = []) async throws -> RethreadOutcome {
-            let scopedMessages = try await store.fetchMessages(since: cutoffDate,
-                                                               limit: nil,
-                                                               mailbox: mailbox,
-                                                               account: account,
-                                                               includeAllInboxesAliases: includeAllInboxesAliases)
-            let messages = try await Self.mergedMessages(scopedMessages,
-                                                         includeThreadIDs: includeThreadIDs,
-                                                         store: store)
-            let baseResult = threader.buildThreads(from: messages)
+            let initiallyScopedMessages = try await store.fetchMessagesForThreading(
+                since: cutoffDate,
+                mailbox: mailbox,
+                account: account,
+                includeAllInboxesAliases: includeAllInboxesAliases,
+                includeThreadIDs: includeThreadIDs
+            )
             let manualGroups = try await store.fetchManualThreadGroups()
+            let initialResult = threader.buildThreads(from: initiallyScopedMessages)
+            let initiallyVisibleMessageKeys = Set(initiallyScopedMessages.map(\.threadKey))
+            let initiallyVisibleJWZThreadIDs = Set(initialResult.jwzThreadMap.values)
+            let relevantManualGroups = manualGroups.filter { group in
+                !group.manualMessageKeys.isDisjoint(with: initiallyVisibleMessageKeys) ||
+                    !group.jwzThreadIDs.isDisjoint(with: initiallyVisibleJWZThreadIDs) ||
+                    includeThreadIDs.contains(group.id) ||
+                    !group.jwzThreadIDs.isDisjoint(with: includeThreadIDs)
+            }
+            let manualThreadIDs = relevantManualGroups.reduce(into: includeThreadIDs) { result, group in
+                result.insert(group.id)
+                result.formUnion(group.jwzThreadIDs)
+            }
+            let manualMessageKeys = relevantManualGroups.reduce(into: Set<String>()) { result, group in
+                result.formUnion(group.manualMessageKeys)
+            }
+            let messages: [EmailMessage]
+            if manualThreadIDs == includeThreadIDs && manualMessageKeys.isEmpty {
+                messages = initiallyScopedMessages
+            } else {
+                messages = try await store.fetchMessagesForThreading(
+                    since: cutoffDate,
+                    mailbox: mailbox,
+                    account: account,
+                    includeAllInboxesAliases: includeAllInboxesAliases,
+                    includeThreadIDs: manualThreadIDs,
+                    includeMessageKeys: manualMessageKeys
+                )
+            }
+            let baseResult = threader.buildThreads(from: messages)
             let applied = threader.applyManualGroups(manualGroups, to: baseResult)
             let effectiveGroups = applied.updatedGroups.isEmpty ? manualGroups : applied.updatedGroups
             if !applied.updatedGroups.isEmpty {
@@ -439,84 +475,100 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let groupsByID = Dictionary(uniqueKeysWithValues: effectiveGroups.map { ($0.id, $0) })
             return RethreadOutcome(roots: updatedResult.roots,
                                    unreadTotal: unread,
-                                   messageCount: messages.count,
+                                   messageCount: messages.reduce(0) { $0 + ($1.isCalendarRSVP ? 0 : 1) },
                                    threadCount: updatedResult.threads.count,
                                    manualGroupByMessageKey: updatedResult.manualGroupByMessageKey,
                                    manualAttachmentMessageIDs: updatedResult.manualAttachmentMessageIDs,
                                    manualGroups: groupsByID,
                                    jwzThreadMap: updatedResult.jwzThreadMap,
-                                   folders: folders)
+                                   folders: folders,
+                                   calendarRecoveryFingerprint: Self.calendarRecoveryFingerprint(for: messages))
         }
 
-        private static func mergedMessages(_ scopedMessages: [EmailMessage],
-                                           includeThreadIDs: Set<String>,
-                                           store: MessageStore) async throws -> [EmailMessage] {
-            guard !includeThreadIDs.isEmpty else { return scopedMessages }
-            let includedMessages = try await store.fetchMessages(threadIDs: includeThreadIDs)
-            guard !includedMessages.isEmpty else { return scopedMessages }
-            var messagesByID = Dictionary(uniqueKeysWithValues: scopedMessages.map { ($0.messageID, $0) })
-            for message in includedMessages {
-                messagesByID[message.messageID] = message
+        func recoverCalendarAncestors(cutoffDate: Date?,
+                                      mailbox: String?,
+                                      account: String?,
+                                      includeAllInboxesAliases: Bool,
+                                      includeThreadIDs: Set<String>) async throws -> CalendarRecoveryOutcome {
+            let scopedMessages = try await store.fetchMessagesForThreading(
+                since: cutoffDate,
+                mailbox: mailbox,
+                account: account,
+                includeAllInboxesAliases: includeAllInboxesAliases,
+                includeThreadIDs: includeThreadIDs
+            )
+            let recoveryResult = await calendarRecovery.recoverCalendarAncestorsWithStatus(for: scopedMessages)
+            guard !recoveryResult.messages.isEmpty else {
+                return CalendarRecoveryOutcome(didPersistMessages: false,
+                                               hadTransientFailure: recoveryResult.hadTransientFailure)
             }
-            return messagesByID.values.sorted { lhs, rhs in
-                if lhs.date == rhs.date {
-                    return lhs.messageID < rhs.messageID
+            try Task.checkCancellation()
+            try await store.upsert(messages: recoveryResult.messages)
+            return CalendarRecoveryOutcome(didPersistMessages: true,
+                                           hadTransientFailure: recoveryResult.hadTransientFailure)
+        }
+
+        func repairCalendarClassificationsIfNeeded() async -> Bool {
+            await calendarRecovery.repairStoredClassificationsIfNeeded()
+        }
+
+        private static func calendarRecoveryFingerprint(for messages: [EmailMessage]) -> String {
+            var hasher = Hasher()
+            for message in messages.sorted(by: { lhs, rhs in
+                if lhs.normalizedMessageID == rhs.normalizedMessageID {
+                    return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
                 }
-                return lhs.date > rhs.date
+                return lhs.normalizedMessageID < rhs.normalizedMessageID
+            }) {
+                hasher.combine(message.accountName.lowercased())
+                hasher.combine(message.normalizedMessageID)
+                hasher.combine(message.calendarMessageKind?.rawValue)
+                hasher.combine(message.inReplyTo.map(JWZThreader.normalizeIdentifier))
+                for reference in message.references.map(JWZThreader.normalizeIdentifier).sorted() {
+                    hasher.combine(reference)
+                }
             }
+            return String(hasher.finalize(), radix: 16)
         }
 
         func nodeSummaryInputs(for roots: [ThreadNode],
                                manualAttachmentMessageIDs: Set<String>,
+                               manualGroupByMessageKey: [String: String],
+                               jwzThreadMap: [String: String],
                                snippetLineLimit: Int,
-                               stopPhrases: [String]) -> [String: NodeSummaryInput] {
-            let formatter = SnippetFormatter(lineLimit: snippetLineLimit,
-                                             stopPhrases: stopPhrases)
-            var inputs: [String: NodeSummaryInput] = [:]
+                               stopPhrases: [String],
+                               providerID: String) -> ThreadSummaryContextBuild {
+            var sources: [ThreadSummaryMessageSource] = []
+            sources.reserveCapacity(roots.reduce(0) { $0 + Self.flatten(node: $1).count })
 
             for root in roots {
                 let timeline = Self.timelineNodes(for: root)
-                var priorEntries: [EmailSummaryContextEntry] = []
-                priorEntries.reserveCapacity(timeline.count)
+                guard let first = timeline.first else { continue }
+                let rootKey = first.message.threadKey
+                let effectiveThreadID = manualGroupByMessageKey[rootKey]
+                    ?? first.message.threadID
+                    ?? jwzThreadMap[rootKey]
+                    ?? first.id
 
                 for node in timeline {
-                    let subject = Self.normalizedText(node.message.subject,
-                                                      maxCharacters: 140)
-                    let body = Self.normalizedText(formatter.format(node.message.snippet),
-                                                   maxCharacters: 600)
-                    let priorContext = Array(priorEntries.suffix(8))
-                    if !subject.isEmpty || !body.isEmpty {
-                        let fingerprintEntries = priorContext.map {
-                            NodeSummaryFingerprintEntry(messageID: $0.messageID,
-                                                        subject: $0.subject,
-                                                        bodySnippet: $0.bodySnippet)
-                        }
-                        let fingerprint = ThreadSummaryFingerprint.makeNode(subject: subject,
-                                                                            body: body,
-                                                                            priorEntries: fingerprintEntries)
-                        inputs[node.id] = NodeSummaryInput(nodeID: node.id,
-                                                           cacheKey: node.id,
-                                                           subject: subject,
-                                                           body: body,
-                                                           priorMessages: priorContext,
-                                                           fingerprint: fingerprint)
-                    }
-
-                    let priorSnippet = Self.normalizedText(formatter.format(node.message.snippet),
-                                                           maxCharacters: 220)
-                    if !subject.isEmpty || !priorSnippet.isEmpty {
-                        priorEntries.append(EmailSummaryContextEntry(messageID: node.message.messageID,
-                                                                     subject: subject,
-                                                                     bodySnippet: priorSnippet))
-                    } else if manualAttachmentMessageIDs.contains(node.id) {
-                        priorEntries.append(EmailSummaryContextEntry(messageID: node.message.messageID,
-                                                                     subject: "Manual attachment",
-                                                                     bodySnippet: ""))
-                    }
+                    let messageKey = node.message.threadKey
+                    let automaticThreadID = jwzThreadMap[messageKey]
+                        ?? (manualGroupByMessageKey[messageKey] == nil ? node.message.threadID : nil)
+                        ?? node.id
+                    sources.append(ThreadSummaryMessageSourceBuilder.make(
+                        message: node.message,
+                        nodeID: node.id,
+                        cacheKey: node.id,
+                        effectiveThreadID: manualGroupByMessageKey[messageKey] ?? effectiveThreadID,
+                        automaticThreadID: automaticThreadID,
+                        isManualAttachment: manualAttachmentMessageIDs.contains(node.id),
+                        snippetLineLimit: snippetLineLimit,
+                        stopPhrases: stopPhrases
+                    ))
                 }
             }
 
-            return inputs
+            return ThreadSummaryContextBuilder.build(sources: sources, providerID: providerID)
         }
 
         private static func timelineNodes(for root: ThreadNode) -> [ThreadNode] {
@@ -537,14 +589,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return results
         }
 
-        private static func normalizedText(_ text: String, maxCharacters: Int) -> String {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return "" }
-            let collapsed = trimmed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            guard collapsed.count > maxCharacters else { return collapsed }
-            let endIndex = collapsed.index(collapsed.startIndex, offsetBy: maxCharacters)
-            return String(collapsed[..<endIndex]) + "…"
-        }
     }
 
     @Published internal private(set) var roots: [ThreadNode] = [] {
@@ -561,13 +605,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     /// Roots filtered by the current search query. Returns all roots when the query is empty.
     internal var filteredRoots: [ThreadNode] {
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return roots }
-        return roots.filter { node in
-            node.message.subject.lowercased().contains(query) ||
-            node.message.from.lowercased().contains(query) ||
-            node.message.snippet.lowercased().contains(query)
-        }
+        Self.searchRoots(roots, matching: searchQuery)
     }
 
     /// Count of threads matching the current search query, nil when no search is active.
@@ -577,7 +615,24 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return filteredRoots.count
     }
 
+    /// Keeps an entire thread visible when the root or any reply matches.
+    /// Both list modes consume the same filtered root projection.
+    internal static func searchRoots(_ roots: [ThreadNode],
+                                     matching rawQuery: String) -> [ThreadNode] {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return roots }
+        return roots.filter { threadNode($0, matches: query) }
+    }
+
+    private static func threadNode(_ node: ThreadNode, matches query: String) -> Bool {
+        node.message.subject.lowercased().contains(query) ||
+            node.message.from.lowercased().contains(query) ||
+            node.message.snippet.lowercased().contains(query) ||
+            node.children.contains { threadNode($0, matches: query) }
+    }
+
     @Published internal private(set) var isRefreshing = false
+    @Published internal var isGraphAutomationPresented = false
     @Published internal private(set) var refreshProgress: Double?
     @Published internal var activeToast: ToastMessage?
     private var toastDismissTask: Task<Void, Never>?
@@ -658,6 +713,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var visibleDayRange: ClosedRange<Int>?
     @Published internal private(set) var visibleEmptyDayIntervals: [DateInterval] = []
 
+    /// Canonical content-shaping settings shared with Graph semantic-title
+    /// generation so both enrichment paths fingerprint the same thread text.
+    internal var summaryContextSnippetLineLimit: Int {
+        inspectorSettings.snippetLineLimit
+    }
+
+    internal var summaryContextStopPhrases: [String] {
+        inspectorSettings.stopPhrases
+    }
+
     /// Formatted description of the visible date range for display in the date rail overlay.
     internal var visibleDateRangeDescription: String? {
         guard let range = visibleDayRange else { return nil }
@@ -711,10 +776,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private static let maximumAppleScriptRetryAttempts = 3
     private static let appleScriptRetryDelayNanoseconds: UInt64 = 750_000_000
+    private static let calendarRepairForegroundWaitLimit: TimeInterval = 30
 
     private let store: MessageStore
     private let client: any MailCanvasClient
+    internal let graphAutomationCoordinator: GraphAutomationCoordinator
     private let threader: JWZThreader
+    private let threadSummaryRebuildCoordinator: ThreadSummaryRebuildCoordinator
     private let summaryProvider: EmailSummaryProviding?
     private let summaryProviderID: String
     private let summaryAvailabilityMessage: String
@@ -731,16 +799,21 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let dayFetchCoordinator: any DayFetchCoordinating
     private let worker: SidebarBackgroundWorker
     private var rethreadTask: Task<Void, Never>?
+    private var calendarAncestorRecoveryTask: Task<Void, Never>?
+    private var completedCalendarRecoveryFingerprint: String?
+    private var inFlightCalendarRecoveryFingerprint: String?
     private var isRethreadRunning = false
     private var hasQueuedRethread = false
     private var autoRefreshTask: Task<Void, Never>?
-    private var nodeSummaryTasks: [String: Task<Void, Never>] = [:]
+    private var nodeSummaryRefreshTask: Task<Void, Never>?
     private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
-    private var nodeSummaryTaskTokens: [String: UUID] = [:]
     private var folderSummaryTaskTokens: [String: UUID] = [:]
     private var timelineTagTasks: [String: Task<Void, Never>] = [:]
     private var timelineTagCacheByNodeID: [String: SummaryCacheEntry] = [:]
     private var nodeSummaryRefreshGeneration = 0
+    private var threadSummaryRevisionsByThreadID: [String: String] = [:]
+    private var pendingThreadSummaryRebuildIDs: Set<String> = []
+    private var hasThreadSummaryRevisionBaseline = false
     private let folderSummaryDebounceInterval: TimeInterval
     private var cancellables = Set<AnyCancellable>()
     private var didStart = false
@@ -772,7 +845,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var pendingScrollTimeoutTasks: [UUID: Task<Void, Never>] = [:]
     private var mailboxThreadAutoMoveTask: Task<Void, Never>?
     private var mailboxThreadAutoMovePassPending = false
-    private var pendingManualAttachmentMailboxMove: PendingManualAttachmentMailboxMove?
     private let bottomBarMailboxActionStatusLifetime: TimeInterval = 300
     private var bottomBarMailboxActionStatusByThreadID: [String: BottomBarMailboxActionStatus] = [:]
     private var bottomBarMailboxActionStatusExpiryTask: Task<Void, Never>?
@@ -790,24 +862,38 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let allFoldersScrollStateResetInterval: UInt64 = 350_000_000
 
     internal init(settings: AutoRefreshSettings,
-                  inspectorSettings: InspectorViewSettings,
+                  inspectorSettings: InspectorViewSettings? = nil,
                   pinnedFolderSettings: PinnedFolderSettings? = nil,
                   mailboxFolderOrderSettings: MailboxFolderOrderSettings? = nil,
                   mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings? = nil,
                   store: MessageStore = .shared,
                   client: any MailCanvasClient = MailAppleScriptClient(),
+                  calendarRecoveryClient: (any MailMessageFetching)? = nil,
                   threader: JWZThreader = JWZThreader(),
                   backfillService: BatchBackfillServicing? = nil,
                   dayFetchCoordinator: (any DayFetchCoordinating)? = nil,
                   summaryCapability: EmailSummaryCapability? = nil,
                   tagCapability: EmailTagCapability? = nil,
+                  graphAutomationSettings: GraphAutomationSettings? = nil,
+                  graphAutomationMailClient: (any GraphSnipMailMoving)? = nil,
+                  graphRelationshipCapabilityProvider: @escaping @MainActor () -> GraphRelationshipCapability = GraphRelationshipProviderFactory.makeCapability,
+                  graphTopicCapabilityProvider: @escaping @MainActor () -> GraphTopicCapability = GraphTopicProviderFactory.makeCapability,
                   activityCenter: ProcessingActivityCenter? = nil,
                   folderSummaryDebounceInterval: TimeInterval = 30) {
         self.store = store
         self.client = client
+        let resolvedAutomationMailClient = graphAutomationMailClient ?? (client as? any GraphSnipMailMoving)
+        self.graphAutomationCoordinator = GraphAutomationCoordinator(
+            store: store,
+            settings: graphAutomationSettings,
+            mailClient: resolvedAutomationMailClient,
+            relationshipCapabilityProvider: graphRelationshipCapabilityProvider,
+            topicCapabilityProvider: graphTopicCapabilityProvider
+        )
         self.threader = threader
+        self.threadSummaryRebuildCoordinator = ThreadSummaryRebuildCoordinator(store: store)
         self.settings = settings
-        self.inspectorSettings = inspectorSettings
+        self.inspectorSettings = inspectorSettings ?? InspectorViewSettings()
         self.activityCenter = activityCenter
         let resolvedDayFetchCoordinator: any DayFetchCoordinating
         if let dayFetchCoordinator {
@@ -833,7 +919,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.tagProvider = tagCapability.provider
         self.tagProviderID = tagCapability.providerID
         self.tagAvailabilityMessage = tagCapability.statusMessage
-        self.worker = SidebarBackgroundWorker(client: client,
+        let resolvedCalendarRecoveryClient: any MailMessageFetching
+        if let calendarRecoveryClient {
+            resolvedCalendarRecoveryClient = calendarRecoveryClient
+        } else if client is MailAppleScriptClient {
+            resolvedCalendarRecoveryClient = MailAppleScriptClient()
+        } else {
+            resolvedCalendarRecoveryClient = client
+        }
+        self.worker = SidebarBackgroundWorker(calendarRecoveryClient: resolvedCalendarRecoveryClient,
                                               store: store,
                                               threader: threader)
         self.pinnedFolderIDs = self.pinnedFolderSettings.pinnedFolderIDs
@@ -849,10 +943,31 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 self?.reloadDayFetchCoverages()
             }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .summaryRegenerationDidComplete)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let self,
+                      let changedStore = notification.object as? MessageStore,
+                      changedStore === self.store else { return }
+                // Batch Re-GenAI writes directly to the shared cache. Reload
+                // the published states so Graph receives the new generation
+                // identity even when regenerated text is byte-for-byte equal.
+                self.refreshNodeSummaries(for: self.roots)
+            }
+            .store(in: &cancellables)
         self.pinnedFolderSettings.$pinnedFolderIDs
             .receive(on: RunLoop.main)
             .sink { [weak self] ids in
                 self?.pinnedFolderIDs = ids
+            }
+            .store(in: &cancellables)
+        self.inspectorSettings.$snippetLineLimit
+            .combineLatest(self.inspectorSettings.$stopPhrasesText)
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.refreshNodeSummaries(for: self.roots)
             }
             .store(in: &cancellables)
         self.mailboxFolderOrderSettings.$orderedFolderIDs
@@ -861,12 +976,21 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 self?.applyMailboxFolderOrderToPublishedAccounts()
             }
             .store(in: &cancellables)
+        self.graphAutomationCoordinator.onOrganizationChanged = { [weak self] in
+            self?.scheduleRethread(delay: 0)
+        }
+        self.graphAutomationCoordinator.mailboxRuleRemap = { [weak self] sourceThreadIDs, replacementThreadID, preferredSourceThreadID in
+            self?.mailboxThreadAutoMoveSettings.remap(threadIDs: sourceThreadIDs,
+                                                      to: replacementThreadID,
+                                                      preferredSourceThreadID: preferredSourceThreadID)
+        }
     }
 
     deinit {
         rethreadTask?.cancel()
+        calendarAncestorRecoveryTask?.cancel()
         autoRefreshTask?.cancel()
-        nodeSummaryTasks.values.forEach { $0.cancel() }
+        nodeSummaryRefreshTask?.cancel()
         folderSummaryTasks.values.forEach { $0.cancel() }
         timelineTagTasks.values.forEach { $0.cancel() }
         folderJumpTasks.values.forEach { $0.cancel() }
@@ -877,22 +1001,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         allFoldersScrollStateResetTask?.cancel()
     }
 
-    private func cancelNodeSummaryTask(for nodeID: String) {
-        nodeSummaryTasks[nodeID]?.cancel()
-        nodeSummaryTasks.removeValue(forKey: nodeID)
-        nodeSummaryTaskTokens.removeValue(forKey: nodeID)
-    }
-
     private func cancelFolderSummaryTask(for folderID: String) {
         folderSummaryTasks[folderID]?.cancel()
         folderSummaryTasks.removeValue(forKey: folderID)
         folderSummaryTaskTokens.removeValue(forKey: folderID)
-    }
-
-    private func clearNodeSummaryTask(for nodeID: String, token: UUID) {
-        guard nodeSummaryTaskTokens[nodeID] == token else { return }
-        nodeSummaryTasks.removeValue(forKey: nodeID)
-        nodeSummaryTaskTokens.removeValue(forKey: nodeID)
     }
 
     private func clearFolderSummaryTask(for folderID: String, token: UUID) {
@@ -1099,6 +1211,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Task {
             try? await store.markInterruptedDayFetchCoverageFailed()
             await loadDayFetchCoverages(refreshConcreteScopes: true)
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.waitForForegroundMailActivityToFinish(
+                    maximumWait: Self.calendarRepairForegroundWaitLimit
+                )
+            } catch {
+                return
+            }
+            if await self.worker.repairCalendarClassificationsIfNeeded() {
+                self.scheduleRethread(delay: 0)
+            }
         }
         Task { await loadCachedMessages() }
         refreshMailboxHierarchy()
@@ -1399,6 +1524,72 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    private func scheduleCalendarAncestorRecoveryIfNeeded(
+        fingerprint: String,
+        scopeID: String,
+        cutoffDate: Date?,
+        mailbox: String?,
+        account: String?,
+        includeAllInboxesAliases: Bool,
+        includeThreadIDs: Set<String>
+    ) {
+        let scopedFingerprint = "\(scopeID)|\(fingerprint)"
+        guard completedCalendarRecoveryFingerprint != scopedFingerprint,
+              inFlightCalendarRecoveryFingerprint != scopedFingerprint else { return }
+
+        calendarAncestorRecoveryTask?.cancel()
+        inFlightCalendarRecoveryFingerprint = scopedFingerprint
+        calendarAncestorRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.waitForForegroundMailActivityToFinish()
+                let outcome = try await worker.recoverCalendarAncestors(
+                    cutoffDate: cutoffDate,
+                    mailbox: mailbox,
+                    account: account,
+                    includeAllInboxesAliases: includeAllInboxesAliases,
+                    includeThreadIDs: includeThreadIDs
+                )
+                guard !Task.isCancelled,
+                      self.inFlightCalendarRecoveryFingerprint == scopedFingerprint else { return }
+                self.inFlightCalendarRecoveryFingerprint = nil
+                self.calendarAncestorRecoveryTask = nil
+                if outcome.hadTransientFailure {
+                    self.completedCalendarRecoveryFingerprint = nil
+                } else {
+                    self.completedCalendarRecoveryFingerprint = scopedFingerprint
+                }
+                if outcome.didPersistMessages {
+                    self.scheduleRethread(delay: 0)
+                }
+            } catch is CancellationError {
+                if self.inFlightCalendarRecoveryFingerprint == scopedFingerprint {
+                    self.inFlightCalendarRecoveryFingerprint = nil
+                    self.calendarAncestorRecoveryTask = nil
+                }
+            } catch {
+                if self.inFlightCalendarRecoveryFingerprint == scopedFingerprint {
+                    self.inFlightCalendarRecoveryFingerprint = nil
+                    self.calendarAncestorRecoveryTask = nil
+                    self.completedCalendarRecoveryFingerprint = nil
+                }
+                Log.refresh.error("Calendar ancestor recovery pass failed. error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    private func waitForForegroundMailActivityToFinish(maximumWait: TimeInterval? = nil) async throws {
+        let deadline = maximumWait.map { Date().addingTimeInterval(max(0, $0)) }
+        while isAnyRefreshRunning {
+            try Task.checkCancellation()
+            if let deadline, Date() >= deadline {
+                Log.refresh.info("Foreground Mail activity wait limit reached; starting background calendar repair.")
+                return
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
     private func performRethread() async {
         guard !isRethreadRunning else {
             hasQueuedRethread = true
@@ -1429,6 +1620,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let previousFolderIDs = Set(self.threadFolders.map(\.id))
             let cutoffDate = cachedMessageCutoffDate()
             let storeFilter = activeMailboxStoreFilter
+            let calendarRecoveryScopeID = activeMailboxScope.graphPagingScopeID
             let archivedGraphThreadIDs = try await archivedGraphThreadIDsForRethread()
             let includePinnedThreadIDs = try await pinnedThreadIDsToIncludeForRethread()
             let includeThreadIDs = includePinnedThreadIDs
@@ -1466,9 +1658,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             self.folderEditsByID = [:]
             pruneSelection(using: scopedRoots)
             pruneFolderSelection(using: rethreadResult.folders)
-            refreshNodeSummaries(for: scopedRoots)
+            refreshNodeSummaries(for: rethreadResult.roots)
             refreshTimelineTags(for: scopedRoots)
-            refreshFolderSummaries(for: scopedRoots, folders: rethreadResult.folders)
             let currentNodeIDs = Set(Self.flatten(nodes: scopedRoots).map(\.id))
             let removedNodeIDs = previousNodeIDs.subtracting(currentNodeIDs)
             let removedFolderIDs = previousFolderIDs.subtracting(rethreadResult.folders.map(\.id))
@@ -1489,11 +1680,31 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 }
             }
             Log.refresh.info("Rethread complete. messages=\(rethreadResult.messageCount, privacy: .public) threads=\(rethreadResult.threadCount, privacy: .public) unreadTotal=\(self.unreadTotal, privacy: .public) needsAttention=\(self.needsAttentionCount, privacy: .public)")
+            scheduleCalendarAncestorRecoveryIfNeeded(
+                fingerprint: rethreadResult.calendarRecoveryFingerprint,
+                scopeID: calendarRecoveryScopeID,
+                cutoffDate: cutoffDate,
+                mailbox: storeFilter.mailbox,
+                account: storeFilter.account,
+                includeAllInboxesAliases: storeFilter.includeAllInboxesAliases,
+                includeThreadIDs: includeThreadIDs
+            )
             activityDetail = String.localizedStringWithFormat(
                 NSLocalizedString("activity.thread.rebuild.completed", comment: "Thread rebuild completed detail"),
                 rethreadResult.threadCount
             )
-            await runPendingManualAttachmentMailboxMoveIfNeeded()
+            graphAutomationCoordinator.scheduleEvaluation(
+                snapshot: GraphAutomationSnapshot(
+                    scopeID: calendarRecoveryScopeID,
+                    roots: rethreadResult.roots,
+                    folders: rethreadResult.folders,
+                    manualGroups: rethreadResult.manualGroups,
+                    manualGroupByMessageKey: rethreadResult.manualGroupByMessageKey,
+                    manualAttachmentMessageIDs: rethreadResult.manualAttachmentMessageIDs,
+                    jwzThreadMap: rethreadResult.jwzThreadMap,
+                    summariesByNodeID: nodeSummaries
+                )
+            )
             scheduleMailboxThreadAutoMovePass()
         } catch {
             Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
@@ -1505,6 +1716,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             activityState = .failed
             activityDetail = status
         }
+    }
+
+    internal func presentGraphAutomation() {
+        isGraphAutomationPresented = true
+    }
+
+    internal func scanCurrentMailForGraphAutomation() {
+        graphAutomationCoordinator.scanCurrentMail()
     }
 
     @MainActor
@@ -1637,7 +1856,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func regenerateNodeSummary(for nodeID: String) {
-        guard let summaryProvider else {
+        guard summaryProvider != nil else {
             if var state = nodeSummaries[nodeID] {
                 state.statusMessage = summaryAvailabilityMessage
                 state.isSummarizing = false
@@ -1645,95 +1864,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
             return
         }
-
-        cancelNodeSummaryTask(for: nodeID)
-        nodeSummaries[nodeID] = ThreadSummaryState(text: nodeSummaries[nodeID]?.text ?? "",
-                                                   statusMessage: "Summarizing…",
-                                                   isSummarizing: true)
-
-        let rootsSnapshot = roots
-        let manualAttachmentSnapshot = manualAttachmentMessageIDs
-        let snippetLineLimit = inspectorSettings.snippetLineLimit
-        let stopPhrases = inspectorSettings.stopPhrases
-
-        let taskToken = UUID()
-        let activityID = beginActivity(titleKey: "activity.summary.node.title",
-                                       detail: Self.node(matching: nodeID, in: roots)?.message.subject,
-                                       kind: .generation)
-        nodeSummaryTaskTokens[nodeID] = taskToken
-        nodeSummaryTasks[nodeID] = Task { [weak self] in
-            guard let self else { return }
-            var finalActivityState = ProcessingActivityState.completed
-            var finalActivityDetail = NSLocalizedString("activity.summary.node.completed",
-                                                        comment: "Message summary generation completed detail")
-            let inputsByNodeID = await worker.nodeSummaryInputs(for: rootsSnapshot,
-                                                                manualAttachmentMessageIDs: manualAttachmentSnapshot,
-                                                                snippetLineLimit: snippetLineLimit,
-                                                                stopPhrases: stopPhrases)
-            guard let input = inputsByNodeID[nodeID] else {
-                await MainActor.run {
-                    self.finishSummary(for: nodeID, in: \.nodeSummaries)
-                    self.clearNodeSummaryTask(for: nodeID, token: taskToken)
-                    self.finishActivity(activityID,
-                                        detail: NSLocalizedString("activity.summary.node.completed",
-                                                                  comment: "Message summary generation completed detail"))
-                }
-                return
-            }
-            do {
-                let request = EmailSummaryRequest(subject: input.subject,
-                                                  body: input.body,
-                                                  priorMessages: input.priorMessages)
-                let text = try await summaryProvider.summarizeEmail(request)
-                let generatedAt = Date()
-                let entry = SummaryCacheEntry(scope: .emailNode,
-                                              scopeID: input.cacheKey,
-                                              summaryText: text,
-                                              generatedAt: generatedAt,
-                                              fingerprint: input.fingerprint,
-                                              provider: summaryProviderID)
-                do {
-                    try await store.upsertSummaries([entry])
-                } catch {
-                    Log.app.error("Failed to persist summary cache: \(error.localizedDescription, privacy: .public)")
-                }
-                let timestamp = DateFormatter.localizedString(from: Date(),
-                                                              dateStyle: .none,
-                                                              timeStyle: .short)
-                await MainActor.run {
-                    self.updateSummary(for: nodeID,
-                                       text: text,
-                                       status: "Updated \(timestamp)",
-                                       isSummarizing: false,
-                                       in: \.nodeSummaries)
-                    self.refreshFolderSummaries(for: self.roots, folders: self.threadFolders)
-                }
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.finishSummary(for: nodeID, in: \.nodeSummaries)
-                }
-                finalActivityState = .cancelled
-                finalActivityDetail = NSLocalizedString("activity.state.cancelled",
-                                                        comment: "Cancelled processing activity state")
-            } catch {
-                await MainActor.run {
-                    self.updateSummary(for: nodeID,
-                                       text: self.nodeSummaries[nodeID]?.text ?? "",
-                                       status: error.localizedDescription,
-                                       isSummarizing: false,
-                                       in: \.nodeSummaries)
-                    self.showError(error.localizedDescription)
-                }
-                finalActivityState = .failed
-                finalActivityDetail = error.localizedDescription
-            }
-            await MainActor.run {
-                self.finishActivity(activityID,
-                                    state: finalActivityState,
-                                    detail: finalActivityDetail)
-                self.clearNodeSummaryTask(for: nodeID, token: taskToken)
-            }
-        }
+        refreshNodeSummaries(for: roots, forcingNodeID: nodeID)
     }
 
     internal func regenerateFolderSummary(for folderID: String) {
@@ -1845,22 +1976,31 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Self.rootID(for: nodeID, in: roots)
     }
 
-    private func refreshNodeSummaries(for roots: [ThreadNode]) {
+    private func refreshNodeSummaries(for roots: [ThreadNode],
+                                      forcingNodeID: String? = nil) {
         let rootsSnapshot = roots
         let manualAttachmentSnapshot = manualAttachmentMessageIDs
+        let manualGroupSnapshot = manualGroupByMessageKey
+        let jwzThreadSnapshot = jwzThreadMap
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         let stopPhrases = inspectorSettings.stopPhrases
         let provider = summaryProvider
         let providerStatusMessage = summaryAvailabilityMessage
+        let providerID = summaryProviderID
+        nodeSummaryRefreshTask?.cancel()
         nodeSummaryRefreshGeneration += 1
         let generation = nodeSummaryRefreshGeneration
-        Task { [weak self] in
+        nodeSummaryRefreshTask = Task { [weak self] in
             guard let self else { return }
-            let inputsByNodeID = await worker.nodeSummaryInputs(for: rootsSnapshot,
-                                                                manualAttachmentMessageIDs: manualAttachmentSnapshot,
-                                                                snippetLineLimit: snippetLineLimit,
-                                                                stopPhrases: stopPhrases)
-            let cacheKeys = inputsByNodeID.values.map(\.cacheKey)
+            await threadSummaryRebuildCoordinator.invalidate()
+            let build = await worker.nodeSummaryInputs(for: rootsSnapshot,
+                                                       manualAttachmentMessageIDs: manualAttachmentSnapshot,
+                                                       manualGroupByMessageKey: manualGroupSnapshot,
+                                                       jwzThreadMap: jwzThreadSnapshot,
+                                                       snippetLineLimit: snippetLineLimit,
+                                                       stopPhrases: stopPhrases,
+                                                       providerID: providerID)
+            let cacheKeys = build.inputsByNodeID.values.map(\.cacheKey)
             var cachedByKey: [String: SummaryCacheEntry] = [:]
             if !cacheKeys.isEmpty {
                 do {
@@ -1870,13 +2010,96 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     Log.app.error("Failed to load cached summaries: \(error.localizedDescription, privacy: .public)")
                 }
             }
+            guard !Task.isCancelled else { return }
+            let plan = await MainActor.run { () -> NodeSummaryRebuildPlan? in
+                guard self.nodeSummaryRefreshGeneration == generation else { return nil }
+                return self.prepareNodeSummaries(build: build,
+                                                 cachedByKey: cachedByKey,
+                                                 providerAvailable: provider != nil,
+                                                 providerStatusMessage: providerStatusMessage,
+                                                 forcingNodeID: forcingNodeID)
+            }
+            guard let plan else { return }
+
+            guard let provider, !plan.threadInputsByID.isEmpty else {
+                await MainActor.run {
+                    guard self.nodeSummaryRefreshGeneration == generation else { return }
+                    self.nodeSummaryRefreshTask = nil
+                    self.refreshFolderSummaries(for: self.roots, folders: self.threadFolders)
+                }
+                return
+            }
+
+            let coordinatorGeneration = await threadSummaryRebuildCoordinator.beginGeneration()
+            var publishedAnyThread = false
+            for threadID in plan.threadInputsByID.keys.sorted() {
+                guard !Task.isCancelled,
+                      let inputs = plan.threadInputsByID[threadID] else { return }
+                let activityID = await MainActor.run {
+                    self.beginActivity(titleKey: "activity.summary.thread.title",
+                                       detail: inputs.first?.request.subject,
+                                       kind: .generation,
+                                       progress: 0)
+                }
+                do {
+                    let entries = try await threadSummaryRebuildCoordinator.rebuildThread(
+                        inputs: inputs,
+                        provider: provider,
+                        providerID: providerID,
+                        generation: coordinatorGeneration
+                    ) { [weak self] completed, total in
+                        Task { @MainActor in
+                            guard let self, self.nodeSummaryRefreshGeneration == generation else { return }
+                            let detail = String.localizedStringWithFormat(
+                                NSLocalizedString("activity.summary.thread.progress",
+                                                  comment: "Thread summary generation progress"),
+                                completed,
+                                total
+                            )
+                            self.updateActivity(activityID,
+                                                detail: detail,
+                                                progress: Double(completed) / Double(max(total, 1)))
+                        }
+                    }
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        guard self.nodeSummaryRefreshGeneration == generation else { return }
+                        self.publishNodeSummaryBatch(entries: entries, inputs: inputs)
+                        self.pendingThreadSummaryRebuildIDs.remove(threadID)
+                        self.finishActivity(activityID,
+                                            detail: NSLocalizedString("activity.summary.thread.completed",
+                                                                      comment: "Thread summary batch completed"))
+                    }
+                    publishedAnyThread = true
+                } catch is CancellationError {
+                    await MainActor.run {
+                        self.finishActivity(activityID,
+                                            state: .cancelled,
+                                            detail: NSLocalizedString("activity.state.cancelled",
+                                                                      comment: "Cancelled processing activity state"))
+                    }
+                    return
+                } catch {
+                    await MainActor.run {
+                        guard self.nodeSummaryRefreshGeneration == generation else { return }
+                        self.publishNodeSummaryFailure(inputs: inputs,
+                                                       cachedByKey: plan.cachedByKey,
+                                                       errorMessage: error.localizedDescription)
+                        self.finishActivity(activityID,
+                                            state: .failed,
+                                            detail: error.localizedDescription)
+                    }
+                }
+            }
+
             await MainActor.run {
                 guard self.nodeSummaryRefreshGeneration == generation else { return }
-                self.prepareNodeSummaries(for: rootsSnapshot,
-                                          inputsByNodeID: inputsByNodeID,
-                                          cachedByKey: cachedByKey,
-                                          summaryProvider: provider,
-                                          providerStatusMessage: providerStatusMessage)
+                self.nodeSummaryRefreshTask = nil
+                if publishedAnyThread {
+                    self.refreshFolderSummaries(for: self.roots,
+                                                folders: self.threadFolders,
+                                                debounceIntervalOverride: 0)
+                }
             }
         }
     }
@@ -1928,136 +2151,116 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     @MainActor
-    private func prepareNodeSummaries(for roots: [ThreadNode],
-                                      inputsByNodeID: [String: NodeSummaryInput],
+    private func prepareNodeSummaries(build: ThreadSummaryContextBuild,
                                       cachedByKey: [String: SummaryCacheEntry],
-                                      summaryProvider: EmailSummaryProviding?,
-                                      providerStatusMessage: String) {
+                                      providerAvailable: Bool,
+                                      providerStatusMessage: String,
+                                      forcingNodeID: String?) -> NodeSummaryRebuildPlan {
+        let inputsByNodeID = build.inputsByNodeID
         let validNodeIDs = Set(inputsByNodeID.keys)
-        for (id, task) in nodeSummaryTasks where !validNodeIDs.contains(id) {
-            task.cancel()
-            nodeSummaryTasks.removeValue(forKey: id)
-            nodeSummaryTaskTokens.removeValue(forKey: id)
-            nodeSummaries.removeValue(forKey: id)
-            expandedSummaryIDs.remove(id)
+        expandedSummaryIDs.formIntersection(validNodeIDs)
+
+        let currentThreadIDs = Set(build.threadRevisionsByThreadID.keys)
+        pendingThreadSummaryRebuildIDs.formIntersection(currentThreadIDs)
+        if hasThreadSummaryRevisionBaseline {
+            for (threadID, revision) in build.threadRevisionsByThreadID
+                where threadSummaryRevisionsByThreadID[threadID] != revision {
+                pendingThreadSummaryRebuildIDs.insert(threadID)
+            }
+        }
+        threadSummaryRevisionsByThreadID = build.threadRevisionsByThreadID
+        hasThreadSummaryRevisionBaseline = true
+
+        for input in inputsByNodeID.values where cachedByKey[input.cacheKey] == nil {
+            pendingThreadSummaryRebuildIDs.insert(input.effectiveThreadID)
+        }
+        if let forcingNodeID,
+           let forcedInput = inputsByNodeID[forcingNodeID] {
+            pendingThreadSummaryRebuildIDs.insert(forcedInput.effectiveThreadID)
         }
 
+        let threadInputsByID = Dictionary(
+            grouping: inputsByNodeID.values.filter {
+                pendingThreadSummaryRebuildIDs.contains($0.effectiveThreadID)
+            },
+            by: \.effectiveThreadID
+        )
+
+        var nextStates = nodeSummaries.filter { validNodeIDs.contains($0.key) }
         for input in inputsByNodeID.values {
-            guard !input.subject.isEmpty || !input.body.isEmpty else {
-                nodeSummaries.removeValue(forKey: input.nodeID)
-                cancelNodeSummaryTask(for: input.nodeID)
-                expandedSummaryIDs.remove(input.nodeID)
-                continue
-            }
-
             let cachedEntry = cachedByKey[input.cacheKey]
-            let hasFreshCache = cachedEntry?.fingerprint == input.fingerprint
-            let isProviderAvailable = summaryProvider != nil
+            let needsRebuild = threadInputsByID[input.effectiveThreadID] != nil
 
-            if let cachedEntry, hasFreshCache {
-                cancelNodeSummaryTask(for: input.nodeID)
-                nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
-                                                                 statusMessage: cachedStatusMessage(for: cachedEntry,
-                                                                                                    prefix: "Updated"),
-                                                                 isSummarizing: false)
-                continue
-            }
-
-            if !isProviderAvailable {
-                cancelNodeSummaryTask(for: input.nodeID)
-                if let cachedEntry {
-                    nodeSummaries[input.nodeID] = ThreadSummaryState(text: cachedEntry.summaryText,
-                                                                     statusMessage: cachedStatusMessage(for: cachedEntry,
-                                                                                                        prefix: "Last updated",
-                                                                                                        suffix: providerStatusMessage),
-                                                                     isSummarizing: false)
-                } else {
-                    nodeSummaries.removeValue(forKey: input.nodeID)
-                }
-                continue
-            }
-
-            guard let summaryProvider else { continue }
-            let placeholderText = cachedEntry?.summaryText ?? nodeSummaries[input.nodeID]?.text ?? ""
-            nodeSummaries[input.nodeID] = ThreadSummaryState(text: placeholderText,
-                                                             statusMessage: "Summarizing…",
-                                                             isSummarizing: true)
-
-            cancelNodeSummaryTask(for: input.nodeID)
-            let taskToken = UUID()
-            let activityID = beginActivity(titleKey: "activity.summary.node.title",
-                                           detail: input.subject,
-                                           kind: .generation)
-            nodeSummaryTaskTokens[input.nodeID] = taskToken
-            nodeSummaryTasks[input.nodeID] = Task { [weak self] in
-                guard let self else { return }
-                var finalActivityState = ProcessingActivityState.completed
-                var finalActivityDetail = NSLocalizedString("activity.summary.node.completed",
-                                                            comment: "Message summary generation completed detail")
-                do {
-                    let request = EmailSummaryRequest(subject: input.subject,
-                                                      body: input.body,
-                                                      priorMessages: input.priorMessages)
-                    let text = try await summaryProvider.summarizeEmail(request)
-                    let generatedAt = Date()
-                    let entry = SummaryCacheEntry(scope: .emailNode,
-                                                  scopeID: input.cacheKey,
-                                                  summaryText: text,
-                                                  generatedAt: generatedAt,
-                                                  fingerprint: input.fingerprint,
-                                                  provider: summaryProviderID)
-                    do {
-                        try await store.upsertSummaries([entry])
-                    } catch {
-                        Log.app.error("Failed to persist summary cache: \(error.localizedDescription, privacy: .public)")
-                    }
-                    let timestamp = DateFormatter.localizedString(from: Date(),
-                                                                  dateStyle: .none,
-                                                                  timeStyle: .short)
-                    await MainActor.run {
-                        self.updateSummary(for: input.nodeID,
-                                           text: text,
-                                           status: "Updated \(timestamp)",
-                                           isSummarizing: false,
-                                           in: \.nodeSummaries)
-                        self.refreshFolderSummaries(for: self.roots, folders: self.threadFolders)
-                    }
-                } catch is CancellationError {
-                    await MainActor.run {
-                        self.finishSummary(for: input.nodeID, in: \.nodeSummaries)
-                    }
-                    finalActivityState = .cancelled
-                    finalActivityDetail = NSLocalizedString("activity.state.cancelled",
-                                                            comment: "Cancelled processing activity state")
-                } catch {
-                    await MainActor.run {
-                        if let cachedEntry {
-                            self.updateSummary(for: input.nodeID,
-                                               text: cachedEntry.summaryText,
-                                               status: self.cachedStatusMessage(for: cachedEntry,
-                                                                                prefix: "Last updated",
-                                                                                suffix: error.localizedDescription),
-                                               isSummarizing: false,
-                                               in: \.nodeSummaries)
-                        } else {
-                            self.updateSummary(for: input.nodeID,
-                                               text: "",
-                                               status: error.localizedDescription,
-                                               isSummarizing: false,
-                                               in: \.nodeSummaries)
-                        }
-                    }
-                    finalActivityState = .failed
-                    finalActivityDetail = error.localizedDescription
-                }
-                await MainActor.run {
-                    self.finishActivity(activityID,
-                                        state: finalActivityState,
-                                        detail: finalActivityDetail)
-                    self.clearNodeSummaryTask(for: input.nodeID, token: taskToken)
-                }
+            if needsRebuild, providerAvailable {
+                let oldText = cachedEntry?.summaryText ?? nextStates[input.nodeID]?.text ?? ""
+                nextStates[input.nodeID] = ThreadSummaryState(
+                    text: oldText,
+                    statusMessage: NSLocalizedString("summary.thread.rebuilding",
+                                                     comment: "Thread-aware email summaries are rebuilding"),
+                    isSummarizing: true,
+                    generationID: cachedEntry?.generationID ?? nextStates[input.nodeID]?.generationID
+                )
+            } else if let cachedEntry {
+                let isFresh = cachedEntry.fingerprint == input.fingerprint &&
+                    cachedEntry.provider == summaryProviderID
+                nextStates[input.nodeID] = ThreadSummaryState(
+                    text: cachedEntry.summaryText,
+                    statusMessage: cachedStatusMessage(
+                        for: cachedEntry,
+                        prefix: isFresh ? "Updated" : "Last updated",
+                        suffix: providerAvailable ? nil : providerStatusMessage
+                    ),
+                    isSummarizing: false,
+                    generationID: cachedEntry.generationID
+                )
+            } else {
+                nextStates.removeValue(forKey: input.nodeID)
             }
         }
+        nodeSummaries = nextStates
+
+        return NodeSummaryRebuildPlan(
+            threadInputsByID: providerAvailable ? threadInputsByID : [:],
+            cachedByKey: cachedByKey
+        )
+    }
+
+    @MainActor
+    private func publishNodeSummaryBatch(entries: [SummaryCacheEntry],
+                                         inputs: [ThreadSummaryNodeInput]) {
+        let entriesByKey = Dictionary(uniqueKeysWithValues: entries.map { ($0.scopeID, $0) })
+        let timestamp = DateFormatter.localizedString(from: Date(),
+                                                      dateStyle: .none,
+                                                      timeStyle: .short)
+        var nextStates = nodeSummaries
+        for input in inputs {
+            guard let entry = entriesByKey[input.cacheKey] else { continue }
+            nextStates[input.nodeID] = ThreadSummaryState(text: entry.summaryText,
+                                                          statusMessage: "Updated \(timestamp)",
+                                                          isSummarizing: false,
+                                                          generationID: entry.generationID)
+        }
+        nodeSummaries = nextStates
+    }
+
+    @MainActor
+    private func publishNodeSummaryFailure(inputs: [ThreadSummaryNodeInput],
+                                           cachedByKey: [String: SummaryCacheEntry],
+                                           errorMessage: String) {
+        var nextStates = nodeSummaries
+        for input in inputs {
+            let cachedEntry = cachedByKey[input.cacheKey]
+            let oldText = cachedEntry?.summaryText ?? nextStates[input.nodeID]?.text ?? ""
+            let status = cachedEntry.map {
+                cachedStatusMessage(for: $0, prefix: "Last updated", suffix: errorMessage)
+            } ?? errorMessage
+            nextStates[input.nodeID] = ThreadSummaryState(text: oldText,
+                                                          statusMessage: status,
+                                                          isSummarizing: false,
+                                                          generationID: cachedEntry?.generationID
+                                                            ?? nextStates[input.nodeID]?.generationID)
+        }
+        nodeSummaries = nextStates
     }
 
     @MainActor
@@ -2093,14 +2296,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func refreshFolderSummaries(for roots: [ThreadNode],
-                                        folders: [ThreadFolder]) {
+                                        folders: [ThreadFolder],
+                                        debounceIntervalOverride: TimeInterval? = nil) {
         let rootsSnapshot = roots
         let foldersSnapshot = folders
         let manualGroupSnapshot = manualGroupByMessageKey
         let jwzThreadSnapshot = jwzThreadMap
         let provider = summaryProvider
         let providerStatusMessage = summaryAvailabilityMessage
-        let debounceInterval = folderSummaryDebounceInterval
+        let debounceInterval = debounceIntervalOverride ?? folderSummaryDebounceInterval
 
         Task { [weak self] in
             guard let self else { return }
@@ -2132,7 +2336,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
             let inputsByFolderID = Self.folderSummaryInputs(for: foldersSnapshot,
                                                             folderNodes: folderNodes,
-                                                            cachedNodeSummaries: cachedNodeByID)
+                                                            cachedNodeSummaries: cachedNodeByID,
+                                                            providerID: self.summaryProviderID)
             await MainActor.run {
                 self.prepareFolderSummaries(for: foldersSnapshot,
                                             inputsByFolderID: inputsByFolderID,
@@ -2180,7 +2385,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             FolderSummaryFingerprintEntry(nodeID: node.id,
                                           nodeFingerprint: cachedByID[node.id]?.fingerprint ?? "missing")
         }
-        let fingerprint = ThreadSummaryFingerprint.makeFolder(nodeEntries: fingerprintEntries)
+        let fingerprint = ThreadSummaryFingerprint.makeFolder(title: folder.title,
+                                                              nodeEntries: fingerprintEntries,
+                                                              providerID: summaryProviderID)
         return FolderSummaryInput(folderID: folderID,
                                   title: folder.title,
                                   summaryTexts: Array(summaryTexts.prefix(20)),
@@ -2275,6 +2482,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     let request = FolderSummaryRequest(title: input.title,
                                                        messageSummaries: input.summaryTexts)
                     let text = try await summaryProvider.summarizeFolder(request)
+                    try Task.checkCancellation()
+                    guard self.folderSummaryTaskTokens[input.folderID] == taskToken else {
+                        throw CancellationError()
+                    }
                     let generatedAt = Date()
                     let entry = SummaryCacheEntry(scope: .folder,
                                                   scopeID: input.folderID,
@@ -2286,6 +2497,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         try await store.upsertSummaries([entry])
                     } catch {
                         Log.app.error("Failed to persist folder summary cache: \(error.localizedDescription, privacy: .public)")
+                    }
+                    try Task.checkCancellation()
+                    guard self.folderSummaryTaskTokens[input.folderID] == taskToken else {
+                        throw CancellationError()
                     }
                     let timestamp = DateFormatter.localizedString(from: Date(),
                                                                   dateStyle: .none,
@@ -2299,6 +2514,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     }
                 } catch is CancellationError {
                     await MainActor.run {
+                        guard self.folderSummaryTaskTokens[input.folderID] == taskToken else { return }
                         self.finishSummary(for: input.folderID, in: \.folderSummaries)
                     }
                     finalActivityState = .cancelled
@@ -2306,6 +2522,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                             comment: "Cancelled processing activity state")
                 } catch {
                     await MainActor.run {
+                        guard self.folderSummaryTaskTokens[input.folderID] == taskToken else { return }
                         if let cachedEntry {
                             self.updateSummary(for: input.folderID,
                                                text: cachedEntry.summaryText,
@@ -2337,7 +2554,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private static func folderSummaryInputs(for folders: [ThreadFolder],
                                             folderNodes: [String: [ThreadNode]],
-                                            cachedNodeSummaries: [String: SummaryCacheEntry]) -> [String: FolderSummaryInput] {
+                                            cachedNodeSummaries: [String: SummaryCacheEntry],
+                                            providerID: String) -> [String: FolderSummaryInput] {
         var inputs: [String: FolderSummaryInput] = [:]
         inputs.reserveCapacity(folders.count)
 
@@ -2351,7 +2569,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 FolderSummaryFingerprintEntry(nodeID: node.id,
                                               nodeFingerprint: cachedNodeSummaries[node.id]?.fingerprint ?? "missing")
             }
-            let fingerprint = ThreadSummaryFingerprint.makeFolder(nodeEntries: fingerprintEntries)
+            let fingerprint = ThreadSummaryFingerprint.makeFolder(title: folder.title,
+                                                                  nodeEntries: fingerprintEntries,
+                                                                  providerID: providerID)
             inputs[folder.id] = FolderSummaryInput(folderID: folder.id,
                                                    title: folder.title,
                                                    summaryTexts: Array(summaryTexts.prefix(20)),
@@ -2435,6 +2655,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
 #if DEBUG
+    internal var isNodeSummaryRefreshPendingForTesting: Bool {
+        nodeSummaryRefreshTask != nil
+    }
+
     internal func applyRethreadResultForTesting(roots: [ThreadNode],
                                                 manualGroupByMessageKey: [String: String] = [:],
                                                 manualAttachmentMessageIDs: Set<String> = [],
@@ -2447,7 +2671,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.threadFolders = folders
         self.folderMembershipByThreadID = Self.folderMembershipMap(for: folders)
         refreshNodeSummaries(for: roots)
-        refreshFolderSummaries(for: roots, folders: folders)
     }
 #endif
 
@@ -2555,6 +2778,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func selectMailboxScope(_ scope: MailboxScope) {
         guard activeMailboxScope != scope else { return }
+        calendarAncestorRecoveryTask?.cancel()
+        calendarAncestorRecoveryTask = nil
+        inFlightCalendarRecoveryFingerprint = nil
+        completedCalendarRecoveryFingerprint = nil
+        nodeSummaryRefreshTask?.cancel()
+        threadSummaryRevisionsByThreadID = [:]
+        pendingThreadSummaryRebuildIDs = []
+        hasThreadSummaryRevisionBaseline = false
         activeMailboxScope = scope
         mailboxActionStatusMessage = nil
         bottomBarMailboxActionStatusMessage = nil
@@ -2567,25 +2798,48 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func addActionItem(message: EmailMessage, folderID: String?, tags: [String]) {
+        let sourceMessage = physicalSourceMessage(for: message)
         Task { [weak self] in
             guard let self else { return }
-            await MessageStore.shared.addActionItem(for: message, folderID: folderID, tags: tags)
+            await MessageStore.shared.addActionItem(for: sourceMessage, folderID: folderID, tags: tags)
             await refreshActionItemIDs()
         }
     }
 
     internal func removeActionItem(message: EmailMessage) {
+        let sourceMessage = physicalSourceMessage(for: message)
         Task { [weak self] in
             guard let self else { return }
-            await MessageStore.shared.removeActionItem(for: message)
+            await MessageStore.shared.removeActionItem(for: sourceMessage)
             await refreshActionItemIDs()
         }
     }
 
-    internal func toggleActionItemDone(_ messageID: String) {
+    internal func isActionItem(message: EmailMessage) -> Bool {
+        let source = message.physicalSource
+        if actionItemIDs.contains(Self.actionItemSourceID(for: message)) {
+            return true
+        }
+        let normalizedMessageID = JWZThreader.normalizeIdentifier(source.messageID)
+        return actionItems.contains {
+            $0.accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                JWZThreader.normalizeIdentifier($0.messageID) == normalizedMessageID
+        }
+    }
+
+    internal nonisolated static func actionItemSourceID(for message: EmailMessage) -> String {
+        ActionItem.scopedID(for: message)
+    }
+
+    private func physicalSourceMessage(for message: EmailMessage) -> EmailMessage {
+        guard message.isEmbeddedHistory else { return message }
+        return Self.node(matching: message.physicalSource, in: roots)?.message ?? message
+    }
+
+    internal func toggleActionItemDone(_ item: ActionItem) {
         Task { [weak self] in
             guard let self else { return }
-            await MessageStore.shared.toggleActionItemDone(messageID)
+            await MessageStore.shared.toggleActionItemDone(item)
             await refreshActionItemIDs()
         }
     }
@@ -3443,7 +3697,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 try await store.upsertThreadFolders(updatedFolders)
                 await MainActor.run {
                     self.threadFolders = updatedFolders
-                    self.refreshFolderSummaries(for: self.roots, folders: updatedFolders)
+                    self.refreshFolderSummaries(for: self.roots,
+                                                folders: updatedFolders,
+                                                debounceIntervalOverride: 0)
                 }
             } catch {
                 Log.app.error("Failed to save recalibrated descendant folder colors: \(error.localizedDescription, privacy: .public)")
@@ -3455,17 +3711,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func openMessageInMail(_ node: ThreadNode) {
         let messageKey = node.message.id.uuidString
+        let source = node.message.physicalSource
         let attemptID = UUID()
         openInMailAttemptID = attemptID
         setOpenInMailState(.searchingFilteredFallback, messageKey: messageKey, attemptID: attemptID)
         let activityID = beginActivity(titleKey: "activity.open_mail.title",
                                        detail: node.message.subject,
                                        kind: .mailbox)
-        let metadata = MailControl.OpenMessageMetadata(subject: node.message.subject,
-                                                       sender: node.message.from,
-                                                       date: node.message.date,
-                                                       mailbox: node.message.mailboxID,
-                                                       account: node.message.accountName)
+        let metadata = MailControl.OpenMessageMetadata(subject: source.subject,
+                                                       sender: source.from,
+                                                       date: source.date,
+                                                       mailbox: source.mailboxID,
+                                                       account: source.accountName)
         Task.detached { [weak self] in
             guard let self else { return }
             do {
@@ -4135,9 +4392,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let targetKey = targetNode.message.threadKey
         let targetJWZID = jwzThreadMap[targetKey] ?? targetNode.message.threadID ?? targetNode.id
         let targetThreadID = effectiveThreadID(for: targetNode)
-        let targetFolderMailboxMove = pendingFolderMailboxMoveForManualAttachment(targetNode: targetNode,
-                                                                                  targetThreadID: targetThreadID,
-                                                                                  targetMessageKey: targetKey)
 
         var jwzThreadCounts: [String: Int] = [:]
         for detail in selectionDetails {
@@ -4172,9 +4426,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                           replacementThreadID: newGroup.id,
                                                           preferredSourceThreadID: targetThreadID)
                     await MainActor.run {
-                        if !manualAttachmentKeys.isEmpty {
-                            self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
-                        }
                         self.scheduleRethread()
                     }
                 } catch {
@@ -4197,9 +4448,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                           replacementThreadID: groupID,
                                                           preferredSourceThreadID: targetThreadID)
                     await MainActor.run {
-                        if !manualAttachmentKeys.isEmpty {
-                            self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
-                        }
                         self.scheduleRethread()
                     }
                 } catch {
@@ -4233,9 +4481,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                       replacementThreadID: mergedGroup.id,
                                                       preferredSourceThreadID: targetThreadID)
                 await MainActor.run {
-                    if !manualAttachmentKeys.isEmpty {
-                        self.pendingManualAttachmentMailboxMove = targetFolderMailboxMove
-                    }
                     self.scheduleRethread()
                 }
             } catch {
@@ -4303,29 +4548,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             folderMembershipByThreadID = update.membership
             refreshFolderSummaries(for: roots, folders: update.folders)
         }
-        mailboxThreadAutoMoveSettings.remap(threadIDs: sourceThreadIDs,
-                                            to: replacementThreadID,
-                                            preferredSourceThreadID: preferredSourceThreadID)
-    }
-
-    private func pendingFolderMailboxMoveForManualAttachment(targetNode: ThreadNode,
-                                                             targetThreadID: String?,
-                                                             targetMessageKey: String) -> PendingManualAttachmentMailboxMove? {
-        if let targetThreadID,
-           let folderID = folderMembershipByThreadID[targetThreadID],
-           let folder = threadFolders.first(where: { $0.id == folderID }),
-           let destination = folder.mailboxDestination {
-            return PendingManualAttachmentMailboxMove(targetMessageKey: targetMessageKey,
-                                                      destinationAccount: destination.account,
-                                                      destinationPath: destination.path)
-        }
-
-        let account = mailboxActionAccountName(for: targetNode)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let mailboxPath = mailboxPathForMailboxMove(message: targetNode.message).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !account.isEmpty, !mailboxPath.isEmpty else { return nil }
-        return PendingManualAttachmentMailboxMove(targetMessageKey: targetMessageKey,
-                                                  destinationAccount: account,
-                                                  destinationPath: mailboxPath)
     }
 
     private func mailboxActionAccountSet() -> Set<String> {
@@ -4668,30 +4890,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             return baseStatus
         } catch {
             return Self.mailboxMoveFailureMessage(for: error)
-        }
-    }
-
-    @MainActor
-    private func runPendingManualAttachmentMailboxMoveIfNeeded() async {
-        guard let pending = pendingManualAttachmentMailboxMove else { return }
-        pendingManualAttachmentMailboxMove = nil
-
-        guard let targetNode = Self.flatten(nodes: roots).first(where: { $0.message.threadKey == pending.targetMessageKey }),
-              let threadID = effectiveThreadID(for: targetNode) else {
-            return
-        }
-
-        let folder = ThreadFolder(id: "pending-manual-attachment-folder",
-                                  title: "",
-                                  color: ThreadFolderColor(red: 0, green: 0, blue: 0, alpha: 0),
-                                  threadIDs: [threadID],
-                                  parentID: nil,
-                                  mailboxAccount: pending.destinationAccount,
-                                  mailboxPath: pending.destinationPath)
-        let statusMessage = await moveThreadToAssignedFolderMailbox(threadID: threadID, folder: folder)
-        if let statusMessage {
-            mailboxActionStatusMessage = statusMessage
-            setBottomBarMailboxActionStatus(statusMessage, forThreadID: threadID)
         }
     }
 
@@ -5490,23 +5688,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    private func inferredMailboxDestinationForSelection(_ selectedNodes: [ThreadNode]) -> (account: String, path: String)? {
-        guard !selectedNodes.isEmpty else { return nil }
-        let destinations = selectedNodes.compactMap { node in
-            Self.normalizedMailboxDestination(account: mailboxActionAccountName(for: node),
-                                              path: mailboxPathForMailboxMove(message: node.message))
-        }
-        guard destinations.count == selectedNodes.count,
-              let firstDestination = destinations.first else {
-            return nil
-        }
-        let hasDiscrepancy = destinations.contains { destination in
-            destination.account.caseInsensitiveCompare(firstDestination.account) != .orderedSame ||
-                destination.path.caseInsensitiveCompare(firstDestination.path) != .orderedSame
-        }
-        return hasDiscrepancy ? nil : firstDestination
-    }
-
     internal func addFolderForSelection() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
@@ -5516,10 +5697,6 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
         let selectedFolderIDs = Set(effectiveThreadIDs.compactMap { folderMembershipByThreadID[$0] })
         let parentFolderID = selectedFolderIDs.count == 1 ? selectedFolderIDs.first : nil
-        let inheritedMailboxDestination = parentFolderID.flatMap { folderID in
-            threadFolders.first(where: { $0.id == folderID })?.mailboxDestination
-        }
-        let inferredMailboxDestination = inferredMailboxDestinationForSelection(selectedNodes) ?? inheritedMailboxDestination
 
         let latestSubjectNode = selectedNodes.max(by: { $0.message.date < $1.message.date })
         let defaultTitle = latestSubjectNode.map { node in
@@ -5531,8 +5708,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                   color: ThreadFolderColor.defaultNewFolder,
                                   threadIDs: effectiveThreadIDs,
                                   parentID: parentFolderID,
-                                  mailboxAccount: inferredMailboxDestination?.account,
-                                  mailboxPath: inferredMailboxDestination?.path)
+                                  mailboxAccount: nil,
+                                  mailboxPath: nil)
         let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
         let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
             var updatedFolder = existingFolder
@@ -5555,7 +5732,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 await MainActor.run {
                     self.threadFolders = updatedFolders
                     self.folderMembershipByThreadID = Self.folderMembershipMap(for: updatedFolders)
-                    self.refreshFolderSummaries(for: self.roots, folders: updatedFolders)
+                    self.refreshFolderSummaries(for: self.roots,
+                                                folders: updatedFolders,
+                                                debounceIntervalOverride: 0)
                 }
             } catch {
                 Log.app.error("Failed to save thread folder: \(error.localizedDescription, privacy: .public)")
@@ -5632,7 +5811,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
         threadFolders = updatedFolders
         folderMembershipByThreadID = Self.folderMembershipMap(for: updatedFolders)
-        refreshFolderSummaries(for: roots, folders: updatedFolders)
+        refreshFolderSummaries(for: roots,
+                               folders: updatedFolders,
+                               debounceIntervalOverride: 0)
         return folder.id
     }
 
@@ -6655,6 +6836,16 @@ extension ThreadCanvasViewModel {
         return nil
     }
 
+    internal static func node(matching source: EmailMessageSource,
+                              in roots: [ThreadNode]) -> ThreadNode? {
+        for root in roots {
+            if let match = findNode(in: root, matching: source) {
+                return match
+            }
+        }
+        return nil
+    }
+
     private static func latestDate(in node: ThreadNode) -> Date {
         node.children.reduce(node.message.date) { current, child in
             max(current, latestDate(in: child))
@@ -6775,6 +6966,19 @@ extension ThreadCanvasViewModel {
         }
         for child in node.children {
             if let match = findNode(in: child, matching: id) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func findNode(in node: ThreadNode,
+                                 matching source: EmailMessageSource) -> ThreadNode? {
+        if source.matches(node.message) {
+            return node
+        }
+        for child in node.children {
+            if let match = findNode(in: child, matching: source) {
                 return match
             }
         }

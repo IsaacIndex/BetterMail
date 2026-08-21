@@ -312,14 +312,14 @@ purely down-stream of that into scene nodes.
     - `BetterMail/Sources/UI/DesignTokens.swift`.
     - `BetterMail/Sources/UI/Graph/GraphScene.swift`,
       `GraphSceneNodes.swift`, `GraphHoverCard.swift`, `GraphToolbar.swift`,
-      `GraphCompostRing.swift`, `GraphSettingsSheet.swift` — replace the
+      `GraphRestoreHistoryControl.swift`, `GraphSettingsSheet.swift` — replace the
       legacy v1 palette references with `DesignTokens.Graph.AppTheme.*`.
   - **Validation**:
     - Light + dark appearance both render legibly (manual smoke screenshot).
     - No remaining references to the legacy v1 palette in the Graph module.
   - **Implementation note (2026-05-11)**: Added
     `DesignTokens.Graph.AppTheme` dynamic NSColor/SwiftUI tokens and routed the
-    graph scene, nodes, hover card, toolbar, compost ring, canvas background,
+    graph scene, nodes, hover card, toolbar, restore history, canvas background,
     and settings sheet through AppTheme. Validation:
     the retired palette name no longer appears in `BetterMail/Sources/UI/Graph`;
     no matches; build/tests succeeded. Blockers: manual light/dark screenshot

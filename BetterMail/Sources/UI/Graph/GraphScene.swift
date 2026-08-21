@@ -19,7 +19,7 @@ internal final class GraphScene: SKScene {
     internal static let idleFramesPerSecond = 5
 
     internal var onSelectGraphNode: ((String?) -> Void)?
-    internal var onExpandRemainingBranches: ((String) -> Void)?
+    internal var onExpandRemainingBranches: ((GraphRemainderScope) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
     internal var onPruneThread: ((String) -> Void)?
@@ -50,9 +50,11 @@ internal final class GraphScene: SKScene {
     private var forceConfig = GraphForceConstants.defaults
     private let trunkEdgeNode = SKShapeNode()
     private let chainEdgeNode = SKShapeNode()
+    private let manualChainEdgeNode = SKShapeNode()
     private let remainingEdgeNode = SKShapeNode()
     private let dimmedTrunkEdgeNode = SKShapeNode()
     private let dimmedChainEdgeNode = SKShapeNode()
+    private let dimmedManualChainEdgeNode = SKShapeNode()
     private let dimmedRemainingEdgeNode = SKShapeNode()
     private var appliedEdgeRenderingMode: EdgeRenderingMode?
     private var theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
@@ -247,7 +249,7 @@ internal final class GraphScene: SKScene {
         }
         if let nodeID = hitNodeID {
             if let remaining = graphData.remainingBranchByID[nodeID] {
-                onExpandRemainingBranches?(remaining.parentID)
+                onExpandRemainingBranches?(remaining.scope)
                 publishFrameRatePreferenceIfNeeded()
                 draggedNodeOffset = nil
                 pendingDraggedNodePosition = nil
@@ -545,6 +547,8 @@ internal final class GraphScene: SKScene {
         }
         let remainingLayers: [(SKShapeNode, NSColor, CGFloat, CGFloat)] = [
             (remainingEdgeNode, theme.archiveNS, 1.25, 0.58),
+            (manualChainEdgeNode, theme.manualThreadNS, 1.25, 0.76),
+            (dimmedManualChainEdgeNode, theme.manualThreadNS, 1.0, 0.22),
             (dimmedRemainingEdgeNode, theme.inkTertiaryNS, 1.0, 0.22)
         ]
         for (node, color, strokeWidth, strokeAlpha) in remainingLayers {
@@ -698,7 +702,7 @@ internal final class GraphScene: SKScene {
                                       textScale: textScale,
                                       theme: theme)
             node.configureExpansionAccessibility(label: remainingBranch.accessibilityLabel) { [weak self] in
-                self?.onExpandRemainingBranches?(remainingBranch.parentID)
+                self?.onExpandRemainingBranches?(remainingBranch.scope)
             }
             graphNodesByID[remainingBranch.id] = node
             addChild(node)
@@ -904,10 +908,12 @@ internal final class GraphScene: SKScene {
             anchor = nil
         }
         let trunkPath = CGMutablePath()
+        let manualChainPath = CGMutablePath()
         let remainingPath = CGMutablePath()
         let shouldSkipChains = skipCoalescedChains && !modeChanged
         let chainPath = shouldSkipChains ? nil : CGMutablePath()
         let dimmedTrunkPath = CGMutablePath()
+        let dimmedManualChainPath = CGMutablePath()
         let dimmedRemainingPath = CGMutablePath()
         let dimmedChainPath = shouldSkipChains ? nil : CGMutablePath()
         for edge in graphData.edges {
@@ -944,6 +950,18 @@ internal final class GraphScene: SKScene {
                 appendDashedEdge(source: source,
                                  target: target,
                                  to: dimmedRemainingPath)
+            case (.manualChain, false):
+                appendDashedEdge(source: source,
+                                 target: target,
+                                 to: manualChainPath,
+                                 dashLength: 4,
+                                 gapLength: 4)
+            case (.manualChain, true):
+                appendDashedEdge(source: source,
+                                 target: target,
+                                 to: dimmedManualChainPath,
+                                 dashLength: 4,
+                                 gapLength: 4)
             case (.chain, false):
                 if let chainPath {
                     appendEdge(edge: edge,
@@ -969,8 +987,10 @@ internal final class GraphScene: SKScene {
             }
         }
         trunkEdgeNode.path = trunkPath
+        manualChainEdgeNode.path = manualChainPath
         remainingEdgeNode.path = remainingPath
         dimmedTrunkEdgeNode.path = dimmedTrunkPath
+        dimmedManualChainEdgeNode.path = dimmedManualChainPath
         dimmedRemainingEdgeNode.path = dimmedRemainingPath
         if let chainPath {
             chainEdgeNode.path = chainPath

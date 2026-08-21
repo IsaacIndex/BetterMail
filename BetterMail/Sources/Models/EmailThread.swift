@@ -1,6 +1,6 @@
 import Foundation
 
-internal struct EmailThread: Identifiable, Hashable {
+internal nonisolated struct EmailThread: Identifiable, Hashable, Sendable {
     internal let id: String
     internal let rootMessageID: String?
     internal let subject: String
@@ -9,7 +9,7 @@ internal struct EmailThread: Identifiable, Hashable {
     internal let messageCount: Int
 }
 
-internal struct ThreadNode: Identifiable {
+internal nonisolated struct ThreadNode: Identifiable, Sendable {
     internal let id: String
     internal let message: EmailMessage
     internal var children: [ThreadNode]

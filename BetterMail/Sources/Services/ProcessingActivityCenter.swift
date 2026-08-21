@@ -81,9 +81,44 @@ internal struct ProcessingActivity: Identifiable, Equatable {
     }
 }
 
+internal enum ProcessingActivityShelfPolicy {
+    internal static let displayDuration: TimeInterval = 4
+    internal static let displayDurationNanoseconds: UInt64 = 4_000_000_000
+
+    internal static func activity(from activities: [ProcessingActivity], at date: Date) -> ProcessingActivity? {
+        let visibleActiveActivity = activities
+            .filter { activity in
+                activity.isActive && isWithinDisplayWindow(referenceDate: activity.startedAt, at: date)
+            }
+            .sorted { lhs, rhs in
+                lhs.updatedAt > rhs.updatedAt
+            }
+            .first
+
+        if let visibleActiveActivity {
+            return visibleActiveActivity
+        }
+
+        return activities
+            .filter { activity in
+                guard !activity.isActive else { return false }
+                return isWithinDisplayWindow(referenceDate: activity.finishedAt ?? activity.updatedAt, at: date)
+            }
+            .sorted { lhs, rhs in
+                (lhs.finishedAt ?? lhs.updatedAt) > (rhs.finishedAt ?? rhs.updatedAt)
+            }
+            .first
+    }
+
+    private static func isWithinDisplayWindow(referenceDate: Date, at date: Date) -> Bool {
+        date < referenceDate.addingTimeInterval(displayDuration)
+    }
+}
+
 @MainActor
 internal final class ProcessingActivityCenter: ObservableObject {
     @Published internal private(set) var activities: [ProcessingActivity] = []
+    @Published internal private(set) var shelfPresentationVersion = 0
 
     private let retainedActivityCount = 12
 
@@ -117,6 +152,10 @@ internal final class ProcessingActivityCenter: ObservableObject {
         activeCount > 0
     }
 
+    internal func shelfActivity(at date: Date = Date()) -> ProcessingActivity? {
+        ProcessingActivityShelfPolicy.activity(from: activities, at: date)
+    }
+
     @discardableResult
     internal func begin(id: ProcessingActivityID = UUID().uuidString,
                         title: String,
@@ -146,6 +185,7 @@ internal final class ProcessingActivityCenter: ObservableObject {
                                                  finishedAt: nil))
         }
         pruneFinishedActivities()
+        advanceShelfPresentationVersion()
         return id
     }
 
@@ -179,6 +219,7 @@ internal final class ProcessingActivityCenter: ObservableObject {
         activities[index].updatedAt = date
         activities[index].finishedAt = date
         pruneFinishedActivities()
+        advanceShelfPresentationVersion()
     }
 
     private func pruneFinishedActivities() {
@@ -188,6 +229,10 @@ internal final class ProcessingActivityCenter: ObservableObject {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(retainedActivityCount)
         activities = active + finished
+    }
+
+    private func advanceShelfPresentationVersion() {
+        shelfPresentationVersion &+= 1
     }
 
     private static func normalizedProgress(_ progress: Double?) -> Double? {

@@ -157,6 +157,60 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
                                   snippetLineLimit: snippetLineLimit)
     }
 
+    internal func fetchMessages(messageIDs: [String],
+                                account: String,
+                                snippetLineLimit: Int) async throws -> [EmailMessage] {
+        let normalizedIDs = Array(Set(messageIDs.map(JWZThreader.normalizeIdentifier)))
+            .filter { !$0.isEmpty }
+            .sorted()
+        guard !normalizedIDs.isEmpty else { return [] }
+        guard normalizedIDs.count <= DayFetchCoordinator.maximumRequestBatchSize else {
+            throw MailAppleScriptClientError.invalidPayloadBatch
+        }
+        let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAccount.isEmpty else { return [] }
+
+        try Task.checkCancellation()
+        let script = buildMessageIDLookupScript(messageIDs: normalizedIDs,
+                                                internalIDs: Array(repeating: "", count: normalizedIDs.count),
+                                                account: trimmedAccount)
+        Log.appleScript.info("[THREADING][ANCESTOR] requested. count=\(normalizedIDs.count, privacy: .public) account=\(trimmedAccount, privacy: .private)")
+        let descriptor = try await scriptRunner.run(script, logPrefix: "[THREADING][ANCESTOR]")
+        try Task.checkCancellation()
+        return try decodeMessages(from: descriptor,
+                                  mailbox: "",
+                                  snippetLineLimit: snippetLineLimit)
+    }
+
+    internal func fetchMessages(references: [MessageReference],
+                                account: String,
+                                snippetLineLimit: Int) async throws -> [EmailMessage] {
+        let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAccount.isEmpty else { return [] }
+        let scopedReferences = references.filter {
+            $0.account.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(trimmedAccount) == .orderedSame
+                && !JWZThreader.normalizeIdentifier($0.messageID).isEmpty
+        }
+        guard !scopedReferences.isEmpty else { return [] }
+        guard scopedReferences.count <= DayFetchCoordinator.maximumRequestBatchSize else {
+            throw MailAppleScriptClientError.invalidPayloadBatch
+        }
+
+        let messageIDs = scopedReferences.map { JWZThreader.normalizeIdentifier($0.messageID) }
+        let internalIDs = scopedReferences.map { $0.internalMailID ?? "" }
+        try Task.checkCancellation()
+        let script = buildMessageIDLookupScript(messageIDs: messageIDs,
+                                                internalIDs: internalIDs,
+                                                account: trimmedAccount)
+        Log.appleScript.info("[CALENDAR][RECOVERY] requested. count=\(scopedReferences.count, privacy: .public) account=\(trimmedAccount, privacy: .private)")
+        let descriptor = try await scriptRunner.run(script, logPrefix: "[CALENDAR][RECOVERY]")
+        try Task.checkCancellation()
+        return try decodeMessages(from: descriptor,
+                                  mailbox: "",
+                                  snippetLineLimit: snippetLineLimit)
+    }
+
     internal func countMessages(in range: DateInterval, mailbox: String = "inbox", account: String? = nil) async throws -> Int {
         try Task.checkCancellation()
         let now = Date()
@@ -308,9 +362,19 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
         """
     }
 
-    private func mailboxResolverScript(mailbox: String, account: String?) -> String {
+    private func mailboxResolverScript(mailbox: String,
+                                       account: String?,
+                                       resolveInitialMailbox: Bool = true) -> String {
         let safeMailboxPath = escapedForAppleScript(mailbox.trimmingCharacters(in: .whitespacesAndNewlines))
         let safeAccount = escapedForAppleScript((account ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        let initialResolutionScript = resolveInitialMailbox ? """
+        set _mailboxPathToken to "\(safeMailboxPath)"
+        set _accountToken to "\(safeAccount)"
+        set _mbx to my resolveMailboxByPath(_accountToken, _mailboxPathToken)
+        if _mbx is missing value then
+          error "Mailbox not found for path: " & _mailboxPathToken & " account: " & _accountToken number -1728
+        end if
+        """ : ""
         return """
         \(mailboxPathHelpersScript())
         on trimText(_value)
@@ -485,12 +549,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
           return _resolvedMailboxes
         end resolveMailboxesByPath
 
-        set _mailboxPathToken to "\(safeMailboxPath)"
-        set _accountToken to "\(safeAccount)"
-        set _mbx to my resolveMailboxByPath(_accountToken, _mailboxPathToken)
-        if _mbx is missing value then
-          error "Mailbox not found for path: " & _mailboxPathToken & " account: " & _accountToken number -1728
-        end if
+        \(initialResolutionScript)
         """
     }
 
@@ -623,7 +682,8 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
 
         return """
         \(mailboxResolverScript(mailbox: references.first?.mailbox ?? "inbox",
-                                account: references.first?.account))
+                                account: references.first?.account,
+                                resolveInitialMailbox: false))
         set _internalIDs to \(appleScriptStringList(internalIDs))
         set _messageIDs to \(appleScriptStringList(messageIDs))
         set _mailboxPaths to \(appleScriptStringList(mailboxes))
@@ -643,10 +703,20 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
                   try
                     set _matches to (messages of _sourceMailbox whose id is (_wantedInternalID as integer))
                   end try
-                else if _wantedMessageID is not "" then
+                end if
+                -- Apple Mail's numeric ID may change while the RFC Message-ID
+                -- and mailbox remain valid. Retry in the resolved mailbox
+                -- before escalating to the account-wide recovery scan.
+                if ((count of _matches) is 0) and (_wantedMessageID is not "") then
                   try
                     set _matches to (messages of _sourceMailbox whose message id is _wantedMessageID)
                   end try
+                  if (count of _matches) is 0 then
+                    set _alternateMessageID to "<" & _wantedMessageID & ">"
+                    try
+                      set _matches to (messages of _sourceMailbox whose message id is _alternateMessageID)
+                    end try
+                  end if
                 end if
               end if
               repeat with _messageRef in _matches
@@ -680,6 +750,133 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
         \(contentFetchScript)
                 copy {_actualInternalID, _actualMessageID, _subject, _actualMailboxPath, _actualAccountName, (date received of _messageValue), (read status of _messageValue), _src, _body} to end of _rows
                 exit repeat
+              end repeat
+            end repeat
+          end timeout
+        end tell
+        return _rows
+        """
+    }
+
+    private func buildMessageIDLookupScript(messageIDs: [String],
+                                            internalIDs: [String],
+                                            account: String) -> String {
+        let safeAccount = escapedForAppleScript(account)
+        let alignedInternalIDs = internalIDs.count == messageIDs.count
+            ? internalIDs
+            : Array(repeating: "", count: messageIDs.count)
+        return """
+        \(mailboxPathHelpersScript())
+        on allMailboxes(_containerRef)
+          set _results to {}
+          set _children to {}
+          tell application id "com.apple.mail"
+            try
+              set _children to every mailbox of _containerRef
+            on error
+              try
+                set _children to mailboxes of _containerRef
+              end try
+            end try
+          end tell
+          repeat with _childRef in _children
+            set _child to contents of _childRef
+            copy _child to end of _results
+            set _descendants to my allMailboxes(_child)
+            repeat with _descendant in _descendants
+              copy (contents of _descendant) to end of _results
+            end repeat
+          end repeat
+          return _results
+        end allMailboxes
+
+        on matchingAccount(_accountToken)
+          tell application id "com.apple.mail"
+            repeat with _accountRef in every account
+              set _accountValue to contents of _accountRef
+              set _matches to false
+              ignoring case
+                try
+                  if (name of _accountValue as string) is _accountToken then set _matches to true
+                end try
+                if not _matches then
+                  try
+                    if (id of _accountValue as string) is _accountToken then set _matches to true
+                  end try
+                end if
+              end ignoring
+              if _matches then return _accountValue
+            end repeat
+          end tell
+          return missing value
+        end matchingAccount
+
+        set _wantedMessageIDs to \(appleScriptStringList(messageIDs))
+        set _wantedInternalIDs to \(appleScriptStringList(alignedInternalIDs))
+        set _accountToken to "\(safeAccount)"
+        set _rows to {}
+        set _accountRef to my matchingAccount(_accountToken)
+        if _accountRef is missing value then return _rows
+        set _mailboxesToScan to my allMailboxes(_accountRef)
+        tell application id "com.apple.mail"
+          with timeout of 300 seconds
+            repeat with _index from 1 to (count of _wantedMessageIDs)
+              set _wantedMessageID to item _index of _wantedMessageIDs as string
+              set _wantedInternalID to item _index of _wantedInternalIDs as string
+              set _alternateMessageID to "<" & _wantedMessageID & ">"
+              set _found to false
+              repeat with _mailboxRef in _mailboxesToScan
+                set _mailboxValue to contents of _mailboxRef
+                set _matches to {}
+                if _wantedInternalID is not "" then
+                  try
+                    set _matches to (messages of _mailboxValue whose id is (_wantedInternalID as integer))
+                  end try
+                end if
+                if (count of _matches) is 0 then
+                  try
+                    set _matches to (messages of _mailboxValue whose message id is _wantedMessageID)
+                  end try
+                end if
+                if (count of _matches) is 0 then
+                  try
+                    set _matches to (messages of _mailboxValue whose message id is _alternateMessageID)
+                  end try
+                end if
+                repeat with _messageRef in _matches
+                  set _messageValue to contents of _messageRef
+                  set _src to ""
+                  set _body to ""
+                  set _internalID to ""
+                  set _actualMessageID to _wantedMessageID
+                  set _subject to ""
+                  set _mailboxPath to my mailboxPathForMailbox(_mailboxValue)
+                  try
+                    set _internalID to (id of _messageValue as string)
+                  end try
+                  try
+                    set _actualMessageID to (message id of _messageValue as string)
+                  end try
+                  try
+                    set _subject to (subject of _messageValue as string)
+                  end try
+                  set _actualAccountName to _accountToken
+                  try
+                    set _actualAccountName to (name of account of _mailboxValue as string)
+                  on error
+                    set _actualAccountName to _accountToken
+                  end try
+                  try
+                    set _src to (source of _messageValue as string)
+                  end try
+                  try
+                    set _body to (content of _messageValue as string)
+                  end try
+                  copy {_internalID, _actualMessageID, _subject, _mailboxPath, _actualAccountName, (date received of _messageValue), (read status of _messageValue), _src, _body} to end of _rows
+                  set _found to true
+                  exit repeat
+                end repeat
+                if _found then exit repeat
               end repeat
             end repeat
           end timeout
@@ -775,6 +972,24 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
     }
 
 #if DEBUG
+    internal func buildPayloadScriptForTesting(references: [MessageReference],
+                                               profile: MailFetchProfile = .full) -> String {
+        buildPayloadScript(references: references, profile: profile)
+    }
+
+    internal func buildMessageIDLookupScriptForTesting(messageIDs: [String], account: String) -> String {
+        buildMessageIDLookupScript(messageIDs: messageIDs,
+                                   internalIDs: Array(repeating: "", count: messageIDs.count),
+                                   account: account)
+    }
+
+    internal func buildReferenceLookupScriptForTesting(references: [MessageReference],
+                                                       account: String) -> String {
+        buildMessageIDLookupScript(messageIDs: references.map { JWZThreader.normalizeIdentifier($0.messageID) },
+                                   internalIDs: references.map { $0.internalMailID ?? "" },
+                                   account: account)
+    }
+
     internal func buildManifestScriptForTesting(range: DateInterval,
                                                 mailbox: String = "inbox",
                                                 account: String? = nil) -> String {
@@ -1420,6 +1635,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
         messages.reserveCapacity(descriptor.numberOfItems)
 
         let decoder = HeaderDecoder()
+        let collapsedHistoryParser = CollapsedEmailHistoryParser(decoder: decoder)
         guard descriptor.numberOfItems > 0 else {
             Log.appleScript.info("Descriptor contained no items.")
             return []
@@ -1450,9 +1666,16 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
             let recipients = headers["to"] ?? ""
             let sender = headers["from"] ?? ""
             let snippetPreviewLineLimit = snippetLineLimit == Int.max ? snippetLineLimit : snippetLineLimit + 1
-            let snippet = decoder.bodySnippet(fromBody: bodyText,
-                                              fallbackSource: source,
-                                              maxLines: snippetPreviewLineLimit)
+            let calendarClassification = CalendarRSVPClassifier.classify(source)
+            let decodedSnippet = decoder.bodySnippet(fromBody: bodyText,
+                                                     fallbackSource: source,
+                                                     maxLines: snippetPreviewLineLimit)
+            let snippet = calendarClassification.supplementText ?? decodedSnippet
+            let embeddedMessages = collapsedHistoryParser.parse(source: source,
+                                                                 body: bodyText,
+                                                                 parentMessageID: canonicalID,
+                                                                 parentAccountName: accountName,
+                                                                 parentSubject: subject)
 
             let email = EmailMessage(messageID: canonicalID,
                                      internalMailID: (internalMailID?.isEmpty == false) ? internalMailID : nil,
@@ -1464,8 +1687,11 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
                                      date: dateValue,
                                      snippet: snippet,
                                      isUnread: !isRead,
+                                     isCalendarRSVP: calendarClassification.shouldSuppress,
+                                     calendarMessageKind: calendarClassification.kind,
                                      inReplyTo: inReplyTo,
-                                     references: references)
+                                     references: references,
+                                     embeddedMessages: embeddedMessages)
             messages.append(email)
         }
         Log.appleScript.info("Decoded \(messages.count, privacy: .public) messages from AppleScript response.")
@@ -1503,7 +1729,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
     }
 }
 
-internal struct HeaderDecoder {
+internal nonisolated struct HeaderDecoder: Sendable {
     func headers(from source: String) -> [String: String] {
         let normalizedSource = source.replacingOccurrences(of: "\r\n", with: "\n")
         var headers: [String: String] = [:]
@@ -1515,7 +1741,9 @@ internal struct HeaderDecoder {
             }
             if line.hasPrefix(" ") || line.hasPrefix("\t") {
                 guard let key = currentKey else { continue }
-                let value = (headers[key] ?? "") + line.trimmingCharacters(in: .whitespaces)
+                let continuation = line.trimmingCharacters(in: .whitespaces)
+                let separator = (headers[key]?.isEmpty == false && !continuation.isEmpty) ? " " : ""
+                let value = (headers[key] ?? "") + separator + continuation
                 headers[key] = value
                 continue
             }
@@ -1537,15 +1765,22 @@ internal struct HeaderDecoder {
                      fallbackSource source: String,
                      maxLength: Int = 400,
                      maxLines: Int = 20) -> String {
+        if let mimeBody = readableMIMEContent(from: body) {
+            let cleaned = cleanedSnippetLines(from: mimeBody, maxLines: maxLines)
+            if !cleaned.isEmpty {
+                return truncate(cleaned, maxLength: maxLength)
+            }
+        }
+
         let cleanedBody = cleanedSnippetLines(from: body, maxLines: maxLines)
-        if !cleanedBody.isEmpty {
+        if !cleanedBody.isEmpty, !containsMIMEFraming(body) {
             return truncate(cleanedBody, maxLength: maxLength)
         }
         return bodySnippetFromSource(source, maxLength: maxLength, maxLines: maxLines)
     }
 
     private func bodySnippetFromSource(_ source: String, maxLength: Int, maxLines: Int) -> String {
-        if let mimeText = extractPlainTextFromMIME(source) {
+        if let mimeText = readableMIMEContent(from: source) {
             let cleaned = cleanedSnippetLines(from: mimeText, maxLines: maxLines)
             if !cleaned.isEmpty {
                 Log.appleScript.debug("MIME parsing: using extracted text/plain for snippet")
@@ -1556,6 +1791,10 @@ internal struct HeaderDecoder {
         let normalizedSource = source.replacingOccurrences(of: "\r\n", with: "\n")
         guard let range = normalizedSource.range(of: "\n\n") else { return "" }
         let body = normalizedSource[range.upperBound...]
+        guard !containsMIMEFraming(String(body)) else {
+            Log.appleScript.debug("MIME parsing: refusing to expose unparsed MIME framing")
+            return ""
+        }
         let cleaned = cleanedSnippetLines(from: String(body), maxLines: maxLines)
         if cleaned.isEmpty {
             return ""
@@ -1568,9 +1807,22 @@ internal struct HeaderDecoder {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         let lines = normalized.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-        let cleaned = lines.compactMap { line -> String? in
+        var cleaned: [String] = []
+        var previousLineWasBlank = true
+        for line in lines {
             let value = cleanSnippetLine(String(line))
-            return value.isEmpty ? nil : value
+            if value.isEmpty {
+                if !previousLineWasBlank {
+                    cleaned.append("")
+                }
+                previousLineWasBlank = true
+            } else {
+                cleaned.append(value)
+                previousLineWasBlank = false
+            }
+        }
+        while cleaned.last?.isEmpty == true {
+            cleaned.removeLast()
         }
         guard !cleaned.isEmpty else { return "" }
         let limited = maxLines > 0 ? Array(cleaned.prefix(maxLines)) : cleaned
@@ -1594,8 +1846,7 @@ internal struct HeaderDecoder {
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#39;", with: "'")
 
-        let parts = cleaned.split { $0.isWhitespace }
-        return parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func truncate(_ text: String, maxLength: Int) -> String {
@@ -1733,12 +1984,71 @@ internal struct HeaderDecoder {
     private static let maxMIMESourceSize = 512 * 1024
     private static let maxMIMEDepth = 10
 
+    private struct MIMETextCandidate {
+        let text: String
+        let isPlainText: Bool
+    }
+
+    func readableMIMEContent(from source: String) -> String? {
+        guard !source.isEmpty, source.utf8.count <= Self.maxMIMESourceSize else {
+            return nil
+        }
+
+        let normalized = normalizedLineEndings(source)
+        if let multipartText = extractPlainTextFromMIME(normalized) {
+            return multipartText
+        }
+
+        if let boundary = openingBoundary(in: normalized),
+           let candidate = extractTextFromParts(normalized, boundary: boundary, depth: 0) {
+            return candidate.text
+        }
+
+        let topHeaders = headers(from: normalized)
+        let contentType = topHeaders["content-type"] ?? ""
+        let normalizedContentType = contentType.lowercased()
+        guard normalizedContentType.contains("text/plain") || normalizedContentType.contains("text/html"),
+              !isAttachment(topHeaders),
+              let headerEnd = normalized.range(of: "\n\n") else {
+            return nil
+        }
+
+        let transferEncoding = topHeaders["content-transfer-encoding"] ?? ""
+        let encodedBody = String(normalized[headerEnd.upperBound...])
+        let decoded = decodeMIMEBody(encodedBody,
+                                     transferEncoding: transferEncoding,
+                                     contentType: contentType)
+        if normalizedContentType.contains("text/html") {
+            return stripHTML(decoded)
+        }
+        return decoded
+    }
+
+    func containsMIMEFraming(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        let normalized = normalizedLineEndings(text)
+        if openingBoundary(in: normalized) != nil {
+            return true
+        }
+        let leadingHeaders = headers(from: normalized)
+        if leadingHeaders["mime-version"] != nil || leadingHeaders["content-transfer-encoding"] != nil {
+            return true
+        }
+        guard let contentType = leadingHeaders["content-type"]?.lowercased() else {
+            return false
+        }
+        return contentType.contains("multipart/")
+            || contentType.contains("text/plain")
+            || contentType.contains("text/html")
+            || contentType.contains("message/rfc822")
+    }
+
     func extractPlainTextFromMIME(_ source: String) -> String? {
         guard source.utf8.count <= Self.maxMIMESourceSize else {
             Log.appleScript.debug("MIME parsing skipped: source exceeds 512 KB")
             return nil
         }
-        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n")
+        let normalized = normalizedLineEndings(source)
         let topHeaders = headers(from: normalized)
         guard let contentType = topHeaders["content-type"],
               contentType.lowercased().contains("multipart"),
@@ -1748,37 +2058,72 @@ internal struct HeaderDecoder {
         guard let headerEnd = normalized.range(of: "\n\n") else { return nil }
         let body = String(normalized[headerEnd.upperBound...])
         Log.appleScript.debug("MIME parsing: attempting multipart extraction with boundary")
-        let result = extractTextFromParts(body, boundary: boundary, depth: 0)
+        let result = extractTextFromParts(body, boundary: boundary, depth: 0)?.text
         if result == nil {
             Log.appleScript.debug("MIME parsing: no text/plain part found")
         }
         return result
     }
 
-    private func extractTextFromParts(_ body: String, boundary: String, depth: Int) -> String? {
-        guard depth < Self.maxMIMEDepth else { return nil }
-        let delimiter = "--" + boundary
-        let closingDelimiter = delimiter + "--"
+    func embeddedRFC822Sources(from source: String) -> [String] {
+        guard !source.isEmpty, source.utf8.count <= Self.maxMIMESourceSize else {
+            return []
+        }
+        var results: [String] = []
+        collectEmbeddedRFC822Sources(in: normalizedLineEndings(source),
+                                     depth: 0,
+                                     results: &results)
+        return results
+    }
 
-        let workingBody: String
-        if let closingRange = body.range(of: closingDelimiter) {
-            workingBody = String(body[..<closingRange.lowerBound])
-        } else {
-            workingBody = body
+    private func collectEmbeddedRFC822Sources(in source: String,
+                                               depth: Int,
+                                               results: inout [String]) {
+        guard depth < Self.maxMIMEDepth,
+              let headerEnd = source.range(of: "\n\n") else {
+            return
+        }
+        let partHeaders = headers(from: source)
+        guard !isAttachment(partHeaders) else { return }
+        let contentType = partHeaders["content-type"] ?? ""
+        let normalizedContentType = contentType.lowercased()
+        let body = String(source[headerEnd.upperBound...])
+
+        if normalizedContentType.contains("multipart"),
+           let boundary = extractBoundary(from: contentType) {
+            for part in splitMIMEParts(body, boundary: boundary) {
+                collectEmbeddedRFC822Sources(in: part,
+                                             depth: depth + 1,
+                                             results: &results)
+            }
+            return
         }
 
-        let rawParts = workingBody.components(separatedBy: delimiter)
-        let parts = Array(rawParts.dropFirst())
+        guard normalizedContentType.contains("message/rfc822") else { return }
+        let decoded = decodeMIMEBody(body,
+                                     transferEncoding: partHeaders["content-transfer-encoding"] ?? "",
+                                     contentType: contentType)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !decoded.isEmpty, decoded.range(of: "\n\n") != nil else { return }
+        results.append(decoded)
+        collectEmbeddedRFC822Sources(in: decoded,
+                                     depth: depth + 1,
+                                     results: &results)
+    }
 
-        var plainTextResult: String?
-        var htmlFallback: String?
+    private func extractTextFromParts(_ body: String,
+                                      boundary: String,
+                                      depth: Int) -> MIMETextCandidate? {
+        guard depth < Self.maxMIMEDepth else { return nil }
+        let parts = splitMIMEParts(body, boundary: boundary)
+        var htmlFallback: MIMETextCandidate?
 
         for part in parts {
-            let trimmedPart = part.hasPrefix("\n") ? String(part.dropFirst()) : part
-            guard let headerEnd = trimmedPart.range(of: "\n\n") else { continue }
-            let partHeaderStr = String(trimmedPart[..<headerEnd.lowerBound])
-            let partBody = String(trimmedPart[headerEnd.upperBound...])
+            guard let headerEnd = part.range(of: "\n\n") else { continue }
+            let partHeaderStr = String(part[..<headerEnd.lowerBound])
+            let partBody = String(part[headerEnd.upperBound...])
             let partHeaders = headers(from: partHeaderStr + "\n\n")
+            guard !isAttachment(partHeaders) else { continue }
             let rawPartContentType = partHeaders["content-type"] ?? ""
             let partContentType = rawPartContentType.lowercased()
             let transferEncoding = partHeaders["content-transfer-encoding"] ?? ""
@@ -1786,41 +2131,602 @@ internal struct HeaderDecoder {
             if partContentType.contains("multipart"),
                let nestedBoundary = extractBoundary(from: rawPartContentType) {
                 if let nested = extractTextFromParts(partBody, boundary: nestedBoundary, depth: depth + 1) {
-                    return nested
+                    if nested.isPlainText {
+                        return nested
+                    }
+                    if htmlFallback == nil {
+                        htmlFallback = nested
+                    }
                 }
             } else if partContentType.contains("text/plain") || (partContentType.isEmpty && depth > 0) {
                 let decoded = decodeMIMEBody(partBody, transferEncoding: transferEncoding, contentType: rawPartContentType)
-                plainTextResult = decoded
+                if !decoded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return MIMETextCandidate(text: decoded, isPlainText: true)
+                }
             } else if partContentType.contains("text/html") && htmlFallback == nil {
                 let decoded = decodeMIMEBody(partBody, transferEncoding: transferEncoding, contentType: rawPartContentType)
-                htmlFallback = stripHTML(decoded)
+                let stripped = stripHTML(decoded)
+                if !stripped.isEmpty {
+                    htmlFallback = MIMETextCandidate(text: stripped, isPlainText: false)
+                }
             }
-
-            if plainTextResult != nil { return plainTextResult }
         }
 
         return htmlFallback
     }
 
+    private func splitMIMEParts(_ body: String, boundary: String) -> [String] {
+        let normalized = normalizedLineEndings(body)
+        let delimiter = "--" + boundary
+        let closingDelimiter = delimiter + "--"
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)
+        var parts: [String] = []
+        var currentLines: [Substring] = []
+        var isCollecting = false
+        var didClose = false
+
+        for line in lines {
+            let marker = line.trimmingCharacters(in: .whitespaces)
+            if marker == delimiter {
+                if isCollecting {
+                    parts.append(currentLines.map(String.init).joined(separator: "\n"))
+                }
+                currentLines.removeAll(keepingCapacity: true)
+                isCollecting = true
+                continue
+            }
+            if marker == closingDelimiter {
+                if isCollecting {
+                    parts.append(currentLines.map(String.init).joined(separator: "\n"))
+                }
+                didClose = true
+                break
+            }
+            if isCollecting {
+                currentLines.append(line)
+            }
+        }
+
+        if isCollecting, !didClose, !currentLines.isEmpty {
+            parts.append(currentLines.map(String.init).joined(separator: "\n"))
+        }
+        return parts
+    }
+
+    private func openingBoundary(in source: String) -> String? {
+        let firstContentLine = normalizedLineEndings(source)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
+            .trimmingCharacters(in: .whitespaces)
+        guard var marker = firstContentLine,
+              marker.hasPrefix("--"),
+              marker.count > 2 else {
+            return nil
+        }
+        marker.removeFirst(2)
+        if marker.hasSuffix("--") {
+            marker.removeLast(2)
+        }
+        guard !marker.isEmpty, !marker.contains(where: \.isWhitespace) else {
+            return nil
+        }
+        return marker
+    }
+
+    private func isAttachment(_ headers: [String: String]) -> Bool {
+        headers["content-disposition"]?
+            .lowercased()
+            .contains("attachment") == true
+    }
+
+    private func normalizedLineEndings(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
     private func stripHTML(_ html: String) -> String {
         var result = html
         result = result.replacingOccurrences(
-            of: "<style[^>]*>[\\s\\S]*?</style>",
+            of: "(?is)<style[^>]*>.*?</style>",
             with: "",
             options: .regularExpression
         )
         result = result.replacingOccurrences(
-            of: "<script[^>]*>[\\s\\S]*?</script>",
+            of: "(?is)<script[^>]*>.*?</script>",
             with: "",
             options: .regularExpression
         )
+        result = result.replacingOccurrences(of: "(?i)<br\\s*/?>",
+                                             with: "\n",
+                                             options: .regularExpression)
+        result = result.replacingOccurrences(of: "(?i)</(?:p|div|h[1-6]|blockquote|tr)\\s*>",
+                                             with: "\n\n",
+                                             options: .regularExpression)
+        result = result.replacingOccurrences(of: "(?i)<li(?:\\s[^>]*)?>",
+                                             with: "• ",
+                                             options: .regularExpression)
+        result = result.replacingOccurrences(of: "(?i)</li\\s*>",
+                                             with: "\n",
+                                             options: .regularExpression)
+        result = result.replacingOccurrences(of: "(?i)</?(?:ul|ol)(?:\\s[^>]*)?>",
+                                             with: "\n",
+                                             options: .regularExpression)
         result = result.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        result = result.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        result = result.replacingOccurrences(of: "[\\t ]+",
+                                             with: " ",
+                                             options: .regularExpression)
+        result = result.replacingOccurrences(of: "[\\t ]+([.,!?;:])",
+                                             with: "$1",
+                                             options: .regularExpression)
+        result = result
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&hellip;", with: "…")
+            .replacingOccurrences(of: "&ndash;", with: "–")
+            .replacingOccurrences(of: "&mdash;", with: "—")
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
- 
+
+internal nonisolated struct CollapsedEmailHistoryParser: Sendable {
+    private struct Draft: Sendable {
+        let originalMessageID: String?
+        let subject: String
+        let from: String
+        let to: String
+        let date: Date?
+        let snippet: String
+        let identityContent: String
+    }
+
+    private enum HeaderKey: Hashable, Sendable {
+        case from
+        case date
+        case to
+        case cc
+        case subject
+        case messageID
+    }
+
+    private enum BlockKind: Sendable {
+        case headers
+        case quotedReply(dateText: String, sender: String)
+    }
+
+    private struct BlockStart: Sendable {
+        let lineIndex: Int
+        let kind: BlockKind
+    }
+
+    private static let maximumInputBytes = 1024 * 1024
+    private static let maximumMIMEScanBytes = 512 * 1024
+    private static let maximumEmbeddedMessages = 64
+    private static let maximumSnippetCharacters = 1_500
+
+    private let decoder: HeaderDecoder
+
+    internal init(decoder: HeaderDecoder = HeaderDecoder()) {
+        self.decoder = decoder
+    }
+
+    internal func parse(source: String,
+                        body: String,
+                        parentMessageID: String,
+                        parentAccountName: String = "",
+                        parentSubject: String) -> [EmbeddedEmailMessage] {
+        let boundedSource = boundedMIMESource(source)
+        var drafts = decoder.embeddedRFC822Sources(from: boundedSource).compactMap(draft(fromRFC822Source:))
+
+        if let text = bestTextCandidate(source: boundedSource, body: body) {
+            drafts.append(contentsOf: draftsFromCollapsedText(text,
+                                                              parentSubject: parentSubject))
+        }
+
+        var seenOriginalMessageIDs = Set<String>()
+        var seenFingerprints = Set<String>()
+        var results: [EmbeddedEmailMessage] = []
+        results.reserveCapacity(min(drafts.count, Self.maximumEmbeddedMessages))
+
+        for draft in drafts {
+            guard results.count < Self.maximumEmbeddedMessages else { break }
+            let normalizedOriginalID = draft.originalMessageID.map(JWZThreader.normalizeIdentifier)
+                .flatMap { $0.isEmpty ? nil : $0 }
+            if let normalizedOriginalID,
+               !seenOriginalMessageIDs.insert(normalizedOriginalID).inserted {
+                continue
+            }
+
+            let fingerprint = contentFingerprint(for: draft)
+            guard seenFingerprints.insert(fingerprint).inserted else { continue }
+            let identity = normalizedOriginalID.map { "message|\($0)" } ?? "content|\(fingerprint)"
+            let parentScope = stableHash([
+                parentAccountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                JWZThreader.normalizeIdentifier(parentMessageID)
+            ].joined(separator: "\n"))
+            let logicalID = "embedded-history|\(parentScope)|\(stableHash(identity))"
+            results.append(EmbeddedEmailMessage(id: logicalID,
+                                                originalMessageID: normalizedOriginalID,
+                                                subject: draft.subject,
+                                                from: draft.from,
+                                                to: draft.to,
+                                                date: draft.date,
+                                                snippet: draft.snippet,
+                                                sourceOrder: results.count))
+        }
+        return results
+    }
+
+    /// Large messages are commonly large because an attachment follows the
+    /// human-readable MIME part. Keep the parser within the decoder's existing
+    /// safety budget while allowing that leading text part to be inspected.
+    private func boundedMIMESource(_ source: String) -> String {
+        guard source.utf8.count > Self.maximumMIMEScanBytes else { return source }
+        return String(decoding: source.utf8.prefix(Self.maximumMIMEScanBytes), as: UTF8.self)
+    }
+
+    private func bestTextCandidate(source: String, body: String) -> String? {
+        var candidates: [String] = []
+        if let decodedBody = decoder.readableMIMEContent(from: body) {
+            candidates.append(decodedBody)
+        }
+        if !body.isEmpty,
+           body.utf8.count <= Self.maximumInputBytes,
+           !decoder.containsMIMEFraming(body) {
+            candidates.append(body)
+        }
+        if let decodedSource = decoder.readableMIMEContent(from: source) {
+            candidates.append(decodedSource)
+        }
+
+        return candidates
+            .filter { !$0.isEmpty && $0.utf8.count <= Self.maximumInputBytes }
+            .max { lhs, rhs in
+                let lhsScore = collapsedBlockStarts(in: normalizedLines(lhs)).count
+                let rhsScore = collapsedBlockStarts(in: normalizedLines(rhs)).count
+                if lhsScore == rhsScore { return lhs.count < rhs.count }
+                return lhsScore < rhsScore
+            }
+            .flatMap { collapsedBlockStarts(in: normalizedLines($0)).isEmpty ? nil : $0 }
+    }
+
+    private func draft(fromRFC822Source source: String) -> Draft? {
+        let headers = decoder.headers(from: source)
+        let from = cleanedHeaderValue(headers["from"] ?? "")
+        let subject = cleanedHeaderValue(headers["subject"] ?? "")
+        guard !from.isEmpty, !subject.isEmpty else { return nil }
+        let body = decoder.readableMIMEContent(from: source) ?? ""
+        let snippet = cleanedSnippet(body)
+        return Draft(originalMessageID: headers["message-id"],
+                     subject: subject,
+                     from: from,
+                     to: cleanedHeaderValue(headers["to"] ?? ""),
+                     date: parseDate(headers["date"] ?? ""),
+                     snippet: snippet,
+                     identityContent: body)
+    }
+
+    private func draftsFromCollapsedText(_ text: String,
+                                         parentSubject: String) -> [Draft] {
+        let lines = normalizedLines(text)
+        let starts = collapsedBlockStarts(in: lines)
+        guard !starts.isEmpty else { return [] }
+
+        return starts.enumerated().compactMap { offset, start in
+            let end = offset + 1 < starts.count ? starts[offset + 1].lineIndex : lines.count
+            switch start.kind {
+            case .headers:
+                return headerDraft(lines: lines,
+                                   start: start.lineIndex,
+                                   end: end,
+                                   fallbackSubject: parentSubject)
+            case let .quotedReply(dateText, sender):
+                let bodyStart = min(start.lineIndex + 1, end)
+                let body = lines[bodyStart..<end]
+                    .map(removingQuotePrefix)
+                    .joined(separator: "\n")
+                let snippet = cleanedSnippet(body)
+                guard !sender.isEmpty, !snippet.isEmpty else { return nil }
+                return Draft(originalMessageID: nil,
+                             subject: fallbackSubject(from: parentSubject),
+                             from: cleanedHeaderValue(sender),
+                             to: "",
+                             date: parseDate(dateText),
+                             snippet: snippet,
+                             identityContent: body)
+            }
+        }
+    }
+
+    private func collapsedBlockStarts(in lines: [String]) -> [BlockStart] {
+        var starts: [BlockStart] = []
+        for index in lines.indices {
+            if let (key, _) = parsedHeaderLine(lines[index]),
+               key == .from,
+               isStrongHeaderBlock(lines: lines, start: index) {
+                starts.append(BlockStart(lineIndex: index, kind: .headers))
+                continue
+            }
+            if let marker = quotedReplyMarker(from: lines[index]),
+               nextNonemptyLineIsQuoted(lines: lines, after: index) {
+                starts.append(BlockStart(lineIndex: index,
+                                         kind: .quotedReply(dateText: marker.dateText,
+                                                            sender: marker.sender)))
+            }
+        }
+        return starts
+    }
+
+    private func isStrongHeaderBlock(lines: [String], start: Int) -> Bool {
+        let upperBound = min(lines.count, start + 18)
+        var keys = Set<HeaderKey>()
+        var currentKey: HeaderKey?
+        for index in start..<upperBound {
+            let line = lines[index]
+            let cleaned = normalizedVisibleLine(line)
+            if cleaned.isEmpty || (index > start && isForwardingSeparator(cleaned)) {
+                break
+            }
+            if let (key, value) = parsedHeaderLine(line), !value.isEmpty {
+                keys.insert(key)
+                currentKey = key
+                if keys.contains(.from), keys.contains(.date), keys.contains(.subject) {
+                    return true
+                }
+                continue
+            }
+            guard isRecipientHeaderContinuation(line, for: currentKey) else { break }
+        }
+        return false
+    }
+
+    private func headerDraft(lines: [String],
+                             start: Int,
+                             end: Int,
+                             fallbackSubject parentSubject: String) -> Draft? {
+        var values: [HeaderKey: String] = [:]
+        var currentKey: HeaderKey?
+        var bodyStart = end
+
+        for index in start..<end {
+            let line = lines[index]
+            if let (key, value) = parsedHeaderLine(line) {
+                values[key] = [values[key], value]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                currentKey = key
+                continue
+            }
+
+            let cleaned = normalizedVisibleLine(line)
+            if cleaned.isEmpty {
+                if values[.from] != nil,
+                   values[.date] != nil,
+                   values[.subject] != nil {
+                    bodyStart = min(index + 1, end)
+                    break
+                }
+                return nil
+            }
+
+            if let currentKey,
+               isRecipientHeaderContinuation(line, for: currentKey),
+               values[.subject] == nil {
+                values[currentKey] = [values[currentKey], cleaned]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                continue
+            }
+            bodyStart = index
+            break
+        }
+
+        let from = cleanedHeaderValue(values[.from] ?? "")
+        let dateText = cleanedHeaderValue(values[.date] ?? "")
+        let parsedSubject = cleanedHeaderValue(values[.subject] ?? "")
+        guard !from.isEmpty, !dateText.isEmpty, !parsedSubject.isEmpty else { return nil }
+        let recipients = [values[.to], values[.cc]]
+            .compactMap { $0 }
+            .map(cleanedHeaderValue)
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        let body = bodyStart < end
+            ? lines[bodyStart..<end].map(removingQuotePrefix).joined(separator: "\n")
+            : ""
+        let snippet = cleanedSnippet(body)
+        let originalMessageID = cleanedHeaderValue(values[.messageID] ?? "")
+        return Draft(originalMessageID: originalMessageID.isEmpty ? nil : originalMessageID,
+                     subject: parsedSubject.isEmpty ? fallbackSubject(from: parentSubject) : parsedSubject,
+                     from: from,
+                     to: recipients,
+                     date: parseDate(dateText),
+                     snippet: snippet,
+                     identityContent: body)
+    }
+
+    private func isRecipientHeaderContinuation(_ line: String,
+                                               for key: HeaderKey?) -> Bool {
+        guard key == .to || key == .cc else { return false }
+        let value = normalizedVisibleLine(line)
+        return value.contains("@") || value.contains("mailto:") || value.contains("<")
+    }
+
+    private func parsedHeaderLine(_ line: String) -> (HeaderKey, String)? {
+        let normalized = normalizedVisibleLine(line)
+        guard let separator = normalized.firstIndex(where: { $0 == ":" || $0 == "：" }) else {
+            return nil
+        }
+        let rawKey = normalized[..<separator]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let value = normalized[normalized.index(after: separator)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let key: HeaderKey
+        switch rawKey {
+        case "from", "寄件者", "寄件人", "发件人": key = .from
+        case "date", "sent", "寄件日期", "发送时间", "寄件時間": key = .date
+        case "to", "收件者", "收件人": key = .to
+        case "cc", "副本", "抄送": key = .cc
+        case "subject", "主旨", "主题": key = .subject
+        case "message-id", "message id": key = .messageID
+        default: return nil
+        }
+        return (key, String(value))
+    }
+
+    private func normalizedVisibleLine(_ line: String) -> String {
+        removingQuotePrefix(line)
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func removingQuotePrefix(_ line: String) -> String {
+        var value = line.trimmingCharacters(in: .whitespaces)
+        while value.hasPrefix(">") {
+            value.removeFirst()
+            value = value.trimmingCharacters(in: .whitespaces)
+        }
+        return value
+    }
+
+    private func nextNonemptyLineIsQuoted(lines: [String], after index: Int) -> Bool {
+        guard index + 1 < lines.count else { return false }
+        for line in lines[(index + 1)...] {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            return trimmed.hasPrefix(">")
+        }
+        return false
+    }
+
+    private func quotedReplyMarker(from line: String) -> (dateText: String, sender: String)? {
+        let normalized = normalizedVisibleLine(line)
+        let lowered = normalized.lowercased()
+        guard lowered.hasPrefix("on "), lowered.hasSuffix(" wrote:") else { return nil }
+        let suffixStart = normalized.index(normalized.endIndex, offsetBy: -" wrote:".count)
+        let markerBody = String(normalized[normalized.index(normalized.startIndex, offsetBy: 3)..<suffixStart])
+        guard let comma = markerBody.lastIndex(of: ",") else { return nil }
+        let dateText = markerBody[..<comma].trimmingCharacters(in: .whitespacesAndNewlines)
+        let sender = markerBody[markerBody.index(after: comma)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !dateText.isEmpty, !sender.isEmpty else { return nil }
+        return (String(dateText), String(sender))
+    }
+
+    private func fallbackSubject(from parentSubject: String) -> String {
+        let stripped = parentSubject.replacingOccurrences(
+            of: "(?i)^(?:(?:re|fw|fwd|aw|sv|wg):\\s*)+",
+            with: "",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? "Quoted reply" : stripped
+    }
+
+    private func cleanedHeaderValue(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func cleanedSnippet(_ value: String) -> String {
+        let lines = normalizedLines(value)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        var start = 0
+        var end = lines.count
+        while start < end,
+              lines[start].isEmpty || isForwardingSeparator(lines[start]) {
+            start += 1
+        }
+        while end > start,
+              lines[end - 1].isEmpty || isForwardingSeparator(lines[end - 1]) {
+            end -= 1
+        }
+        guard start < end else { return "" }
+        let joined = lines[start..<end].joined(separator: "\n")
+        return String(joined.prefix(Self.maximumSnippetCharacters))
+    }
+
+    private func isForwardingSeparator(_ line: String) -> Bool {
+        let lowered = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lowered == "begin forwarded message:"
+            || (lowered.hasPrefix("--")
+                && (lowered.contains("original message") || lowered.contains("forwarded message")))
+    }
+
+    private func normalizedLines(_ value: String) -> [String] {
+        value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+    }
+
+    private func parseDate(_ value: String) -> Date? {
+        let normalized = cleanedHeaderValue(value)
+            .replacingOccurrences(of: " at ", with: " ", options: .caseInsensitive)
+        guard !normalized.isEmpty else { return nil }
+        let formats = [
+            "EEE, d MMM yyyy HH:mm:ss Z",
+            "EEE, d MMM yyyy HH:mm Z",
+            "EEEE, d MMMM yyyy h:mm a",
+            "EEEE, d MMMM yyyy HH:mm",
+            "EEEE, d MMMM, yyyy HH:mm",
+            "EEEE, MMMM d, yyyy h:mm a",
+            "EEEE, MMMM d, yyyy HH:mm",
+            "EEE, MMM d, yyyy h:mm a",
+            "MMM d, yyyy h:mm a",
+            "d MMM yyyy h:mm a",
+            "d MMM yyyy HH:mm"
+        ]
+        for format in formats {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = format
+            if let date = formatter.date(from: normalized) {
+                return date
+            }
+        }
+        return ISO8601DateFormatter().date(from: normalized)
+    }
+
+    private func contentFingerprint(for draft: Draft) -> String {
+        stableHash([
+            draft.subject,
+            draft.from,
+            draft.to,
+            draft.date.map { String($0.timeIntervalSince1970) } ?? "",
+            draft.identityContent
+        ]
+        .map { cleanedHeaderValue($0).lowercased() }
+        .joined(separator: "\n"))
+    }
+
+    private func stableHash(_ value: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
+    }
+}
+
 private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+
     var fourCharCodeValue: FourCharCode {
         var result: FourCharCode = 0
         for scalar in unicodeScalars.prefix(4) {

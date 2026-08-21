@@ -3,6 +3,19 @@ import XCTest
 
 @MainActor
 final class ThreadFolderMailboxTests: XCTestCase {
+    func testGroupingActionTerminology_hasFullCompactAndBoundaryCopy() {
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.group", comment: ""), "Join Thread")
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.group.verb", comment: ""), "Join")
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.add_folder", comment: ""), "Create Group")
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.add_folder.verb", comment: ""), "Group")
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.move_mailbox_folder", comment: ""), "Move")
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.ungroup", comment: ""), "Remove from Thread")
+        XCTAssertEqual(NSLocalizedString("threadlist.selection.ungroup.verb", comment: ""), "Remove")
+        XCTAssertTrue(NSLocalizedString("threadlist.selection.add_folder.help", comment: "")
+            .contains("Mailbox Folder"))
+        XCTAssertEqual(NSLocalizedString("mailbox.sidebar.all_folders", comment: ""), "All Groups")
+    }
+
     func testFetchThreadFolders_persistsMailboxDestination() async throws {
         let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
@@ -160,7 +173,7 @@ final class ThreadFolderMailboxTests: XCTestCase {
         XCTAssertEqual(update?.membership["manual-group"], folder.id)
     }
 
-    func testAddFolderForSelection_setsMailboxDestinationWhenSelectionMatches() async throws {
+    func testAddFolderForSelection_keepsMailboxDestinationExplicitWhenSelectionMatches() async throws {
         let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
@@ -190,6 +203,7 @@ final class ThreadFolderMailboxTests: XCTestCase {
                                     references: [],
                                     threadID: "thread-b")
 
+        try await store.upsert(messages: [messageA, messageB])
         viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: messageA), ThreadNode(message: messageB)])
         viewModel.selectNode(id: messageA.messageID)
         viewModel.selectNode(id: messageB.messageID, additive: true)
@@ -198,8 +212,41 @@ final class ThreadFolderMailboxTests: XCTestCase {
 
         let folders = try await store.fetchThreadFolders()
         XCTAssertEqual(folders.count, 1)
-        XCTAssertEqual(folders.first?.mailboxAccount, "Work")
-        XCTAssertEqual(folders.first?.mailboxPath, "Projects/Acme")
+        XCTAssertNil(folders.first?.mailboxAccount)
+        XCTAssertNil(folders.first?.mailboxPath)
+        let persistedMessages = try await store.fetchMessages()
+        XCTAssertEqual(Set(persistedMessages.map(\.mailboxID)), ["Projects/Acme"],
+                       "Create Group must not move messages in Mail or alter their cached mailbox")
+    }
+
+    func testAddFolderForSelection_supportsOneThreadWithoutMovingIt() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadFolderMailboxTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
+        let message = EmailMessage(messageID: "msg-one",
+                                   mailboxID: "Inbox",
+                                   accountName: "Work",
+                                   subject: "One thread group",
+                                   from: "a@example.com",
+                                   to: "me@example.com",
+                                   date: Date(),
+                                   snippet: "",
+                                   isUnread: false,
+                                   inReplyTo: nil,
+                                   references: [],
+                                   threadID: "thread-one")
+        try await store.upsert(messages: [message])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: message)])
+        viewModel.selectNode(id: message.messageID)
+
+        viewModel.addFolderForSelection()
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let groups = try await store.fetchThreadFolders()
+        let persistedMessages = try await store.fetchMessages()
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.threadIDs, ["thread-one"])
+        XCTAssertEqual(persistedMessages.first?.mailboxID, "Inbox")
     }
 
     func testAddFolderForSelection_leavesMailboxDestinationUnsetWhenSelectionDiffers() async throws {
@@ -290,9 +337,9 @@ final class ThreadFolderMailboxTests: XCTestCase {
         let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
         let restored = try await store.fetchThreadFolders()
 
-        XCTAssertEqual(resolution, .exact(MailboxFolderChoice(account: "Work",
-                                                              path: "Projects/Acme",
-                                                              displayPath: "Projects/Acme")))
+        XCTAssertEqual(resolution, MailboxPathResolution.exact(MailboxFolderChoice(account: "Work",
+                                                                                   path: "Projects/Acme",
+                                                                                   displayPath: "Projects/Acme")))
         XCTAssertEqual(restored.first?.mailboxPath, "Projects/Acme")
     }
 
@@ -342,9 +389,9 @@ final class ThreadFolderMailboxTests: XCTestCase {
         let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
         let restored = try await store.fetchThreadFolders()
 
-        XCTAssertEqual(resolution, .heuristic(MailboxFolderChoice(account: "Work",
-                                                                  path: "Projects/Phoenix",
-                                                                  displayPath: "Projects/Phoenix")))
+        XCTAssertEqual(resolution, MailboxPathResolution.heuristic(MailboxFolderChoice(account: "Work",
+                                                                                       path: "Projects/Phoenix",
+                                                                                       displayPath: "Projects/Phoenix")))
         XCTAssertEqual(restored.first?.mailboxPath, "Projects/Phoenix")
     }
 
@@ -353,7 +400,7 @@ final class ThreadFolderMailboxTests: XCTestCase {
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings(), store: store)
         let message = EmailMessage(messageID: "msg-a",
-                                   mailboxID: "Archive",
+                                   mailboxID: "Missing",
                                    accountName: "Work",
                                    subject: "A",
                                    from: "a@example.com",
@@ -388,7 +435,7 @@ final class ThreadFolderMailboxTests: XCTestCase {
         let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
         let restored = try await store.fetchThreadFolders()
 
-        XCTAssertEqual(resolution, .missing)
+        XCTAssertEqual(resolution, MailboxPathResolution.missing)
         XCTAssertEqual(restored.first?.mailboxPath, "Projects/Acme")
     }
 
@@ -449,7 +496,7 @@ final class ThreadFolderMailboxTests: XCTestCase {
         let resolution = await viewModel.recoverFolderDestinationForTesting(folderID: "folder-1")
         let restored = try await store.fetchThreadFolders()
 
-        XCTAssertEqual(resolution, .ambiguous)
+        XCTAssertEqual(resolution, MailboxPathResolution.ambiguous)
         XCTAssertEqual(restored.first?.mailboxPath, "Projects/Acme")
     }
 

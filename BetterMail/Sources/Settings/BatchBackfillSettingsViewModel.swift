@@ -163,17 +163,15 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    self.isRunning = false
-                    self.isStopping = false
-                    self.statusText = NSLocalizedString(self.cancelledStatusKey(for: self.currentAction),
-                                                   comment: "Status when the current batch operation is stopped")
-                    self.estimatedTimeRemainingText = nil
-                    self.errorMessage = nil
-                    self.finishCurrentActivity(state: .cancelled, detail: self.statusText)
-                    self.currentAction = nil
-                    self.runTask = nil
+                    self.finishCancelledRun()
                 }
             } catch {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        self.finishCancelledRun()
+                    }
+                    return
+                }
                 await MainActor.run {
                     self.isRunning = false
                     self.isStopping = false
@@ -234,26 +232,26 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                     self.estimatedTimeRemainingText = nil
                     self.statusText = String.localizedStringWithFormat(
                         NSLocalizedString("settings.regenai.status.finished", comment: "Status after Re-GenAI completes"),
-                        result.regenerated
+                        result.regenerated,
+                        result.graphTitlesRegenerated
                     )
                     self.finishCurrentActivity(state: .completed, detail: self.statusText)
                     self.runTask = nil
                 }
-                logger.info("RegenAI finished: regenerated=\(result.regenerated, privacy: .public) total=\(total, privacy: .public)")
+                logger.info("RegenAI finished: summaries=\(result.regenerated, privacy: .public) titles=\(result.graphTitlesRegenerated, privacy: .public) total=\(total, privacy: .public)")
             } catch is CancellationError {
                 await MainActor.run {
-                    self.isRunning = false
-                    self.isStopping = false
-                    self.statusText = NSLocalizedString(self.cancelledStatusKey(for: self.currentAction),
-                                                   comment: "Status when the current batch operation is stopped")
-                    self.estimatedTimeRemainingText = nil
-                    self.errorMessage = nil
-                    self.finishCurrentActivity(state: .cancelled, detail: self.statusText)
-                    self.currentAction = nil
-                    self.runTask = nil
+                    self.finishCancelledRun()
                 }
                 logger.info("RegenAI cancelled")
             } catch {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        self.finishCancelledRun()
+                    }
+                    logger.info("RegenAI cancelled after provider wrapped the cancellation")
+                    return
+                }
                 await MainActor.run {
                     self.isRunning = false
                     self.isStopping = false
@@ -452,6 +450,18 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         case .backfill, .none:
             return "settings.backfill.status.cancelled"
         }
+    }
+
+    private func finishCancelledRun() {
+        isRunning = false
+        isStopping = false
+        statusText = NSLocalizedString(cancelledStatusKey(for: currentAction),
+                                       comment: "Status when the current batch operation is stopped")
+        estimatedTimeRemainingText = nil
+        errorMessage = nil
+        finishCurrentActivity(state: .cancelled, detail: statusText)
+        currentAction = nil
+        runTask = nil
     }
 
     private func stoppingStatusKey(for action: Action?) -> String {

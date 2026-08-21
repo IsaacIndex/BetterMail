@@ -933,7 +933,7 @@ internal struct ThreadCanvasView: View {
                                                      summaryState: nodeData.summaryState,
                                                      tags: nodeData.tags,
                                                      isSelected: nodeData.isSelected,
-                                                     isActionItem: viewModel.actionItemIDs.contains(nodeData.node.message.messageID),
+                                                     isActionItem: viewModel.isActionItem(message: nodeData.node.message),
                                                      mailboxLabel: nodeData.mailboxLabel,
                                                      fontScale: metrics.fontScale,
                                                      readabilityMode: readabilityMode)
@@ -946,7 +946,7 @@ internal struct ThreadCanvasView: View {
                         ThreadCanvasNodeView(node: nodeData.node,
                                              summaryState: nodeData.summaryState,
                                              isSelected: nodeData.isSelected,
-                                             isActionItem: viewModel.actionItemIDs.contains(nodeData.node.message.messageID),
+                                             isActionItem: viewModel.isActionItem(message: nodeData.node.message),
                                              mailboxLabel: nodeData.mailboxLabel,
                                              fontScale: metrics.fontScale,
                                              viewMode: displaySettings.viewMode,
@@ -977,7 +977,7 @@ internal struct ThreadCanvasView: View {
                     .help("Right-click for more options")
                     .contextMenu {
                         let message = nodeData.node.message
-                        let isActionItem = viewModel.actionItemIDs.contains(message.messageID)
+                        let isActionItem = viewModel.isActionItem(message: message)
                         let folderID = viewModel.folderMembershipByThreadID[nodeData.node.threadID]
                         let tags = nodeData.tags
 
@@ -2889,9 +2889,9 @@ private struct ThreadCanvasConnectorColumn: View {
 
     private var manualConnectorColor: Color {
         if reduceTransparency {
-            return Color.red.opacity(0.68)
+            return DesignTokens.Graph.AppTheme.manualThread.opacity(0.68)
         }
-        return Color.red.opacity(0.95)
+        return DesignTokens.Graph.AppTheme.manualThread.opacity(0.95)
     }
 
     private func connectorSegments(for nodes: [ThreadCanvasNode]) -> [ConnectorSegment] {

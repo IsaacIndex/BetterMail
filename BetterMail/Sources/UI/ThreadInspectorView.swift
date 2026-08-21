@@ -87,24 +87,33 @@ internal struct ThreadInspectorView: View {
                                              isExpanded: summaryExpansion)
             }
 
-            InspectorField(label: NSLocalizedString("threadcanvas.inspector.from", comment: "From label"),
-                           value: node.message.from,
-                           textScale: textScale)
-            InspectorField(label: NSLocalizedString("threadcanvas.inspector.to", comment: "To label"),
-                           value: node.message.to,
-                           textScale: textScale)
+            InspectorAddressField(label: NSLocalizedString("threadcanvas.inspector.from", comment: "From label"),
+                                  value: node.message.from,
+                                  systemImage: "person.crop.circle",
+                                  collapsedLimit: 1,
+                                  textScale: textScale,
+                                  primaryForeground: inspectorPrimaryForegroundStyle,
+                                  secondaryForeground: inspectorSecondaryForegroundStyle,
+                                  accessibilityIdentifier: AccessibilityID.threadInspectorFromField)
+                .id("from-\(node.message.id)")
+            InspectorAddressField(label: NSLocalizedString("threadcanvas.inspector.to", comment: "To label"),
+                                  value: node.message.to,
+                                  systemImage: "person.2",
+                                  collapsedLimit: 4,
+                                  textScale: textScale,
+                                  primaryForeground: inspectorPrimaryForegroundStyle,
+                                  secondaryForeground: inspectorSecondaryForegroundStyle,
+                                  accessibilityIdentifier: AccessibilityID.threadInspectorToField)
+                .id("to-\(node.message.id)")
             InspectorField(label: NSLocalizedString("threadcanvas.inspector.date", comment: "Date label"),
                            value: Self.dateFormatter.string(from: node.message.date),
                            textScale: textScale)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("threadcanvas.inspector.snippet", comment: "Snippet label"))
-                    .font(DesignTokens.font(size: 12, textScale: textScale))
-                    .foregroundStyle(inspectorSecondaryForegroundStyle)
-                Text(snippetText(for: node))
-                    .font(DesignTokens.font(size: 13, textScale: textScale))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            InspectorEmailContent(label: NSLocalizedString("threadcanvas.inspector.snippet", comment: "Snippet label"),
+                                  content: snippetText(for: node),
+                                  textScale: textScale,
+                                  primaryForeground: inspectorPrimaryForegroundStyle,
+                                  secondaryForeground: inspectorSecondaryForegroundStyle)
 
             openInMailButton(for: node)
             openInMailStatus(for: node)
@@ -391,6 +400,298 @@ internal struct ThreadInspectorView: View {
         return Color.white.opacity(0.95)
     }
 
+}
+
+internal nonisolated struct InspectorEmailAddress: Equatable, Sendable {
+    internal let displayName: String?
+    internal let email: String?
+
+    internal var primaryText: String {
+        displayName ?? email ?? ""
+    }
+
+    internal var secondaryText: String? {
+        guard displayName != nil else { return nil }
+        return email
+    }
+
+    internal var initial: String {
+        let source = primaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return source.first.map { String($0).uppercased() } ?? "?"
+    }
+}
+
+internal nonisolated enum InspectorEmailAddressParser {
+    internal static func parse(_ headerValue: String) -> [InspectorEmailAddress] {
+        let unfolded = headerValue
+            .replacingOccurrences(of: "[\\r\\n]+[\\t ]*",
+                                  with: " ",
+                                  options: .regularExpression)
+        return splitAddressTokens(unfolded).compactMap(parseToken)
+    }
+
+    private static func splitAddressTokens(_ value: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var isQuoted = false
+        var isEscaped = false
+        var angleDepth = 0
+
+        for character in value {
+            if isEscaped {
+                current.append(character)
+                isEscaped = false
+                continue
+            }
+            if character == "\\", isQuoted {
+                current.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "\"" {
+                isQuoted.toggle()
+                current.append(character)
+                continue
+            }
+            if !isQuoted {
+                if character == "<" {
+                    angleDepth += 1
+                } else if character == ">", angleDepth > 0 {
+                    angleDepth -= 1
+                } else if (character == "," || character == ";"), angleDepth == 0 {
+                    appendToken(current, to: &tokens)
+                    current = ""
+                    continue
+                }
+            }
+            current.append(character)
+        }
+        appendToken(current, to: &tokens)
+        return tokens
+    }
+
+    private static func appendToken(_ token: String, to tokens: inout [String]) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            tokens.append(trimmed)
+        }
+    }
+
+    private static func parseToken(_ rawToken: String) -> InspectorEmailAddress? {
+        let token = removingGroupPrefix(from: rawToken)
+        guard !token.isEmpty else { return nil }
+
+        if let open = token.firstIndex(of: "<"),
+           let close = token.lastIndex(of: ">"),
+           open < close {
+            let name = normalizedDisplayName(String(token[..<open]))
+            let emailStart = token.index(after: open)
+            let email = normalizedEmail(String(token[emailStart..<close]))
+            guard name != nil || email != nil else { return nil }
+            return InspectorEmailAddress(displayName: name, email: email)
+        }
+
+        if token.contains("@") {
+            return InspectorEmailAddress(displayName: nil,
+                                         email: normalizedEmail(token))
+        }
+        return InspectorEmailAddress(displayName: normalizedDisplayName(token),
+                                     email: nil)
+    }
+
+    private static func removingGroupPrefix(from rawToken: String) -> String {
+        let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let colon = token.firstIndex(of: ":") else { return token }
+        let prefix = token[..<colon]
+        let suffix = token[token.index(after: colon)...]
+        guard !prefix.contains("@"), suffix.contains("@") else { return token }
+        return suffix.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizedDisplayName(_ value: String) -> String? {
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.hasPrefix("\""), normalized.hasSuffix("\""), normalized.count >= 2 {
+            normalized.removeFirst()
+            normalized.removeLast()
+        }
+        normalized = normalized
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private static func normalizedEmail(_ value: String) -> String? {
+        let normalized = value
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines
+                .union(CharacterSet(charactersIn: "<>")))
+            .replacingOccurrences(of: "mailto:", with: "", options: [.caseInsensitive, .anchored])
+        return normalized.isEmpty ? nil : normalized
+    }
+}
+
+private struct InspectorAddressField: View {
+    let label: String
+    let value: String
+    let systemImage: String
+    let collapsedLimit: Int
+    let textScale: CGFloat
+    let primaryForeground: Color
+    let secondaryForeground: Color
+    let accessibilityIdentifier: String
+
+    @State private var isExpanded = false
+
+    private var addresses: [InspectorEmailAddress] {
+        InspectorEmailAddressParser.parse(value)
+    }
+
+    private var visibleAddresses: [InspectorEmailAddress] {
+        isExpanded ? addresses : Array(addresses.prefix(max(collapsedLimit, 1)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Label(label, systemImage: systemImage)
+                    .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
+                    .foregroundStyle(secondaryForeground)
+                Spacer(minLength: 0)
+                if addresses.count > 1 {
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("threadcanvas.inspector.address.count",
+                                          comment: "Recipient count in an inspector address field"),
+                        addresses.count
+                    ))
+                    .font(DesignTokens.font(size: 10, weight: .medium, textScale: textScale))
+                    .foregroundStyle(secondaryForeground)
+                }
+            }
+
+            if addresses.isEmpty {
+                Text(NSLocalizedString("threadcanvas.inspector.address.empty",
+                                       comment: "Placeholder for an empty sender or recipient field"))
+                    .font(DesignTokens.font(size: 12, textScale: textScale))
+                    .foregroundStyle(secondaryForeground)
+            } else {
+                ForEach(Array(visibleAddresses.enumerated()), id: \.offset) { _, address in
+                    InspectorAddressRow(address: address,
+                                        textScale: textScale,
+                                        primaryForeground: primaryForeground,
+                                        secondaryForeground: secondaryForeground)
+                }
+
+                if addresses.count > max(collapsedLimit, 1) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        Label(expansionButtonTitle,
+                              systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(DesignTokens.font(size: 11, weight: .medium, textScale: textScale))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(inspectorCardBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var expansionButtonTitle: String {
+        if isExpanded {
+            return NSLocalizedString("threadcanvas.inspector.address.show_less",
+                                     comment: "Button that collapses a recipient list")
+        }
+        let remainingCount = max(addresses.count - max(collapsedLimit, 1), 0)
+        return String.localizedStringWithFormat(
+            NSLocalizedString("threadcanvas.inspector.address.show_more",
+                              comment: "Button that expands a recipient list"),
+            remainingCount
+        )
+    }
+
+    private var inspectorCardBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
+        return shape
+            .fill(Color.primary.opacity(0.035))
+            .overlay(shape.stroke(Color.secondary.opacity(0.16)))
+    }
+}
+
+private struct InspectorAddressRow: View {
+    let address: InspectorEmailAddress
+    let textScale: CGFloat
+    let primaryForeground: Color
+    let secondaryForeground: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(address.initial)
+                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor.opacity(0.12), in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: address.primaryText)
+                    .font(DesignTokens.font(size: 12,
+                                            weight: address.secondaryText == nil ? .regular : .semibold,
+                                            textScale: textScale))
+                    .foregroundStyle(primaryForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let secondaryText = address.secondaryText {
+                    Text(verbatim: secondaryText)
+                        .font(DesignTokens.font(size: 11, textScale: textScale))
+                        .foregroundStyle(secondaryForeground)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct InspectorEmailContent: View {
+    let label: String
+    let content: String
+    let textScale: CGFloat
+    let primaryForeground: Color
+    let secondaryForeground: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(label, systemImage: "doc.plaintext")
+                .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
+                .foregroundStyle(secondaryForeground)
+            Text(verbatim: content)
+                .font(DesignTokens.font(size: 13, textScale: textScale))
+                .foregroundStyle(primaryForeground)
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(inspectorCardBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(AccessibilityID.threadInspectorEmailContent)
+    }
+
+    private var inspectorCardBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.card, style: .continuous)
+        return shape
+            .fill(Color.primary.opacity(0.035))
+            .overlay(shape.stroke(Color.secondary.opacity(0.16)))
+    }
 }
 
 private struct InspectorField: View {

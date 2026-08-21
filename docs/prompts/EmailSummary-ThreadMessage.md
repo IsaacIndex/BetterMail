@@ -1,42 +1,40 @@
 # Prompt: Thread Message Summary
 
 ## Use Case
-Summarizes a single email message, focusing on what it adds or changes relative to prior messages in the thread.
+Summarizes one email's own content while using its effective conversation to clarify references, without attributing neighbouring content to that email.
 
 ## Inputs and Preprocessing
-- Inputs: subject, body, prior message summaries.
+- Inputs: subject, body, chronological position/total, immediate previous email, and immediate next email.
 - Preprocessing:
   - Trim subject and body.
   - If subject is empty, use "No subject".
   - If body is empty, use "No body content available.".
-  - Prior messages: include up to 10 entries.
-  - If no prior messages, use "None".
+  - Label each available adjacency as `automatic email reply` or `manual thread link`.
+  - Use `None` when an immediate neighbour does not exist.
 
 ## Prompt Template
 ```text
-Transform this email into one or two concise sentences.
-Use only the provided text; do not add new facts or assumptions.
-Focus on what is new compared to the prior messages listed.
-Keep the tone professional and actionable.
+Summarize the content of the CURRENT email. Use its thread position and
+immediate neighbours only to clarify references and what is new in this email.
 
-Email subject:
-<subject>
+Current email position: <position> of <total>
+Subject: <subject>
+Body: <body>
 
-Email body excerpt:
-<body>
+Immediate previous email:
+<subject> — <snippet> [<relationship>]
 
-Prior messages in this thread:
-1. <subject> — <snippet>
-2. <subject> — <snippet>
-...
+Immediate next email:
+<subject> — <snippet> [<relationship>]
 ```
 
 ## System Instructions
 ```text
-You are an organized executive assistant reviewing an email.
-Transform the provided email content into a concise summary of what this message adds or changes relative to the prior context.
-Do not introduce any details that are not present in the input.
-Avoid bullet lists; use one or two short sentences.
+You are an executive assistant reviewing a user's email thread.
+Summarize the current email's information, request, decision, answer,
+confirmation, or action. Use its immediate neighbours only to clarify context.
+Never attribute a neighbour's claims, decisions, or actions to the current email.
+Use only the supplied text, avoid speculation, and output one or two plain-text sentences.
 ```
 
 ## Generation Options
@@ -46,10 +44,13 @@ Avoid bullet lists; use one or two short sentences.
 ## Output Expectations
 - One or two concise sentences.
 - Professional, actionable tone.
-- Focuses on new information vs. prior context.
+- Focuses on the current email's information, request, decision, answer, confirmation, or action.
+- Mentions its conversational relationship only when that clarifies the email's own content.
+- Treats both neighbours as context only.
 - No bullet lists.
 
 ## Injection Notes
 - `<subject>` is injected from the cleaned subject string (or `No subject`).
 - `<body>` is injected from the cleaned body excerpt (or `No body content available.`).
-- `Prior messages in this thread` is injected from up to 10 prior entries (or `None`).
+- `<position>` and `<total>` come from the complete effective thread.
+- Each neighbour is the one chronologically adjacent message, with provenance derived from JWZ/manual membership.

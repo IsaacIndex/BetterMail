@@ -5,7 +5,6 @@ import SwiftUI
 /// honor against its existing graph projection.
 internal struct ObsidianGraphControls: View {
     @ObservedObject internal var settings: GraphCanvasSettings
-    @Binding internal var searchQuery: String
     internal let data: GraphData
     internal let textScale: CGFloat
 
@@ -53,7 +52,7 @@ internal struct ObsidianGraphControls: View {
                 .frame(maxHeight: 500)
             }
         }
-        .frame(width: isCollapsed ? 196 : 276)
+        .frame(width: 196)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(DesignTokens.Graph.AppTheme.panel.opacity(0.96))
@@ -103,10 +102,6 @@ internal struct ObsidianGraphControls: View {
 
     private var filters: some View {
         VStack(alignment: .leading, spacing: 9) {
-            TextField(NSLocalizedString("graph.controls.search", comment: "Graph filter search field"),
-                      text: $searchQuery)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier(AccessibilityID.graphControlsSearch)
             Stepper(value: $settings.visibleBranchCount,
                     in: GraphCanvasSettings.visibleBranchCountRange) {
                 HStack {
@@ -131,6 +126,18 @@ internal struct ObsidianGraphControls: View {
             .font(.caption)
             .help(NSLocalizedString("graph.settings.visible_branches_per_node.help",
                                     comment: "Help for the per-node graph branch limit"))
+            Stepper(value: $settings.visibleEmailsPerThread,
+                    in: GraphCanvasSettings.visibleEmailsPerThreadRange) {
+                HStack {
+                    Text(NSLocalizedString("graph.settings.visible_emails_per_thread",
+                                           comment: "Number of email nodes shown per thread page"))
+                    Spacer()
+                    valueText("\(settings.visibleEmailsPerThread)")
+                }
+            }
+            .font(.caption)
+            .help(NSLocalizedString("graph.settings.visible_emails_per_thread.help",
+                                    comment: "Help for the per-thread email node limit"))
         }
     }
 

@@ -42,9 +42,7 @@ internal struct ThreadListView: View {
     @State private var selectedDayFetch: DayFetchSelection?
     @State private var isInspectorVisible = false
     @State private var isShowingMailboxMoveSheet = false
-    @State private var isSearchFieldVisible = false
     @FocusState private var isSearchFieldFocused: Bool
-    @State private var searchEscapeMonitor: Any?
 
     private let navCornerRadius: CGFloat = 18
     private let navHorizontalPadding: CGFloat = 16
@@ -70,8 +68,8 @@ internal struct ThreadListView: View {
             .onKeyPress("-") { handleGraphKey(.zoomOut) }
             .onKeyPress("0") { handleGraphKey(.reset) }
             .onKeyPress(.escape) {
-                if isSearchFieldVisible {
-                    hideSearchField()
+                if isSearchFieldFocused {
+                    handleSearchEscape()
                     return .handled
                 }
                 // The allocation sheet owns Escape while it is presented. Its
@@ -87,10 +85,6 @@ internal struct ThreadListView: View {
             }
             .onAppear {
                 isInspectorVisible = viewModel.selectedNodeID != nil || viewModel.selectedFolderID != nil
-                installSearchEscapeMonitor()
-            }
-            .onDisappear {
-                removeSearchEscapeMonitor()
             }
             .onChange(of: viewModel.selectedNodeID) { _, newValue in
                 withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
@@ -107,13 +101,6 @@ internal struct ThreadListView: View {
             }
             .onChange(of: settings.interval) { _, _ in
                 viewModel.applyAutoRefreshSettings()
-            }
-            .onChange(of: isSearchFieldVisible) { _, isVisible in
-                if isVisible {
-                    focusSearchFieldSoon()
-                } else {
-                    isSearchFieldFocused = false
-                }
             }
             .sheet(isPresented: $isShowingBackfillConfirmation) {
                 BackfillConfirmationSheet(
@@ -137,6 +124,10 @@ internal struct ThreadListView: View {
             .sheet(isPresented: $isShowingMailboxMoveSheet) {
                 MailboxFolderMoveSheet(viewModel: viewModel)
                     .frame(minWidth: 440, minHeight: 390)
+            }
+            .sheet(isPresented: $viewModel.isGraphAutomationPresented) {
+                GraphAutomationQueueSheet(coordinator: viewModel.graphAutomationCoordinator,
+                                          folders: viewModel.threadFolders)
             }
     }
 
@@ -186,6 +177,7 @@ internal struct ThreadListView: View {
             if graphSettings.mode == .graph {
                 GraphCanvasView(threadViewModel: viewModel,
                                 graphViewModel: graphViewModel,
+                                automationCoordinator: viewModel.graphAutomationCoordinator,
                                 graphSettings: graphSettings,
                                 displaySettings: displaySettings,
                                 topInset: canvasTopPadding,
@@ -346,19 +338,16 @@ internal struct ThreadListView: View {
             ViewThatFits(in: .horizontal) {
                 wideNavigationRow
                 compactNavigationRows
+                narrowNavigationRows
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             if let errorMessage = viewModel.errorMessage {
                 errorBanner(message: errorMessage)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(navPrimaryForegroundStyle)
-        .shadow(color: Color.black.opacity(isGlassNavEnabled ? (colorScheme == .light ? 0.18 : 0.45) : 0),
-                radius: 1.5,
-                x: 0,
-                y: 1)
         .background(navBackground)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -372,15 +361,16 @@ internal struct ThreadListView: View {
                     .preference(key: NavHeightPreferenceKey.self, value: proxy.size.height)
             }
         )
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.threadListNavigationBar)
         .accessibilityLabel(NSLocalizedString("accessibility.threadlist.navbar.label",
                                               comment: "Accessibility label for the thread list navigation bar"))
     }
 
     private var wideNavigationRow: some View {
-        HStack {
+        HStack(spacing: 8) {
             navigationStatusBlock
-            Spacer()
+            Spacer(minLength: 12)
             canvasViewModeSegmentedControl
             if isThreadCanvasSelected {
                 zoomControls
@@ -393,19 +383,38 @@ internal struct ThreadListView: View {
 
     private var compactNavigationRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
                 navigationStatusBlock
-                Spacer()
+                Spacer(minLength: 12)
                 coverageCalendarButton
                 refreshButton
             }
-            HStack {
+            HStack(spacing: 8) {
                 canvasViewModeSegmentedControl
                 if isThreadCanvasSelected {
                     zoomControls
                 }
                 Spacer(minLength: 8)
                 searchBar
+            }
+        }
+    }
+
+    private var narrowNavigationRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            navigationStatusBlock
+            HStack(spacing: 8) {
+                canvasViewModeSegmentedControl
+                if isThreadCanvasSelected {
+                    zoomControls
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                searchBar
+                Spacer(minLength: 0)
+                coverageCalendarButton
+                refreshButton
             }
         }
     }
@@ -445,150 +454,144 @@ internal struct ThreadListView: View {
         .background(Color.red.opacity(0.85))
     }
 
-
-    @ViewBuilder
     private var searchBar: some View {
-        HStack(spacing: 4) {
-            Button {
-                toggleSearchField()
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
-                                            weight: .medium,
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
+                                        weight: .medium,
+                                        textScale: displaySettings.textScale))
+                .foregroundStyle(isSearchFieldFocused ? Color.accentColor : navSecondaryForegroundStyle)
+                .accessibilityHidden(true)
+
+            searchFieldControl
+
+            if let count = currentSearchResultCount {
+                Text("\(count)")
+                    .font(DesignTokens.font(size: 10,
+                                            weight: .semibold,
                                             textScale: displaySettings.textScale))
+                    .monospacedDigit()
+                    .foregroundStyle(navSecondaryForegroundStyle)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(navSecondaryForegroundStyle.opacity(0.1))
+                    )
+                    .accessibilityLabel(String.localizedStringWithFormat(
+                        NSLocalizedString("accessibility.threadlist.search.results",
+                                          comment: "Accessibility label for the thread search result count"),
+                        count
+                    ))
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
-            .buttonStyle(.borderless)
-            .help(NSLocalizedString("threadlist.search.help", comment: "Tooltip for showing or hiding thread search"))
-            .accessibilityIdentifier(AccessibilityID.searchButton)
-            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.button",
-                                                  comment: "Accessibility label for the thread search button"))
-            .accessibilityHint(NSLocalizedString("accessibility.threadlist.search.hint",
-                                                comment: "Accessibility hint for the thread search button"))
 
-            if isSearchFieldVisible {
-                searchFieldControl
-
-                if let count = viewModel.searchResultCount {
-                    Text("\(count)")
-                        .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
-                                                textScale: displaySettings.textScale))
-                        .foregroundStyle(navSecondaryForegroundStyle)
-                        .transition(.opacity)
-                }
-
+            if !trimmedSearchQuery.isEmpty {
+                searchClearButton
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
+        .padding(.horizontal, 9)
+        .frame(minWidth: 190, idealWidth: 220, maxWidth: 260, minHeight: 30)
+        .background(topBarControlSurface(isActive: isSearchFieldFocused))
+        .animation(.easeOut(duration: 0.14), value: currentSearchResultCount)
+        .animation(.easeOut(duration: 0.14), value: trimmedSearchQuery.isEmpty)
     }
 
     private var searchFieldControl: some View {
         TextField(NSLocalizedString("threadlist.search.placeholder",
                                     comment: "Thread search field placeholder"),
                   text: $viewModel.searchQuery)
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.plain)
             .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
                                     textScale: displaySettings.textScale))
-            .frame(width: 156)
-            .overlay(alignment: .trailing) {
-                searchClearButton
-                    .padding(.trailing, 6)
-            }
+            .foregroundStyle(navPrimaryForegroundStyle)
             .focused($isSearchFieldFocused)
             .onKeyPress(.escape) {
-                hideSearchField()
+                handleSearchEscape()
                 return .handled
             }
             .accessibilityIdentifier(AccessibilityID.searchField)
             .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.field",
                                                   comment: "Accessibility label for the thread search field"))
-            .onAppear {
-                focusSearchFieldSoon()
-            }
-            .transition(.move(edge: .trailing).combined(with: .opacity))
+            .accessibilityHint(NSLocalizedString("accessibility.threadlist.search.field.hint",
+                                                comment: "Accessibility hint for the persistent thread search field"))
     }
 
     private var searchClearButton: some View {
         Button {
-            if viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                hideSearchField()
-            } else {
-                viewModel.searchQuery = ""
-                focusSearchFieldSoon()
-            }
+            viewModel.searchQuery = ""
+            isSearchFieldFocused = true
         } label: {
-            Image(systemName: viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                  ? "xmark"
-                  : "xmark.circle.fill")
-            .font(DesignTokens.font(size: DesignTokens.FontSize.caption,
+            Image(systemName: "xmark.circle.fill")
+            .font(DesignTokens.font(size: DesignTokens.FontSize.bodySecondary,
                                     weight: .medium,
                                     textScale: displaySettings.textScale))
+            .foregroundStyle(navSecondaryForegroundStyle)
+            .frame(width: 18, height: 18)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              ? NSLocalizedString("threadlist.search.close", comment: "Tooltip for closing search")
-              : NSLocalizedString("threadlist.search.clear", comment: "Tooltip for clearing search"))
-        .accessibilityLabel(viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? NSLocalizedString("accessibility.threadlist.search.close",
-                                                comment: "Accessibility label for closing search")
-                            : NSLocalizedString("accessibility.threadlist.search.clear",
-                                                comment: "Accessibility label for clearing search"))
+        .help(NSLocalizedString("threadlist.search.clear", comment: "Tooltip for clearing search"))
+        .accessibilityLabel(NSLocalizedString("accessibility.threadlist.search.clear",
+                                              comment: "Accessibility label for clearing search"))
     }
 
-    private func toggleSearchField() {
-        if isSearchFieldVisible {
-            hideSearchField()
-        } else {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isSearchFieldVisible = true
-            }
+    private var trimmedSearchQuery: String {
+        viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var currentSearchResultCount: Int? {
+        switch selectedCanvasViewMode {
+        case .default, .timeline:
+            return viewModel.searchResultCount
+        case .graph:
+            return graphViewModel.searchResultCount
         }
     }
 
-    private func hideSearchField() {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            isSearchFieldVisible = false
+    private func handleSearchEscape() {
+        if trimmedSearchQuery.isEmpty {
+            isSearchFieldFocused = false
+        } else {
             viewModel.searchQuery = ""
         }
     }
 
-    private func focusSearchFieldSoon() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            isSearchFieldFocused = true
-        }
-    }
-
-    private func installSearchEscapeMonitor() {
-        guard searchEscapeMonitor == nil else { return }
-
-        searchEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53, isSearchFieldVisible {
-                hideSearchField()
-                return nil
-            }
-            return event
-        }
-    }
-
-    private func removeSearchEscapeMonitor() {
-        if let monitor = searchEscapeMonitor {
-            NSEvent.removeMonitor(monitor)
-            searchEscapeMonitor = nil
-        }
+    private func topBarControlSurface(isActive: Bool = false,
+                                      cornerRadius: CGFloat = 9) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(isActive
+                  ? Color.accentColor.opacity(colorScheme == .dark ? 0.18 : 0.1)
+                  : navSecondaryForegroundStyle.opacity(isGlassNavEnabled ? 0.09 : 0.07))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(isActive
+                            ? Color.accentColor.opacity(0.42)
+                            : navSecondaryForegroundStyle.opacity(0.16),
+                            lineWidth: 1)
+            )
     }
 
     private var zoomControls: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Text(zoomPercentText)
                 .font(DesignTokens.font(size: 11, weight: .medium, textScale: displaySettings.textScale))
                 .foregroundStyle(navSecondaryForegroundStyle)
-                .frame(minWidth: 38, alignment: .trailing)
+                .monospacedDigit()
+                .frame(width: 42, alignment: .trailing)
+                .padding(.leading, 2)
 
             Button {
                 displaySettings.requestFitVisibleContent()
             } label: {
                 Image(systemName: "viewfinder")
                     .font(DesignTokens.font(size: 12, weight: .semibold, textScale: displaySettings.textScale))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
             .help(NSLocalizedString("threadlist.zoom.fit.help", comment: "Tooltip for fitting visible thread canvas content"))
             .accessibilityIdentifier(AccessibilityID.zoomFitButton)
             .accessibilityLabel(NSLocalizedString("accessibility.threadlist.zoom.fit",
@@ -601,8 +604,11 @@ internal struct ThreadListView: View {
             } label: {
                 Image(systemName: "arrow.counterclockwise")
                     .font(DesignTokens.font(size: 12, weight: .semibold, textScale: displaySettings.textScale))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
             .help(NSLocalizedString("threadlist.zoom.reset.help", comment: "Tooltip for resetting thread canvas zoom"))
             .accessibilityIdentifier(AccessibilityID.zoomResetButton)
             .accessibilityLabel(NSLocalizedString("accessibility.threadlist.zoom.reset",
@@ -610,12 +616,9 @@ internal struct ThreadListView: View {
             .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.reset.hint",
                                                 comment: "Accessibility hint for the reset zoom button"))
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(navSecondaryForegroundStyle.opacity(isGlassNavEnabled ? 0.08 : 0.06))
-        )
+        .padding(2)
+        .frame(height: 30)
+        .background(topBarControlSurface())
     }
 
     private var zoomPercentText: String {
@@ -629,40 +632,36 @@ internal struct ThreadListView: View {
     private var canvasViewModeSegmentedControl: some View {
         HStack(spacing: 2) {
             ForEach(ThreadListCanvasViewMode.allCases) { mode in
+                let isSelected = selectedCanvasViewMode == mode
                 Button {
                     transitionCanvasViewMode(to: mode)
                 } label: {
                     Text(mode.localizedTitle)
                         .font(DesignTokens.font(size: 12,
-                                                weight: selectedCanvasViewMode == mode ? .semibold : .medium,
+                                                weight: isSelected ? .semibold : .medium,
                                                 textScale: displaySettings.textScale))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .foregroundStyle(selectedCanvasViewMode == mode ? DesignTokens.Graph.ink : navSecondaryForegroundStyle)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 26)
+                        .foregroundStyle(isSelected ? Color.accentColor : navSecondaryForegroundStyle)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(selectedCanvasViewMode == mode ? DesignTokens.Graph.panel : Color.clear)
-                                .shadow(color: Color.black.opacity(selectedCanvasViewMode == mode ? 0.08 : 0),
-                                        radius: 1,
-                                        x: 0,
-                                        y: 1)
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(isSelected
+                                      ? Color.accentColor.opacity(colorScheme == .dark ? 0.2 : 0.11)
+                                      : Color.clear)
                         )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .accessibilityIdentifier(AccessibilityID.canvasViewModeSegment(mode.rawValue))
                 .accessibilityLabel(mode.localizedTitle)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(2)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DesignTokens.Graph.panelSecondary)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DesignTokens.Graph.line, lineWidth: 1)
-        )
+        .frame(height: 30)
+        .background(topBarControlSurface())
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.canvasViewModeControl)
         .accessibilityLabel(NSLocalizedString("accessibility.threadlist.canvasviewmode.control",
                                               comment: "Accessibility label for canvas view mode picker"))
@@ -729,27 +728,39 @@ internal struct ThreadListView: View {
     private var refreshTimingView: some View {
         VStack(alignment: .leading, spacing: 2) {
             if let lastRefreshDate = viewModel.lastRefreshDate {
-                Text("Last updated: \(lastRefreshDate.formatted(date: .numeric, time: .shortened))")
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("threadlist.refresh.last_updated",
+                                      comment: "Last refresh timestamp in the thread list navigation bar"),
+                    lastRefreshDate.formatted(date: .numeric, time: .shortened)
+                ))
                     .font(DesignTokens.font(size: 11, textScale: displaySettings.textScale))
                     .foregroundStyle(navSecondaryForegroundStyle)
             }
             if settings.isEnabled, let nextRefreshDate = viewModel.nextRefreshDate {
-                Text("Next refresh: \(nextRefreshDate.formatted(date: .numeric, time: .shortened))")
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("threadlist.refresh.next_refresh",
+                                      comment: "Next refresh timestamp in the thread list navigation bar"),
+                    nextRefreshDate.formatted(date: .numeric, time: .shortened)
+                ))
                     .font(DesignTokens.font(size: 11, textScale: displaySettings.textScale))
                     .foregroundStyle(navSecondaryForegroundStyle)
             }
         }
     }
 
-    @ViewBuilder
     private var coverageCalendarButton: some View {
-        let button = Button {
+        Button {
             isShowingCoverageCalendar.toggle()
         } label: {
-            Label(NSLocalizedString("dayfetch.calendar.button",
-                                    comment: "Open day coverage calendar button"),
-                  systemImage: "calendar.badge.exclamationmark")
+            topBarActionLabel(
+                title: NSLocalizedString("dayfetch.calendar.button",
+                                         comment: "Open day coverage calendar button"),
+                systemImage: "calendar.badge.exclamationmark",
+                isActive: isShowingCoverageCalendar
+            )
         }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
         .popover(isPresented: $isShowingCoverageCalendar, arrowEdge: .bottom) {
             DayCoverageCalendarView(scope: viewModel.activeDayFetchScope,
                                     coverages: viewModel.dayFetchCoverages,
@@ -761,32 +772,71 @@ internal struct ThreadListView: View {
         .accessibilityIdentifier(AccessibilityID.dayCoverageCalendarButton)
         .accessibilityHint(NSLocalizedString("dayfetch.calendar.button.hint",
                                             comment: "Coverage calendar button accessibility hint"))
-
-        if #available(macOS 26, *) {
-            button.buttonStyle(.glass)
-        } else {
-            button
-        }
     }
 
-    @ViewBuilder
     private var refreshButton: some View {
-        let button = Button(action: {
+        Button(action: {
             viewModel.refreshMailboxHierarchy(force: true)
             viewModel.refreshNow()
         }) {
-            Label("Refresh", systemImage: "arrow.clockwise")
+            HStack(spacing: 6) {
+                if isTopBarRefreshRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(DesignTokens.font(size: 12,
+                                                weight: .semibold,
+                                                textScale: displaySettings.textScale))
+                        .frame(width: 14, height: 14)
+                }
+                Text(NSLocalizedString("threadlist.refresh.button", comment: "Refresh threads button title"))
+                    .font(DesignTokens.font(size: 12,
+                                            weight: .semibold,
+                                            textScale: displaySettings.textScale))
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 30)
+            .background(topBarControlSurface())
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
-        .disabled(viewModel.isAnyRefreshRunning)
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .disabled(isTopBarRefreshRunning)
         .accessibilityIdentifier(AccessibilityID.refreshButton)
+        .accessibilityLabel(isTopBarRefreshRunning
+                            ? NSLocalizedString("refresh.status.refreshing",
+                                                comment: "Status while refresh is running")
+                            : NSLocalizedString("threadlist.refresh.button",
+                                                comment: "Refresh threads button title"))
         .accessibilityHint(NSLocalizedString("accessibility.threadlist.refresh.hint",
                                             comment: "Accessibility hint for the refresh button"))
+    }
 
-        if #available(macOS 26, *) {
-            button.buttonStyle(.glass)
-        } else {
-            button
+    private var isTopBarRefreshRunning: Bool {
+        viewModel.isAnyRefreshRunning || viewModel.isMailboxHierarchyLoading
+    }
+
+    private func topBarActionLabel(title: String,
+                                   systemImage: String,
+                                   isActive: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(DesignTokens.font(size: 12,
+                                        weight: .semibold,
+                                        textScale: displaySettings.textScale))
+                .frame(width: 14, height: 14)
+            Text(title)
+                .font(DesignTokens.font(size: 12,
+                                        weight: .semibold,
+                                        textScale: displaySettings.textScale))
         }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 30)
+        .foregroundStyle(isActive ? Color.accentColor : navPrimaryForegroundStyle)
+        .background(topBarControlSurface(isActive: isActive))
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var navBackground: some View {
@@ -795,8 +845,8 @@ internal struct ThreadListView: View {
             fillOpacity: DesignTokens.Opacity.fill(for: colorScheme),
             strokeOpacity: DesignTokens.Opacity.stroke(for: colorScheme),
             shadowOpacity: DesignTokens.Opacity.shadow(for: colorScheme),
-            shadowRadius: 16,
-            shadowY: 8,
+            shadowRadius: 12,
+            shadowY: 5,
             tintOpacity: DesignTokens.Opacity.tint(for: colorScheme),
             isInteractive: true
         )
@@ -808,79 +858,9 @@ internal struct ThreadListView: View {
                 Group {
                     VStack(alignment: .leading, spacing: 0) {
                         if viewModel.shouldShowSelectionActions {
-                            HStack(spacing: 12) {
-                                if viewModel.isMailboxActionRunning {
-                                    HStack(spacing: 6) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                        Text(viewModel.mailboxActionProgressMessage ??
-                                             NSLocalizedString("mailbox.action.progress.move",
-                                                               comment: "Status while moving messages to mailbox folder"))
-                                            .font(.caption)
-                                            .foregroundStyle(navSecondaryForegroundStyle)
-                                    }
-                                }
-                                Text(String.localizedStringWithFormat(
-                                    NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
-                                    viewModel.selectedNodeIDs.count
-                                ))
-                                .font(.caption)
-                                .foregroundStyle(navSecondaryForegroundStyle)
-                                Button(action: { viewModel.groupSelectedMessages() }) {
-                                    actionBarButtonLabel(
-                                        systemImage: "link",
-                                        verbKey: "threadlist.selection.group.verb",
-                                        accessibilityKey: "threadlist.selection.group"
-                                    )
-                                }
-                                .disabled(!viewModel.canGroupSelection)
-                                .help(NSLocalizedString("threadlist.selection.group", comment: "Group selection button"))
-                                .accessibilityIdentifier(AccessibilityID.selectionAction("group"))
-                                Button(action: { viewModel.addFolderForSelection() }) {
-                                    actionBarButtonLabel(
-                                        systemImage: "folder",
-                                        verbKey: "threadlist.selection.add_folder.verb",
-                                        accessibilityKey: "threadlist.selection.add_folder"
-                                    )
-                                }
-                                .disabled(viewModel.selectedNodeIDs.isEmpty)
-                                .help(NSLocalizedString("threadlist.selection.add_folder", comment: "Add folder selection button"))
-                                .accessibilityIdentifier(AccessibilityID.selectionAction("add-thread-folder"))
-                                Button(action: { isShowingMailboxMoveSheet = true }) {
-                                    actionBarButtonLabel(
-                                        systemImage: "folder.badge.plus",
-                                        verbKey: "threadlist.selection.move_mailbox_folder.verb",
-                                        accessibilityKey: "threadlist.selection.move_mailbox_folder"
-                                    )
-                                }
-                                .disabled(!viewModel.canMoveSelectionToMailboxFolder || viewModel.isMailboxActionRunning)
-                                .help(viewModel.mailboxActionDisabledReason ??
-                                      NSLocalizedString("threadlist.selection.move_mailbox_folder",
-                                                        comment: "Move selected nodes to mailbox folder button"))
-                                .accessibilityIdentifier(AccessibilityID.selectionAction("move-mailbox-folder"))
-                                Button(action: { viewModel.ungroupSelectedMessages() }) {
-                                    actionBarButtonLabel(
-                                        systemImage: "personalhotspot.slash",
-                                        verbKey: "threadlist.selection.ungroup.verb",
-                                        accessibilityKey: "threadlist.selection.ungroup"
-                                    )
-                                }
-                                .disabled(!viewModel.canUngroupSelection)
-                                .help(NSLocalizedString("threadlist.selection.ungroup", comment: "Ungroup selection button"))
-                                .accessibilityIdentifier(AccessibilityID.selectionAction("ungroup"))
-                                if shouldShowBackfillAction {
-                                    Button(action: { presentBackfillConfirmation() }) {
-                                        actionBarButtonLabel(
-                                            systemImage: "tray.and.arrow.down",
-                                            verbKey: "threadlist.backfill.button.verb",
-                                            accessibilityKey: "threadlist.backfill.button"
-                                        )
-                                    }
-                                    .disabled(viewModel.isBackfilling)
-                                    .help(NSLocalizedString("threadlist.backfill.button",
-                                                            comment: "Backfill visible days button"))
-                                    .accessibilityIdentifier(AccessibilityID.backfillButton)
-                                }
+                            ViewThatFits(in: .horizontal) {
+                                selectionActionsRow(compact: false)
+                                selectionActionsRow(compact: true)
                             }
                         } else {
                             HStack(spacing: 12) {
@@ -888,8 +868,9 @@ internal struct ThreadListView: View {
                                     Button(action: { presentBackfillConfirmation() }) {
                                         actionBarButtonLabel(
                                             systemImage: "tray.and.arrow.down",
-                                            verbKey: "threadlist.backfill.button.verb",
-                                            accessibilityKey: "threadlist.backfill.button"
+                                            fullKey: "threadlist.backfill.button",
+                                            compactKey: "threadlist.backfill.button.verb",
+                                            compact: false
                                         )
                                     }
                                     .disabled(viewModel.isBackfilling)
@@ -915,6 +896,7 @@ internal struct ThreadListView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .padding(.bottom, 16)
                 .offset(x: selectionActionBarHorizontalOffset)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(AccessibilityID.selectionActionBar)
                 .accessibilityLabel(NSLocalizedString("accessibility.threadlist.selection_bar.label",
                                                       comment: "Accessibility label for the selection action bar"))
@@ -942,18 +924,91 @@ internal struct ThreadListView: View {
     }
 
     private var actionBarMaxWidth: CGFloat? {
-        viewModel.shouldShowSelectionActions ? 520 : nil
+        viewModel.shouldShowSelectionActions ? 760 : nil
+    }
+
+    private func selectionActionsRow(compact: Bool) -> some View {
+        HStack(spacing: compact ? 9 : 12) {
+            if viewModel.isMailboxActionRunning {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(viewModel.mailboxActionProgressMessage ??
+                         NSLocalizedString("mailbox.action.progress.move",
+                                           comment: "Status while moving messages to mailbox folder"))
+                        .font(.caption)
+                        .foregroundStyle(navSecondaryForegroundStyle)
+                }
+            }
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("threadlist.selection.count", comment: "Selection count label"),
+                viewModel.selectedNodeIDs.count
+            ))
+            .font(.caption)
+            .foregroundStyle(navSecondaryForegroundStyle)
+            Button(action: { viewModel.groupSelectedMessages() }) {
+                actionBarButtonLabel(systemImage: "link",
+                                     fullKey: "threadlist.selection.group",
+                                     compactKey: "threadlist.selection.group.verb",
+                                     compact: compact)
+            }
+            .disabled(!viewModel.canGroupSelection)
+            .help(NSLocalizedString("threadlist.selection.group.help", comment: "Join Thread help"))
+            .accessibilityIdentifier(AccessibilityID.selectionAction("group"))
+            Button(action: { viewModel.addFolderForSelection() }) {
+                actionBarButtonLabel(systemImage: "folder.badge.plus",
+                                     fullKey: "threadlist.selection.add_folder",
+                                     compactKey: "threadlist.selection.add_folder.verb",
+                                     compact: compact)
+            }
+            .disabled(viewModel.selectedNodeIDs.isEmpty)
+            .help(NSLocalizedString("threadlist.selection.add_folder.help", comment: "Create Group help"))
+            .accessibilityIdentifier(AccessibilityID.selectionAction("add-thread-folder"))
+            Button(action: { isShowingMailboxMoveSheet = true }) {
+                actionBarButtonLabel(systemImage: "folder",
+                                     fullKey: "threadlist.selection.move_mailbox_folder",
+                                     compactKey: "threadlist.selection.move_mailbox_folder.verb",
+                                     compact: compact)
+            }
+            .disabled(!viewModel.canMoveSelectionToMailboxFolder || viewModel.isMailboxActionRunning)
+            .help(viewModel.mailboxActionDisabledReason ??
+                  NSLocalizedString("threadlist.selection.move_mailbox_folder.help",
+                                    comment: "Move selected nodes to mailbox folder help"))
+            .accessibilityIdentifier(AccessibilityID.selectionAction("move-mailbox-folder"))
+            Button(action: { viewModel.ungroupSelectedMessages() }) {
+                actionBarButtonLabel(systemImage: "personalhotspot.slash",
+                                     fullKey: "threadlist.selection.ungroup",
+                                     compactKey: "threadlist.selection.ungroup.verb",
+                                     compact: compact)
+            }
+            .disabled(!viewModel.canUngroupSelection)
+            .help(NSLocalizedString("threadlist.selection.ungroup.help", comment: "Remove from Thread help"))
+            .accessibilityIdentifier(AccessibilityID.selectionAction("ungroup"))
+            if shouldShowBackfillAction {
+                Button(action: { presentBackfillConfirmation() }) {
+                    actionBarButtonLabel(systemImage: "tray.and.arrow.down",
+                                         fullKey: "threadlist.backfill.button",
+                                         compactKey: "threadlist.backfill.button.verb",
+                                         compact: compact)
+                }
+                .disabled(viewModel.isBackfilling)
+                .help(NSLocalizedString("threadlist.backfill.button",
+                                        comment: "Backfill visible days button"))
+                .accessibilityIdentifier(AccessibilityID.backfillButton)
+            }
+        }
     }
 
     private func actionBarButtonLabel(systemImage: String,
-                                      verbKey: String,
-                                      accessibilityKey: String) -> some View {
-        Label(NSLocalizedString(verbKey, comment: "Selection action short verb"),
+                                      fullKey: String,
+                                      compactKey: String,
+                                      compact: Bool) -> some View {
+        Label(NSLocalizedString(compact ? compactKey : fullKey,
+                                comment: "Selection action label"),
               systemImage: systemImage)
             .labelStyle(.titleAndIcon)
             .font(.caption)
-            .help(NSLocalizedString(accessibilityKey, comment: "Selection action button"))
-            .accessibilityLabel(NSLocalizedString(accessibilityKey, comment: "Selection action button"))
+            .accessibilityLabel(NSLocalizedString(fullKey, comment: "Selection action button"))
     }
 
     private var mergedVisibleRiskInterval: DateInterval? {

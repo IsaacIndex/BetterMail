@@ -67,7 +67,7 @@ internal struct GraphBranchConfig: Equatable {
         switch edgeKind {
         case .trunk, .grouping, .remaining:
             return trunkWidth
-        case .suggested, .chain:
+        case .suggested, .chain, .manualChain:
             return chainWidth
         }
     }
@@ -80,7 +80,7 @@ internal struct GraphBranchConfig: Equatable {
         switch edgeKind {
         case .trunk, .grouping, .remaining:
             return jointRadiusTrunk
-        case .suggested, .chain:
+        case .suggested, .chain, .manualChain:
             return jointRadiusChain
         }
     }
@@ -311,13 +311,28 @@ internal struct GraphForceSimulator {
         for remainingBranch in data.remainingBranches {
             let fallbackRadius = Self.threadRingRadius(branchCount: data.threads.count + 1, size: size)
             let angle = CGFloat(remainingBranch.angle) * .pi / 180
-            let defaultPosition = radialTargets.remainingByID[remainingBranch.id] ??
-                CGPoint(x: center.x + cos(angle) * fallbackRadius,
-                        y: center.y + sin(angle) * fallbackRadius)
+            let fallbackPosition = CGPoint(x: center.x + cos(angle) * fallbackRadius,
+                                           y: center.y + sin(angle) * fallbackRadius)
+            let defaultPosition: CGPoint
+            if case .messages(let threadID) = remainingBranch.scope,
+               let anchorPosition = nextNodes[remainingBranch.layoutAnchorID]?.restingPosition {
+                let threadPosition = nextNodes[threadID]?.restingPosition ?? center
+                let direction = Self.outwardUnitVector(from: threadPosition, through: anchorPosition)
+                defaultPosition = CGPoint(x: anchorPosition.x + direction.x * 76,
+                                          y: anchorPosition.y + direction.y * 76)
+            } else {
+                defaultPosition = radialTargets.remainingByID[remainingBranch.id] ?? fallbackPosition
+            }
+            let remainderBranchID: String
+            if case .messages(let threadID) = remainingBranch.scope {
+                remainderBranchID = radialTargets.branchByNodeID[threadID] ?? threadID
+            } else {
+                remainderBranchID = radialTargets.branchByNodeID[remainingBranch.id] ?? remainingBranch.id
+            }
             nextNodes[remainingBranch.id] = GraphPhysicsNode(id: remainingBranch.id,
                                                              kind: .remaining,
                                                              threadID: nil,
-                                                             branchID: radialTargets.branchByNodeID[remainingBranch.id] ?? remainingBranch.id,
+                                                             branchID: remainderBranchID,
                                                              position: preservedPosition(remainingBranch.id) ?? defaultPosition,
                                                              velocity: .zero,
                                                              radius: remainingBranch.radius,
@@ -1055,14 +1070,16 @@ internal struct GraphForceSimulator {
             branchByNodeID[grouping.id] = grouping.id
         }
 
-        for remaining in data.remainingBranches where remaining.parentID != data.center.id {
-            let parentTarget = groupingTargets[remaining.parentID]
-                ?? threadTargets[remaining.parentID]
+        for remaining in data.remainingBranches {
+            guard case .branches(let parentID) = remaining.scope,
+                  parentID != data.center.id else { continue }
+            let parentTarget = groupingTargets[parentID]
+                ?? threadTargets[parentID]
                 ?? center
             let direction = outwardUnitVector(from: center, through: parentTarget)
             remainingTargets[remaining.id] = CGPoint(x: parentTarget.x + direction.x * 118,
                                                      y: parentTarget.y + direction.y * 118)
-            branchByNodeID[remaining.id] = branchByNodeID[remaining.parentID] ?? remaining.parentID
+            branchByNodeID[remaining.id] = branchByNodeID[parentID] ?? parentID
         }
 
         return GraphRadialLayoutTargets(threadByID: threadTargets,

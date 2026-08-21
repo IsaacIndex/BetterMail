@@ -1,14 +1,24 @@
 import Foundation
 
-internal struct SnippetFormatter {
+internal nonisolated struct SnippetFormatter: Sendable {
     internal let lineLimit: Int
     internal let stopPhrases: [String]
 
     internal func format(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let decoder = HeaderDecoder()
+        let content: String
+        if let decoded = decoder.readableMIMEContent(from: text) {
+            content = decoded
+        } else if decoder.containsMIMEFraming(text) {
+            content = ""
+        } else {
+            content = text
+        }
+
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let filtered = removeStopPhrases(from: trimmed)
-        return trimmedPreview(filtered, maxLines: lineLimit)
+        return trimmedPreview(preserveFormatting(in: filtered), maxLines: lineLimit)
     }
 
     private func removeStopPhrases(from text: String) -> String {
@@ -21,10 +31,34 @@ internal struct SnippetFormatter {
             updated = regex?.stringByReplacingMatches(in: updated, options: [], range: range, withTemplate: "") ?? updated
         }
 
-        let lines = updated.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-        let cleaned = lines.compactMap { line -> String? in
-            let collapsed = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            return collapsed.isEmpty ? nil : collapsed
+        return updated
+    }
+
+    private func preserveFormatting(in text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        var cleaned: [String] = []
+        var previousLineWasBlank = true
+
+        for line in lines {
+            var value = String(line)
+            while value.last?.isWhitespace == true {
+                value.removeLast()
+            }
+            if value.trimmingCharacters(in: .whitespaces).isEmpty {
+                if !previousLineWasBlank {
+                    cleaned.append("")
+                }
+                previousLineWasBlank = true
+            } else {
+                cleaned.append(value)
+                previousLineWasBlank = false
+            }
+        }
+        while cleaned.last?.isEmpty == true {
+            cleaned.removeLast()
         }
         return cleaned.joined(separator: "\n")
     }
@@ -34,7 +68,7 @@ internal struct SnippetFormatter {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         guard lines.count > maxLines else { return text }
         var limited = lines.prefix(maxLines).map(String.init)
-        if let lastIndex = limited.indices.last {
+        if let lastIndex = limited.indices.last, !limited[lastIndex].hasSuffix("…") {
             limited[lastIndex] = limited[lastIndex] + "…"
         }
         return limited.joined(separator: "\n")

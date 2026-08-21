@@ -233,4 +233,5 @@ final class MessageStoreBoundaryTests: XCTestCase {
 
         XCTAssertEqual(results.map(\.messageID), ["msg-expected"])
     }
+
 }

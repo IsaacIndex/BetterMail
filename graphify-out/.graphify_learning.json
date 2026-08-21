@@ -1,0 +1,102 @@
+{
+  "generated_at": "2026-08-20T09:07:06.602420+00:00",
+  "nodes": {
+    "bettermail_sources_datasource_mailapplescriptclient_headerdecoder": {
+      "code_fingerprint": "43e91053b7c97c0492a32ffb1dde2a8f6d813c9d18f7ffda29f8b20cdfbd2bce",
+      "label": "HeaderDecoder",
+      "last": "2026-08-20T07:13:20.070786+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 0.998176129,
+      "source_file": "BetterMail/Sources/DataSource/MailAppleScriptClient.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_models_emailthread_threadnode": {
+      "code_fingerprint": "f336efc5875daca3e442cbada504033b4b359d838029eaee8ee2d47f9e983998",
+      "label": "ThreadNode",
+      "last": "2026-08-20T07:13:20.070786+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 0.998176129,
+      "source_file": "BetterMail/Sources/Models/EmailThread.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_storage_messagestore_messagestore": {
+      "code_fingerprint": "a78a260f017e68cf51bbcb392aa66036f4c7619750e6d261ea65e10da4558f04",
+      "label": "MessageStore",
+      "last": "2026-08-20T07:13:20.070786+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 0.998176129,
+      "source_file": "BetterMail/Sources/Storage/MessageStore.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_threading_jwzthreader_jwzthreader": {
+      "code_fingerprint": "fb40eaace79a1c527d9abe9f36f948eddbfe1973ab81a4b2d110f77aa717e645",
+      "label": "JWZThreader",
+      "last": "2026-08-20T07:13:20.070786+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 0.998176129,
+      "source_file": "BetterMail/Sources/Threading/JWZThreader.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_viewmodels_graphcanvasviewmodel_graphcanvasviewmodel": {
+      "code_fingerprint": "c0d6ca998d3b46269763ec502d23d7ece18e7422df01df09dba1577f0fe39467",
+      "label": "GraphCanvasViewModel",
+      "last": "2026-08-20T07:13:20.070786+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 0.998176129,
+      "source_file": "BetterMail/Sources/ViewModels/GraphCanvasViewModel.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_viewmodels_threadcanvasviewmodel_threadcanvasviewmodel": {
+      "code_fingerprint": "089b3ce5bf39647d7c892b7ee9f575668a30aeefe40c7408f53b2e7451c3b24a",
+      "label": "ThreadCanvasViewModel",
+      "last": "2026-08-20T07:13:20.070786+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 0.998176129,
+      "source_file": "BetterMail/Sources/ViewModels/ThreadCanvasViewModel.swift",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

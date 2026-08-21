@@ -59,8 +59,10 @@ internal struct GraphHoverCard: View {
                     .font(DesignTokens.font(size: 10.5, textScale: textScale))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
                 Text(String.localizedStringWithFormat(
-                    NSLocalizedString("graph.hover.remaining.detail",
-                                      comment: "Graph hover card remaining branches detail"),
+                    NSLocalizedString(remainingBranch.scope.isMessageScope
+                                      ? "graph.hover.remaining.emails.detail"
+                                      : "graph.hover.remaining.detail",
+                                      comment: "Graph hover card remaining items detail"),
                     remainingBranch.nextBatchCount
                 ))
                     .font(DesignTokens.font(size: 11, textScale: textScale))
@@ -153,5 +155,12 @@ internal struct GraphHoverCard: View {
                               comment: "Graph hover relative time in days"),
             Int(seconds / 86_400)
         )
+    }
+}
+
+private extension GraphRemainderScope {
+    var isMessageScope: Bool {
+        if case .messages = self { return true }
+        return false
     }
 }

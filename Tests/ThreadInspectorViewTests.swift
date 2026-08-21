@@ -30,6 +30,34 @@ final class ThreadInspectorViewTests: XCTestCase {
         XCTAssertEqual(status, .opened(.filteredFallback))
     }
 
+    func test_inspectorEmailAddressParser_quotedCommas_keepNamesAndEmailsTogether() {
+        let addresses = InspectorEmailAddressParser.parse(
+            "\"Cheung, Simon\" <simon.cheung@hkjc.org.hk>, \"Chen, Rachel Q\"<rachel.q.chen@hkjc.org.hk>, steven.z.li@hkjc.org.hk"
+        )
+
+        XCTAssertEqual(addresses, [
+            InspectorEmailAddress(displayName: "Cheung, Simon",
+                                  email: "simon.cheung@hkjc.org.hk"),
+            InspectorEmailAddress(displayName: "Chen, Rachel Q",
+                                  email: "rachel.q.chen@hkjc.org.hk"),
+            InspectorEmailAddress(displayName: nil,
+                                  email: "steven.z.li@hkjc.org.hk")
+        ])
+    }
+
+    func test_inspectorEmailAddressParser_groupAndFoldedHeader_returnsIndividualRecipients() {
+        let addresses = InspectorEmailAddressParser.parse(
+            "Reviewers: Doris FUNG <doris.fung@hk1.ibm.com>,\r\n Simon <simon@example.com>; Junjie LIN <junjie@example.com>"
+        )
+
+        XCTAssertEqual(addresses.map(\.primaryText), ["Doris FUNG", "Simon", "Junjie LIN"])
+        XCTAssertEqual(addresses.compactMap(\.email), [
+            "doris.fung@hk1.ibm.com",
+            "simon@example.com",
+            "junjie@example.com"
+        ])
+    }
+
     func test_folderMinimapSurface_normalizedPoint_clampsIntoUnitSpace() {
         let point = FolderMinimapSurface.normalizedPoint(CGPoint(x: 260, y: -10),
                                                          in: CGSize(width: 200, height: 100))

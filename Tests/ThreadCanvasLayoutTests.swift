@@ -3,40 +3,102 @@ import XCTest
 
 @MainActor
 final class ThreadCanvasLayoutTests: XCTestCase {
-    func test_activityShelfBottomInset_noObstacle_usesDefaultInset() {
-        let inset = ProcessingActivityShelfLayout.bottomInset(
-            containerHeight: 720,
-            compostPanelTop: nil
-        )
-
-        XCTAssertEqual(inset, 18)
+    func test_activityShelfLayout_usesFixedWindowInsets() {
+        XCTAssertEqual(ProcessingActivityShelfLayout.trailingInset, 18)
+        XCTAssertEqual(ProcessingActivityShelfLayout.bottomInset, 18)
     }
 
-    func test_activityShelfBottomInset_oneRowCompost_addsGapAbovePanelTop() {
-        let inset = ProcessingActivityShelfLayout.bottomInset(
-            containerHeight: 720,
-            compostPanelTop: 610
-        )
+    func test_processingActivityShelfPolicy_activeActivityExpiresFromStartTime() {
+        let startedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+        let activity = makeProcessingActivity(id: "tags",
+                                              state: .running,
+                                              startedAt: startedAt)
 
-        XCTAssertEqual(inset, 118)
+        XCTAssertEqual(
+            ProcessingActivityShelfPolicy.activity(
+                from: [activity],
+                at: startedAt.addingTimeInterval(ProcessingActivityShelfPolicy.displayDuration - 0.1)
+            )?.id,
+            activity.id
+        )
+        XCTAssertNil(
+            ProcessingActivityShelfPolicy.activity(
+                from: [activity],
+                at: startedAt.addingTimeInterval(ProcessingActivityShelfPolicy.displayDuration + 0.1)
+            )
+        )
     }
 
-    func test_activityShelfBottomInset_multiRowCompost_tracksTallerPanelTop() {
-        let inset = ProcessingActivityShelfLayout.bottomInset(
-            containerHeight: 720,
-            compostPanelTop: 420
-        )
+    func test_processingActivityShelfPolicy_finishedActivityExpiresFromFinishTime() {
+        let startedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+        let finishedAt = startedAt.addingTimeInterval(20)
+        let activity = makeProcessingActivity(id: "tags",
+                                              state: .completed,
+                                              startedAt: startedAt,
+                                              updatedAt: finishedAt,
+                                              finishedAt: finishedAt)
 
-        XCTAssertEqual(inset, 308)
+        XCTAssertEqual(
+            ProcessingActivityShelfPolicy.activity(
+                from: [activity],
+                at: finishedAt.addingTimeInterval(ProcessingActivityShelfPolicy.displayDuration - 0.1)
+            )?.id,
+            activity.id
+        )
+        XCTAssertNil(
+            ProcessingActivityShelfPolicy.activity(
+                from: [activity],
+                at: finishedAt.addingTimeInterval(ProcessingActivityShelfPolicy.displayDuration + 0.1)
+            )
+        )
     }
 
-    func test_activityShelfBottomInset_obstacleBelowClearance_usesMinimumInset() {
-        let inset = ProcessingActivityShelfLayout.bottomInset(
-            containerHeight: 720,
-            compostPanelTop: 715
-        )
+    func test_processingActivityShelfPolicy_prefersRecentActiveActivityOverRecentFinishedHistory() {
+        let now = Date(timeIntervalSinceReferenceDate: 2_000)
+        let completed = makeProcessingActivity(id: "completed",
+                                               state: .completed,
+                                               startedAt: now.addingTimeInterval(-30),
+                                               updatedAt: now.addingTimeInterval(-1),
+                                               finishedAt: now.addingTimeInterval(-1))
+        let active = makeProcessingActivity(id: "active",
+                                            state: .running,
+                                            startedAt: now.addingTimeInterval(-2))
 
-        XCTAssertEqual(inset, 18)
+        XCTAssertEqual(ProcessingActivityShelfPolicy.activity(from: [completed, active], at: now)?.id,
+                       active.id)
+    }
+
+    func test_activityCenter_retainsFinishedHistoryAfterToastExpires() {
+        let center = ProcessingActivityCenter()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+        let finishedAt = startedAt.addingTimeInterval(20)
+        let activityID = center.begin(id: "tags",
+                                      title: "Generating timeline tags",
+                                      kind: .generation,
+                                      date: startedAt)
+        center.finish(activityID, date: finishedAt)
+
+        XCTAssertEqual(center.visibleActivities.map(\.id), [activityID])
+        XCTAssertNil(center.shelfActivity(
+            at: finishedAt.addingTimeInterval(ProcessingActivityShelfPolicy.displayDuration + 0.1)
+        ))
+    }
+
+    func test_activityCenter_restartingAnActivityAdvancesShelfPresentationVersion() {
+        let center = ProcessingActivityCenter()
+        let firstStart = Date(timeIntervalSinceReferenceDate: 1_000)
+        let activityID = center.begin(id: "refresh",
+                                      title: "Refreshing",
+                                      kind: .refresh,
+                                      date: firstStart)
+        center.finish(activityID, date: firstStart.addingTimeInterval(1))
+        center.begin(id: activityID,
+                     title: "Refreshing",
+                     kind: .refresh,
+                     date: firstStart.addingTimeInterval(20))
+
+        XCTAssertEqual(center.shelfPresentationVersion, 3)
+        XCTAssertEqual(center.shelfActivity(at: firstStart.addingTimeInterval(21))?.state, .running)
     }
 
     func testDayIndexForLastSevenDays() {
@@ -77,6 +139,28 @@ final class ThreadCanvasLayoutTests: XCTestCase {
     func testMetrics_whenDayAxisHidden_dayLabelWidthIsZero() {
         let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0, showsDayAxis: false)
         XCTAssertEqual(metrics.dayLabelWidth, 0)
+    }
+
+    func test_searchRoots_whenReplyMatches_keepsWholeThread() {
+        let reply = ThreadNode(message: makeMessage(id: "Deployment handoff", date: Date()))
+        let matchingRoot = ThreadNode(message: makeMessage(id: "Root message", date: Date()),
+                                      children: [reply])
+        let otherRoot = ThreadNode(message: makeMessage(id: "Budget review", date: Date()))
+
+        let filtered = ThreadCanvasViewModel.searchRoots([matchingRoot, otherRoot],
+                                                          matching: "deployment")
+
+        XCTAssertEqual(filtered.map(\.id), ["Root message"])
+        XCTAssertEqual(filtered.first?.children.map(\.id), ["Deployment handoff"])
+    }
+
+    func test_searchRoots_whenQueryIsWhitespace_keepsAllThreads() {
+        let roots = [ThreadNode(message: makeMessage(id: "First", date: Date())),
+                     ThreadNode(message: makeMessage(id: "Second", date: Date()))]
+
+        let filtered = ThreadCanvasViewModel.searchRoots(roots, matching: "  \n")
+
+        XCTAssertEqual(filtered.map(\.id), ["First", "Second"])
     }
 
     func testRootsForMailboxScope_allFolders_filtersToFolderThreadIDs_preservingInputOrder() {
@@ -957,6 +1041,22 @@ final class ThreadCanvasLayoutTests: XCTestCase {
                      inReplyTo: nil,
                      references: [],
                      threadID: "thread-\(id)")
+    }
+
+    private func makeProcessingActivity(id: ProcessingActivityID,
+                                        state: ProcessingActivityState,
+                                        startedAt: Date,
+                                        updatedAt: Date? = nil,
+                                        finishedAt: Date? = nil) -> ProcessingActivity {
+        ProcessingActivity(id: id,
+                           title: id,
+                           detail: nil,
+                           kind: .generation,
+                           state: state,
+                           progress: nil,
+                           startedAt: startedAt,
+                           updatedAt: updatedAt ?? startedAt,
+                           finishedAt: finishedAt)
     }
 
     func testFolderOrderingKeepsMembersAdjacentAndSortedByFolderLatestDate() {

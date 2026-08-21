@@ -39,6 +39,20 @@ internal enum MailboxScope: Hashable {
         }
         return false
     }
+
+    /// Stable identity used to discard per-thread Graph paging only when the
+    /// user actually changes mailbox scope.
+    internal var graphPagingScopeID: String {
+        switch self {
+        case .actionItems: return "action-items"
+        case .allEmails: return "all-emails"
+        case .allFolders: return "all-folders"
+        case .allInboxes: return "all-inboxes"
+        case .graphArchive: return "graph-archive"
+        case .mailboxFolder(let account, let path):
+            return "mailbox:\(account.lowercased())|\(path.lowercased())"
+        }
+    }
 }
 
 internal enum MailboxPathFormatter {

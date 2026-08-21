@@ -10,10 +10,10 @@ final class ActionItemTests: XCTestCase {
         return MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
     }
 
-    private func makeMessage(id: String = "msg-1") -> EmailMessage {
+    private func makeMessage(id: String = "msg-1", accountName: String = "Test") -> EmailMessage {
         EmailMessage(messageID: id,
                      mailboxID: "inbox",
-                     accountName: "Test",
+                     accountName: accountName,
                      subject: "Test subject",
                      from: "sender@example.com",
                      to: "me@example.com",
@@ -30,7 +30,9 @@ final class ActionItemTests: XCTestCase {
         await store.addActionItem(for: msg, folderID: "folder-1", tags: ["Tag A", "Tag B", "Tag C"])
         let items = await store.fetchActionItems()
         XCTAssertEqual(items.count, 1)
-        XCTAssertEqual(items[0].id, msg.messageID)
+        XCTAssertEqual(items[0].messageID, msg.messageID)
+        XCTAssertEqual(items[0].accountName, msg.accountName)
+        XCTAssertEqual(items[0].id, ActionItem.scopedID(for: msg))
         XCTAssertEqual(items[0].folderID, "folder-1")
         XCTAssertEqual(items[0].tags, ["Tag A", "Tag B", "Tag C"])
         XCTAssertFalse(items[0].isDone)
@@ -49,11 +51,13 @@ final class ActionItemTests: XCTestCase {
         let store = makeStore()
         let msg = makeMessage()
         await store.addActionItem(for: msg, folderID: nil, tags: [])
-        await store.toggleActionItemDone(msg.messageID)
+        let initialItems = await store.fetchActionItems()
+        let item = try XCTUnwrap(initialItems.first)
+        await store.toggleActionItemDone(item)
         let items = await store.fetchActionItems()
         XCTAssertTrue(items[0].isDone)
         // Toggle back
-        await store.toggleActionItemDone(msg.messageID)
+        await store.toggleActionItemDone(item)
         let items2 = await store.fetchActionItems()
         XCTAssertFalse(items2[0].isDone)
     }
@@ -89,5 +93,29 @@ final class ActionItemTests: XCTestCase {
         await store.addActionItem(for: msg, folderID: nil, tags: originalTags)
         let items = await store.fetchActionItems()
         XCTAssertEqual(items[0].tags, originalTags)
+    }
+
+    func test_sameMessageIDInDifferentAccounts_actionItemsRemainIndependent() async throws {
+        let store = makeStore()
+        let work = makeMessage(id: "shared-message-id", accountName: "Work")
+        let personal = makeMessage(id: "shared-message-id", accountName: "Personal")
+
+        await store.addActionItem(for: work, folderID: "work-folder", tags: ["Work"])
+        await store.addActionItem(for: personal, folderID: "personal-folder", tags: ["Personal"])
+
+        var items = await store.fetchActionItems()
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(Set(items.map(\.id)),
+                       Set([ActionItem.scopedID(for: work), ActionItem.scopedID(for: personal)]))
+
+        let workItem = try XCTUnwrap(items.first { $0.accountName == "Work" })
+        await store.toggleActionItemDone(workItem)
+        items = await store.fetchActionItems()
+        XCTAssertTrue(try XCTUnwrap(items.first { $0.accountName == "Work" }).isDone)
+        XCTAssertFalse(try XCTUnwrap(items.first { $0.accountName == "Personal" }).isDone)
+
+        await store.removeActionItem(for: work)
+        items = await store.fetchActionItems()
+        XCTAssertEqual(items.map(\.accountName), ["Personal"])
     }
 }
