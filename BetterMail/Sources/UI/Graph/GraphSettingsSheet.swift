@@ -8,69 +8,43 @@ internal struct GraphSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     internal var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        Form {
+            Section {
+                Toggle(NSLocalizedString("graph.settings.sound", comment: "Graph sound toggle"),
+                       isOn: $settings.soundOn)
+                Picker(NSLocalizedString("graph.settings.motion", comment: "Graph motion picker"),
+                       selection: $settings.reduceMotionOverride) {
+                    ForEach(GraphReduceMotionOverride.allCases) { mode in
+                        Text(mode.localizedTitle).tag(mode)
+                    }
+                }
+                LabeledContent(NSLocalizedString("graph.settings.snip_parent",
+                                                 comment: "Graph snip parent mailbox field")) {
+                    TextField(NSLocalizedString("graph.settings.snip_parent",
+                                                comment: "Graph snip parent mailbox field"),
+                              text: $settings.snipParentMailboxPath)
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 240)
+                }
+                branchCountControl
+                childBranchCountControl
+                emailCountControl
+            } header: {
                 Text(NSLocalizedString("graph.settings.title", comment: "Graph settings title"))
                     .font(.title3.bold())
                     .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
-                VStack(alignment: .leading, spacing: 12) {
-                    Toggle(NSLocalizedString("graph.settings.sound", comment: "Graph sound toggle"),
-                           isOn: $settings.soundOn)
-                    Picker(NSLocalizedString("graph.settings.motion", comment: "Graph motion picker"),
-                           selection: $settings.reduceMotionOverride) {
-                        ForEach(GraphReduceMotionOverride.allCases) { mode in
-                            Text(mode.localizedTitle).tag(mode)
-                        }
-                    }
-                    TextField(NSLocalizedString("graph.settings.snip_parent", comment: "Graph snip parent mailbox field"),
-                              text: $settings.snipParentMailboxPath)
-                        .textFieldStyle(.roundedBorder)
-                    Stepper(value: $settings.visibleBranchCount,
-                            in: GraphCanvasSettings.visibleBranchCountRange) {
-                        HStack {
-                            Text(NSLocalizedString("graph.settings.visible_branches",
-                                                   comment: "Number of graph branches shown per page"))
-                            Spacer()
-                            Text("\(settings.visibleBranchCount)")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
-                        }
-                    }
-                    .help(NSLocalizedString("graph.settings.visible_branches.help",
-                                            comment: "Help for the root graph branch limit"))
-                    Stepper(value: $settings.visibleBranchesPerNode,
-                            in: GraphCanvasSettings.visibleBranchesPerNodeRange) {
-                        HStack {
-                            Text(NSLocalizedString("graph.settings.visible_branches_per_node",
-                                                   comment: "Number of child branches shown per graph node"))
-                            Spacer()
-                            Text("\(settings.visibleBranchesPerNode)")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
-                        }
-                    }
-                    .help(NSLocalizedString("graph.settings.visible_branches_per_node.help",
-                                            comment: "Help for the per-node graph branch limit"))
-                    Stepper(value: $settings.visibleEmailsPerThread,
-                            in: GraphCanvasSettings.visibleEmailsPerThreadRange) {
-                        HStack {
-                            Text(NSLocalizedString("graph.settings.visible_emails_per_thread",
-                                                   comment: "Number of email nodes shown per thread page"))
-                            Spacer()
-                            Text("\(settings.visibleEmailsPerThread)")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
-                        }
-                    }
-                    .help(NSLocalizedString("graph.settings.visible_emails_per_thread.help",
-                                            comment: "Help for the per-thread email node limit"))
-                }
-                displaySection
-                suggestionPreferencesSection
-                GraphAutomationSettingsSection(settings: automationCoordinator.settings,
-                                               coordinator: automationCoordinator,
-                                               onScanCurrentMail: onScanCurrentMail)
-                forcesSection
+                    .textCase(nil)
+            }
+
+            displaySection
+            suggestionPreferencesSection
+            GraphAutomationSettingsSection(settings: automationCoordinator.settings,
+                                           coordinator: automationCoordinator,
+                                           onScanCurrentMail: onScanCurrentMail)
+            forcesSection
+
+            Section {
                 HStack {
                     Spacer()
                     Button(NSLocalizedString("graph.settings.done", comment: "Close graph settings")) {
@@ -79,24 +53,62 @@ internal struct GraphSettingsSheet: View {
                     .keyboardShortcut(.defaultAction)
                 }
             }
-            .padding(18)
         }
+        .formStyle(.grouped)
         .frame(width: 440)
         .frame(maxHeight: 720)
-        .background(DesignTokens.Graph.AppTheme.background)
+    }
+
+    private var branchCountControl: some View {
+        LabeledContent(NSLocalizedString("graph.settings.visible_branches",
+                                         comment: "Number of graph branches shown per page")) {
+            Stepper(value: $settings.visibleBranchCount,
+                    in: GraphCanvasSettings.visibleBranchCountRange) {
+                Text("\(settings.visibleBranchCount)")
+                    .monospacedDigit()
+            }
+            .accessibilityLabel(NSLocalizedString("graph.settings.visible_branches",
+                                                  comment: "Number of graph branches shown per page"))
+            .frame(maxWidth: 150, alignment: .trailing)
+        }
+        .help(NSLocalizedString("graph.settings.visible_branches.help",
+                                comment: "Help for the root graph branch limit"))
+    }
+
+    private var childBranchCountControl: some View {
+        LabeledContent(NSLocalizedString("graph.settings.visible_branches_per_node",
+                                         comment: "Number of child branches shown per graph node")) {
+            Stepper(value: $settings.visibleBranchesPerNode,
+                    in: GraphCanvasSettings.visibleBranchesPerNodeRange) {
+                Text("\(settings.visibleBranchesPerNode)")
+                    .monospacedDigit()
+            }
+            .accessibilityLabel(NSLocalizedString("graph.settings.visible_branches_per_node",
+                                                  comment: "Number of child branches shown per graph node"))
+            .frame(maxWidth: 150, alignment: .trailing)
+        }
+        .help(NSLocalizedString("graph.settings.visible_branches_per_node.help",
+                                comment: "Help for the per-node graph branch limit"))
+    }
+
+    private var emailCountControl: some View {
+        LabeledContent(NSLocalizedString("graph.settings.visible_emails_per_thread",
+                                         comment: "Number of email nodes shown per thread page")) {
+            Stepper(value: $settings.visibleEmailsPerThread,
+                    in: GraphCanvasSettings.visibleEmailsPerThreadRange) {
+                Text("\(settings.visibleEmailsPerThread)")
+                    .monospacedDigit()
+            }
+            .accessibilityLabel(NSLocalizedString("graph.settings.visible_emails_per_thread",
+                                                  comment: "Number of email nodes shown per thread page"))
+            .frame(maxWidth: 150, alignment: .trailing)
+        }
+        .help(NSLocalizedString("graph.settings.visible_emails_per_thread.help",
+                                comment: "Help for the per-thread email node limit"))
     }
 
     private var forcesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(NSLocalizedString("graph.settings.forces.title", comment: "Graph force settings section title"))
-                    .font(.headline)
-                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
-                Spacer()
-                Button(NSLocalizedString("graph.settings.forces.restore", comment: "Restore graph force defaults")) {
-                    settings.restoreObsidianDefaults()
-                }
-            }
+        Section {
             forceSlider(NSLocalizedString("graph.controls.center_force", comment: "Graph center force slider"),
                         value: $settings.obsidianCenterStrength,
                         range: 0...0.012,
@@ -117,23 +129,22 @@ internal struct GraphSettingsSheet: View {
                         range: 48...180,
                         step: 2,
                         precision: 0)
+        } header: {
+            HStack {
+                Text(NSLocalizedString("graph.settings.forces.title", comment: "Graph force settings section title"))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                Spacer()
+                Button(NSLocalizedString("graph.settings.forces.restore", comment: "Restore graph force defaults")) {
+                    settings.restoreObsidianDefaults()
+                }
+                .buttonStyle(.link)
+            }
+            .textCase(nil)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DesignTokens.Graph.AppTheme.panel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
-        )
     }
 
     private var displaySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("graph.controls.display", comment: "Graph display controls heading"))
-                .font(.headline)
-                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+        Section {
             Toggle(NSLocalizedString("graph.controls.arrows", comment: "Show graph arrows toggle"),
                    isOn: $settings.obsidianShowsArrows)
             forceSlider(NSLocalizedString("graph.controls.text_fade",
@@ -153,24 +164,15 @@ internal struct GraphSettingsSheet: View {
                         range: 0.5...3,
                         step: 0.1,
                         precision: 1)
+        } header: {
+            Text(NSLocalizedString("graph.controls.display", comment: "Graph display controls heading"))
+                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                .textCase(nil)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DesignTokens.Graph.AppTheme.panel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
-        )
     }
 
     private var suggestionPreferencesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(NSLocalizedString("graph.settings.suggestions.title",
-                                   comment: "Graph suggestion preferences section title"))
-                .font(.headline)
-                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+        Section {
             Text(NSLocalizedString("graph.settings.suggestions.local_note",
                                    comment: "Graph suggestions are local preferences, not model training"))
                 .font(.callout)
@@ -190,16 +192,12 @@ internal struct GraphSettingsSheet: View {
             }
             .disabled(!settings.hasSuggestedTopicPreferences)
             .accessibilityIdentifier(AccessibilityID.graphSuggestionPreferencesReset)
+        } header: {
+            Text(NSLocalizedString("graph.settings.suggestions.title",
+                                   comment: "Graph suggestion preferences section title"))
+                .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                .textCase(nil)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DesignTokens.Graph.AppTheme.panel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
-        )
     }
 
     private func forceSlider(_ title: String,
@@ -211,16 +209,16 @@ internal struct GraphSettingsSheet: View {
             get: { Double(value.wrappedValue) },
             set: { value.wrappedValue = CGFloat($0) }
         )
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                Spacer()
+        return LabeledContent(title) {
+            HStack(spacing: 8) {
+                Slider(value: doubleValue, in: range, step: step)
+                    .accessibilityLabel(title)
+                    .frame(minWidth: 150)
                 Text(Self.formatted(value.wrappedValue, precision: precision))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+                    .frame(minWidth: 46, alignment: .trailing)
             }
-            .font(.caption)
-            Slider(value: doubleValue, in: range, step: step)
         }
     }
 
@@ -235,17 +233,7 @@ private struct GraphAutomationSettingsSection: View {
     let onScanCurrentMail: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(NSLocalizedString("graph.automation.settings.title",
-                                       comment: "Graph automation settings heading"))
-                    .font(.headline)
-                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
-                Spacer()
-                if coordinator.isEvaluating {
-                    ProgressView().controlSize(.small)
-                }
-            }
+        Section {
             Toggle(NSLocalizedString("graph.automation.settings.pause",
                                      comment: "Pause graph automation"),
                    isOn: Binding(get: { settings.isPaused },
@@ -295,24 +283,24 @@ private struct GraphAutomationSettingsSection: View {
                     }
                 }
             }
+        } header: {
+            HStack {
+                Text(NSLocalizedString("graph.automation.settings.title",
+                                       comment: "Graph automation settings heading"))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                Spacer()
+                if coordinator.isEvaluating {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .textCase(nil)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DesignTokens.Graph.AppTheme.panel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
-        )
     }
 
     private func actionControls(title: String,
                                 mode: Binding<GraphAutomationMode>,
                                 strictness: Binding<GraphAutomationStrictness>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.callout.weight(.semibold))
+        LabeledContent(title) {
             HStack {
                 Picker(NSLocalizedString("graph.automation.settings.mode",
                                          comment: "Automation action mode picker"),

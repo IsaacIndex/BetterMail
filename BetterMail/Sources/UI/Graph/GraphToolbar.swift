@@ -13,76 +13,77 @@ internal struct GraphToolbar: View {
     internal let onAutomation: () -> Void
 
     internal var body: some View {
-        HStack(spacing: 6) {
-            toolbarButton(title: viewModel.snipActionTitle,
-                          systemImage: "scissors",
-                          isOn: viewModel.snipPhase != .idle,
-                          tint: DesignTokens.Graph.AppTheme.snip,
-                          accessibilityID: AccessibilityID.graphToolbarSnip,
-                          help: NSLocalizedString("graph.toolbar.snip.help.mode",
-                                                  comment: "Help for entering graph branch snip mode"),
-                          action: performSnip)
-            toolbarButton(title: NSLocalizedString("graph.toolbar.archive", comment: "Graph archive mode"),
-                          systemImage: "archivebox",
-                          isOn: viewModel.pruneMode == .archive,
-                          tint: DesignTokens.Graph.AppTheme.archive,
-                          accessibilityID: AccessibilityID.graphToolbarArchive,
-                          isDisabled: viewModel.isArchiveDisabledForSnip,
-                          help: selectedThreadID == nil
-                          ? NSLocalizedString("graph.toolbar.archive.help.mode",
-                                              comment: "Help for entering graph branch archive mode")
-                          : NSLocalizedString("graph.toolbar.archive.help.selected",
-                                              comment: "Help for archiving the selected graph thread"),
-                          action: performArchive)
-            GraphRestoreHistoryControl(entries: restoreHistoryEntries,
-                                       restoringEntryIDs: restoringHistoryEntryIDs,
-                                       textScale: textScale,
-                                       onRestore: onRestoreHistoryEntry,
-                                       onDismiss: onDismissHistoryEntry)
-            toolbarButton(title: NSLocalizedString("graph.toolbar.automation",
-                                                   comment: "Open graph automation queue"),
-                          systemImage: "wand.and.stars",
-                          isOn: false,
-                          tint: DesignTokens.Graph.AppTheme.accent,
-                          accessibilityID: AccessibilityID.graphToolbarAutomation,
-                          badgeCount: automationAttentionCount,
-                          help: NSLocalizedString("graph.toolbar.automation.help",
-                                                  comment: "Help for graph automation queue"),
-                          action: onAutomation)
-            Divider()
-                .frame(height: 18)
-            plainButton(systemImage: "minus.magnifyingglass",
-                        title: NSLocalizedString("graph.toolbar.zoom_out", comment: "Graph zoom out"),
-                        accessibilityID: AccessibilityID.graphToolbarZoomOut,
-                        action: viewModel.zoomOut)
+        HStack(spacing: 8) {
+            ControlGroup {
+                toolbarButton(title: viewModel.snipActionTitle,
+                              systemImage: "scissors",
+                              isOn: viewModel.snipPhase != .idle,
+                              tint: DesignTokens.Graph.AppTheme.snip,
+                              accessibilityID: AccessibilityID.graphToolbarSnip,
+                              help: NSLocalizedString("graph.toolbar.snip.help.mode",
+                                                      comment: "Help for entering graph branch snip mode"),
+                              action: performSnip)
+                toolbarButton(title: NSLocalizedString("graph.toolbar.archive", comment: "Graph archive mode"),
+                              systemImage: "archivebox",
+                              isOn: viewModel.pruneMode == .archive,
+                              tint: DesignTokens.Graph.AppTheme.archive,
+                              accessibilityID: AccessibilityID.graphToolbarArchive,
+                              isDisabled: viewModel.isArchiveDisabledForSnip,
+                              help: selectedThreadID == nil
+                              ? NSLocalizedString("graph.toolbar.archive.help.mode",
+                                                  comment: "Help for entering graph branch archive mode")
+                              : NSLocalizedString("graph.toolbar.archive.help.selected",
+                                                  comment: "Help for archiving the selected graph thread"),
+                              action: performArchive)
+                GraphRestoreHistoryControl(entries: restoreHistoryEntries,
+                                           restoringEntryIDs: restoringHistoryEntryIDs,
+                                           textScale: textScale,
+                                           onRestore: onRestoreHistoryEntry,
+                                           onDismiss: onDismissHistoryEntry)
+                toolbarButton(title: NSLocalizedString("graph.toolbar.automation",
+                                                       comment: "Open graph automation queue"),
+                              systemImage: "wand.and.stars",
+                              isOn: false,
+                              tint: DesignTokens.Graph.AppTheme.accent,
+                              accessibilityID: AccessibilityID.graphToolbarAutomation,
+                              badgeCount: automationAttentionCount,
+                              help: NSLocalizedString("graph.toolbar.automation.help",
+                                                      comment: "Help for graph automation queue"),
+                              action: onAutomation)
+            }
+            .controlSize(.small)
+
+            ControlGroup {
+                plainButton(systemImage: "minus.magnifyingglass",
+                            title: NSLocalizedString("graph.toolbar.zoom_out", comment: "Graph zoom out"),
+                            accessibilityID: AccessibilityID.graphToolbarZoomOut,
+                            action: viewModel.zoomOut)
+                plainButton(systemImage: "plus.magnifyingglass",
+                            title: NSLocalizedString("graph.toolbar.zoom_in", comment: "Graph zoom in"),
+                            accessibilityID: AccessibilityID.graphToolbarZoomIn,
+                            action: viewModel.zoomIn)
+            }
+            .controlSize(.small)
+
             Text("\(Int((viewModel.zoomScale * 100).rounded()))%")
                 .font(DesignTokens.font(size: 10.5, weight: .medium, textScale: textScale))
-                .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
-                .frame(width: 46)
-            plainButton(systemImage: "plus.magnifyingglass",
-                        title: NSLocalizedString("graph.toolbar.zoom_in", comment: "Graph zoom in"),
-                        accessibilityID: AccessibilityID.graphToolbarZoomIn,
-                        action: viewModel.zoomIn)
-            plainButton(systemImage: "scope",
-                        title: NSLocalizedString("graph.toolbar.recenter", comment: "Graph recenter"),
-                        accessibilityID: AccessibilityID.graphToolbarRecenter,
-                        action: viewModel.resetViewport)
-            plainButton(systemImage: "slider.horizontal.3",
-                        title: NSLocalizedString("graph.toolbar.settings", comment: "Graph settings"),
-                        accessibilityID: AccessibilityID.graphToolbarSettings,
-                        action: { viewModel.isSettingsPresented = true })
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(minWidth: 44)
+
+            ControlGroup {
+                plainButton(systemImage: "scope",
+                            title: NSLocalizedString("graph.toolbar.recenter", comment: "Graph recenter"),
+                            accessibilityID: AccessibilityID.graphToolbarRecenter,
+                            action: viewModel.resetViewport)
+                plainButton(systemImage: "slider.horizontal.3",
+                            title: NSLocalizedString("graph.toolbar.settings", comment: "Graph settings"),
+                            accessibilityID: AccessibilityID.graphToolbarSettings,
+                            action: { viewModel.isSettingsPresented = true })
+            }
+            .controlSize(.small)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(DesignTokens.Graph.AppTheme.panel)
-                .shadow(color: Color.black.opacity(0.10), radius: 18, x: 0, y: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
-        )
+        .padding(4)
         .accessibilityIdentifier(AccessibilityID.graphToolbar)
     }
 
@@ -99,6 +100,7 @@ internal struct GraphToolbar: View {
             HStack(spacing: 5) {
                 Label(title, systemImage: systemImage)
                     .labelStyle(.titleAndIcon)
+                    .symbolVariant(isOn ? .fill : .none)
                 if badgeCount > 0 {
                     Text("\(badgeCount)")
                         .font(.caption2.monospacedDigit().bold())
@@ -109,30 +111,23 @@ internal struct GraphToolbar: View {
                         .accessibilityHidden(true)
                 }
             }
-                .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
-                .frame(width: 108)
-                .frame(minHeight: 26)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .foregroundStyle(isOn ? Color.white : DesignTokens.Graph.AppTheme.inkSecondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isOn ? tint : Color.clear)
-                )
-                .contentShape(Rectangle())
+            .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
+            .foregroundStyle(isOn ? tint : DesignTokens.Graph.AppTheme.inkSecondary)
+            .frame(minWidth: 104, minHeight: 24)
         }
-        .buttonStyle(.plain)
-        .focusable()
-        .focusEffectDisabled()
         .accessibilityLabel(title)
-        .accessibilityValue(accessibilityValue(for: accessibilityID, badgeCount: badgeCount))
+        .accessibilityValue(accessibilityValue(for: accessibilityID,
+                                               badgeCount: badgeCount,
+                                               isOn: isOn))
+        .accessibilityAddTraits(isOn ? .isSelected : [])
         .accessibilityIdentifier(accessibilityID)
         .disabled(isDisabled)
-        .opacity(isDisabled ? 0.45 : 1)
         .help(help)
     }
 
-    private func accessibilityValue(for accessibilityID: String, badgeCount: Int) -> String {
+    private func accessibilityValue(for accessibilityID: String,
+                                    badgeCount: Int,
+                                    isOn: Bool) -> String {
         if accessibilityID == AccessibilityID.graphToolbarAutomation, badgeCount > 0 {
             return String.localizedStringWithFormat(
                 NSLocalizedString("graph.automation.attention_count",
@@ -140,15 +135,33 @@ internal struct GraphToolbar: View {
                 badgeCount
             )
         }
+        let modeState: String? = {
+            guard accessibilityID == AccessibilityID.graphToolbarSnip
+                    || accessibilityID == AccessibilityID.graphToolbarArchive else {
+                return nil
+            }
+            return NSLocalizedString(
+                isOn
+                    ? "accessibility.graph.toolbar.mode.active"
+                    : "accessibility.graph.toolbar.mode.inactive",
+                comment: "Accessibility state for a stateful graph toolbar mode"
+            )
+        }()
         if accessibilityID == AccessibilityID.graphToolbarSnip,
            viewModel.stagedSnipCount > 0 {
-            return String.localizedStringWithFormat(
+            let detail = String.localizedStringWithFormat(
                 NSLocalizedString("graph.snip.staging.count",
                                   comment: "Number of staged graph branches"),
                 viewModel.stagedSnipCount
             )
+            return String.localizedStringWithFormat(
+                NSLocalizedString("accessibility.graph.toolbar.mode.state_with_detail",
+                                  comment: "Graph toolbar mode state followed by detail"),
+                modeState ?? "",
+                detail
+            )
         }
-        return ""
+        return modeState ?? ""
     }
 
     private func performSnip() {
@@ -164,19 +177,11 @@ internal struct GraphToolbar: View {
                              accessibilityID: String,
                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
                 .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-                .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(DesignTokens.Graph.AppTheme.panelSecondary.opacity(0.001))
-                )
+                .frame(minWidth: 24, minHeight: 24)
         }
-        .buttonStyle(.plain)
-        .focusable()
-        .focusEffectDisabled()
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityID)
         .help(title)

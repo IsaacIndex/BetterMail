@@ -68,13 +68,18 @@ internal struct ActionItemsView: View {
 
     private var topBar: some View {
         HStack(spacing: 8) {
-            Text("Action Items")
+            Text(NSLocalizedString("mailbox.sidebar.action_items",
+                                   comment: "Action Items view title"))
                 .font(.headline)
             Text(subtitleText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button(showDone ? "Hide done" : "Show done") {
+            Button(showDone
+                   ? NSLocalizedString("action_items.hide_done",
+                                       comment: "Button title for hiding completed action items")
+                   : NSLocalizedString("action_items.show_done",
+                                       comment: "Button title for showing completed action items")) {
                 showDone.toggle()
             }
             .buttonStyle(.borderless)
@@ -93,45 +98,50 @@ internal struct ActionItemsView: View {
     private var subtitleText: String {
         let open = viewModel.actionItems.filter { !$0.isDone }.count
         let folderCount = Set(viewModel.actionItems.filter { !$0.isDone }.compactMap(\.folderID)).count
-        if open == 0 { return "All done" }
-        return "\(open) open · \(folderCount) folder\(folderCount == 1 ? "" : "s")"
+        if open == 0 {
+            return NSLocalizedString("action_items.subtitle.all_done",
+                                     comment: "Action Items subtitle when everything is complete")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("action_items.subtitle.counts",
+                              comment: "Open action-item and folder counts"),
+            open,
+            folderCount
+        )
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Image(systemName: "checklist")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text("No action items yet")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            Text("Right-click any thread on the canvas\nto mark it as an action item.")
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-            Button(NSLocalizedString("action_items.empty.view_all_emails",
-                                     comment: "Button title for leaving an empty action items list and viewing all email threads")) {
+        ContentUnavailableView {
+            Label(NSLocalizedString("action_items.empty.title",
+                                    comment: "Action Items empty-state title"),
+                  systemImage: "checklist")
+        } description: {
+            Text(NSLocalizedString("action_items.empty.description",
+                                   comment: "Action Items empty-state explanation"))
+        } actions: {
+            Button(NSLocalizedString(
+                "action_items.empty.view_all_emails",
+                comment: "Button title for leaving an empty action items list and viewing all email threads"
+            )) {
                 viewModel.selectMailboxScope(.allEmails)
             }
             .controlSize(.small)
             .buttonStyle(.bordered)
             .accessibilityIdentifier(AccessibilityID.actionItemsEmptyViewCanvasButton)
-            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var itemList: some View {
         let grouped = groupedItems
-        return List {
+        return List(selection: selectedActionItemID) {
             ForEach(grouped) { group in
                 Section {
                     ForEach(group.items) { item in
                         ActionItemRow(item: item,
                                       displayTitle: displayTitle(for: item),
-                                      onToggleDone: { viewModel.toggleActionItemDone(item) },
-                                      onSelect: { viewModel.selectNode(id: item.messageID) })
+                                      onToggleDone: { viewModel.toggleActionItemDone(item) })
+                            .tag(item.messageID)
                     }
                 } header: {
                     HStack {
@@ -155,13 +165,23 @@ internal struct ActionItemsView: View {
         .accessibilityIdentifier(AccessibilityID.actionItemsList)
     }
 
+    private var selectedActionItemID: Binding<String?> {
+        Binding(
+            get: { viewModel.selectedNodeID },
+            set: { viewModel.selectNode(id: $0) }
+        )
+    }
+
     // MARK: - Helpers
 
     private func displayTitle(for item: ActionItem) -> String {
         let summary = viewModel.summaryState(for: item.messageID)?.text
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !summary.isEmpty { return summary }
-        return item.subject.isEmpty ? "(no subject)" : item.subject
+        return item.subject.isEmpty
+            ? NSLocalizedString("action_items.no_subject",
+                                comment: "Fallback title for an action item without a subject")
+            : item.subject
     }
 
     // MARK: - Grouping
@@ -189,7 +209,10 @@ internal struct ActionItemsView: View {
 
         if let unfiled = folderMap[nil], !unfiled.isEmpty {
             groups.append(ItemGroup(folderID: nil,
-                                    folderTitle: "Unfiled",
+                                    folderTitle: NSLocalizedString(
+                                        "action_items.unfiled",
+                                        comment: "Action-item section for messages without a BetterMail group"
+                                    ),
                                     items: unfiled.sorted { $0.addedAt > $1.addedAt }))
         }
         return groups
@@ -203,16 +226,15 @@ private struct ActionItemRow: View {
     let item: ActionItem
     let displayTitle: String
     let onToggleDone: () -> Void
-    let onSelect: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Button(action: onToggleDone) {
-                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isDone ? Color.green.opacity(0.7) : Color.secondary)
-                    .font(.system(size: 16))
+            Toggle(isOn: isDone) {
+                EmptyView()
             }
-            .buttonStyle(.borderless)
+            .labelsHidden()
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
             .accessibilityIdentifier(AccessibilityID.actionItemDoneButton(item.id))
             .accessibilityLabel(item.isDone
                                 ? NSLocalizedString("accessibility.action_items.mark_not_done",
@@ -251,12 +273,21 @@ private struct ActionItemRow: View {
         .padding(.vertical, 2)
         .opacity(item.isDone ? 0.55 : 1)
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.actionItemRow(item.id))
         .accessibilityLabel(actionItemAccessibilityLabel)
         .accessibilityHint(NSLocalizedString("accessibility.action_items.row.hint",
                                              comment: "Accessibility hint for selecting an action item row"))
-        .highPriorityGesture(TapGesture().onEnded { _ in onSelect() })
+    }
+
+    private var isDone: Binding<Bool> {
+        Binding(
+            get: { item.isDone },
+            set: { newValue in
+                guard newValue != item.isDone else { return }
+                onToggleDone()
+            }
+        )
     }
 
     private var actionItemAccessibilityLabel: String {

@@ -268,16 +268,18 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 ## UI Layers (Current)
 - App entry point: `BetterMail/BetterMailApp.swift` shows `ContentView` in the main `WindowGroup`.
 - `BetterMail/ContentView.swift` renders a split layout with:
-  - `MailboxSidebarView` on the left for account + mailbox-folder navigation.
+  - `MailboxSidebarView` on the left for account + mailbox-folder navigation, using native source-list selection while retaining app-only drag reordering.
   - `ThreadListView` on the right for the thread canvas, inspector, and action bars.
 - `BetterMail/Sources/UI/ThreadListView.swift` composes the main canvas stack:
   - `ThreadCanvasView` as the full-window canvas.
   - `ThreadInspectorView` as a right-side overlay panel.
-  - `navigationBarOverlay` as the top bar above the canvas.
+  - `navigationBarOverlay` as the top bar above the canvas, with a native segmented view picker and native zoom `ControlGroup`.
   - `selectionActionBar` as a bottom overlay for multi-select actions.
+- Action Items uses native list selection, checkbox toggles, and an empty-state component; thread summaries use native disclosure semantics.
+- Graph settings use a native form and the bottom graph actions use native control groups. The SpriteKit renderer remains behind a narrow SwiftUI/AppKit adapter because it supplies point-specific context menus, trackpad gestures, drag/drop, retained rendering, and explicit teardown.
 - **Move** in the selection bar targets Apple Mailbox Folders; **Create Group** only persists a BetterMail Group.
 - New Groups never infer or inherit a Mailbox Folder destination. Assigning one in the Group inspector remains separate and explicit.
-- The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable hierarchical folder selector to make destination picking clearer.
+- The mailbox-folder sheet now uses a single guided flow with a segmented mode switch (`Move Existing` / `Create New`) and a searchable native folder list to make destination picking and keyboard navigation clearer.
 - Mailbox-folder move actions are thread-scoped: selecting any node in a thread moves all cached messages in that thread to keep mailbox/thread state consistent.
 - The selection bar's mailbox status line is also thread-scoped: it only appears while that thread remains selected and auto-clears after 5 minutes.
 - Mailbox-folder move execution now requires cached Apple Mail internal IDs and uses source-mailbox-scoped lookups to reduce move latency on long threads.
@@ -287,6 +289,7 @@ See `Sources/Threading/JWZThreader.swift` for the full implementation, including
 - Opening the mailbox-folder move sheet now triggers a hierarchy refresh when account/folder destinations are missing, and hierarchy reads automatically retry AppleEvent timeout failures before surfacing an error.
 - `All Inboxes` remains inbox-only. Messages moved out of inbox appear in `All Emails` and in their Mailbox Folder scope after refresh/rethread reconciliation. `All Groups` shows only grouped threads, hides date-rail labels, and bypasses day-window node filtering so Group members remain visible in dense rows.
 - The global Refresh button keeps the same mailbox-scoped behavior in every view. Group-specific refresh is exposed separately in the Group inspector via `Refresh Threads`, which refreshes the selected Group's threads plus any nested child Groups by scanning the relevant Mailbox Folders for matching normalized subjects without altering manual-thread attachments.
+- See `docs/NativeSwiftUIComponentAudit.md` for the exhaustive component-by-component native/adapted/custom decision record and validation matrix.
 
 ## Testing
 - Run all tests from Xcode (`⌘U`) or via CLI:
