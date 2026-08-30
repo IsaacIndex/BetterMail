@@ -81,6 +81,16 @@ internal struct GraphAutomationQueueSheet: View {
             }
             .disabled(selectedPendingIDs.isEmpty)
             .accessibilityIdentifier(AccessibilityID.graphAutomationRejectSelected)
+            Button(NSLocalizedString("graph.automation.approve_all",
+                                     comment: "Approve every pending automation proposal")) {
+                let ids = Set(coordinator.pendingProposals.map(\.id))
+                Task {
+                    await coordinator.approveAll()
+                    selectedIDs.subtract(ids)
+                }
+            }
+            .disabled(coordinator.pendingProposals.isEmpty)
+            .accessibilityIdentifier(AccessibilityID.graphAutomationApproveAll)
             Button(NSLocalizedString("graph.automation.approve_selected",
                                      comment: "Approve selected automation proposals")) {
                 let ids = selectedPendingIDs
@@ -103,15 +113,6 @@ internal struct GraphAutomationQueueSheet: View {
                 Label(group.title, systemImage: group.folderID == nil ? "point.3.connected.trianglepath.dotted" : "folder.fill")
                     .font(.headline)
                 Spacer()
-                let pending = group.proposals.filter { $0.status == .pendingReview }
-                if let folderID = group.folderID, !pending.isEmpty {
-                    Button(NSLocalizedString("graph.automation.approve_all_destination",
-                                             comment: "Approve every proposal for one destination")) {
-                        Task { await coordinator.approveAll(destinationFolderID: folderID) }
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier(AccessibilityID.graphAutomationApproveAll(folderID))
-                }
             }
             ForEach(StatusSection.allCases) { statusSection in
                 let rows = group.proposals.filter { statusSection.contains($0.status) }

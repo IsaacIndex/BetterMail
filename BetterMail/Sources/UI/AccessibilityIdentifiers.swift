@@ -174,9 +174,7 @@ internal enum AccessibilityID {
         "bettermail.graph-automation.row.\(stable(id))"
     }
 
-    internal static func graphAutomationApproveAll(_ folderID: String) -> String {
-        "bettermail.graph-automation.approve-all.\(stable(folderID))"
-    }
+    internal static let graphAutomationApproveAll = "bettermail.graph-automation.approve-all"
 
     internal static func graphModeSegment(_ mode: GraphCanvasMode) -> String {
         "bettermail.thread-list.graph-mode.\(stable(mode.rawValue))"

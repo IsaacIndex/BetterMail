@@ -602,7 +602,7 @@
 "graph.automation.selected_count" = "%d selected";
 "graph.automation.approve_selected" = "Approve Selected";
 "graph.automation.reject_selected" = "Reject Selected";
-"graph.automation.approve_all_destination" = "Approve All";
+"graph.automation.approve_all" = "Approve All";
 "graph.automation.include_source" = "Include %@ in this batch";
 "graph.automation.edit_destination" = "Change Destination";
 "graph.automation.retry" = "Retry";

@@ -116,10 +116,8 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         await apply(selected, snapshot: snapshot, allowsReviewedConflicts: true)
     }
 
-    internal func approveAll(destinationFolderID: String) async {
-        await approve(ids: Set(proposals.filter {
-            $0.status == .pendingReview && $0.target.folderID == destinationFolderID
-        }.map(\.id)))
+    internal func approveAll() async {
+        await approve(ids: Set(pendingProposals.map(\.id)))
     }
 
     internal func reject(ids: Set<String>) async {

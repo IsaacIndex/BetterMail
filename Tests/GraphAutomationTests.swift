@@ -212,6 +212,64 @@ final class GraphAutomationTests: XCTestCase {
         XCTAssertFalse(persistedFolder.threadIDs.contains("thread-established"))
     }
 
+    func testApproveAll_appliesEveryPendingProposalInQueue() async throws {
+        let defaults = makeDefaults()
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = GraphAutomationSettings(userDefaults: defaults)
+        settings.attachMode = .review
+        settings.appendMode = .review
+        let relationshipProvider = IBMRelationshipProvider()
+        let coordinator = makeCoordinator(store: store,
+                                          settings: settings,
+                                          relationshipProvider: relationshipProvider)
+        let roots = [
+            makeRoot(threadID: "thread-established",
+                     messageID: "established@example.com",
+                     subject: "Join the Pru Feedback Loop team on IBM Consulting Advantage",
+                     date: Date(timeIntervalSince1970: 100)),
+            makeRoot(threadID: "thread-angus",
+                     messageID: "angus@example.com",
+                     subject: "Invites Angus Lo to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                     date: Date(timeIntervalSince1970: 200)),
+            makeRoot(threadID: "thread-anthony",
+                     messageID: "anthony@example.com",
+                     subject: "Invites Anthony Liu to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                     date: Date(timeIntervalSince1970: 300)),
+            makeRoot(threadID: "thread-roadmap",
+                     messageID: "roadmap@example.com",
+                     subject: "IBM Consulting Advantage quarterly roadmap",
+                     date: Date(timeIntervalSince1970: 400))
+        ]
+        let folder = makeFolder(threadIDs: ["thread-established"])
+        let secondFolder = ThreadFolder(id: "folder-review",
+                                        title: "Review Destination",
+                                        color: ThreadFolderColor(red: 0.5, green: 0.3, blue: 0.7, alpha: 1),
+                                        threadIDs: [],
+                                        parentID: "folder-work")
+        try await store.upsertThreadFolders([folder, secondFolder])
+        let snapshot = makeSnapshot(roots: roots, folders: [folder, secondFolder])
+
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: false)
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: true)
+
+        let attachment = try XCTUnwrap(coordinator.pendingProposals.first {
+            $0.action == .attachToThread
+        })
+        await coordinator.changeDestination(proposalID: attachment.id, folderID: secondFolder.id)
+
+        let pendingIDs = Set(coordinator.pendingProposals.map(\.id))
+        XCTAssertEqual(pendingIDs.count, 3)
+        XCTAssertEqual(Set(coordinator.pendingProposals.map(\.action)),
+                       Set([.attachToThread, .appendToFolder]))
+        XCTAssertEqual(Set(coordinator.pendingProposals.compactMap(\.target.folderID)),
+                       Set([folder.id, secondFolder.id]))
+
+        await coordinator.approveAll()
+
+        XCTAssertTrue(coordinator.pendingProposals.isEmpty)
+        XCTAssertEqual(Set(coordinator.proposals.filter { $0.status == .applied }.map(\.id)), pendingIDs)
+    }
+
     func testExactRejectionSuppressesOnlyUnchangedEvidence() async throws {
         let defaults = makeDefaults()
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
