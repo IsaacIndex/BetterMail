@@ -28,7 +28,13 @@ internal final class AutoRefreshSettings: ObservableObject {
         }
     }
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        _storedEnabled = AppStorage(wrappedValue: false,
+                                    "autoRefreshEnabled",
+                                    store: userDefaults)
+        _storedInterval = AppStorage(wrappedValue: Self.defaultInterval,
+                                     "autoRefreshIntervalSeconds",
+                                     store: userDefaults)
         let normalized = Self.clampInterval(_storedInterval.wrappedValue)
         storedInterval = normalized
         isEnabled = _storedEnabled.wrappedValue

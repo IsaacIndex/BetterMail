@@ -1,5 +1,69 @@
 import SwiftUI
 
+private struct OrganizerLiveDropAttempt: Equatable, Sendable {
+    let id: UUID
+    let itemCount: Int
+    var hadVisibleHighlight: Bool
+    var destination: OrganizerDropDestinationKind?
+    var didRelease: Bool
+}
+
+private func recordOrganizerLiveDropCompletion(
+    recorder: OrganizerMetricsRecorder,
+    attempt: OrganizerLiveDropAttempt,
+    mutationSucceeded: Bool,
+    requestedOutcome: OrganizerMetricOutcome
+) async {
+    if !attempt.didRelease {
+        let releaseOutcome: OrganizerMetricOutcome = requestedOutcome == .cancelled
+            ? .cancelled
+            : .failure
+        _ = await recorder.recordEvent(
+            .dropRelease,
+            count: attempt.itemCount,
+            status: releaseOutcome,
+            failureReason: releaseOutcome == .cancelled ? .cancelled : .invalidTarget
+        )
+    }
+
+    let acceptedDestination = attempt.destination == .emptyCanvas
+        || attempt.destination == .confirmedGroup
+    let highlightSatisfied = attempt.destination == .emptyCanvas
+        || (attempt.destination == .confirmedGroup && attempt.hadVisibleHighlight)
+    let succeeded = requestedOutcome == .success
+        && mutationSucceeded
+        && acceptedDestination
+        && highlightSatisfied
+    let outcome: OrganizerMetricOutcome
+    if requestedOutcome == .cancelled {
+        outcome = .cancelled
+    } else {
+        outcome = succeeded ? .success : .failure
+    }
+    let failureReason: OrganizerMetricCoarseFailureReason? = outcome == .success
+        ? nil
+        : (outcome == .cancelled ? .cancelled : .invalidTarget)
+    _ = await recorder.recordEvent(
+        .dropOutcome,
+        count: attempt.itemCount,
+        status: outcome,
+        failureReason: failureReason
+    )
+    try? await recorder.recordRuntimeDrop(
+        source: .livePointer,
+        attemptCount: 1,
+        successCount: outcome == .success ? 1 : 0,
+        invalidTargetMutationCount: 0,
+        outcome: outcome
+    )
+    if outcome == .failure || outcome == .cancelled {
+        _ = await recorder.failActiveTimedEvents(
+            outcome: outcome,
+            failureReason: failureReason ?? .actionFailure
+        )
+    }
+}
+
 internal struct GraphCanvasView: View {
     @ObservedObject internal var threadViewModel: ThreadCanvasViewModel
     @ObservedObject internal var graphViewModel: GraphCanvasViewModel
@@ -8,6 +72,9 @@ internal struct GraphCanvasView: View {
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     internal let topInset: CGFloat
     internal let bottomChromeInset: CGFloat
+    internal let onRenderedOrganizerReceipt: OrganizerRenderedGraphReceiptHandler
+    internal let onOrganizerSelectGraphNode: (String?, OrganizerPointerSelectionIntent) -> Void
+    internal let onOrganizerLassoGraphNodeIDs: (Set<String>, Bool) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -15,6 +82,14 @@ internal struct GraphCanvasView: View {
     @State private var isLegendExpanded = false
     @State private var reviewedGrouping: GraphGrouping?
     @State private var restoringHistoryEntryIDs: Set<String> = []
+    @State private var pendingGroupComposer: OrganizerPendingGroupComposer?
+    @State private var liveDropAttempt: OrganizerLiveDropAttempt?
+    @State private var dropMetricsCoordinator = OrganizerDropMetricsCoordinator()
+    @State private var previousMetricSearchQuery = ""
+    @State private var retrievalStartTask: Task<Bool, Never>?
+    @State private var hasScheduledRetrievalVisibleMetric = false
+    @State private var retrievalGeneration = 0
+    @State private var isMetricRetrievalActive = false
 
     internal var body: some View {
         GeometryReader { proxy in
@@ -23,6 +98,7 @@ internal struct GraphCanvasView: View {
                                    settings: graphSettings,
                                    selectedNodeID: threadViewModel.selectedNodeID,
                                    selectedNodeIDs: threadViewModel.selectedNodeIDs,
+                                   isLassoSelectionActive: graphViewModel.isLassoSelectionActive,
                                    reduceMotion: reduceMotion,
                                    colorScheme: colorScheme,
                                    textScale: displaySettings.textScale,
@@ -33,9 +109,22 @@ internal struct GraphCanvasView: View {
                                            threadViewModel.selectFolder(id: nil)
                                        }
                                    },
+                                   onSelectGraphNodeWithIntent: onOrganizerSelectGraphNode,
+                                   onLassoGraphNodeIDs: onOrganizerLassoGraphNodeIDs,
                                    onToggleActionItem: toggleActionItem(forGraphNodeID:),
                                    isActionItem: isActionItem(forGraphNodeID:),
-                                   onMoveThreadToFolder: moveGraphThread(_:toFolderID:))
+                                   onMoveThreadToFolder: moveGraphThread(_:toFolderID:),
+                                   onMoveThreadsToFolder: moveGraphThreads(_:toFolderID:),
+                                   onCreateGroupAtCanvasPoint: { threadIDs, overlayPoint, worldPoint in
+                                       pendingGroupComposer = OrganizerPendingGroupComposer(
+                                           rawThreadIDs: threadIDs,
+                                           overlayPoint: overlayPoint,
+                                           worldPoint: worldPoint,
+                                           dropAttemptID: liveDropAttempt?.id
+                                       )
+                                   },
+                                   onDropLifecycle: handleDropLifecycle(_:),
+                                   onRenderedOrganizerSnapshot: handleRenderedOrganizerSnapshot(_:))
                     .accessibilityIdentifier(AccessibilityID.graphCanvas)
                     .accessibilityLabel(NSLocalizedString("graph.accessibility.canvas",
                                                           comment: "Accessibility label for graph canvas"))
@@ -47,7 +136,10 @@ internal struct GraphCanvasView: View {
                         Spacer(minLength: 0)
                         ObsidianGraphControls(settings: graphSettings,
                                               data: graphViewModel.data,
-                                              textScale: displaySettings.textScale)
+                                              textScale: displaySettings.textScale,
+                                              canUndoLayoutReset: graphViewModel.canUndoSpatialLayoutReset,
+                                              onResetLayout: graphViewModel.resetSpatialLayout,
+                                              onUndoLayoutReset: graphViewModel.undoSpatialLayoutReset)
                             .padding(.top, 16)
                             .padding(.trailing, 18)
                     }
@@ -60,6 +152,21 @@ internal struct GraphCanvasView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         .allowsHitTesting(false)
                         .zIndex(2)
+                }
+                if let pendingGroupComposer {
+                    OrganizerInlineGroupComposer(
+                        request: pendingGroupComposer,
+                        textScale: displaySettings.textScale,
+                        onCancel: {
+                            cancelPendingGroupComposer(pendingGroupComposer)
+                        },
+                        onConfirm: { title in
+                            createGroup(from: pendingGroupComposer, title: title)
+                        }
+                    )
+                    .position(composerPosition(for: pendingGroupComposer.overlayPoint,
+                                               in: proxy.size))
+                    .zIndex(5)
                 }
                 VStack {
                     Spacer()
@@ -119,7 +226,7 @@ internal struct GraphCanvasView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     } else if selectedActionTarget == nil,
                               graphViewModel.selectedGrouping == nil,
-                              let instruction = pruneInstruction {
+                              let instruction = interactionInstruction {
                         Label(instruction.title, systemImage: instruction.systemImage)
                             .font(DesignTokens.font(size: 11,
                                                    weight: .semibold,
@@ -144,6 +251,7 @@ internal struct GraphCanvasView: View {
                                  textScale: displaySettings.textScale,
                                  selectedThreadID: selectedActionTarget?.threadID,
                                  restoreHistoryEntries: graphViewModel.compostEntries,
+                                 organizationHistoryItems: graphViewModel.organizationHistoryItems,
                                  restoringHistoryEntryIDs: restoringHistoryEntryIDs,
                                  automationAttentionCount: automationCoordinator.attentionCount,
                                  onRestoreHistoryEntry: restore,
@@ -166,6 +274,9 @@ internal struct GraphCanvasView: View {
             syncData()
         }
         .onDisappear {
+            cancelMetricRetrievalIfNeeded()
+            graphViewModel.deactivateLassoSelection()
+            graphViewModel.flushSpatialStatePersistence()
             graphViewModel.setGraphEnrichmentActive(false)
             graphViewModel.discardSnipSession()
         }
@@ -178,7 +289,10 @@ internal struct GraphCanvasView: View {
         .onChange(of: graphSettings.dismissedSuggestedTopicIDs) { _, _ in syncData() }
         .onChange(of: graphSettings.hiddenSuggestedTopics) { _, _ in syncData() }
         .onReceive(threadViewModel.$roots) { _ in syncData() }
-        .onReceive(threadViewModel.$searchQuery) { _ in syncData() }
+        .onReceive(threadViewModel.$searchQuery) { query in
+            handleMetricSearchQuery(query)
+            syncData(searchQuery: query)
+        }
         .onChange(of: threadViewModel.activeMailboxScope) { _, _ in
             graphViewModel.discardSnipSession()
             syncData()
@@ -188,7 +302,13 @@ internal struct GraphCanvasView: View {
         .onReceive(threadViewModel.$threadFolders) { _ in syncData() }
         .onReceive(threadViewModel.$folderMembershipByThreadID) { _ in syncData() }
         .onReceive(automationCoordinator.$proposals) { _ in syncData() }
-        .onReceive(automationCoordinator.$topicSignalsByRawThreadID) { _ in syncData() }
+        .onReceive(automationCoordinator.$topicSignalsByRawThreadID) { topicSignals in
+            // `@Published` emits from `willSet`, so reading the coordinator
+            // property here can still return the previous dictionary. Pass the
+            // emitted value through directly so a one-shot topic refresh can
+            // render suggestions without waiting for an unrelated UI update.
+            syncData(topicSignalsOverride: topicSignals)
+        }
         .onChange(of: graphViewModel.snipNotice) { _, notice in
             guard let notice else { return }
             switch notice.style {
@@ -280,7 +400,14 @@ internal struct GraphCanvasView: View {
         )
     }
 
-    private var pruneInstruction: (title: String, systemImage: String)? {
+    private var interactionInstruction: (title: String, systemImage: String)? {
+        if graphViewModel.isLassoSelectionActive {
+            return (
+                NSLocalizedString("graph.toolbar.lasso.instruction",
+                                  comment: "Instruction shown while area selection is active"),
+                "rectangle.dashed"
+            )
+        }
         switch graphViewModel.pruneMode {
         case .idle:
             return nil
@@ -376,18 +503,358 @@ internal struct GraphCanvasView: View {
                                       tags: target.tags)
     }
 
-    private func moveGraphThread(_ rawThreadID: String, toFolderID folderID: String) {
-        guard let folder = threadViewModel.threadFolders.first(where: { $0.id == folderID }) else {
+    private func handleDropLifecycle(_ signal: OrganizerDropLifecycleSignal) {
+        guard let recorder = threadViewModel.organizerMetricsRecorder else { return }
+        switch signal {
+        case .intent(let itemCount):
+            pendingGroupComposer = nil
+            if let previous = liveDropAttempt {
+                finishDropMetrics(previous,
+                                  mutationSucceeded: false,
+                                  requestedOutcome: .cancelled)
+            }
+            liveDropAttempt = OrganizerLiveDropAttempt(id: UUID(),
+                                                       itemCount: max(itemCount, 1),
+                                                       hadVisibleHighlight: false,
+                                                       destination: nil,
+                                                       didRelease: false)
+            dropMetricsCoordinator.enqueue {
+                _ = await recorder.recordEvent(.actionStart,
+                                               count: 1)
+                _ = await recorder.recordEvent(.dropIntent,
+                                               count: max(itemCount, 1))
+            }
+
+        case .highlight(let itemCount):
+            var attempt = liveDropAttempt
+                ?? OrganizerLiveDropAttempt(id: UUID(),
+                                            itemCount: max(itemCount, 1),
+                                            hadVisibleHighlight: false,
+                                            destination: nil,
+                                            didRelease: false)
+            attempt.hadVisibleHighlight = true
+            liveDropAttempt = attempt
+            dropMetricsCoordinator.enqueue {
+                _ = await recorder.recordEvent(.dropHighlight,
+                                               count: max(itemCount, 1),
+                                               status: .success)
+            }
+
+        case .release(let itemCount, let destination, let hadVisibleHighlight):
+            var attempt = liveDropAttempt
+                ?? OrganizerLiveDropAttempt(id: UUID(),
+                                            itemCount: max(itemCount, 1),
+                                            hadVisibleHighlight: false,
+                                            destination: nil,
+                                            didRelease: false)
+            attempt.hadVisibleHighlight = attempt.hadVisibleHighlight || hadVisibleHighlight
+            attempt.destination = destination
+            attempt.didRelease = true
+            liveDropAttempt = attempt
+            let releaseSucceeded = destination == .emptyCanvas
+                || (destination == .confirmedGroup && attempt.hadVisibleHighlight)
+            dropMetricsCoordinator.enqueue {
+                _ = await recorder.recordEvent(.dropRelease,
+                                               count: attempt.itemCount,
+                                               status: releaseSucceeded ? .success : .failure,
+                                               failureReason: releaseSucceeded ? nil : .invalidTarget)
+            }
+            if destination == .invalidTarget {
+                liveDropAttempt = nil
+                finishDropMetrics(attempt,
+                                  mutationSucceeded: false,
+                                  requestedOutcome: .failure)
+            }
+
+        case .cancelled(let itemCount):
+            let attempt = liveDropAttempt
+                ?? OrganizerLiveDropAttempt(id: UUID(),
+                                            itemCount: max(itemCount, 1),
+                                            hadVisibleHighlight: false,
+                                            destination: nil,
+                                            didRelease: false)
+            liveDropAttempt = nil
+            finishDropMetrics(attempt,
+                              mutationSucceeded: false,
+                              requestedOutcome: .cancelled)
+        }
+    }
+
+    private func finishDropMetrics(_ attempt: OrganizerLiveDropAttempt,
+                                   mutationSucceeded: Bool,
+                                   requestedOutcome: OrganizerMetricOutcome) {
+        guard let recorder = threadViewModel.organizerMetricsRecorder else { return }
+        dropMetricsCoordinator.enqueue {
+            await recordOrganizerLiveDropCompletion(
+                recorder: recorder,
+                attempt: attempt,
+                mutationSucceeded: mutationSucceeded,
+                requestedOutcome: requestedOutcome
+            )
+        }
+    }
+
+    private func handleRenderedOrganizerSnapshot(_ receipt: OrganizerRenderedGraphReceipt) {
+        let newlyVisibleCount = receipt.newlyVisibleConfirmedMemberCount
+        guard let recorder = threadViewModel.organizerMetricsRecorder else { return }
+        let query = normalizedMetricQuery(threadViewModel.searchQuery)
+        let generation = retrievalGeneration
+        onRenderedOrganizerReceipt(receipt)
+        Task {
+            _ = await recorder.recordRenderedOrganizerSnapshot(
+                receipt.snapshot,
+                newlyVisibleCount: newlyVisibleCount,
+                isStillCurrent: { @MainActor in
+                    receipt.matchesFilterGeneration(
+                        graphViewModel.organizerRenderFilterGeneration
+                    )
+                }
+            )
+            guard query == OrganizerMetricsRecorder.frozenRetrievalQuery,
+                  receipt.matchesFilterGeneration(
+                    graphViewModel.organizerRenderFilterGeneration
+                  ),
+                  receipt.snapshot.containsAccessibleConversation(
+                    rawThreadID: OrganizerMetricsRecorder.frozenRetrievalRawThreadID
+                  ),
+                  !hasScheduledRetrievalVisibleMetric,
+                  let startTask = retrievalStartTask else {
+                return
+            }
+            hasScheduledRetrievalVisibleMetric = true
+            guard await startTask.value,
+                  !Task.isCancelled,
+                  generation == retrievalGeneration,
+                  receipt.matchesFilterGeneration(
+                    graphViewModel.organizerRenderFilterGeneration
+                  ),
+                  normalizedMetricQuery(threadViewModel.searchQuery)
+                    == OrganizerMetricsRecorder.frozenRetrievalQuery else {
+                if generation == retrievalGeneration {
+                    hasScheduledRetrievalVisibleMetric = false
+                    cancelMetricRetrievalIfNeeded(recorder: recorder)
+                }
+                return
+            }
+            let visibleCount = receipt.snapshot.filteredAccessibleConversationCount
+            let didRecord = await recorder.recordRenderedRetrievalVisible(
+                count: visibleCount,
+                generation: generation,
+                isStillCurrent: { @MainActor in
+                    generation == retrievalGeneration
+                        && receipt.matchesFilterGeneration(
+                            graphViewModel.organizerRenderFilterGeneration
+                        )
+                        && normalizedMetricQuery(threadViewModel.searchQuery)
+                            == OrganizerMetricsRecorder.frozenRetrievalQuery
+                }
+            )
+            guard generation == retrievalGeneration,
+                  receipt.matchesFilterGeneration(
+                    graphViewModel.organizerRenderFilterGeneration
+                  ),
+                  normalizedMetricQuery(threadViewModel.searchQuery)
+                    == OrganizerMetricsRecorder.frozenRetrievalQuery else {
+                if generation == retrievalGeneration {
+                    cancelMetricRetrievalIfNeeded(recorder: recorder)
+                }
+                return
+            }
+            if didRecord {
+                retrievalStartTask = nil
+                isMetricRetrievalActive = false
+            } else {
+                hasScheduledRetrievalVisibleMetric = false
+            }
+        }
+    }
+
+    private func handleMetricSearchQuery(_ rawQuery: String) {
+        let normalized = normalizedMetricQuery(rawQuery)
+        defer { previousMetricSearchQuery = normalized }
+        guard let recorder = threadViewModel.organizerMetricsRecorder else { return }
+        if !previousMetricSearchQuery.isEmpty,
+           (previousMetricSearchQuery == OrganizerMetricsRecorder.frozenRetrievalQuery
+            && normalized != OrganizerMetricsRecorder.frozenRetrievalQuery
+            || normalized.isEmpty
+            || !OrganizerMetricsRecorder.frozenRetrievalQuery.hasPrefix(normalized)) {
+            cancelMetricRetrievalIfNeeded(recorder: recorder)
             return
         }
-        threadViewModel.moveThread(threadID: rawThreadID, toFolderID: folderID)
-        threadViewModel.showToast(
-            String.localizedStringWithFormat(
-                NSLocalizedString("graph.folder.drop.moving",
-                                  comment: "Status after dropping a graph thread onto a confirmed folder"),
-                folder.title
+        guard previousMetricSearchQuery.isEmpty,
+              !normalized.isEmpty,
+              OrganizerMetricsRecorder.frozenRetrievalQuery.hasPrefix(normalized) else {
+            return
+        }
+        hasScheduledRetrievalVisibleMetric = false
+        isMetricRetrievalActive = true
+        retrievalGeneration += 1
+        let generation = retrievalGeneration
+        retrievalStartTask = Task {
+            guard !Task.isCancelled else { return false }
+            return await recorder.beginDefaultRetrievalTimedEvent(generation: generation)
+        }
+    }
+
+    private func cancelMetricRetrievalIfNeeded(
+        recorder: OrganizerMetricsRecorder? = nil
+    ) {
+        let hadActiveRequest = isMetricRetrievalActive
+        retrievalGeneration += 1
+        let cancellationGeneration = retrievalGeneration
+        retrievalStartTask?.cancel()
+        retrievalStartTask = nil
+        hasScheduledRetrievalVisibleMetric = false
+        isMetricRetrievalActive = false
+        guard hadActiveRequest else { return }
+        guard let recorder = recorder ?? threadViewModel.organizerMetricsRecorder else { return }
+        Task {
+            _ = await recorder.cancelDefaultRetrievalTimedEvent(
+                generation: cancellationGeneration
             )
-        )
+        }
+    }
+
+    private func normalizedMetricQuery(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func cancelPendingGroupComposer(_ request: OrganizerPendingGroupComposer) {
+        pendingGroupComposer = nil
+        guard let attempt = liveDropAttempt,
+              request.dropAttemptID == attempt.id else { return }
+        liveDropAttempt = nil
+        finishDropMetrics(attempt,
+                          mutationSucceeded: false,
+                          requestedOutcome: .cancelled)
+    }
+
+    private func moveGraphThread(_ rawThreadID: String, toFolderID folderID: String) {
+        moveGraphThreads([rawThreadID], toFolderID: folderID)
+    }
+
+    private func moveGraphThreads(_ rawThreadIDs: [String], toFolderID folderID: String) {
+        let attempt = liveDropAttempt
+        liveDropAttempt = nil
+        guard let folder = threadViewModel.threadFolders.first(where: { $0.id == folderID }) else {
+            if let attempt {
+                finishDropMetrics(attempt,
+                                  mutationSucceeded: false,
+                                  requestedOutcome: .failure)
+            }
+            return
+        }
+        let viewModel = threadViewModel
+        let recorder = viewModel.organizerMetricsRecorder
+        let operation: @MainActor () async -> Void = {
+            do {
+                let result = try await viewModel.organizeThreads(
+                    Set(rawThreadIDs),
+                    intoGroupID: folderID
+                )
+                if let attempt, let recorder {
+                    await recordOrganizerLiveDropCompletion(
+                        recorder: recorder,
+                        attempt: attempt,
+                        mutationSucceeded: result.mutation.didChange,
+                        requestedOutcome: .success
+                    )
+                }
+                viewModel.showToast(
+                    String.localizedStringWithFormat(
+                        NSLocalizedString("graph.folder.drop.moving",
+                                          comment: "Status after dropping graph conversations onto a confirmed folder"),
+                        folder.title
+                    ),
+                    style: .success
+                )
+            } catch {
+                if let attempt, let recorder {
+                    await recordOrganizerLiveDropCompletion(
+                        recorder: recorder,
+                        attempt: attempt,
+                        mutationSucceeded: false,
+                        requestedOutcome: .failure
+                    )
+                }
+                viewModel.showError(error.localizedDescription)
+            }
+        }
+        if attempt != nil {
+            dropMetricsCoordinator.enqueue(operation)
+        } else {
+            Task { @MainActor in
+                await operation()
+            }
+        }
+    }
+
+    private func createGroup(from request: OrganizerPendingGroupComposer,
+                             title: String) {
+        pendingGroupComposer = nil
+        let attempt = liveDropAttempt
+        guard request.dropAttemptID == attempt?.id else { return }
+        liveDropAttempt = nil
+        let viewModel = threadViewModel
+        let graphViewModel = graphViewModel
+        let recorder = viewModel.organizerMetricsRecorder
+        let operation: @MainActor () async -> Void = {
+            do {
+                let result = try await viewModel.createOrganizationGroup(
+                    title: title,
+                    threadIDs: Set(request.rawThreadIDs),
+                    scopeID: viewModel.activeMailboxScope.graphPagingScopeID,
+                    anchor: request.worldPoint,
+                    zoom: graphViewModel.zoomScale
+                )
+                if let intent = result.operation.spatialAnchorIntent {
+                    let revision = try await graphViewModel.persistConfirmedGroupAnchor(
+                        groupID: result.mutation.groupID,
+                        point: request.worldPoint
+                    )
+                    try await viewModel.completeOrganizationSpatialAnchor(
+                        operationID: result.operation.id,
+                        intentID: intent.intentID,
+                        opaqueStoreRevision: revision
+                    )
+                }
+                if let attempt, let recorder {
+                    await recordOrganizerLiveDropCompletion(
+                        recorder: recorder,
+                        attempt: attempt,
+                        mutationSucceeded: result.mutation.didChange,
+                        requestedOutcome: .success
+                    )
+                }
+                viewModel.showToast(
+                    NSLocalizedString("organizer.group.created",
+                                      comment: "Status after creating a Group from a canvas drop"),
+                    style: .success
+                )
+            } catch {
+                if let attempt, let recorder {
+                    await recordOrganizerLiveDropCompletion(
+                        recorder: recorder,
+                        attempt: attempt,
+                        mutationSucceeded: false,
+                        requestedOutcome: .failure
+                    )
+                }
+                viewModel.showError(error.localizedDescription)
+            }
+        }
+        if attempt != nil {
+            dropMetricsCoordinator.enqueue(operation)
+        } else {
+            Task { @MainActor in
+                await operation()
+            }
+        }
+    }
+
+    private func composerPosition(for requested: CGPoint, in size: CGSize) -> CGPoint {
+        CGPoint(x: min(max(requested.x, 150), max(150, size.width - 150)),
+                y: min(max(requested.y, 92), max(92, size.height - 110)))
     }
 
     private func performSnipAction() {
@@ -404,12 +871,13 @@ internal struct GraphCanvasView: View {
         audio.warm()
     }
 
-    private func syncData() {
+    private func syncData(searchQuery: String? = nil,
+                          topicSignalsOverride: [String: GraphTopicSignal]? = nil) {
         graphViewModel.onArchiveStateChanged = { [weak threadViewModel] in
             threadViewModel?.refreshGraphArchiveVisibility()
         }
         graphViewModel.update(roots: threadViewModel.roots,
-                              searchQuery: threadViewModel.searchQuery,
+                              searchQuery: searchQuery ?? threadViewModel.searchQuery,
                               tagsByNodeID: threadViewModel.timelineTagsByNodeID,
                               summariesByNodeID: threadViewModel.nodeSummaries,
                               manualAttachmentMessageIDs: threadViewModel.manualAttachmentMessageIDs,
@@ -419,7 +887,8 @@ internal struct GraphCanvasView: View {
                               folders: threadViewModel.threadFolders,
                               folderMembershipByThreadID: threadViewModel.folderMembershipByThreadID,
                               automationProposals: automationCoordinator.proposals,
-                              topicSignalsOverride: automationCoordinator.topicSignalsByRawThreadID,
+                              topicSignalsOverride: topicSignalsOverride
+                                  ?? automationCoordinator.topicSignalsByRawThreadID,
                               dismissedSuggestedTopicIDs: graphSettings.dismissedSuggestedTopicIDs,
                               hiddenSuggestedTopics: graphSettings.hiddenSuggestedTopics,
                               showsArchivedThreads: threadViewModel.activeMailboxScope == .graphArchive,
@@ -501,6 +970,97 @@ internal struct GraphCanvasView: View {
         guard let folderID = grouping.sourceFolderID else { return }
         graphViewModel.selectGrouping(id: nil)
         threadViewModel.selectFolder(id: folderID)
+    }
+}
+
+private struct OrganizerPendingGroupComposer: Identifiable, Equatable {
+    let id = UUID()
+    let rawThreadIDs: [String]
+    let overlayPoint: CGPoint
+    let worldPoint: CGPoint
+    let dropAttemptID: UUID?
+}
+
+private struct OrganizerInlineGroupComposer: View {
+    let request: OrganizerPendingGroupComposer
+    let textScale: CGFloat
+    let onCancel: () -> Void
+    let onConfirm: (String) -> Void
+
+    @State private var title = ""
+    @State private var didAttemptBlankName = false
+    @FocusState private var isNameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(NSLocalizedString("organizer.group.composer.title",
+                                  comment: "Title for inline Group naming composer"))
+                .font(DesignTokens.font(size: 13,
+                                        weight: .semibold,
+                                        textScale: textScale))
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("organizer.group.composer.count",
+                                  comment: "Conversation count in inline Group naming composer"),
+                request.rawThreadIDs.count
+            ))
+            .font(DesignTokens.font(size: 10.5,
+                                    weight: .regular,
+                                    textScale: textScale))
+            .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+
+            TextField(NSLocalizedString("organizer.group.composer.placeholder",
+                                        comment: "Placeholder for a new Group name"),
+                      text: $title)
+                .textFieldStyle(.roundedBorder)
+                .focused($isNameFocused)
+                .onSubmit(submit)
+                .accessibilityIdentifier(AccessibilityID.organizerGroupNameField)
+
+            if didAttemptBlankName {
+                Text(NSLocalizedString("organizer.group.composer.blank_error",
+                                      comment: "Validation error for a blank Group name"))
+                    .font(DesignTokens.font(size: 10,
+                                            weight: .medium,
+                                            textScale: textScale))
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Button(NSLocalizedString("common.cancel", comment: "Cancel"), action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Spacer(minLength: 12)
+                Button(NSLocalizedString("organizer.group.composer.create",
+                                         comment: "Create a named Group"),
+                       action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier(AccessibilityID.organizerGroupCreateConfirm)
+            }
+        }
+        .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+        .padding(14)
+        .frame(width: 280)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+                .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(AccessibilityID.organizerGroupComposer)
+        .onAppear { isNameFocused = true }
+    }
+
+    private func submit() {
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            didAttemptBlankName = true
+            return
+        }
+        onConfirm(normalized)
     }
 }
 
@@ -667,6 +1227,14 @@ private struct GraphLegend: View {
                         legendCircle(stroke: DesignTokens.Graph.AppTheme.inkSecondary, lineWidth: 1.4)
                         legendCircle(stroke: DesignTokens.Graph.AppTheme.ink, lineWidth: 1.9)
                     }
+                }
+                legendRow(title: NSLocalizedString("graph.legend.selection.title",
+                                                   comment: "Graph legend area selection title"),
+                          detail: NSLocalizedString("graph.legend.selection.detail",
+                                                    comment: "Graph legend area selection detail")) {
+                    Image(systemName: "rectangle.dashed")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(DesignTokens.Graph.AppTheme.accent)
                 }
                 legendRow(title: NSLocalizedString("graph.legend.folder.title",
                                                    comment: "Graph legend folder branch title"),

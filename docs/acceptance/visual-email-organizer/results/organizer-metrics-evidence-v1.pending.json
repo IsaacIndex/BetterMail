@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "visual-email-organizer-metrics-v1",
+  "protocolId": "visual-email-organizer-v1",
+  "runId": "synthetic-run-pending",
+  "fixtureId": "organizer-100-v1",
+  "appBuild": "build-pending",
+  "evidenceType": "automated-logic",
+  "status": "pending",
+  "generatedAt": "2026-08-28T03:52:49Z",
+  "records": [],
+  "eventSummary": [],
+  "timing": [],
+  "drops": [],
+  "wrongPlacements": [],
+  "suggestions": []
+}

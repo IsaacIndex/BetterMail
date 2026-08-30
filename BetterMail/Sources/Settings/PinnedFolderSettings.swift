@@ -12,7 +12,10 @@ internal final class PinnedFolderSettings: ObservableObject {
         }
     }
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        _storedPinnedFolderIDs = AppStorage(wrappedValue: "",
+                                            "threadCanvasPinnedFolderIDs",
+                                            store: userDefaults)
         pinnedFolderIDs = Set(Self.decode(storedPinnedFolderIDs))
     }
 

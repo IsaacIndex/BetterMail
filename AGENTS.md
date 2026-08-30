@@ -205,27 +205,16 @@ Raycast, Spotlight, and Dock launch the installed local bundle at:
 The repo-local Xcode build product is not the same bundle. When a change should be visible from Raycast, Spotlight, or Dock, agents must rebuild and install the app bundle after the normal validation build succeeds:
 
 ```bash
-xcodebuild \
-  -project BetterMail.xcodeproj \
-  -scheme BetterMail \
-  -configuration Debug \
-  -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath DerivedData \
-  CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY=- \
-  DEVELOPMENT_TEAM= \
-  PROVISIONING_PROFILE_SPECIFIER= \
-  clean build \
-  > /tmp/xcodebuild.log 2>&1
-
-ditto \
-  DerivedData/Build/Products/Debug/BetterMail.app \
-  /Users/isaacibm/Applications/BetterMail.app
-
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
-  -f /Users/isaacibm/Applications/BetterMail.app
-
-mdimport /Users/isaacibm/Applications/BetterMail.app
+./script/build_and_run.sh --install
 ```
 
-Use the ad-hoc signing override above only for this local install path; do not commit signing, entitlement, bundle identifier, or provisioning changes for it. If an app icon or other bundle metadata changed and Raycast/Dock still shows stale data, reset caches with `qlmanage -r cache`, restart Raycast, and restart Dock only after verifying the installed bundle contains the expected resources.
+The guarded local workflow requires Apple Development certificate SHA-1
+`59D9099E689B4FCF247C0E2C021C3B62E80AE4B2` with
+`DEVELOPMENT_TEAM=TN3L2WBKR5`. It clean-builds with the ignored local signing
+overrides, rejects ad-hoc signatures, deep-strict-verifies both the app and Mail
+extension before and after installation, preserves their bundle identifiers,
+and restores the previous installed bundle if validation fails. Do not commit
+signing, entitlement, bundle identifier, or provisioning changes. If an app
+icon or other bundle metadata changed and Raycast/Dock still shows stale data,
+reset caches with `qlmanage -r cache`, restart Raycast, and restart Dock only
+after verifying the installed bundle contains the expected resources.

@@ -88,7 +88,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
                                 profile: MailFetchProfile = .full) async throws -> [EmailMessage] {
         try Task.checkCancellation()
         let sinceDisplay = date?.ISO8601Format() ?? "nil"
-        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public) profile=\(String(describing: profile), privacy: .public)")
+        Log.appleScript.info("fetchMessages requested. mailbox=\(mailbox, privacy: .private) account=\(account ?? "", privacy: .private) limit=\(limit, privacy: .public) since=\(sinceDisplay, privacy: .public) profile=\(String(describing: profile), privacy: .public)")
         let script = buildScript(mailbox: mailbox, account: account, limit: limit, since: date, profile: profile)
         Log.appleScript.debug("Generated AppleScript of \(script.count, privacy: .public) characters.")
         let descriptor = try await scriptRunner.run(script)
@@ -106,7 +106,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
         let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
-        Log.appleScript.info("\(LogPrefix.backfillFetch, privacy: .public) fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.backfillFetch, privacy: .public) fetchMessages requested. mailbox=\(mailbox, privacy: .private) account=\(account ?? "", privacy: .private) limit=\(limit, privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
         let script = buildScript(mailbox: mailbox,
                                  account: account,
                                  limit: limit,
@@ -217,7 +217,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
         let startWindow = max(0, Int(now.timeIntervalSince(range.start)))
         let clampedEnd = min(range.end, now)
         let endWindow = max(0, Int(now.timeIntervalSince(clampedEnd)))
-        Log.appleScript.info("\(LogPrefix.backfillCount, privacy: .public) countMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.backfillCount, privacy: .public) countMessages requested. mailbox=\(mailbox, privacy: .private) account=\(account ?? "", privacy: .private) rangeStart=\(range.start.ISO8601Format(), privacy: .public) rangeEnd=\(range.end.ISO8601Format(), privacy: .public)")
         let script = buildCountScript(mailbox: mailbox,
                                       account: account,
                                       startWindow: startWindow,
@@ -244,7 +244,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
             .filter { !$0.isEmpty }
         guard !filteredSubjects.isEmpty else { return [] }
         try Task.checkCancellation()
-        Log.appleScript.info("\(LogPrefix.subjectFetch, privacy: .public) fetchMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) limit=\(limit, privacy: .public) subjectCount=\(filteredSubjects.count, privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.subjectFetch, privacy: .public) fetchMessages requested. mailbox=\(mailbox, privacy: .private) account=\(account ?? "", privacy: .private) limit=\(limit, privacy: .public) subjectCount=\(filteredSubjects.count, privacy: .public)")
         let script = buildSubjectScopedScript(mailbox: mailbox,
                                               account: account,
                                               normalizedSubjects: filteredSubjects,
@@ -263,7 +263,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
             .filter { !$0.isEmpty }
         guard !filteredSubjects.isEmpty else { return 0 }
         try Task.checkCancellation()
-        Log.appleScript.info("\(LogPrefix.subjectCount, privacy: .public) countMessages requested. mailbox=\(mailbox, privacy: .public) account=\(account ?? "", privacy: .public) subjectCount=\(filteredSubjects.count, privacy: .public)")
+        Log.appleScript.info("\(LogPrefix.subjectCount, privacy: .public) countMessages requested. mailbox=\(mailbox, privacy: .private) account=\(account ?? "", privacy: .private) subjectCount=\(filteredSubjects.count, privacy: .public)")
         let script = buildSubjectScopedCountScript(mailbox: mailbox,
                                                    account: account,
                                                    normalizedSubjects: filteredSubjects)
@@ -319,7 +319,7 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
         try Task.checkCancellation()
         let movedIDs = try Self.decodeMovedMessageIDs(from: descriptor)
         let result = GraphMailMoveResult(movedMessageIDs: movedIDs)
-        Log.appleScript.info("Graph snip moved \(result.movedMessageIDs.count, privacy: .public) of \(cleanedIDs.count, privacy: .public) requested messages to mailbox=\(trimmedMailboxPath, privacy: .public) account=\(account ?? "", privacy: .public)")
+        Log.appleScript.info("Graph snip moved \(result.movedMessageIDs.count, privacy: .public) of \(cleanedIDs.count, privacy: .public) requested messages to mailbox=\(trimmedMailboxPath, privacy: .private) account=\(account ?? "", privacy: .private)")
         return result
     }
 

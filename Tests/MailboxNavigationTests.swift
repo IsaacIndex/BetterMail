@@ -80,7 +80,7 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(accounts.first?.folders.first?.children.map(\.name), ["INBOX", "Zeta", "Alpha"])
     }
 
-    func test_buildAccounts_dropsRootFolder_whenSameNameExistsUnderParent() {
+    func test_buildAccounts_preservesDistinctRootFolder_whenSameNameExistsUnderParent() {
         let folders = [
             MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
             MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
@@ -96,13 +96,13 @@ final class MailboxNavigationTests: XCTestCase {
             return
         }
 
-        XCTAssertFalse(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "Azure Ignored" }))
         XCTAssertTrue(work.folders.contains(where: { $0.path == "-------------------------" }))
         XCTAssertEqual(work.folders.first(where: { $0.path == "-------------------------" })?.children.map(\.path),
                        ["-------------------------/Azure Ignored"])
     }
 
-    func test_buildAccounts_keepsNestedFolders_afterRootMirrorRemoved() {
+    func test_buildAccounts_keepsRootAndNestedFolders_withMatchingNames() {
         let folders = [
             MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
             MailboxFolder(account: "Work", path: "Blue Points", name: "Blue Points", parentPath: nil),
@@ -128,15 +128,16 @@ final class MailboxNavigationTests: XCTestCase {
             return
         }
 
-        XCTAssertFalse(work.folders.contains(where: { $0.path == "Azure Ignored" }))
-        XCTAssertFalse(work.folders.contains(where: { $0.path == "Blue Points" }))
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertTrue(work.folders.contains(where: { $0.path == "Blue Points" }))
         XCTAssertTrue(work.folders.contains(where: { $0.path == "Archive" }))
         XCTAssertEqual(dashed.children.map(\.path),
                        ["-------------------------/Azure Ignored", "-------------------------/Blue Points"])
     }
 
-    func test_buildAccounts_dedupesWithinAccount_only() {
+    func test_buildAccounts_dedupesExactPathsWithinAccount_only() {
         let folders = [
+            MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
             MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
             MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
             MailboxFolder(account: "Work",
@@ -156,7 +157,9 @@ final class MailboxNavigationTests: XCTestCase {
             return
         }
 
-        XCTAssertFalse(work.folders.contains(where: { $0.path == "Azure Ignored" }))
+        XCTAssertEqual(work.folders.filter { $0.path == "Azure Ignored" }.count, 1)
+        XCTAssertEqual(work.folders.first(where: { $0.path == "-------------------------" })?.children.map(\.path),
+                       ["-------------------------/Azure Ignored"])
         XCTAssertEqual(personal.folders.map(\.path), ["Azure Ignored"])
     }
 
@@ -199,7 +202,7 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(choices.map(\.displayPath), ["Clients", "Clients/Acme"])
     }
 
-    func test_folderChoices_excludesRemovedRootMirrorPaths() {
+    func test_folderChoices_includesDistinctRootAndNestedPaths() {
         let folders = [
             MailboxFolder(account: "Work", path: "Azure Ignored", name: "Azure Ignored", parentPath: nil),
             MailboxFolder(account: "Work", path: "-------------------------", name: "-------------------------", parentPath: nil),
@@ -217,7 +220,7 @@ final class MailboxNavigationTests: XCTestCase {
         let choices = MailboxHierarchyBuilder.folderChoices(for: work)
         let paths = choices.map(\.path)
 
-        XCTAssertFalse(paths.contains("Azure Ignored"))
+        XCTAssertTrue(paths.contains("Azure Ignored"))
         XCTAssertTrue(paths.contains("-------------------------/Azure Ignored"))
     }
 
@@ -402,6 +405,7 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(ids, ["Work|Inbox", "Work|Inbox/Flagged"])
     }
 
+    @MainActor
     func test_selectedMailboxActionAccount_whenSingleAccount_returnsAccount() {
         let nodes = [
             makeNode(messageID: "m1", account: "Work"),
@@ -411,6 +415,7 @@ final class MailboxNavigationTests: XCTestCase {
         XCTAssertEqual(ThreadCanvasViewModel.selectedMailboxActionAccount(for: nodes), "Work")
     }
 
+    @MainActor
     func test_selectedMailboxActionAccount_whenMixedAccounts_returnsNil() {
         let nodes = [
             makeNode(messageID: "m1", account: "Work"),

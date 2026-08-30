@@ -18,7 +18,10 @@ internal final class MailboxThreadAutoMoveSettings: ObservableObject {
         }
     }
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        _storedRules = AppStorage(wrappedValue: "",
+                                  "mailboxThreadAutoMoveRules",
+                                  store: userDefaults)
         rules = Self.decode(storedRules)
     }
 

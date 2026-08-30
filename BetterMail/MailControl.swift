@@ -315,7 +315,7 @@ internal struct MailControl {
         let script = buildMoveMessagesByInternalIDScript(targets: dedupedTargets,
                                                          mailboxPath: mailboxPath,
                                                          account: account)
-        Log.appleScript.debug("Executing mailbox move script (internal ID) for account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) ids=\(dedupedTargets.count, privacy: .public) scriptLength=\(script.count, privacy: .public)")
+        Log.appleScript.debug("Executing mailbox move script (internal ID) for account=\(account, privacy: .private) destination=\(mailboxPath, privacy: .private) ids=\(dedupedTargets.count, privacy: .public) scriptLength=\(script.count, privacy: .public)")
         let result = try await runScript(script)
         guard result.descriptorType == typeAEList else {
             return MailboxMoveResult(requestedCount: dedupedTargets.count,
@@ -333,7 +333,7 @@ internal struct MailControl {
                                        errorCount: Int(result.atIndex(3)?.int32Value ?? 0),
                                        firstErrorNumber: firstErrorNumberRaw == 0 ? nil : firstErrorNumberRaw,
                                        firstErrorMessage: firstErrorMessageRaw.isEmpty ? nil : firstErrorMessageRaw)
-        Log.appleScript.debug("Mailbox move result account=\(account, privacy: .public) destination=\(mailboxPath, privacy: .public) requested=\(parsed.requestedCount, privacy: .public) matched=\(parsed.matchedCount, privacy: .public) moved=\(parsed.movedCount, privacy: .public) errors=\(parsed.errorCount, privacy: .public) firstErrorNumber=\(parsed.firstErrorNumber ?? 0, privacy: .public) firstErrorMessage=\(parsed.firstErrorMessage ?? "", privacy: .public)")
+        Log.appleScript.debug("Mailbox move result account=\(account, privacy: .private) destination=\(mailboxPath, privacy: .private) requested=\(parsed.requestedCount, privacy: .public) matched=\(parsed.matchedCount, privacy: .public) moved=\(parsed.movedCount, privacy: .public) errors=\(parsed.errorCount, privacy: .public) firstErrorNumber=\(parsed.firstErrorNumber ?? 0, privacy: .public) firstErrorMessage=\(parsed.firstErrorMessage ?? "", privacy: .private)")
         return parsed
     }
 
@@ -362,7 +362,7 @@ internal struct MailControl {
                                                       receivedAt: receivedAt,
                                                       toleranceSeconds: toleranceSeconds,
                                                       allowAccountWideFallback: allowAccountWideFallback)
-        Log.appleScript.debug("Executing internal-ID resolver script for account=\(trimmedAccount, privacy: .public) mailboxPath=\(trimmedMailboxPath, privacy: .public) scriptLength=\(script.count, privacy: .public)")
+        Log.appleScript.debug("Executing internal-ID resolver script for account=\(trimmedAccount, privacy: .private) mailboxPath=\(trimmedMailboxPath, privacy: .private) scriptLength=\(script.count, privacy: .public)")
         let result = try await runScript(script)
         guard result.descriptorType == typeAEList else { return .notFound }
         let matchCount = Int(result.atIndex(1)?.int32Value ?? 0)
@@ -370,7 +370,7 @@ internal struct MailControl {
         let usedAccountWideFallback = result.atIndex(3)?.booleanValue ?? false
         let fallbackMailboxCount = Int(result.atIndex(4)?.int32Value ?? 0)
         let fallbackMessageCount = Int(result.atIndex(5)?.int32Value ?? 0)
-        Log.appleScript.debug("Internal-ID resolver result account=\(trimmedAccount, privacy: .public) mailboxPath=\(trimmedMailboxPath, privacy: .public) matchCount=\(matchCount, privacy: .public) resolvedID=\(resolvedID, privacy: .public) usedAccountWideFallback=\(usedAccountWideFallback, privacy: .public) fallbackMailboxCount=\(fallbackMailboxCount, privacy: .public) fallbackMessageCount=\(fallbackMessageCount, privacy: .public)")
+        Log.appleScript.debug("Internal-ID resolver result account=\(trimmedAccount, privacy: .private) mailboxPath=\(trimmedMailboxPath, privacy: .private) matchCount=\(matchCount, privacy: .public) resolvedID=\(resolvedID, privacy: .private) usedAccountWideFallback=\(usedAccountWideFallback, privacy: .public) fallbackMailboxCount=\(fallbackMailboxCount, privacy: .public) fallbackMessageCount=\(fallbackMessageCount, privacy: .public)")
         if matchCount == 1, !resolvedID.isEmpty {
             return .resolved(resolvedID)
         }

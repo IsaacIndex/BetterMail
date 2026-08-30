@@ -13,6 +13,55 @@ internal enum GraphViewport {
     }
 }
 
+/// The spatial anchor replay boundary is deliberately a value/closure seam.
+/// The organization ledger owns intent and receipt durability; this presenter
+/// only applies a resolved, in-memory intent and reports the resulting JSON
+/// store revision. It does not claim that the two stores are one transaction.
+internal struct GraphSpatialAnchorReplayIntent: Equatable, Sendable {
+    internal let intentID: String
+    internal let groupID: String
+    internal let x: Double
+    internal let y: Double
+    internal let zoom: Double
+
+    internal init(intentID: String,
+                  groupID: String,
+                  x: Double,
+                  y: Double,
+                  zoom: Double) {
+        self.intentID = intentID
+        self.groupID = groupID
+        self.x = x
+        self.y = y
+        self.zoom = zoom
+    }
+}
+
+internal struct GraphSpatialAnchorReplayReceipt: Equatable, Sendable {
+    internal let intentID: String
+    internal let appliedAt: Date
+    internal let opaqueStoreRevision: String
+
+    internal init(intentID: String,
+                  appliedAt: Date,
+                  opaqueStoreRevision: String) {
+        self.intentID = intentID
+        self.appliedAt = appliedAt
+        self.opaqueStoreRevision = opaqueStoreRevision
+    }
+}
+
+internal struct GraphSpatialAnchorReplaySeam: Sendable {
+    internal let pendingIntent: @MainActor @Sendable (String) async -> GraphSpatialAnchorReplayIntent?
+    internal let recordReceipt: @MainActor @Sendable (GraphSpatialAnchorReplayReceipt) async -> Void
+
+    internal init(pendingIntent: @escaping @MainActor @Sendable (String) async -> GraphSpatialAnchorReplayIntent?,
+                  recordReceipt: @escaping @MainActor @Sendable (GraphSpatialAnchorReplayReceipt) async -> Void) {
+        self.pendingIntent = pendingIntent
+        self.recordReceipt = recordReceipt
+    }
+}
+
 internal enum GraphHoverItem: Equatable {
     case grouping(GraphGrouping, CGPoint)
     case thread(GraphThread, CGPoint)
@@ -76,11 +125,6 @@ private enum GraphSnipExecutionClassification {
     case recoveryNeeded
 }
 
-private struct GraphSnipRestoreTuple: Hashable {
-    let destination: GraphMailboxTuple
-    let origin: GraphMailboxTuple
-}
-
 private enum GraphSnipRestoreError: LocalizedError {
     case incomplete
 
@@ -109,7 +153,9 @@ internal final class GraphCanvasViewModel: ObservableObject {
     @Published internal private(set) var data: GraphData = .empty
     @Published internal var hoverItem: GraphHoverItem?
     @Published internal var pruneMode: GraphPruneMode = .idle
+    @Published internal private(set) var isLassoSelectionActive = false
     @Published internal private(set) var compostEntries: [GraphCompostEntry] = []
+    @Published internal private(set) var organizationHistoryItems: [OrganizationHistoryItem] = []
     @Published internal private(set) var snipPhase: GraphSnipPhase = .idle
     @Published internal private(set) var stagedSnipItems: [GraphSnipItem] = []
     @Published internal private(set) var snipLockedAccountName: String?
@@ -126,6 +172,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
     @Published internal private(set) var sproutingMessageIDs: Set<String> = []
     @Published internal private(set) var archivedThreadIDs: Set<String> = []
     @Published internal private(set) var nodePositions: [String: CGPoint] = [:]
+    @Published internal private(set) var confirmedGroupAnchors: [String: CGPoint] = [:]
+    @Published internal private(set) var canUndoSpatialLayoutReset = false
     @Published internal private(set) var pruneAnimationRequest: GraphPruneAnimationRequest?
     @Published internal private(set) var selectedGroupingID: String?
     @Published internal private(set) var regeneratingGraphTitleNodeIDs: Set<String> = []
@@ -133,6 +181,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
     private var sourceRoots: [ThreadNode] = []
     private var currentSearchQuery = ""
+    internal private(set) var organizerRenderFilterGeneration: UInt64 = 0
     private var currentTagsByNodeID: [String: [String]] = [:]
     private var currentSummariesByNodeID: [String: GraphMessageSummary] = [:]
     private var currentManualAttachmentMessageIDs: Set<String> = []
@@ -168,28 +217,58 @@ internal final class GraphCanvasViewModel: ObservableObject {
     private var pruneCompletionTask: Task<Void, Never>?
     private var graphTitleRefreshTask: Task<Void, Never>?
     private var graphTitleRefreshID: UUID?
+    private var organizerRenderedGraphVisibilityTracker = OrganizerRenderedGraphVisibilityTracker()
 #if DEBUG
     /// Deterministic suspension seam for exercising supersession after a
     /// non-cancellation-aware persistence continuation resumes.
     internal var graphTitlePostPersistenceHookForTesting: (() async -> Void)?
+    internal private(set) var lastSpatialLoadDispositionForTesting = "not-started"
+    internal private(set) var lastSpatialReplayIntentIDForTesting: String?
+    internal private(set) var lastSpatialReplayAnchorForTesting: CGPoint?
 #endif
     private var graphTopicRefreshTask: Task<Void, Never>?
     private var graphTopicRefreshID: UUID?
+    private var spatialLoadTask: Task<Void, Never>?
+    private var spatialPersistenceTask: Task<Void, Never>?
+    private var spatialResetTask: Task<Void, Never>?
+    private var organizationHistoryRefreshTask: Task<Void, Never>?
+    private var spatialResetScopeID: String?
+    private var spatialLoadGeneration = UUID()
+    private var spatialLoadedScopeID: String?
+    private var spatialLayoutResetUndo: (scopeID: String, snapshot: GraphSpatialSnapshot)?
+    /// Scene physics reports are deliberately kept out of `@Published` state
+    /// until the layout settles. Publishing every 200 ms makes SwiftUI
+    /// reconfigure the mounted scene while its simulator is still moving.
+    private var pendingSceneNodePositions: [String: CGPoint] = [:]
     private var isGraphTitleGenerationActive = false
     private var isGraphTopicGenerationActive = false
     private let store: MessageStore
-    private let mailClient: any GraphSnipMailMoving
+    private let organizationOperationStore: OrganizationOperationStore
+    private let organizationMailService: any OrganizationMailExecutionServicing
     private let graphTitleCapabilityProvider: (() -> GraphTitleCapability)?
     private let graphTopicCapabilityProvider: (() -> GraphTopicCapability)?
+    private let graphSpatialStore: GraphSpatialStateStore
+    private let graphSpatialAnchorReplay: GraphSpatialAnchorReplaySeam?
 
     internal init(store: MessageStore? = nil,
                   mailClient: any GraphSnipMailMoving = MailAppleScriptClient(),
+                  organizationOperationStore: OrganizationOperationStore = .shared,
+                  organizationMailService: (any OrganizationMailExecutionServicing)? = nil,
                   graphTitleCapabilityProvider: (() -> GraphTitleCapability)? = nil,
-                  graphTopicCapabilityProvider: (() -> GraphTopicCapability)? = nil) {
+                  graphTopicCapabilityProvider: (() -> GraphTopicCapability)? = nil,
+                  graphSpatialStore: GraphSpatialStateStore = GraphSpatialStateStore(),
+                  graphSpatialAnchorReplay: GraphSpatialAnchorReplaySeam? = nil) {
         self.store = store ?? .shared
-        self.mailClient = mailClient
+        self.organizationOperationStore = organizationOperationStore
+        self.organizationMailService = organizationMailService
+            ?? OrganizationMailExecutionService(
+                operationStore: organizationOperationStore,
+                transport: DefaultOrganizationMailGatewayTransport(mailClient: mailClient)
+            )
         self.graphTitleCapabilityProvider = graphTitleCapabilityProvider
         self.graphTopicCapabilityProvider = graphTopicCapabilityProvider
+        self.graphSpatialStore = graphSpatialStore
+        self.graphSpatialAnchorReplay = graphSpatialAnchorReplay
         Task { await loadArchivedEntries() }
     }
 
@@ -209,6 +288,16 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
     internal var selectedGrouping: GraphGrouping? {
         selectedGroupingID.flatMap { data.groupingByID[$0] }
+    }
+
+    internal func renderedOrganizerReceipt(
+        for snapshot: OrganizerRenderedGraphSnapshot,
+        filterGeneration: UInt64
+    ) -> OrganizerRenderedGraphReceipt {
+        organizerRenderedGraphVisibilityTracker.receipt(
+            for: snapshot,
+            filterGeneration: filterGeneration
+        )
     }
 
     internal var totalBranchCount: Int {
@@ -325,6 +414,26 @@ internal final class GraphCanvasViewModel: ObservableObject {
         let sourceChanged = nextSourceThreadIDs != sourceThreadIDs
         let archiveVisibilityChanged = showsArchivedThreads != self.showsArchivedThreads
         let mailboxScopeChanged = mailboxScopeID != self.mailboxScopeID
+        let previousMailboxScopeID = self.mailboxScopeID
+        if mailboxScopeChanged {
+            if !previousMailboxScopeID.isEmpty {
+                spatialPersistenceTask?.cancel()
+                scheduleSpatialPersistence(for: previousMailboxScopeID,
+                                           immediately: true,
+                                           replacesPendingTask: false)
+            }
+            spatialLoadTask?.cancel()
+            spatialLoadGeneration = UUID()
+            spatialLoadedScopeID = nil
+            spatialResetTask = nil
+            spatialResetScopeID = nil
+            nodePositions = [:]
+            confirmedGroupAnchors = [:]
+            pendingSceneNodePositions = [:]
+            zoomScale = 1.0
+            panOffset = .zero
+            discardSpatialLayoutResetUndo()
+        }
         if sourceChanged || archiveVisibilityChanged || mailboxScopeChanged ||
             clampedBranchPageSize != self.branchPageSize {
             visibleBranchLimit = clampedBranchPageSize
@@ -343,6 +452,15 @@ internal final class GraphCanvasViewModel: ObservableObject {
         self.emailPageSize = clampedEmailPageSize
         self.mailboxScopeID = mailboxScopeID
         sourceRoots = roots
+        let previousNormalizedSearchQuery = currentSearchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let nextNormalizedSearchQuery = searchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if previousNormalizedSearchQuery != nextNormalizedSearchQuery {
+            organizerRenderFilterGeneration &+= 1
+        }
         currentSearchQuery = searchQuery
         currentTagsByNodeID = tagsByNodeID
         currentManualAttachmentMessageIDs = manualAttachmentMessageIDs
@@ -369,6 +487,14 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                 generationID: $0.generationID)
         }
         rebuildData()
+        scheduleOrganizationHistoryRefresh()
+        if mailboxScopeChanged {
+            publishSpatialSceneState(forceApply: true)
+        }
+        if !mailboxScopeID.isEmpty,
+           (mailboxScopeChanged || spatialLoadedScopeID != mailboxScopeID) {
+            beginSpatialLoad(for: mailboxScopeID)
+        }
     }
 
     internal func expandRemainingBranches(parentID: String) {
@@ -401,7 +527,58 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func setNodePositions(_ positions: [String: CGPoint]) {
-        nodePositions = positions
+        pendingSceneNodePositions = [:]
+        guard mergeNodePositions(positions) else { return }
+        discardSpatialLayoutResetUndo()
+        publishSpatialSceneState()
+        scheduleSpatialPersistence()
+    }
+
+    /// Records positions emitted by the already-mounted SpriteKit scene.
+    /// Interim physics frames are coalesced without notifying SwiftUI. The
+    /// settled frame becomes the durable model snapshot, but is never bridged
+    /// back into that same scene because it is already authoritative.
+    internal func recordSceneNodePositions(_ positions: [String: CGPoint],
+                                           isSettled: Bool) {
+        let finitePositions = positions.filter { _, position in
+            position.x.isFinite && position.y.isFinite
+        }
+        guard !finitePositions.isEmpty else {
+            if isSettled {
+                pendingSceneNodePositions = [:]
+            }
+            return
+        }
+        guard isSettled else {
+            pendingSceneNodePositions = finitePositions
+            return
+        }
+
+        var settledPositions = pendingSceneNodePositions
+        settledPositions.merge(finitePositions) { _, settled in settled }
+        pendingSceneNodePositions = [:]
+        _ = mergeNodePositions(settledPositions)
+        scheduleSpatialPersistence()
+    }
+
+    @discardableResult
+    private func mergeNodePositions(_ positions: [String: CGPoint]) -> Bool {
+        guard !positions.isEmpty else { return false }
+        var mergedPositions = nodePositions
+        for (nodeID, position) in positions where position.x.isFinite && position.y.isFinite {
+            mergedPositions[nodeID] = position
+        }
+        var mergedGroupAnchors = confirmedGroupAnchors
+        for grouping in data.groupings where grouping.kind == .folder {
+            guard let sourceFolderID = grouping.sourceFolderID,
+                  let position = mergedPositions[grouping.id] else { continue }
+            mergedGroupAnchors[sourceFolderID] = position
+        }
+        guard mergedPositions != nodePositions
+                || mergedGroupAnchors != confirmedGroupAnchors else { return false }
+        nodePositions = mergedPositions
+        confirmedGroupAnchors = mergedGroupAnchors
+        return true
     }
 
     internal func selectGrouping(id: String?) {
@@ -420,13 +597,32 @@ internal final class GraphCanvasViewModel: ObservableObject {
             )
             return
         }
+        if snipPhase == .staging && stagedSnipItems.isEmpty {
+            discardSnipSession()
+        }
+        isLassoSelectionActive = false
         pruneMode = pruneMode == .archive ? .idle : .archive
         _ = pruneStateMachine.send(pruneMode == .archive ? .enterArchive : .cancel)
+    }
+
+    internal func toggleLassoSelection() {
+        guard !isArchiveDisabledForSnip else { return }
+        if isLassoSelectionActive {
+            isLassoSelectionActive = false
+            return
+        }
+        exitPruneMode()
+        isLassoSelectionActive = true
+    }
+
+    internal func deactivateLassoSelection() {
+        isLassoSelectionActive = false
     }
 
     internal func activateSnip() {
         switch snipPhase {
         case .idle:
+            isLassoSelectionActive = false
             pruneMode = .snip
             snipPhase = .staging
             lastSnipBatchResult = nil
@@ -458,6 +654,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func exitPruneMode() {
+        isLassoSelectionActive = false
         switch snipPhase {
         case .allocating, .moving:
             // The allocation sheet owns Escape/dismissal. Let its onDismiss
@@ -494,6 +691,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
     internal func requestArchive(threadID: String) {
         guard !isArchiveDisabledForSnip else { return }
+        if snipPhase == .staging && stagedSnipItems.isEmpty {
+            discardSnipSession()
+        }
+        isLassoSelectionActive = false
         if pruneMode != .archive {
             _ = pruneStateMachine.send(.cancel)
             pruneMode = .archive
@@ -574,18 +775,75 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     @discardableResult
-    internal func confirmSnipBatch(request: GraphSnipBatchRequest) async -> GraphSnipBatchResult? {
+    internal func confirmSnipBatch(
+        request: GraphSnipBatchRequest,
+        disclosedEffects: GraphSnipBatchDisclosure
+    ) async -> GraphSnipBatchResult? {
         guard snipPhase == .allocating,
-              request.items.map(\.threadID) == stagedSnipItems.map(\.threadID),
-              canConfirmSnipAllocations else { return nil }
+              request == snipBatchRequest,
+              request.items == stagedSnipItems,
+              canConfirmSnipAllocations,
+              let currentDisclosure = currentSnipBatchDisclosure(for: request),
+              currentDisclosure == disclosedEffects else { return nil }
         let frozenAllocations = snipAllocations
         snipPhase = .moving
         snipMoveCompletedCount = 0
         snipMoveTotalCount = request.items.count
         let result = await executeSnipBatch(items: request.items,
-                                            allocations: frozenAllocations)
+                                            allocations: frozenAllocations,
+                                            disclosedEffects: disclosedEffects,
+                                            batchID: request.id)
         completeSnipBatch(result)
         return result
+    }
+
+    internal func currentSnipBatchDisclosure(
+        for request: GraphSnipBatchRequest
+    ) -> GraphSnipBatchDisclosure? {
+        guard snipPhase == .allocating,
+              request == snipBatchRequest,
+              request.items == stagedSnipItems,
+              canConfirmSnipAllocations else {
+            return nil
+        }
+        return Self.makeSnipBatchDisclosure(request: request,
+                                            allocations: snipAllocations)
+    }
+
+    internal static func makeSnipBatchDisclosure(
+        request: GraphSnipBatchRequest,
+        allocations: [String: GraphSnipAllocation]
+    ) -> GraphSnipBatchDisclosure? {
+        guard Set(request.items.map(\.threadID)).count == request.items.count else {
+            return nil
+        }
+        let rows = request.items.compactMap { item -> GraphSnipEffectDisclosure? in
+            guard let allocation = allocations[item.threadID],
+                  allocation.threadID == item.threadID else {
+                return nil
+            }
+            let destinationAccount = allocation.destinationAccountName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let destinationPath = allocation.destinationMailboxPath
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !destinationAccount.isEmpty,
+                  !destinationPath.isEmpty,
+                  destinationAccount.caseInsensitiveCompare(request.accountName) == .orderedSame,
+                  destinationAccount.caseInsensitiveCompare(item.accountName) == .orderedSame else {
+                return nil
+            }
+            let effect = snipMailEffect(item: item, allocation: allocation)
+            if let effect, !effect.hasCompleteMailDisclosure {
+                return nil
+            }
+            return GraphSnipEffectDisclosure(threadID: item.threadID,
+                                             subject: item.subject,
+                                             destinationAccountName: destinationAccount,
+                                             destinationMailboxPath: destinationPath,
+                                             effect: effect)
+        }
+        guard rows.count == request.items.count else { return nil }
+        return GraphSnipBatchDisclosure(requestID: request.id, items: rows)
     }
 
     private func toggleSnipItems(_ items: [GraphSnipItem], cascades: Bool) {
@@ -731,15 +989,24 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
     private func executeSnipBatch(
         items: [GraphSnipItem],
-        allocations: [String: GraphSnipAllocation]
+        allocations: [String: GraphSnipAllocation],
+        disclosedEffects: GraphSnipBatchDisclosure,
+        batchID: UUID
     ) async -> GraphSnipBatchResult {
         var batchResult = GraphSnipBatchResult()
+        let disclosureByThreadID = Dictionary(uniqueKeysWithValues: disclosedEffects.items.map {
+            ($0.threadID, $0)
+        })
         for item in items {
-            guard let allocation = allocations[item.threadID] else {
+            guard let allocation = allocations[item.threadID],
+                  let disclosure = disclosureByThreadID[item.threadID] else {
                 snipMoveCompletedCount += 1
                 continue
             }
-            let (classification, outcome) = await executeSnipItem(item, allocation: allocation)
+            let (classification, outcome) = await executeSnipItem(item,
+                                                                  allocation: allocation,
+                                                                  disclosure: disclosure,
+                                                                  batchID: batchID)
             switch classification {
             case .succeeded:
                 batchResult.succeeded.append(outcome)
@@ -757,7 +1024,9 @@ internal final class GraphCanvasViewModel: ObservableObject {
 
     private func executeSnipItem(
         _ item: GraphSnipItem,
-        allocation: GraphSnipAllocation
+        allocation: GraphSnipAllocation,
+        disclosure: GraphSnipEffectDisclosure,
+        batchID: UUID
     ) async -> (GraphSnipExecutionClassification, GraphSnipBatchOutcome) {
         let destination = GraphMailboxTuple(accountName: allocation.destinationAccountName,
                                             mailboxPath: allocation.destinationMailboxPath)
@@ -765,45 +1034,77 @@ internal final class GraphCanvasViewModel: ObservableObject {
             !destination.matches(accountName: $0.sourceAccountName,
                                  mailboxPath: $0.sourceMailboxPath)
         }
-        var messagesBySource: [GraphMailboxTuple: [GraphSnipMessage]] = [:]
-        var sourceOrder: [GraphMailboxTuple] = []
-        for message in messagesToMove {
-            let source = GraphMailboxTuple(accountName: message.sourceAccountName,
-                                           mailboxPath: message.sourceMailboxPath)
-            if messagesBySource[source] == nil {
-                sourceOrder.append(source)
+        guard !messagesToMove.isEmpty else {
+            guard disclosure.effect == nil,
+                  disclosure.destinationAccountName == allocation.destinationAccountName
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  disclosure.destinationMailboxPath == allocation.destinationMailboxPath
+                    .trimmingCharacters(in: .whitespacesAndNewlines) else {
+                return (.unchanged,
+                        GraphSnipBatchOutcome(item: item,
+                                              allocation: allocation,
+                                              displacedMessages: []))
             }
-            messagesBySource[source, default: []].append(message)
+            return (.succeeded,
+                    GraphSnipBatchOutcome(item: item,
+                                          allocation: allocation,
+                                          displacedMessages: []))
         }
 
-        var movedByLocation: [String: GraphSnipMovedMessage] = [:]
-        for source in sourceOrder {
-            let sourceMessages = messagesBySource[source] ?? []
-            do {
-                let result = try await mailClient.moveMessages(
-                    messageIDs: sourceMessages.map(\.id),
-                    toMailboxPath: allocation.destinationMailboxPath,
-                    account: allocation.destinationAccountName,
-                    sourceMailboxPath: source.mailboxPath,
-                    sourceAccount: source.accountName
-                )
-                for message in sourceMessages where result.contains(message.id) {
-                    let moved = GraphSnipMovedMessage(messageID: message.id,
-                                                      sourceMailboxPath: message.sourceMailboxPath,
-                                                      sourceAccountName: message.sourceAccountName,
-                                                      destinationMailboxPath: allocation.destinationMailboxPath,
-                                                      destinationAccountName: allocation.destinationAccountName)
-                    movedByLocation[message.locationIdentity] = moved
-                }
-            } catch {
-                Log.app.error("Graph batch snip move failed for thread \(item.threadID, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
+        guard let effect = Self.snipMailEffect(item: item, allocation: allocation),
+              let disclosedEffect = disclosure.effect,
+              effect == disclosedEffect else {
+            return (.unchanged,
+                    GraphSnipBatchOutcome(item: item,
+                                          allocation: allocation,
+                                          displacedMessages: []))
+        }
+        let routes = effect.sourceRoutes
+        let now = Date()
+        let operationID = OrganizationMailOperationIdentifier.make(
+            namespace: "graph-snip",
+            seed: "\(batchID.uuidString)|\(item.threadID)|\(allocation.destinationAccountName)|\(allocation.destinationMailboxPath)"
+        )
+
+        let gatewayOutcome: OrganizationMailGatewayOutcome
+        do {
+            let authorization = try OrganizationMailAuthorization.fromUserConfirmation(
+                effect: effect,
+                disclosedEffect: disclosedEffect,
+                confirmedAt: now,
+                now: now
+            )
+            gatewayOutcome = try await organizationMailService.move(
+                OrganizationMailMoveExecution(operationID: operationID,
+                                              kind: .snip,
+                                              effect: effect,
+                                              authorization: authorization,
+                                              currentConsent: nil,
+                                              routes: routes,
+                                              destination: effect.destination ?? .none,
+                                              now: now)
+            )
+        } catch {
+            Log.app.error("Graph batch Snip Mail move failed. messageCount=\(routes.count, privacy: .public) error=\(String(describing: type(of: error)), privacy: .public)")
+            return (.unchanged,
+                    GraphSnipBatchOutcome(item: item,
+                                          allocation: allocation,
+                                          displacedMessages: []))
         }
 
-        let requiredLocations = Set(messagesToMove.map(\.locationIdentity))
-        let movedLocations = Set(movedByLocation.keys)
-        let movedMessages = movedByLocation.values.sorted { $0.id < $1.id }
-        if requiredLocations.isSubset(of: movedLocations) {
+        let completedRoutes = Set(gatewayOutcome.completedRoutes)
+        let movedMessages = messagesToMove.compactMap { message -> GraphSnipMovedMessage? in
+            let route = OrganizationMailRoute(messageID: message.id,
+                                              account: message.sourceAccountName,
+                                              mailboxPath: message.sourceMailboxPath)
+            guard completedRoutes.contains(route) else { return nil }
+            return GraphSnipMovedMessage(messageID: message.id,
+                                         sourceMailboxPath: message.sourceMailboxPath,
+                                         sourceAccountName: message.sourceAccountName,
+                                         destinationMailboxPath: allocation.destinationMailboxPath,
+                                         destinationAccountName: allocation.destinationAccountName)
+        }.sorted { $0.id < $1.id }
+        if gatewayOutcome.isComplete, movedMessages.count == routes.count {
             return (.succeeded,
                     GraphSnipBatchOutcome(item: item,
                                           allocation: allocation,
@@ -815,57 +1116,42 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                           allocation: allocation,
                                           displacedMessages: []))
         }
-
-        let remainingDisplaced = await compensateMovedMessages(movedMessages,
-                                                                allocation: allocation)
-        if remainingDisplaced.isEmpty {
-            return (.rolledBack,
-                    GraphSnipBatchOutcome(item: item,
-                                          allocation: allocation,
-                                          displacedMessages: []))
-        }
+        // Partial Mail work is retained for explicit History recovery. It is
+        // never silently compensated with an undisclosed restore mutation.
         return (.recoveryNeeded,
                 GraphSnipBatchOutcome(item: item,
                                       allocation: allocation,
-                                      displacedMessages: remainingDisplaced))
+                                      displacedMessages: movedMessages))
     }
 
-    private func compensateMovedMessages(
-        _ movedMessages: [GraphSnipMovedMessage],
+    private static func snipMailEffect(
+        item: GraphSnipItem,
         allocation: GraphSnipAllocation
-    ) async -> [GraphSnipMovedMessage] {
-        var messagesByOrigin: [GraphMailboxTuple: [GraphSnipMovedMessage]] = [:]
-        var originOrder: [GraphMailboxTuple] = []
-        for message in movedMessages {
-            let origin = GraphMailboxTuple(accountName: message.sourceAccountName,
-                                           mailboxPath: message.sourceMailboxPath)
-            if messagesByOrigin[origin] == nil {
-                originOrder.append(origin)
-            }
-            messagesByOrigin[origin, default: []].append(message)
+    ) -> OrganizationEffect? {
+        let destination = GraphMailboxTuple(accountName: allocation.destinationAccountName,
+                                            mailboxPath: allocation.destinationMailboxPath)
+        let routes = item.messages.filter {
+            !destination.matches(accountName: $0.sourceAccountName,
+                                 mailboxPath: $0.sourceMailboxPath)
+        }.map {
+            OrganizationMailRoute(messageID: $0.id,
+                                  account: $0.sourceAccountName,
+                                  mailboxPath: $0.sourceMailboxPath)
+        }.sorted {
+            if $0.account != $1.account { return $0.account < $1.account }
+            if $0.mailboxPath != $1.mailboxPath { return $0.mailboxPath < $1.mailboxPath }
+            return $0.messageID < $1.messageID
         }
-
-        var restoredLocations: Set<String> = []
-        for origin in originOrder {
-            let messages = messagesByOrigin[origin] ?? []
-            do {
-                let result = try await mailClient.moveMessages(
-                    messageIDs: messages.map(\.messageID),
-                    toMailboxPath: origin.mailboxPath,
-                    account: origin.accountName,
-                    sourceMailboxPath: allocation.destinationMailboxPath,
-                    sourceAccount: allocation.destinationAccountName
-                )
-                for message in messages where result.contains(message.messageID) {
-                    restoredLocations.insert(message.id)
-                }
-            } catch {
-                Log.app.error("Graph batch snip rollback failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        return movedMessages.filter {
-            !restoredLocations.contains($0.id)
-        }
+        guard !routes.isEmpty else { return nil }
+        return OrganizationEffect.appleMail(
+            operation: .snip,
+            mutation: .messageMove,
+            messageCount: routes.count,
+            sourceRoutes: routes,
+            destination: .mailbox(account: allocation.destinationAccountName,
+                                  path: allocation.destinationMailboxPath),
+            reversibility: .conditionallyReversible
+        )
     }
 
     private func completeSnipBatch(_ result: GraphSnipBatchResult) {
@@ -901,6 +1187,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                   createdAt: now)
             )
         }
+        scheduleOrganizationHistoryRefresh()
 
         let successfulThreadIDs = Set(result.succeeded.map(\.item.threadID))
         let visibleFailureThreadIDs = result.unchanged.map(\.item.threadID) +
@@ -950,6 +1237,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                                     priorMailboxPath: nil,
                                                     priorAccountName: nil,
                                                     createdAt: entry.archivedAt))
+            scheduleOrganizationHistoryRefresh()
             pruneMode = .idle
             beginPruneAnimation(threadID: threadID, action: .archive)
         } catch {
@@ -976,6 +1264,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
     internal func dismissRestoreHistoryEntry(_ entry: GraphCompostEntry) {
         dismissedRestoreHistoryEntryIDs.insert(entry.id)
         compostEntries.removeAll { $0.id == entry.id }
+        scheduleOrganizationHistoryRefresh()
     }
 
     internal func restore(_ entry: GraphCompostEntry) async throws {
@@ -999,7 +1288,8 @@ internal final class GraphCanvasViewModel: ObservableObject {
             archivedThreadIDs.remove(entry.threadID)
         case .snip:
             if !entry.movedMessages.isEmpty {
-                let remainingMessages = await restoreMovedMessages(entry.movedMessages)
+                let remainingMessages = await restoreMovedMessages(entry.movedMessages,
+                                                                   operationSeed: entry.id)
                 if !remainingMessages.isEmpty {
                     let replacement = GraphCompostEntry(
                         id: entry.id,
@@ -1017,19 +1307,20 @@ internal final class GraphCanvasViewModel: ObservableObject {
                     if let index = compostEntries.firstIndex(where: { $0.id == entry.id }) {
                         compostEntries[index] = replacement
                     }
+                    scheduleOrganizationHistoryRefresh()
                     throw GraphSnipRestoreError.incomplete
                 }
-            } else if let priorMailboxPath = entry.priorMailboxPath {
-                _ = try await mailClient.moveMessages(messageIDs: entry.messageIDs,
-                                                      toMailboxPath: priorMailboxPath,
-                                                      account: entry.priorAccountName,
-                                                      sourceMailboxPath: nil,
-                                                      sourceAccount: nil)
+            } else if entry.priorMailboxPath != nil {
+                // Legacy entries lack exact current source routes. Recovery is
+                // deliberately fail-closed instead of asking Mail to search by
+                // identifier and infer the source mailbox.
+                throw GraphSnipRestoreError.incomplete
             }
             archivedThreadIDs.remove(entry.threadID)
         }
         dismissedRestoreHistoryEntryIDs.remove(entry.id)
         compostEntries.removeAll { $0.id == entry.id }
+        scheduleOrganizationHistoryRefresh()
         rebuildData()
         if entry.action == .archive {
             onArchiveStateChanged?()
@@ -1037,43 +1328,59 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     private func restoreMovedMessages(
-        _ movedMessages: [GraphSnipMovedMessage]
+        _ movedMessages: [GraphSnipMovedMessage],
+        operationSeed: String
     ) async -> [GraphSnipMovedMessage] {
-        var groups: [GraphSnipRestoreTuple: [GraphSnipMovedMessage]] = [:]
-        var order: [GraphSnipRestoreTuple] = []
-        for message in movedMessages {
-            let tuple = GraphSnipRestoreTuple(
-                destination: GraphMailboxTuple(accountName: message.destinationAccountName,
+        let routes = movedMessages.map { message in
+            OrganizationMailRestoreRoute(
+                current: OrganizationMailRoute(messageID: message.messageID,
+                                               account: message.destinationAccountName,
                                                mailboxPath: message.destinationMailboxPath),
-                origin: GraphMailboxTuple(accountName: message.sourceAccountName,
-                                          mailboxPath: message.sourceMailboxPath)
+                destination: OrganizationMailRoute(messageID: message.messageID,
+                                                   account: message.sourceAccountName,
+                                                   mailboxPath: message.sourceMailboxPath)
             )
-            if groups[tuple] == nil {
-                order.append(tuple)
-            }
-            groups[tuple, default: []].append(message)
         }
-
-        var restoredLocations: Set<String> = []
-        for tuple in order {
-            let messages = groups[tuple] ?? []
-            do {
-                let result = try await mailClient.moveMessages(
-                    messageIDs: messages.map(\.messageID),
-                    toMailboxPath: tuple.origin.mailboxPath,
-                    account: tuple.origin.accountName,
-                    sourceMailboxPath: tuple.destination.mailboxPath,
-                    sourceAccount: tuple.destination.accountName
+        let now = Date()
+        let effect = OrganizationEffect.appleMail(
+            operation: .messageRestore,
+            mutation: .messageRestore,
+            messageCount: routes.count,
+            sourceRoutes: routes.map(\.current),
+            destination: .originalSourceRoutes,
+            reversibility: .conditionallyReversible
+        )
+        do {
+            let authorization = try OrganizationMailAuthorization.fromUserConfirmation(
+                effect: effect,
+                confirmedAt: now,
+                now: now
+            )
+            let outcome = try await organizationMailService.restore(
+                OrganizationMailRestoreExecution(
+                    operationID: OrganizationMailOperationIdentifier.makeRestore(
+                        namespace: "graph-snip-restore",
+                        seed: operationSeed,
+                        routes: routes
+                    ),
+                    kind: .undo,
+                    effect: effect,
+                    authorization: authorization,
+                    currentConsent: nil,
+                    routes: routes,
+                    now: now
                 )
-                for message in messages where result.contains(message.messageID) {
-                    restoredLocations.insert(message.id)
-                }
-            } catch {
-                Log.app.error("Graph Snip restore failed: \(error.localizedDescription, privacy: .public)")
+            )
+            let completed = Set(outcome.completedRoutes)
+            return movedMessages.filter { message in
+                let current = OrganizationMailRoute(messageID: message.messageID,
+                                                    account: message.destinationAccountName,
+                                                    mailboxPath: message.destinationMailboxPath)
+                return !completed.contains(current)
             }
-        }
-        return movedMessages.filter {
-            !restoredLocations.contains($0.id)
+        } catch {
+            Log.app.error("Graph Snip restore failed. messageCount=\(routes.count, privacy: .public) error=\(String(describing: type(of: error)), privacy: .public)")
+            return movedMessages
         }
     }
 
@@ -1086,16 +1393,173 @@ internal final class GraphCanvasViewModel: ObservableObject {
     }
 
     internal func setZoom(_ value: CGFloat) {
+        discardSpatialLayoutResetUndo()
         zoomScale = GraphViewport.clampedZoom(value)
+        scheduleSpatialPersistence()
     }
 
     internal func setPanOffset(_ value: CGPoint) {
+        discardSpatialLayoutResetUndo()
         panOffset = value
+        scheduleSpatialPersistence()
     }
 
     internal func resetViewport() {
+        discardSpatialLayoutResetUndo()
         zoomScale = 1.0
         panOffset = .zero
+        scheduleSpatialPersistence()
+    }
+
+    /// Resets only the currently active mailbox scope. The actor-backed store
+    /// keeps every other scope intact; failed writes never mutate the active
+    /// in-memory state back into the persisted document.
+    internal func resetSpatialLayout() {
+        pendingSceneNodePositions = [:]
+        guard !mailboxScopeID.isEmpty else {
+            discardSpatialLayoutResetUndo()
+            nodePositions = [:]
+            confirmedGroupAnchors = [:]
+            resetViewport()
+            publishSpatialSceneState(forceApply: true)
+            return
+        }
+
+        spatialLoadTask?.cancel()
+        spatialLoadGeneration = UUID()
+        spatialPersistenceTask?.cancel()
+        spatialLayoutResetUndo = (scopeID: mailboxScopeID,
+                                  snapshot: makeSpatialSnapshot())
+        canUndoSpatialLayoutReset = true
+        nodePositions = [:]
+        confirmedGroupAnchors = [:]
+        zoomScale = 1.0
+        panOffset = .zero
+        spatialLoadedScopeID = mailboxScopeID
+        publishSpatialSceneState(forceApply: true)
+        let scopeID = mailboxScopeID
+        let resetTask = Task { [graphSpatialStore] in
+            do {
+                try await graphSpatialStore.resetActiveScope(scopeID: scopeID)
+            } catch {
+                Log.app.error("Graph spatial reset failed: \(String(describing: error), privacy: .private)")
+            }
+        }
+        spatialResetTask = resetTask
+        spatialResetScopeID = scopeID
+    }
+
+    /// Restores the exact pre-reset snapshot only while the same mailbox scope
+    /// remains active. The reset write is awaited before the restoration write
+    /// so a fast Undo cannot be overwritten by the earlier actor operation.
+    internal func undoSpatialLayoutReset() {
+        guard let undo = spatialLayoutResetUndo,
+              undo.scopeID == mailboxScopeID else {
+            discardSpatialLayoutResetUndo()
+            return
+        }
+
+        let pendingReset = spatialResetScopeID == undo.scopeID ? spatialResetTask : nil
+        spatialResetTask = nil
+        spatialResetScopeID = nil
+        spatialLayoutResetUndo = nil
+        canUndoSpatialLayoutReset = false
+        applySpatialSnapshot(undo.snapshot,
+                             scopeID: undo.scopeID,
+                             replayIntent: nil)
+        publishSpatialSceneState(forceApply: true)
+
+        let restoredSnapshot = makeSpatialSnapshot()
+        let graphSpatialStore = graphSpatialStore
+        spatialPersistenceTask?.cancel()
+        spatialPersistenceTask = Task {
+            await pendingReset?.value
+            do {
+                try await graphSpatialStore.save(restoredSnapshot,
+                                                 forScopeID: undo.scopeID)
+            } catch {
+                Log.app.error("Graph spatial reset undo failed: \(String(describing: error), privacy: .private)")
+            }
+        }
+    }
+
+    /// Flushes the current scope's latest snapshot at lifecycle boundaries.
+    /// This is intentionally a scheduled actor write, not a claim of
+    /// Core Data + JSON atomicity.
+    internal func flushSpatialStatePersistence() {
+        if !pendingSceneNodePositions.isEmpty {
+            _ = mergeNodePositions(pendingSceneNodePositions)
+            pendingSceneNodePositions = [:]
+        }
+        scheduleSpatialPersistence(for: mailboxScopeID, immediately: true)
+    }
+
+#if DEBUG
+    /// Deterministic test barrier for the asynchronous actor-backed scope load.
+    /// Production presentation remains non-blocking; tests use this instead of
+    /// assuming a fixed delay is sufficient on every CI or local machine.
+    internal func awaitSpatialStateLoadForTesting() async {
+        await spatialLoadTask?.value
+    }
+
+    internal func awaitSpatialStatePersistenceForTesting() async {
+        await spatialPersistenceTask?.value
+    }
+#endif
+
+    /// Persists a newly confirmed Group anchor before the organization ledger
+    /// records its separate spatial receipt. The returned revision is opaque
+    /// and contains no mailbox, Group, or conversation identifier.
+    internal func persistConfirmedGroupAnchor(groupID: String,
+                                              point: CGPoint) async throws -> String {
+        let normalizedGroupID = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedGroupID.isEmpty,
+              !mailboxScopeID.isEmpty,
+              point.x.isFinite,
+              point.y.isFinite else {
+            throw GraphSpatialStateStoreError.invalidScopeID
+        }
+        discardSpatialLayoutResetUndo()
+        pendingSceneNodePositions = [:]
+        confirmedGroupAnchors[normalizedGroupID] = point
+        if let grouping = data.groupings.first(where: { $0.sourceFolderID == normalizedGroupID }) {
+            nodePositions[grouping.id] = point
+        }
+        publishSpatialSceneState(forceApply: true)
+        let snapshot = makeSpatialSnapshot()
+        try await graphSpatialStore.save(snapshot, forScopeID: mailboxScopeID)
+        return spatialStoreRevision(for: snapshot.updatedAt)
+    }
+
+    /// Prunes a scope only when the caller has a complete source inventory.
+    /// Visible/paged graph IDs must not be passed here: omitted IDs are treated
+    /// as genuinely deleted and removed from both the in-memory merge and the
+    /// durable opaque-token document.
+    internal func pruneSpatialState(sourceNodeIDs: Set<String>,
+                                    confirmedGroupIDs: Set<String>) {
+        guard !mailboxScopeID.isEmpty else { return }
+        spatialPersistenceTask?.cancel()
+        let validNodeIDs = sourceNodeIDs.filter(GraphSpatialOpaqueToken.shouldPersistNodeID)
+        let syntheticNodeIDs = Set(data.groupings.map(\.id))
+            .union([data.center.id])
+            .union(data.remainingBranches.map(\.id))
+        nodePositions = nodePositions.filter { nodeID, _ in
+            syntheticNodeIDs.contains(nodeID) || validNodeIDs.contains(nodeID)
+        }
+        confirmedGroupAnchors = confirmedGroupAnchors.filter { confirmedGroupIDs.contains($0.key) }
+        publishSpatialSceneState()
+
+        let scopeID = mailboxScopeID
+        let graphSpatialStore = graphSpatialStore
+        Task {
+            do {
+                try await graphSpatialStore.prune(scopeID: scopeID,
+                                                  sourceNodeIDs: Set(validNodeIDs),
+                                                  confirmedGroupIDs: confirmedGroupIDs)
+            } catch {
+                Log.app.error("Graph spatial prune failed: \(String(describing: error), privacy: .private)")
+            }
+        }
     }
 
     internal func selectedGraphNodeID(for selectedNodeID: String?) -> String? {
@@ -1219,14 +1683,236 @@ internal final class GraphCanvasViewModel: ObservableObject {
             archivedEntriesByThreadID = Dictionary(uniqueKeysWithValues: entries.map { ($0.threadID, $0) })
             archivedThreadIDs = Set(entries.map(\.threadID))
             rebuildData()
+            scheduleOrganizationHistoryRefresh()
         } catch {
             archivedEntriesByThreadID = [:]
             archivedThreadIDs = []
+            scheduleOrganizationHistoryRefresh()
         }
     }
 
+    private func scheduleOrganizationHistoryRefresh() {
+        organizationHistoryRefreshTask?.cancel()
+        let legacyCompost = compostEntries
+        let legacyAutomation = currentAutomationProposals
+        let operationStore = organizationOperationStore
+        organizationHistoryRefreshTask = Task { [weak self] in
+            let operations = (try? await operationStore.allOperations()) ?? []
+            guard !Task.isCancelled, let self else { return }
+            self.organizationHistoryItems = OrganizationHistoryProjection.make(
+                operations: operations,
+                legacyCompost: legacyCompost,
+                legacyAutomation: legacyAutomation
+            )
+        }
+    }
+
+    private func beginSpatialLoad(for scopeID: String) {
+        guard !scopeID.isEmpty else { return }
+        spatialLoadTask?.cancel()
+        let generation = UUID()
+        spatialLoadGeneration = generation
+        let sourceNodeIDs = spatialSourceNodeIDs()
+        let confirmedGroupIDs = spatialConfirmedGroupIDs()
+        let graphSpatialStore = graphSpatialStore
+        let graphSpatialAnchorReplay = graphSpatialAnchorReplay
+        spatialLoadTask = Task { [weak self] in
+            let snapshot = await graphSpatialStore.load(scopeID: scopeID,
+                                                         sourceNodeIDs: sourceNodeIDs,
+                                                         confirmedGroupIDs: confirmedGroupIDs)
+            let replayIntent = await graphSpatialAnchorReplay?.pendingIntent(scopeID)
+            guard let self else { return }
+            guard !Task.isCancelled else {
+#if DEBUG
+                self.lastSpatialLoadDispositionForTesting = "cancelled"
+#endif
+                return
+            }
+            guard self.spatialLoadGeneration == generation else {
+#if DEBUG
+                self.lastSpatialLoadDispositionForTesting = "superseded"
+#endif
+                return
+            }
+            guard self.mailboxScopeID == scopeID else {
+#if DEBUG
+                self.lastSpatialLoadDispositionForTesting = "scope-changed"
+#endif
+                return
+            }
+            self.applySpatialSnapshot(snapshot,
+                                      scopeID: scopeID,
+                                      replayIntent: replayIntent)
+#if DEBUG
+            self.lastSpatialLoadDispositionForTesting = "applied"
+#endif
+        }
+    }
+
+    private func applySpatialSnapshot(_ snapshot: GraphSpatialSnapshot,
+                                      scopeID: String,
+                                      replayIntent: GraphSpatialAnchorReplayIntent?) {
+        guard mailboxScopeID == scopeID else { return }
+        pendingSceneNodePositions = [:]
+        var restoredPositions = snapshot.nodePositions.reduce(into: [String: CGPoint]()) { result, entry in
+            let point = CGPoint(x: entry.value.x, y: entry.value.y)
+            guard point.x.isFinite, point.y.isFinite else { return }
+            result[entry.key] = point
+        }
+        var restoredAnchors = snapshot.confirmedGroupAnchors.reduce(into: [String: CGPoint]()) { result, entry in
+            let point = CGPoint(x: entry.value.x, y: entry.value.y)
+            guard point.x.isFinite, point.y.isFinite else { return }
+            result[entry.key] = point
+        }
+        var restoredZoom = GraphViewport.clampedZoom(CGFloat(snapshot.zoomScale))
+        if let replayIntent,
+           replayIntent.x.isFinite,
+           replayIntent.y.isFinite,
+           replayIntent.zoom.isFinite,
+           replayIntent.zoom > 0 {
+            let point = CGPoint(x: replayIntent.x, y: replayIntent.y)
+            restoredAnchors[replayIntent.groupID] = point
+            restoredZoom = GraphViewport.clampedZoom(CGFloat(replayIntent.zoom))
+            if let grouping = data.groupings.first(where: { $0.sourceFolderID == replayIntent.groupID }) {
+                restoredPositions[grouping.id] = point
+            }
+        }
+
+        nodePositions = restoredPositions
+        confirmedGroupAnchors = restoredAnchors
+        zoomScale = restoredZoom
+        panOffset = CGPoint(x: snapshot.panOffset.x, y: snapshot.panOffset.y)
+#if DEBUG
+        lastSpatialReplayIntentIDForTesting = replayIntent?.intentID
+        lastSpatialReplayAnchorForTesting = replayIntent.flatMap { restoredAnchors[$0.groupID] }
+#endif
+        spatialLoadedScopeID = scopeID
+        publishSpatialSceneState()
+
+        guard let replayIntent else { return }
+        let replaySnapshot = makeSpatialSnapshot()
+        let receipt = GraphSpatialAnchorReplayReceipt(
+            intentID: replayIntent.intentID,
+            appliedAt: Date(),
+            opaqueStoreRevision: spatialStoreRevision(for: replaySnapshot.updatedAt)
+        )
+        let graphSpatialStore = graphSpatialStore
+        let graphSpatialAnchorReplay = graphSpatialAnchorReplay
+        spatialPersistenceTask?.cancel()
+        spatialPersistenceTask = Task {
+            do {
+                try await graphSpatialStore.save(replaySnapshot, forScopeID: scopeID)
+                await graphSpatialAnchorReplay?.recordReceipt(receipt)
+            } catch {
+                Log.app.error("Graph spatial anchor replay failed: \(String(describing: error), privacy: .private)")
+            }
+        }
+    }
+
+    private func scheduleSpatialPersistence(for scopeID: String? = nil,
+                                             immediately: Bool = false,
+                                             replacesPendingTask: Bool = true) {
+        let targetScopeID = scopeID ?? mailboxScopeID
+        guard !targetScopeID.isEmpty else { return }
+        let snapshot = makeSpatialSnapshot()
+        let pendingReset = spatialResetScopeID == targetScopeID ? spatialResetTask : nil
+        if replacesPendingTask {
+            spatialPersistenceTask?.cancel()
+        }
+        let graphSpatialStore = graphSpatialStore
+        let persistenceTask = Task {
+            await pendingReset?.value
+            guard !Task.isCancelled else { return }
+            if !immediately {
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+            }
+            do {
+                try await graphSpatialStore.save(snapshot, forScopeID: targetScopeID)
+            } catch {
+                Log.app.error("Graph spatial state save failed: \(String(describing: error), privacy: .private)")
+            }
+        }
+        if replacesPendingTask {
+            spatialPersistenceTask = persistenceTask
+        }
+    }
+
+    private func discardSpatialLayoutResetUndo() {
+        spatialLayoutResetUndo = nil
+        canUndoSpatialLayoutReset = false
+    }
+
+    private func makeSpatialSnapshot() -> GraphSpatialSnapshot {
+        let groupingNodeIDs = Set(data.groupings.map(\.id))
+        let persistedNodePositions = nodePositions.reduce(into: [String: GraphSpatialPoint]()) { result, entry in
+            guard !groupingNodeIDs.contains(entry.key),
+                  entry.key != data.center.id,
+                  GraphSpatialOpaqueToken.shouldPersistNodeID(entry.key),
+                  entry.value.x.isFinite,
+                  entry.value.y.isFinite else { return }
+            result[entry.key] = GraphSpatialPoint(x: Double(entry.value.x),
+                                                  y: Double(entry.value.y))
+        }
+        var groupAnchors = confirmedGroupAnchors.reduce(into: [String: GraphSpatialPoint]()) { result, entry in
+            guard entry.value.x.isFinite, entry.value.y.isFinite else { return }
+            result[entry.key] = GraphSpatialPoint(x: Double(entry.value.x),
+                                                  y: Double(entry.value.y))
+        }
+        for grouping in data.groupings where grouping.kind == .folder {
+            guard let folderID = grouping.sourceFolderID,
+                  let point = nodePositions[grouping.id],
+                  point.x.isFinite,
+                  point.y.isFinite else { continue }
+            groupAnchors[folderID] = GraphSpatialPoint(x: Double(point.x), y: Double(point.y))
+        }
+        return GraphSpatialSnapshot(nodePositions: persistedNodePositions,
+                                    confirmedGroupAnchors: groupAnchors,
+                                    zoomScale: Double(zoomScale),
+                                    panOffset: GraphSpatialPoint(x: Double(panOffset.x),
+                                                                 y: Double(panOffset.y)),
+                                    updatedAt: Date())
+    }
+
+    private func spatialSourceNodeIDs() -> Set<String> {
+        var result = Set(data.allNodeIDs.filter {
+            !$0.hasPrefix("remaining:") && !data.groupingByID.keys.contains($0) && $0 != data.center.id
+        })
+        for root in sourceRoots {
+            result.insert(GraphData.threadNodeID(for: GraphData.rawThreadID(for: root)))
+            for node in Self.flatten(root) {
+                result.insert(GraphData.messageNodeID(for: node.id))
+            }
+        }
+        return result.filter(GraphSpatialOpaqueToken.shouldPersistNodeID)
+    }
+
+    private func spatialConfirmedGroupIDs() -> Set<String> {
+        Set(currentFolders.map(\.id) + data.groupings.compactMap { grouping in
+            grouping.kind == .folder ? grouping.sourceFolderID : nil
+        })
+    }
+
+    private func spatialStoreRevision(for date: Date) -> String {
+        String(Int(date.timeIntervalSinceReferenceDate * 1_000))
+    }
+
+    private func publishSpatialSceneState(forceApply: Bool = false) {
+        GraphSpatialSceneBridge.publish(nodePositions: nodePositions,
+                                        confirmedGroupAnchors: confirmedGroupAnchors,
+                                        forceApply: forceApply)
+    }
+
     private func rebuildData() {
-        let hiddenArchivedThreadIDs = showsArchivedThreads ? [] : archivedThreadIDs
+        // Persistence can publish the archived ID while the prune animation is
+        // still active (for example when the initial archive load completes at
+        // the same time as a new archive). Keep those exact branches projected
+        // until the animation request finishes; `finishPruneAnimation` clears
+        // the request before rebuilding, so they disappear at one boundary.
+        let pendingPruneThreadIDs = pruneAnimationRequest?.threadIDs ?? []
+        let hiddenArchivedThreadIDs = showsArchivedThreads
+            ? []
+            : archivedThreadIDs.subtracting(pendingPruneThreadIDs)
         let rebuilt = GraphData.make(roots: sourceRoots,
                                      archivedThreadIDs: hiddenArchivedThreadIDs,
                                      tagsByNodeID: currentTagsByNodeID,
@@ -1253,6 +1939,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
         }
         previousMessageIDs = nextMessageIDs
         data = rebuilt
+        publishSpatialSceneState()
         if let selectedGroupingID, rebuilt.groupingByID[selectedGroupingID] == nil {
             self.selectedGroupingID = nil
         }
@@ -1372,7 +2059,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                                         ids: Array(inputs.keys))
             cachedByID = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
         } catch {
-            Log.app.error("Failed to load graph-title cache: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to load graph-title cache: \(error.localizedDescription, privacy: .private)")
         }
 
         guard isCurrentGraphTitleRefresh(refreshID, inputs: inputs) else { return }
@@ -1469,7 +2156,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
                 }
                 return
             } catch {
-                Log.app.error("Failed to generate graph title: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to generate graph title: \(error.localizedDescription, privacy: .private)")
                 regeneratingGraphTitleNodeIDs.remove(input.nodeID)
             }
         }
@@ -1587,7 +2274,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
                                                         ids: Array(inputs.keys))
             cachedByID = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
         } catch {
-            Log.app.error("Failed to load graph-topic cache: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to load graph-topic cache: \(error.localizedDescription, privacy: .private)")
         }
 
         guard isCurrentGraphTopicRefresh(refreshID, inputs: inputs) else { return }
@@ -1667,7 +2354,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
                 do {
                     try await store.upsertSummaries([entry])
                 } catch {
-                    Log.app.error("Failed to persist graph-topic cache: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to persist graph-topic cache: \(error.localizedDescription, privacy: .private)")
                 }
                 if let signal {
                     graphTopicSignalsByRawThreadID[input.rawThreadID] = signal
@@ -1679,7 +2366,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                Log.app.error("Failed to generate graph topic: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to generate graph topic: \(error.localizedDescription, privacy: .private)")
             }
         }
 

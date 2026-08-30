@@ -129,6 +129,25 @@ private struct MailboxMoveCandidate {
     let mailboxPath: String
 }
 
+/// Immutable foreground disclosure for moving the current selection in Apple
+/// Mail. Selection identity and the complete effect are re-resolved immediately
+/// before authorization so a changed route cannot inherit stale consent.
+internal nonisolated struct MailboxMoveConfirmation: Equatable, Sendable {
+    internal let selectedNodeIDs: Set<String>
+    internal let threadIDs: Set<String>
+    internal let account: String
+    internal let destinationPath: String
+    internal let effect: OrganizationEffect?
+
+    internal var messageCount: Int { effect?.messageCount ?? 0 }
+    internal var sourceRouteGroups: [OrganizationMailRouteGroup] {
+        effect?.sourceRouteGroups ?? []
+    }
+    internal var reversibility: OrganizationReversibility {
+        effect?.reversibility ?? .fullyReversible
+    }
+}
+
 private struct ThreadFolderEdit: Hashable {
     let title: String
     let color: ThreadFolderColor
@@ -188,6 +207,8 @@ private enum MailboxFolderActionError: LocalizedError {
     case mixedAccounts
     case missingAccount
     case missingFolderName
+    case incompleteDisclosure
+    case staleConfirmation
 
     var errorDescription: String? {
         switch self {
@@ -203,6 +224,12 @@ private enum MailboxFolderActionError: LocalizedError {
         case .missingFolderName:
             return NSLocalizedString("mailbox.action.error.missing_folder_name",
                                      comment: "Error when new mailbox folder name is empty")
+        case .incompleteDisclosure:
+            return NSLocalizedString("mailbox.action.error.incomplete_disclosure",
+                                     comment: "Error when exact Apple Mail routes cannot be disclosed")
+        case .staleConfirmation:
+            return NSLocalizedString("mailbox.action.error.stale_confirmation",
+                                     comment: "Error when the Mail effect changed after review")
         }
     }
 }
@@ -779,6 +806,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private static let calendarRepairForegroundWaitLimit: TimeInterval = 30
 
     private let store: MessageStore
+    private let organizationOperationStore: OrganizationOperationStore
+    private let organizationCommandService: OrganizationCommandService
+    private let organizationMailService: any OrganizationMailExecutionServicing
+    internal let organizerMetricsRecorder: OrganizerMetricsRecorder?
     private let client: any MailCanvasClient
     internal let graphAutomationCoordinator: GraphAutomationCoordinator
     private let threader: JWZThreader
@@ -795,6 +826,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let pinnedFolderSettings: PinnedFolderSettings
     private let mailboxFolderOrderSettings: MailboxFolderOrderSettings
     private let mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings
+    private let mailAutomationConsentProvider: @MainActor () -> OrganizationMailAutomationConsentResolution
     private let backfillService: BatchBackfillServicing
     private let dayFetchCoordinator: any DayFetchCoordinating
     private let worker: SidebarBackgroundWorker
@@ -804,6 +836,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var inFlightCalendarRecoveryFingerprint: String?
     private var isRethreadRunning = false
     private var hasQueuedRethread = false
+    private var hasPendingMeasuredGroupRethread = false
     private var autoRefreshTask: Task<Void, Never>?
     private var nodeSummaryRefreshTask: Task<Void, Never>?
     private var folderSummaryTasks: [String: Task<Void, Never>] = [:]
@@ -815,6 +848,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var pendingThreadSummaryRebuildIDs: Set<String> = []
     private var hasThreadSummaryRevisionBaseline = false
     private let folderSummaryDebounceInterval: TimeInterval
+    private let performsInitialSourceRefresh: Bool
+    private let includesAllCachedMessagesInRethread: Bool
     private var cancellables = Set<AnyCancellable>()
     private var didStart = false
     private var openInMailAttemptID = UUID()
@@ -867,6 +902,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   mailboxFolderOrderSettings: MailboxFolderOrderSettings? = nil,
                   mailboxThreadAutoMoveSettings: MailboxThreadAutoMoveSettings? = nil,
                   store: MessageStore = .shared,
+                  organizationOperationStore: OrganizationOperationStore = .shared,
+                  organizationMailService: (any OrganizationMailExecutionServicing)? = nil,
+                  organizerMetricsRecorder: OrganizerMetricsRecorder? = nil,
                   client: any MailCanvasClient = MailAppleScriptClient(),
                   calendarRecoveryClient: (any MailMessageFetching)? = nil,
                   threader: JWZThreader = JWZThreader(),
@@ -876,17 +914,46 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   tagCapability: EmailTagCapability? = nil,
                   graphAutomationSettings: GraphAutomationSettings? = nil,
                   graphAutomationMailClient: (any GraphSnipMailMoving)? = nil,
+                  mailAutomationConsentProvider: @escaping @MainActor () -> OrganizationMailAutomationConsentResolution = {
+                      OrganizationMailAutomationConsent.resolve(from: .standard)
+                  },
                   graphRelationshipCapabilityProvider: @escaping @MainActor () -> GraphRelationshipCapability = GraphRelationshipProviderFactory.makeCapability,
                   graphTopicCapabilityProvider: @escaping @MainActor () -> GraphTopicCapability = GraphTopicProviderFactory.makeCapability,
                   activityCenter: ProcessingActivityCenter? = nil,
-                  folderSummaryDebounceInterval: TimeInterval = 30) {
+                  folderSummaryDebounceInterval: TimeInterval = 30,
+                  performsInitialSourceRefresh: Bool = true,
+                  includesAllCachedMessagesInRethread: Bool = false) {
         self.store = store
+        self.organizationOperationStore = organizationOperationStore
+        self.organizerMetricsRecorder = organizerMetricsRecorder
+        self.organizationCommandService = OrganizationCommandService(
+            messageStore: store,
+            operationStore: organizationOperationStore,
+            metricsRecorder: organizerMetricsRecorder
+        )
         self.client = client
         let resolvedAutomationMailClient = graphAutomationMailClient ?? (client as? any GraphSnipMailMoving)
+        let resolvedOrganizationMailService: any OrganizationMailExecutionServicing
+        if let organizationMailService {
+            resolvedOrganizationMailService = organizationMailService
+        } else {
+            resolvedOrganizationMailService = OrganizationMailExecutionService(
+                operationStore: organizationOperationStore,
+                transport: DefaultOrganizationMailGatewayTransport(
+                    mailClient: resolvedAutomationMailClient ?? MailAppleScriptClient()
+                ),
+                metricsRecorder: organizerMetricsRecorder
+            )
+        }
+        self.organizationMailService = resolvedOrganizationMailService
         self.graphAutomationCoordinator = GraphAutomationCoordinator(
             store: store,
             settings: graphAutomationSettings,
             mailClient: resolvedAutomationMailClient,
+            organizationOperationStore: organizationOperationStore,
+            organizationMailService: resolvedOrganizationMailService,
+            metricsRecorder: organizerMetricsRecorder,
+            mailAutomationConsentProvider: mailAutomationConsentProvider,
             relationshipCapabilityProvider: graphRelationshipCapabilityProvider,
             topicCapabilityProvider: graphTopicCapabilityProvider
         )
@@ -910,7 +977,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         self.pinnedFolderSettings = pinnedFolderSettings ?? PinnedFolderSettings()
         self.mailboxFolderOrderSettings = mailboxFolderOrderSettings ?? MailboxFolderOrderSettings()
         self.mailboxThreadAutoMoveSettings = mailboxThreadAutoMoveSettings ?? MailboxThreadAutoMoveSettings()
+        self.mailAutomationConsentProvider = mailAutomationConsentProvider
         self.folderSummaryDebounceInterval = folderSummaryDebounceInterval
+        self.performsInitialSourceRefresh = performsInitialSourceRefresh
+        self.includesAllCachedMessagesInRethread = includesAllCachedMessagesInRethread
         let capability = summaryCapability ?? EmailSummaryProviderFactory.makeCapability()
         self.summaryProvider = capability.provider
         self.summaryProviderID = capability.providerID
@@ -977,7 +1047,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         self.graphAutomationCoordinator.onOrganizationChanged = { [weak self] in
-            self?.scheduleRethread(delay: 0)
+            guard let self else { return }
+            self.hasPendingMeasuredGroupRethread = self.organizerMetricsRecorder != nil
+            self.scheduleRethread(delay: 0)
         }
         self.graphAutomationCoordinator.mailboxRuleRemap = { [weak self] sourceThreadIDs, replacementThreadID, preferredSourceThreadID in
             self?.mailboxThreadAutoMoveSettings.remap(threadIDs: sourceThreadIDs,
@@ -1209,6 +1281,11 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         didStart = true
         Log.refresh.info("ThreadCanvasViewModel start invoked. didStart=false; kicking off initial load.")
         Task {
+            do {
+                _ = try await organizationOperationStore.markInterruptedMailOperationsForRecovery()
+            } catch {
+                Log.app.error("Organization relaunch recovery audit failed. error=\(String(describing: type(of: error)), privacy: .public)")
+            }
             try? await store.markInterruptedDayFetchCoverageFailed()
             await loadDayFetchCoverages(refreshConcreteScopes: true)
         }
@@ -1226,8 +1303,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
         }
         Task { await loadCachedMessages() }
-        refreshMailboxHierarchy()
-        refreshNow()
+        if performsInitialSourceRefresh {
+            refreshMailboxHierarchy()
+            refreshNow()
+        }
         applyAutoRefreshSettings()
         Task { await refreshActionItemIDs() }
     }
@@ -1343,7 +1422,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                   comment: "Cancelled processing activity state"))
                 }
             } catch {
-                Log.refresh.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
+                Log.refresh.error("Refresh failed: \(error.localizedDescription, privacy: .private)")
                 await MainActor.run {
                     self.reloadDayFetchCoverages(refreshConcreteScopes: true)
                     if Self.isMailboxResolveNotFound(error) {
@@ -1414,7 +1493,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func refreshFolderThreads(for folderID: String, limit: Int? = nil) {
         guard !isAnyRefreshRunning else {
-            Log.refresh.debug("Folder refresh skipped because another refresh is in progress. folderID=\(folderID, privacy: .public)")
+            Log.refresh.debug("Folder refresh skipped because another refresh is in progress. folderID=\(folderID, privacy: .private)")
             return
         }
 
@@ -1455,7 +1534,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                   comment: "Cancelled processing activity state"))
                 }
             } catch {
-                Log.refresh.error("Folder refresh failed. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                Log.refresh.error("Folder refresh failed. folderID=\(folderID, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
                 await MainActor.run {
                     self.refreshingFolderThreadIDs.remove(folderID)
                     self.status = String.localizedStringWithFormat(
@@ -1494,7 +1573,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     Log.refresh.debug("Auto refresh cancelled before scheduling next run.")
                     break
                 } catch {
-                    Log.refresh.error("Auto refresh wait failed: \(error.localizedDescription, privacy: .public)")
+                    Log.refresh.error("Auto refresh wait failed: \(error.localizedDescription, privacy: .private)")
                     continue
                 }
                 guard self != nil else { break }
@@ -1573,7 +1652,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.calendarAncestorRecoveryTask = nil
                     self.completedCalendarRecoveryFingerprint = nil
                 }
-                Log.refresh.error("Calendar ancestor recovery pass failed. error=\(error.localizedDescription, privacy: .public)")
+                Log.refresh.error("Calendar ancestor recovery pass failed. error=\(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -1598,6 +1677,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
 
         isRethreadRunning = true
+        let measuresGroupRethread = hasPendingMeasuredGroupRethread
+        hasPendingMeasuredGroupRethread = false
         let activityID = beginActivity(id: "thread.rebuild",
                                        titleKey: "activity.thread.rebuild.title",
                                        detail: NSLocalizedString("activity.thread.rebuild.detail",
@@ -1675,7 +1756,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                             try await store.deleteSummaries(scope: .folder, ids: Array(removedFolderIDs))
                         }
                     } catch {
-                        Log.app.error("Failed to delete stale summary caches: \(error.localizedDescription, privacy: .public)")
+                        Log.app.error("Failed to delete stale summary caches: \(error.localizedDescription, privacy: .private)")
                     }
                 }
             }
@@ -1706,8 +1787,30 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 )
             )
             scheduleMailboxThreadAutoMovePass()
+            if measuresGroupRethread {
+                await organizerMetricsRecorder?.recordEvent(.groupRethreaded,
+                                                            count: 1,
+                                                            status: .success)
+                await organizerMetricsRecorder?.recordEvent(.rethreadComplete,
+                                                            count: 1,
+                                                            status: .success)
+            }
         } catch {
-            Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .public)")
+            if measuresGroupRethread {
+                await organizerMetricsRecorder?.recordEvent(.groupRethreaded,
+                                                            count: 1,
+                                                            status: .failure,
+                                                            failureReason: .missingRethread)
+                await organizerMetricsRecorder?.recordEvent(.recovery,
+                                                            count: 1,
+                                                            status: .failure,
+                                                            failureReason: .missingRethread)
+                _ = await organizerMetricsRecorder?.failActiveTimedEvents(
+                    outcome: .failure,
+                    failureReason: .missingRethread
+                )
+            }
+            Log.refresh.error("Rethread failed: \(error.localizedDescription, privacy: .private)")
             status = String.localizedStringWithFormat(
                 NSLocalizedString("refresh.status.threading_failed", comment: "Status when threading fails"),
                 error.localizedDescription
@@ -1749,6 +1852,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private func runMailboxThreadAutoMovePass() async {
         let rules = mailboxThreadAutoMoveSettings.rules
         guard !rules.isEmpty else { return }
+        guard case .current(let consent) = mailAutomationConsentProvider(),
+              consent.allows(.messageMove) else {
+            return
+        }
         var shouldForceRefresh = false
 
         for rule in rules {
@@ -1771,26 +1878,60 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                        destinationPath: recoveredDestination.path)
                 guard !candidates.isEmpty else { continue }
 
-                let moveInput = Self.mailboxMoveInput(from: candidates)
-                guard moveInput.unresolvedCount == 0,
-                      !moveInput.internalTargets.isEmpty else {
+                let exactRoutes = candidates.map {
+                    OrganizationMailRoute(messageID: $0.message.messageID,
+                                          account: $0.account,
+                                          mailboxPath: $0.mailboxPath)
+                }
+                let disclosedEffect = OrganizationEffect.appleMail(
+                    operation: .mappedFolderMove,
+                    mutation: .messageMove,
+                    messageCount: exactRoutes.count,
+                    sourceRoutes: exactRoutes,
+                    destination: .mailbox(account: recoveredDestination.account,
+                                          path: recoveredDestination.path),
+                    reversibility: .conditionallyReversible
+                )
+                let authorization: OrganizationMailAuthorization
+                do {
+                    authorization = try OrganizationMailAuthorization.fromCurrentConsent(
+                        effect: disclosedEffect,
+                        consent: consent
+                    )
+                } catch {
                     continue
                 }
-                let moveResult = try await Self.executeMailboxMove(with: moveInput,
-                                                                   destinationPath: recoveredDestination.path,
-                                                                   account: recoveredDestination.account)
+                guard !exactRoutes.isEmpty, exactRoutes.allSatisfy(\.isExact) else {
+                    continue
+                }
+                let now = Date()
+                let seed = "\(rule.account)|\(rule.threadID)|\(recoveredDestination.path)|" + exactRoutes
+                    .map { "\($0.messageID)|\($0.account)|\($0.mailboxPath)" }
+                    .sorted()
+                    .joined(separator: "|")
+                let (outcome, moveResult) = try await executeMailboxMove(
+                    operationID: OrganizationMailOperationIdentifier.make(namespace: "mapped-folder-auto-move",
+                                                                          seed: seed),
+                    kind: .automation,
+                    effect: disclosedEffect,
+                    authorization: authorization,
+                    currentConsent: consent,
+                    routes: exactRoutes,
+                    destinationPath: recoveredDestination.path,
+                    account: recoveredDestination.account,
+                    now: now
+                )
                 let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
                 if isFullSuccess {
                     await applyOptimisticMailboxMove(candidates: candidates,
-                                                     moveTargets: moveInput.internalTargets,
-                                                     resolvedInternalIDsByNodeID: [:],
+                                                     completedRoutes: outcome.completedRoutes,
                                                      destinationPath: recoveredDestination.path,
                                                      destinationAccount: recoveredDestination.account)
                 } else {
                     shouldForceRefresh = true
                 }
             } catch {
-                Log.app.error("Mailbox thread auto-move pass failed: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Mailbox thread auto-move pass failed: \(error.localizedDescription, privacy: .private)")
                 shouldForceRefresh = true
             }
         }
@@ -1932,7 +2073,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 do {
                     try await store.upsertSummaries([entry])
                 } catch {
-                    Log.app.error("Failed to persist folder summary cache: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to persist folder summary cache: \(error.localizedDescription, privacy: .private)")
                 }
                 let timestamp = DateFormatter.localizedString(from: Date(),
                                                               dateStyle: .none,
@@ -2007,7 +2148,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     let cached = try await store.fetchSummaries(scope: .emailNode, ids: cacheKeys)
                     cachedByKey = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
                 } catch {
-                    Log.app.error("Failed to load cached summaries: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to load cached summaries: \(error.localizedDescription, privacy: .private)")
                 }
             }
             guard !Task.isCancelled else { return }
@@ -2118,7 +2259,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     let cached = try await store.fetchSummaries(scope: .emailTag, ids: nodeIDs)
                     cachedByID = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
                 } catch {
-                    Log.app.error("Failed to load cached timeline tags: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to load cached timeline tags: \(error.localizedDescription, privacy: .private)")
                 }
             }
 
@@ -2319,7 +2460,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     let cachedNodes = try await store.fetchSummaries(scope: .emailNode, ids: Array(allNodeIDs))
                     cachedNodeByID = Dictionary(uniqueKeysWithValues: cachedNodes.map { ($0.scopeID, $0) })
                 } catch {
-                    Log.app.error("Failed to load cached node summaries: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to load cached node summaries: \(error.localizedDescription, privacy: .private)")
                 }
             }
 
@@ -2330,7 +2471,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     let cachedFolders = try await store.fetchSummaries(scope: .folder, ids: folderIDs)
                     cachedFolderByID = Dictionary(uniqueKeysWithValues: cachedFolders.map { ($0.scopeID, $0) })
                 } catch {
-                    Log.app.error("Failed to load cached folder summaries: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to load cached folder summaries: \(error.localizedDescription, privacy: .private)")
                 }
             }
 
@@ -2496,7 +2637,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     do {
                         try await store.upsertSummaries([entry])
                     } catch {
-                        Log.app.error("Failed to persist folder summary cache: \(error.localizedDescription, privacy: .public)")
+                        Log.app.error("Failed to persist folder summary cache: \(error.localizedDescription, privacy: .private)")
                     }
                     try Task.checkCancellation()
                     guard self.folderSummaryTaskTokens[input.folderID] == taskToken else {
@@ -2801,7 +2942,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let sourceMessage = physicalSourceMessage(for: message)
         Task { [weak self] in
             guard let self else { return }
-            await MessageStore.shared.addActionItem(for: sourceMessage, folderID: folderID, tags: tags)
+            await store.addActionItem(for: sourceMessage, folderID: folderID, tags: tags)
             await refreshActionItemIDs()
         }
     }
@@ -2810,7 +2951,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let sourceMessage = physicalSourceMessage(for: message)
         Task { [weak self] in
             guard let self else { return }
-            await MessageStore.shared.removeActionItem(for: sourceMessage)
+            await store.removeActionItem(for: sourceMessage)
             await refreshActionItemIDs()
         }
     }
@@ -2839,13 +2980,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     internal func toggleActionItemDone(_ item: ActionItem) {
         Task { [weak self] in
             guard let self else { return }
-            await MessageStore.shared.toggleActionItemDone(item)
+            await store.toggleActionItemDone(item)
             await refreshActionItemIDs()
         }
     }
 
     private func refreshActionItemIDs() async {
-        let fetched = await MessageStore.shared.fetchActionItems()
+        let fetched = await store.fetchActionItems()
         actionItems = fetched
         actionItemIDs = Set(fetched.map(\.id))
     }
@@ -2958,7 +3099,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                         ))
                 }
             } catch {
-                Log.appleScript.error("Failed to fetch mailbox hierarchy: \(error.localizedDescription, privacy: .public)")
+                Log.appleScript.error("Failed to fetch mailbox hierarchy: \(error.localizedDescription, privacy: .private)")
                 await MainActor.run {
                     self.mailboxActionStatusMessage = String.localizedStringWithFormat(
                         NSLocalizedString("mailbox.hierarchy.error", comment: "Error when mailbox hierarchy cannot be loaded"),
@@ -3037,58 +3178,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private static func logMailboxHierarchyDebug(folders: [MailboxFolder], accounts: [MailboxAccount]) {
-        let maxRows = 250
-        let total = folders.count
-        let shown = min(total, maxRows)
-        let header = "Mailbox hierarchy fetched. folders=\(total) accounts=\(accounts.count)"
-
-        let rowLines = folders.prefix(maxRows).enumerated().map { index, folder in
-            let parent = folder.parentPath ?? "<nil>"
-            let inferredParent = inferredParentPathForDebug(from: folder.path) ?? "<nil>"
-            return "[\(index)] account='\(folder.account)' name='\(folder.name)' path='\(folder.path)' parentPath='\(parent)' inferredParent='\(inferredParent)'"
-        }
-
-        var treeLines: [String] = []
-        for account in accounts {
-            treeLines.append("account '\(account.name)'")
-            treeLines.append(contentsOf: debugTreeLines(nodes: account.folders, depth: 1))
-        }
-
-        var summary = "\(header)\n-- raw rows (\(shown)/\(total)) --\n"
-        summary += rowLines.joined(separator: "\n")
-        if total > shown {
-            summary += "\n... \(total - shown) more rows omitted ..."
-        }
-        summary += "\n-- built tree --\n"
-        summary += treeLines.joined(separator: "\n")
-
-        Log.appleScript.debug("\(summary, privacy: .public)")
-#if DEBUG
-        print(summary)
-#endif
-    }
-
-    private static func debugTreeLines(nodes: [MailboxFolderNode], depth: Int) -> [String] {
-        var lines: [String] = []
-        for node in nodes {
-            let indent = String(repeating: "  ", count: max(depth, 0))
-            lines.append("\(indent)- \(node.name) [path='\(node.path)']")
-            lines.append(contentsOf: debugTreeLines(nodes: node.children, depth: depth + 1))
-        }
-        return lines
-    }
-
-    private static func inferredParentPathForDebug(from path: String) -> String? {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        for delimiter in ["/", ".", ":"] {
-            guard let index = trimmed.lastIndex(of: Character(delimiter)) else { continue }
-            let candidate = String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !candidate.isEmpty {
-                return candidate
-            }
-        }
-        return nil
+        Log.appleScript.debug("Mailbox hierarchy fetched. folders=\(folders.count, privacy: .public) accounts=\(accounts.count, privacy: .public)")
     }
 
     private static func shouldRetryAppleScriptTimeout(after error: Error) -> Bool {
@@ -3199,132 +3289,202 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         mailboxActionDisabledReason == nil
     }
 
-    internal func moveSelectionToMailboxFolder(path: String, in account: String) {
-        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPath.isEmpty else { return }
-        let bottomBarThreadID = selectedThreadIDForBottomBarMailboxActionStatus()
-        let selectedAccounts = mailboxActionAccountSet()
-        if selectedAccounts.count > 1 {
-            mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
-            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
-            return
-        }
-        if let selectedAccount = selectedAccounts.first, selectedAccount != account {
-            mailboxActionStatusMessage = MailboxFolderActionError.mixedAccounts.localizedDescription
-            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
-            return
-        }
+    internal func prepareMailboxMoveConfirmation(
+        path: String,
+        in account: String
+    ) async throws -> MailboxMoveConfirmation {
         let selectedNodes = selectedNodes(in: roots)
-        guard !selectedNodes.isEmpty else {
-            mailboxActionStatusMessage = MailboxFolderActionError.noSelection.localizedDescription
-            setBottomBarMailboxActionStatus(mailboxActionStatusMessage, forThreadID: bottomBarThreadID)
-            return
-        }
+        return try await resolveMailboxMoveConfirmation(selectedNodes: selectedNodes,
+                                                        account: account,
+                                                        destinationPath: path).confirmation
+    }
 
+    /// Executes only the immutable effect that was displayed by
+    /// `prepareMailboxMoveConfirmation`. A changed selection, cached source
+    /// route, count, destination, or reversibility fails before authorization
+    /// and before the Mail execution service is reached.
+    @discardableResult
+    internal func moveSelectionToMailboxFolder(
+        confirmation disclosedConfirmation: MailboxMoveConfirmation
+    ) async -> Bool {
+        let bottomBarThreadID = selectedThreadIDForBottomBarMailboxActionStatus()
+        let selectedNodes = selectedNodes(in: roots)
         isMailboxActionRunning = true
         mailboxActionStatusMessage = nil
         setBottomBarMailboxActionStatus(nil, forThreadID: bottomBarThreadID)
         mailboxActionProgressMessage = NSLocalizedString("mailbox.action.progress.move",
                                                          comment: "Status while moving messages to mailbox folder")
-        Task.detached { [weak self] in
-            guard let self else { return }
-            do {
-                let scope = try await self.mailboxMoveScopeForSelection(selectedNodes: selectedNodes,
-                                                                        account: account,
-                                                                        destinationPath: trimmedPath)
-                let sourceMailboxes = Set(scope.candidates.map { $0.mailboxPath }).sorted()
-                await MainActor.run {
-                    Log.appleScript.debug("Mailbox move requested. destination=\(trimmedPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) candidateCount=\(scope.candidates.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
-                }
-
-                if scope.candidates.isEmpty {
-                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
-                                                                           destinationPath: trimmedPath,
-                                                                           account: account)
-                    await MainActor.run {
-                        self.isMailboxActionRunning = false
-                        self.mailboxActionProgressMessage = nil
-                        self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.move.summary.no_candidates",
-                                                                            comment: "Status when all thread messages are already in destination mailbox")
-                        self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
-                                                             forThreadID: bottomBarThreadID)
-                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
-                                                          destinationPath: trimmedPath,
-                                                          account: account)
-                    }
-                    return
-                }
-                let moveInput = Self.mailboxMoveInput(from: scope.candidates)
-                let ambiguousCount = 0
-                let unresolvedCount = moveInput.unresolvedCount
-                guard unresolvedCount == 0,
-                      !moveInput.internalTargets.isEmpty else {
-                    await MainActor.run {
-                        self.isMailboxActionRunning = false
-                        self.mailboxActionProgressMessage = nil
-                        self.mailboxActionStatusMessage = Self.mailboxMoveBlockedStatusMessage(ambiguousCount: ambiguousCount,
-                                                                                                unresolvedCount: unresolvedCount)
-                        self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
-                                                             forThreadID: bottomBarThreadID)
-                    }
-                    return
-                }
-
-                let moveResult = try await Self.executeMailboxMove(with: moveInput,
-                                                                   destinationPath: trimmedPath,
-                                                                   account: account)
-                let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
-                if isFullSuccess {
-                    await self.applyOptimisticMailboxMove(candidates: scope.candidates,
-                                                          moveTargets: moveInput.internalTargets,
-                                                          resolvedInternalIDsByNodeID: [:],
-                                                          destinationPath: trimmedPath,
-                                                          destinationAccount: account)
-                }
-                await MainActor.run {
-                    self.isMailboxActionRunning = false
-                    self.mailboxActionProgressMessage = nil
-                    self.mailboxActionStatusMessage = Self.mailboxMoveStatusMessage(moveResult: moveResult,
-                                                                                     ambiguousCount: ambiguousCount,
-                                                                                     unresolvedCount: unresolvedCount)
-                    self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
-                                                         forThreadID: bottomBarThreadID)
-                    if isFullSuccess {
-                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
-                                                          destinationPath: trimmedPath,
-                                                          account: account)
-                        // Optimistic mailbox updates already patched local state. Avoid
-                        // forcing a full refresh here so thread-folder membership does not
-                        // disappear due to partial re-fetch windows.
-                        self.scheduleRethread(delay: 0)
-                    } else {
-                        self.shouldForceFullReload = true
-                        self.refreshNow()
-                    }
-                }
-                if isFullSuccess {
-                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
-                                                                           destinationPath: trimmedPath,
-                                                                           account: account)
-                }
-            } catch {
-                await MainActor.run {
-                    self.isMailboxActionRunning = false
-                    self.mailboxActionProgressMessage = nil
-                    self.mailboxActionStatusMessage = Self.mailboxMoveFailureMessage(for: error)
-                    self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
-                                                         forThreadID: bottomBarThreadID)
-                    if let msg = self.mailboxActionStatusMessage {
-                        self.showError(msg)
-                    }
-                }
+        do {
+            let resolved = try await resolveMailboxMoveConfirmation(
+                selectedNodes: selectedNodes,
+                account: disclosedConfirmation.account,
+                destinationPath: disclosedConfirmation.destinationPath
+            )
+            guard resolved.confirmation == disclosedConfirmation else {
+                throw MailboxFolderActionError.staleConfirmation
             }
+
+            Log.appleScript.debug("Mailbox move confirmed. selectedCount=\(selectedNodes.count, privacy: .public) candidateCount=\(resolved.candidates.count, privacy: .public)")
+            if resolved.candidates.isEmpty {
+                await persistSingleThreadFolderMailboxDestinations(
+                    threadIDs: disclosedConfirmation.threadIDs,
+                    destinationPath: disclosedConfirmation.destinationPath,
+                    account: disclosedConfirmation.account
+                )
+                isMailboxActionRunning = false
+                mailboxActionProgressMessage = nil
+                mailboxActionStatusMessage = NSLocalizedString(
+                    "mailbox.action.move.summary.no_candidates",
+                    comment: "Status when all thread messages are already in destination mailbox"
+                )
+                setBottomBarMailboxActionStatus(mailboxActionStatusMessage,
+                                                forThreadID: bottomBarThreadID)
+                upsertMailboxThreadMoveRules(threadIDs: disclosedConfirmation.threadIDs,
+                                             destinationPath: disclosedConfirmation.destinationPath,
+                                             account: disclosedConfirmation.account)
+                return true
+            }
+
+            guard let effect = resolved.confirmation.effect,
+                  let disclosedEffect = disclosedConfirmation.effect else {
+                throw MailboxFolderActionError.incompleteDisclosure
+            }
+            let exactRoutes = effect.sourceRoutes
+            let now = Date()
+            let authorization = try OrganizationMailAuthorization.fromUserConfirmation(
+                effect: effect,
+                disclosedEffect: disclosedEffect,
+                confirmedAt: now,
+                now: now
+            )
+            let (outcome, moveResult) = try await executeMailboxMove(
+                operationID: OrganizationMailOperationIdentifier.make(
+                    namespace: "explicit-selection-move",
+                    seed: UUID().uuidString
+                ),
+                kind: .mailMove,
+                effect: effect,
+                authorization: authorization,
+                currentConsent: nil,
+                routes: exactRoutes,
+                destinationPath: disclosedConfirmation.destinationPath,
+                account: disclosedConfirmation.account,
+                now: now
+            )
+            let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
+            if isFullSuccess {
+                await applyOptimisticMailboxMove(
+                    candidates: resolved.candidates,
+                    completedRoutes: outcome.completedRoutes,
+                    destinationPath: disclosedConfirmation.destinationPath,
+                    destinationAccount: disclosedConfirmation.account
+                )
+            }
+            isMailboxActionRunning = false
+            mailboxActionProgressMessage = nil
+            mailboxActionStatusMessage = Self.mailboxMoveStatusMessage(moveResult: moveResult,
+                                                                        ambiguousCount: 0,
+                                                                        unresolvedCount: 0)
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage,
+                                            forThreadID: bottomBarThreadID)
+            if isFullSuccess {
+                upsertMailboxThreadMoveRules(threadIDs: disclosedConfirmation.threadIDs,
+                                             destinationPath: disclosedConfirmation.destinationPath,
+                                             account: disclosedConfirmation.account)
+                // Optimistic mailbox updates already patched local state. Avoid
+                // forcing a full refresh here so thread-folder membership does not
+                // disappear due to partial re-fetch windows.
+                scheduleRethread(delay: 0)
+                await persistSingleThreadFolderMailboxDestinations(
+                    threadIDs: disclosedConfirmation.threadIDs,
+                    destinationPath: disclosedConfirmation.destinationPath,
+                    account: disclosedConfirmation.account
+                )
+            } else {
+                shouldForceFullReload = true
+                refreshNow()
+            }
+            return isFullSuccess
+        } catch {
+            isMailboxActionRunning = false
+            mailboxActionProgressMessage = nil
+            mailboxActionStatusMessage = Self.mailboxMoveFailureMessage(for: error)
+            setBottomBarMailboxActionStatus(mailboxActionStatusMessage,
+                                            forThreadID: bottomBarThreadID)
+            if let message = mailboxActionStatusMessage {
+                showError(message)
+            }
+            return false
         }
+    }
+
+    private func resolveMailboxMoveConfirmation(
+        selectedNodes: [ThreadNode],
+        account rawAccount: String,
+        destinationPath rawDestinationPath: String
+    ) async throws -> (confirmation: MailboxMoveConfirmation, candidates: [MailboxMoveCandidate]) {
+        guard !selectedNodes.isEmpty else {
+            throw MailboxFolderActionError.noSelection
+        }
+        let account = rawAccount.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !account.isEmpty else {
+            throw MailboxFolderActionError.missingAccount
+        }
+        let selectedAccounts = Set(selectedNodes.compactMap { node -> String? in
+            let value = node.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        })
+        guard selectedAccounts.count <= 1 else {
+            throw MailboxFolderActionError.mixedAccounts
+        }
+        if let selectedAccount = selectedAccounts.first,
+           selectedAccount.caseInsensitiveCompare(account) != .orderedSame {
+            throw MailboxFolderActionError.mixedAccounts
+        }
+        let destinationPath = rawDestinationPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !destinationPath.isEmpty else {
+            throw MailboxFolderActionError.incompleteDisclosure
+        }
+
+        let scope = try await mailboxMoveScopeForSelection(selectedNodes: selectedNodes,
+                                                           account: account,
+                                                           destinationPath: destinationPath)
+        let exactRoutes = Self.exactMailRoutes(from: scope.candidates)
+        guard exactRoutes.count == scope.candidates.count,
+              exactRoutes.allSatisfy(\.isExact),
+              Set(exactRoutes).count == exactRoutes.count else {
+            throw MailboxFolderActionError.incompleteDisclosure
+        }
+        let effect: OrganizationEffect? = if exactRoutes.isEmpty {
+            nil
+        } else {
+            OrganizationEffect.appleMail(
+                operation: .messageMove,
+                mutation: .messageMove,
+                messageCount: exactRoutes.count,
+                sourceRoutes: exactRoutes,
+                destination: .mailbox(account: account, path: destinationPath),
+                reversibility: .conditionallyReversible
+            )
+        }
+        if let effect, !effect.hasCompleteMailDisclosure {
+            throw MailboxFolderActionError.incompleteDisclosure
+        }
+        let confirmation = MailboxMoveConfirmation(
+            selectedNodeIDs: Set(selectedNodes.map(\.id)),
+            threadIDs: scope.threadIDs,
+            account: account,
+            destinationPath: destinationPath,
+            effect: effect
+        )
+        return (confirmation, scope.candidates)
     }
 
     internal func createMailboxFolderAndMoveSelection(name: String,
                                                       in account: String,
-                                                      parentPath: String?) {
+                                                      parentPath: String?,
+                                                      mailboxCreationAuthorization: OrganizationMailAuthorization? = nil,
+                                                      messageMoveAuthorization: OrganizationMailAuthorization? = nil) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let bottomBarThreadID = selectedThreadIDForBottomBarMailboxActionStatus()
         guard !trimmedName.isEmpty else {
@@ -3358,60 +3518,103 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                let destinationPath = try await MailControl.createMailbox(named: trimmedName,
-                                                                          in: account,
-                                                                          parentPath: parentPath)
-                let scope = try await self.mailboxMoveScopeForSelection(selectedNodes: selectedNodes,
-                                                                        account: account,
-                                                                        destinationPath: destinationPath)
-                let sourceMailboxes = Set(scope.candidates.map { $0.mailboxPath }).sorted()
-                await MainActor.run {
-                    Log.appleScript.debug("Mailbox create-and-move requested. destination=\(destinationPath, privacy: .public) account=\(account, privacy: .public) selectedCount=\(selectedNodes.count, privacy: .public) candidateCount=\(scope.candidates.count, privacy: .public) sourceMailboxes=\(sourceMailboxes.joined(separator: ","), privacy: .public)")
-                }
-
-                if scope.candidates.isEmpty {
-                    await self.persistSingleThreadFolderMailboxDestinations(threadIDs: scope.threadIDs,
-                                                                           destinationPath: destinationPath,
-                                                                           account: account)
+                let trimmedParentPath = parentPath?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let plannedDestinationPath = trimmedParentPath.isEmpty
+                    ? trimmedName
+                    : "\(trimmedParentPath)/\(trimmedName)"
+                let scope = try await self.mailboxMoveScopeForSelection(
+                    selectedNodes: selectedNodes,
+                    account: account,
+                    destinationPath: plannedDestinationPath
+                )
+                guard !scope.candidates.isEmpty else {
                     await MainActor.run {
                         self.isMailboxActionRunning = false
                         self.mailboxActionProgressMessage = nil
-                        self.mailboxActionStatusMessage = NSLocalizedString("mailbox.action.create_and_move.summary.no_candidates",
-                                                                            comment: "Status when folder is created and thread messages already live in destination mailbox")
+                        self.mailboxActionStatusMessage = NSLocalizedString(
+                            "mailbox.action.create_and_move.preflight.no_candidates",
+                            comment: "Create-and-move is stopped before mailbox creation when nothing can move"
+                        )
                         self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
                                                              forThreadID: bottomBarThreadID)
-                        self.upsertMailboxThreadMoveRules(threadIDs: scope.threadIDs,
-                                                          destinationPath: destinationPath,
-                                                          account: account)
-                        self.refreshMailboxHierarchy(force: true)
-                        self.scheduleRethread(delay: 0)
                     }
                     return
                 }
-                let moveInput = Self.mailboxMoveInput(from: scope.candidates)
+                let exactRoutes = Self.exactMailRoutes(from: scope.candidates)
                 let ambiguousCount = 0
-                let unresolvedCount = moveInput.unresolvedCount
+                let unresolvedCount = exactRoutes.filter { !$0.isExact }.count
                 guard unresolvedCount == 0,
-                      !moveInput.internalTargets.isEmpty else {
+                      !exactRoutes.isEmpty else {
                     await MainActor.run {
                         self.isMailboxActionRunning = false
                         self.mailboxActionProgressMessage = nil
-                        self.mailboxActionStatusMessage = Self.mailboxCreateAndMoveBlockedStatusMessage(ambiguousCount: ambiguousCount,
-                                                                                                         unresolvedCount: unresolvedCount)
+                        self.mailboxActionStatusMessage = String.localizedStringWithFormat(
+                            NSLocalizedString(
+                                "mailbox.action.create_and_move.preflight.blocked",
+                                comment: "Create-and-move is stopped before mailbox creation when exact routes are incomplete"
+                            ),
+                            ambiguousCount,
+                            unresolvedCount
+                        )
                         self.setBottomBarMailboxActionStatus(self.mailboxActionStatusMessage,
                                                              forThreadID: bottomBarThreadID)
                     }
                     return
                 }
 
-                let moveResult = try await Self.executeMailboxMove(with: moveInput,
-                                                                   destinationPath: destinationPath,
-                                                                   account: account)
+                let now = Date()
+                let createEffect = OrganizationEffect.appleMail(
+                    operation: .mailboxCreation,
+                    mutation: .mailboxCreation,
+                    messageCount: 0,
+                    sourceRoutes: [],
+                    destination: .newMailbox(account: account, path: plannedDestinationPath),
+                    reversibility: .partiallyReversible
+                )
+                let actionSeed = UUID().uuidString
+                let createOutcome = try await self.organizationMailService.createMailbox(
+                    OrganizationMailboxCreationExecution(
+                        operationID: OrganizationMailOperationIdentifier.make(namespace: "mailbox-create",
+                                                                             seed: actionSeed),
+                        kind: .mailboxCreation,
+                        effect: createEffect,
+                        authorization: mailboxCreationAuthorization,
+                        currentConsent: nil,
+                        now: now
+                    )
+                )
+                guard let destinationPath = createOutcome.createdMailboxPath else {
+                    throw OrganizationMailExecutionServiceError.invalidRequest
+                }
+                await MainActor.run {
+                    Log.appleScript.debug("Mailbox create-and-move requested. selectedCount=\(selectedNodes.count, privacy: .public) candidateCount=\(scope.candidates.count, privacy: .public)")
+                }
+
+                let moveEffect = OrganizationEffect.appleMail(
+                    operation: .mailboxCreateAndMove,
+                    mutation: .messageMove,
+                    messageCount: exactRoutes.count,
+                    sourceRoutes: exactRoutes,
+                    destination: .mailbox(account: account, path: destinationPath),
+                    reversibility: .partiallyReversible
+                )
+                let (moveOutcome, moveResult) = try await self.executeMailboxMove(
+                    operationID: OrganizationMailOperationIdentifier.make(namespace: "mailbox-create-move",
+                                                                          seed: actionSeed),
+                    kind: .mailMove,
+                    effect: moveEffect,
+                    authorization: messageMoveAuthorization,
+                    currentConsent: nil,
+                    routes: exactRoutes,
+                    destinationPath: destinationPath,
+                    account: account,
+                    now: now
+                )
                 let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
                 if isFullSuccess {
                     await self.applyOptimisticMailboxMove(candidates: scope.candidates,
-                                                          moveTargets: moveInput.internalTargets,
-                                                          resolvedInternalIDsByNodeID: [:],
+                                                          completedRoutes: moveOutcome.completedRoutes,
                                                           destinationPath: destinationPath,
                                                           destinationAccount: account)
                 }
@@ -3591,7 +3794,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         pendingScrollTimeoutTasks[request.token]?.cancel()
         pendingScrollTimeoutTasks.removeValue(forKey: request.token)
         if let context = pendingScrollContextByToken.removeValue(forKey: request.token) {
-            Log.app.info("Folder jump completed. marker=success folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) scrolledNodeID=\(request.nodeID, privacy: .public)")
+            Log.app.info("Folder jump completed. marker=success folderID=\(context.folderID, privacy: .private) boundary=\(String(describing: context.boundary), privacy: .public) scrolledNodeID=\(request.nodeID, privacy: .private)")
             completeFolderJump(folderID: context.folderID)
         }
     }
@@ -3605,7 +3808,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             if reason == "manual_scroll" {
                 coalescedFolderJumpBoundaries.removeValue(forKey: context.folderID)
             }
-            Log.app.info("Folder jump cancelled. marker=cancelled folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) targetNodeID=\(context.targetNodeID, privacy: .public) reason=\(reason, privacy: .public)")
+            Log.app.info("Folder jump cancelled. marker=cancelled folderID=\(context.folderID, privacy: .private) boundary=\(String(describing: context.boundary), privacy: .public) targetNodeID=\(context.targetNodeID, privacy: .private) reason=\(reason, privacy: .public)")
             completeFolderJump(folderID: context.folderID)
         }
     }
@@ -3655,7 +3858,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.refreshFolderSummaries(for: self.roots, folders: updated)
                 }
             } catch {
-                Log.app.error("Failed to save thread folder edits: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to save thread folder edits: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -3702,7 +3905,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                 debounceIntervalOverride: 0)
                 }
             } catch {
-                Log.app.error("Failed to save recalibrated descendant folder colors: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to save recalibrated descendant folder colors: \(error.localizedDescription, privacy: .private)")
             }
         }
 
@@ -3729,7 +3932,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 let resolution = try await MailControl.openMessageViaFilteredFallback(metadata)
                 switch resolution {
                 case .opened:
-                    Log.appleScript.info("Open in Mail succeeded by filtered fallback. messageKey=\(messageKey, privacy: .public)")
+                    Log.appleScript.info("Open in Mail succeeded by filtered fallback. messageKey=\(messageKey, privacy: .private)")
                     await MainActor.run {
                         self.setOpenInMailState(.opened(.filteredFallback),
                                                 messageKey: messageKey,
@@ -3739,7 +3942,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                       comment: "Open in Mail completed activity detail"))
                     }
                 case .notFound:
-                    Log.appleScript.info("Open in Mail filtered fallback found no match. messageKey=\(messageKey, privacy: .public)")
+                    Log.appleScript.info("Open in Mail filtered fallback found no match. messageKey=\(messageKey, privacy: .private)")
                     await MainActor.run {
                         self.setOpenInMailState(.notFound, messageKey: messageKey, attemptID: attemptID)
                         self.finishActivity(activityID,
@@ -3749,7 +3952,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     }
                 }
             } catch {
-                Log.appleScript.error("Open in Mail failed. messageKey=\(messageKey, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                Log.appleScript.error("Open in Mail failed. messageKey=\(messageKey, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
                 await MainActor.run {
                     self.setOpenInMailState(.failed(error.localizedDescription),
                                             messageKey: messageKey,
@@ -3803,7 +4006,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     }
                 }
             } catch {
-                Log.app.error("Failed to move thread into folder: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to move thread into folder: \(error.localizedDescription, privacy: .private)")
                 self.showError(error.localizedDescription)
             }
         }
@@ -3823,7 +4026,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.refreshFolderSummaries(for: self.roots, folders: updated.folders)
                 }
             } catch {
-                Log.app.error("Failed to move folder into folder: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to move folder into folder: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -3842,7 +4045,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.refreshFolderSummaries(for: self.roots, folders: updated.folders)
                 }
             } catch {
-                Log.app.error("Failed to move folder to root: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to move folder to root: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -3862,7 +4065,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.refreshFolderSummaries(for: self.roots, folders: updated.remainingFolders)
                 }
             } catch {
-                Log.app.error("Failed to remove thread from folder: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to remove thread from folder: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -3936,7 +4139,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 do {
                     try await store.upsertSummaries([entry])
                 } catch {
-                    Log.app.error("Failed to persist timeline tag cache: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to persist timeline tag cache: \(error.localizedDescription, privacy: .private)")
                 }
                 await MainActor.run {
                     self.timelineTagsByNodeID[node.id] = tags
@@ -4293,7 +4496,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         fetchedCount
                     )
                     self.reloadDayFetchCoverages(refreshConcreteScopes: true)
-                    self.scheduleRethread()
+                    if fetchedCount > 0 {
+                        self.scheduleRethread()
+                    }
                     self.finishActivity(activityID, detail: self.status)
                 }
             } catch is CancellationError {
@@ -4429,7 +4634,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.scheduleRethread()
                     }
                 } catch {
-                    Log.app.error("Failed to save manual thread group: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to save manual thread group: \(error.localizedDescription, privacy: .private)")
                 }
             }
             return
@@ -4451,7 +4656,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                         self.scheduleRethread()
                     }
                 } catch {
-                    Log.app.error("Failed to update manual thread group: \(error.localizedDescription, privacy: .public)")
+                    Log.app.error("Failed to update manual thread group: \(error.localizedDescription, privacy: .private)")
                 }
             }
             return
@@ -4484,7 +4689,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                     self.scheduleRethread()
                 }
             } catch {
-                Log.app.error("Failed to merge manual thread groups: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to merge manual thread groups: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -4513,7 +4718,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 try await removeManualGroupMembership(removalsByGroupID: removalsByGroupID)
                 await MainActor.run { self.scheduleRethread() }
             } catch {
-                Log.app.error("Failed to remove manual thread grouping: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to remove manual thread grouping: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -4552,6 +4757,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private func mailboxActionAccountSet() -> Set<String> {
         Set(selectedNodes(in: roots).compactMap(mailboxActionAccountName(for:)))
+    }
+
+    internal static func selectedMailboxActionAccount(for nodes: [ThreadNode]) -> String? {
+        let accounts = Set(nodes.compactMap { node -> String? in
+            let account = node.message.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return account.isEmpty ? nil : account
+        })
+        guard accounts.count == 1 else { return nil }
+        return accounts.first
     }
 
     private func selectedAccountNameForMailboxActions() -> String? {
@@ -4748,7 +4962,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             }
             return .success(recoveredDestination)
         } catch {
-            Log.app.error("Failed to persist recovered folder mailbox destination: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to persist recovered folder mailbox destination: \(error.localizedDescription, privacy: .private)")
             return .failure(String.localizedStringWithFormat(
                 NSLocalizedString("mailbox.action.folder_destination.reassign",
                                   comment: "Status when assigned folder mailbox destination must be reassigned"),
@@ -4811,7 +5025,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 self.threadFolders = updatedFolders
             }
         } catch {
-            Log.app.error("Failed to persist inferred folder mailbox destination: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to persist inferred folder mailbox destination: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -4850,24 +5064,60 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 return baseStatus
             }
 
-            let moveInput = Self.mailboxMoveInput(from: candidates)
-            guard moveInput.unresolvedCount == 0,
-                  !moveInput.internalTargets.isEmpty else {
+            let exactRoutes = Self.exactMailRoutes(from: candidates)
+            let unresolvedCount = exactRoutes.filter { !$0.isExact }.count
+            guard unresolvedCount == 0,
+                  !exactRoutes.isEmpty else {
                 return Self.mailboxMoveBlockedStatusMessage(ambiguousCount: 0,
-                                                            unresolvedCount: moveInput.unresolvedCount)
+                                                            unresolvedCount: unresolvedCount)
             }
 
-            let moveResult = try await Self.executeMailboxMove(with: moveInput,
-                                                               destinationPath: recoveredDestination.path,
-                                                               account: recoveredDestination.account)
+            let now = Date()
+            let effect = OrganizationEffect.mixed(
+                operation: .mappedFolderMove,
+                betterMailChange: .groupMembership,
+                mailMutations: [.messageMove],
+                messageCount: exactRoutes.count,
+                sourceRoutes: exactRoutes,
+                destination: .mailbox(account: recoveredDestination.account,
+                                      path: recoveredDestination.path),
+                reversibility: .conditionallyReversible
+            )
+            let currentConsent: OrganizationMailAutomationConsent?
+            if case .current(let consent) = mailAutomationConsentProvider(),
+               consent.allows(.messageMove) {
+                currentConsent = consent
+            } else {
+                currentConsent = nil
+            }
+            let authorization = currentConsent.flatMap {
+                try? OrganizationMailAuthorization.fromCurrentConsent(effect: effect,
+                                                                      consent: $0,
+                                                                      now: now)
+            }
+            let seed = "\(threadID)|\(recoveredDestination.account)|\(recoveredDestination.path)|" + exactRoutes
+                .map { "\($0.messageID)|\($0.account)|\($0.mailboxPath)" }
+                .sorted()
+                .joined(separator: "|")
+            let (outcome, moveResult) = try await executeMailboxMove(
+                operationID: OrganizationMailOperationIdentifier.make(namespace: "mapped-folder-move",
+                                                                      seed: seed),
+                kind: .automation,
+                effect: effect,
+                authorization: authorization,
+                currentConsent: currentConsent,
+                routes: exactRoutes,
+                destinationPath: recoveredDestination.path,
+                account: recoveredDestination.account,
+                now: now
+            )
             let isFullSuccess = moveResult.errorCount == 0 && moveResult.movedCount > 0
             let baseStatus = Self.mailboxMoveStatusMessage(moveResult: moveResult,
                                                            ambiguousCount: 0,
-                                                           unresolvedCount: moveInput.unresolvedCount)
+                                                           unresolvedCount: unresolvedCount)
             if isFullSuccess {
                 await applyOptimisticMailboxMove(candidates: candidates,
-                                                 moveTargets: moveInput.internalTargets,
-                                                 resolvedInternalIDsByNodeID: [:],
+                                                 completedRoutes: outcome.completedRoutes,
                                                  destinationPath: recoveredDestination.path,
                                                  destinationAccount: recoveredDestination.account)
                 await MainActor.run {
@@ -5362,7 +5612,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let plan = Self.folderRefreshSubjectPlan(messages: seedMessages)
         guard !plan.isEmpty else { return 0 }
 
-        Log.refresh.info("Starting folder coverage refresh. folderID=\(folderID, privacy: .public) targets=\(plan.count, privacy: .public)")
+        Log.refresh.info("Starting folder coverage refresh. folderID=\(folderID, privacy: .private) targets=\(plan.count, privacy: .public)")
         var fetchedCount = 0
         var seenMessageIDs = Set<String>()
         for item in plan {
@@ -5500,92 +5750,61 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         return (effectiveThreadIDs, candidates)
     }
 
-    nonisolated private static func mailboxMoveInput(from candidates: [MailboxMoveCandidate]) -> (internalTargets: [MailControl.InternalIDMoveTarget], unresolvedCount: Int) {
-        var seenInternalIDs = Set<String>()
-        var internalTargets: [MailControl.InternalIDMoveTarget] = []
-        var unresolvedCount = 0
-        internalTargets.reserveCapacity(candidates.count)
-
-        for candidate in candidates {
-            let internalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !internalID.isEmpty {
-                if seenInternalIDs.insert(internalID).inserted {
-                    internalTargets.append(
-                        MailControl.InternalIDMoveTarget(internalID: internalID,
-                                                         sourceAccount: candidate.account,
-                                                         sourceMailboxPath: candidate.mailboxPath)
-                    )
-                }
-            } else {
-                unresolvedCount += 1
-            }
+    nonisolated private static func exactMailRoutes(from candidates: [MailboxMoveCandidate]) -> [OrganizationMailRoute] {
+        candidates.map {
+            OrganizationMailRoute(messageID: $0.message.messageID,
+                                  account: $0.account,
+                                  mailboxPath: $0.mailboxPath)
+        }.sorted {
+            if $0.account != $1.account { return $0.account < $1.account }
+            if $0.mailboxPath != $1.mailboxPath { return $0.mailboxPath < $1.mailboxPath }
+            return $0.messageID < $1.messageID
         }
-        return (internalTargets, unresolvedCount)
     }
 
-    nonisolated private static func executeMailboxMove(with input: (internalTargets: [MailControl.InternalIDMoveTarget], unresolvedCount: Int),
-                                                       destinationPath: String,
-                                                       account: String) async throws -> MailControl.MailboxMoveResult {
-        var combined = MailControl.MailboxMoveResult(requestedCount: 0,
-                                                     matchedCount: 0,
-                                                     movedCount: 0,
-                                                     errorCount: 0,
-                                                     firstErrorNumber: nil,
-                                                     firstErrorMessage: nil)
-
-        if !input.internalTargets.isEmpty {
-            do {
-                let byInternalID = try await MailControl.moveMessagesByInternalID(targets: input.internalTargets,
-                                                                                   to: destinationPath,
-                                                                                   in: account)
-                combined = Self.combineMailboxMoveResults(lhs: combined, rhs: byInternalID)
-            } catch MailControlError.noMessagesMoved {
-                combined = Self.combineMailboxMoveResults(lhs: combined,
-                                                          rhs: MailControl.MailboxMoveResult(requestedCount: input.internalTargets.count,
-                                                                                             matchedCount: 0,
-                                                                                             movedCount: 0,
-                                                                                             errorCount: 0,
-                                                                                             firstErrorNumber: nil,
-                                                                                             firstErrorMessage: nil))
-            }
-        }
-
-        if combined.movedCount <= 0 {
-            throw MailControlError.noMessagesMoved
-        }
-        return combined
-    }
-
-    nonisolated private static func combineMailboxMoveResults(lhs: MailControl.MailboxMoveResult,
-                                                              rhs: MailControl.MailboxMoveResult) -> MailControl.MailboxMoveResult {
-        MailControl.MailboxMoveResult(requestedCount: lhs.requestedCount + rhs.requestedCount,
-                                      matchedCount: lhs.matchedCount + rhs.matchedCount,
-                                      movedCount: lhs.movedCount + rhs.movedCount,
-                                      errorCount: lhs.errorCount + rhs.errorCount,
-                                      firstErrorNumber: lhs.firstErrorNumber ?? rhs.firstErrorNumber,
-                                      firstErrorMessage: lhs.firstErrorMessage ?? rhs.firstErrorMessage)
+    private func executeMailboxMove(operationID: String,
+                                    kind: OrganizationOperationKind,
+                                    effect: OrganizationEffect,
+                                    authorization: OrganizationMailAuthorization?,
+                                    currentConsent: OrganizationMailAutomationConsent?,
+                                    routes: [OrganizationMailRoute],
+                                    destinationPath: String,
+                                    account: String,
+                                    now: Date) async throws -> (OrganizationMailGatewayOutcome, MailControl.MailboxMoveResult) {
+        let destination = OrganizationMailDestination.mailbox(account: account, path: destinationPath)
+        let outcome = try await organizationMailService.move(
+            OrganizationMailMoveExecution(operationID: operationID,
+                                          kind: kind,
+                                          effect: effect,
+                                          authorization: authorization,
+                                          currentConsent: currentConsent,
+                                          routes: routes,
+                                          destination: destination,
+                                          now: now)
+        )
+        let unresolved = max(routes.count - outcome.completedCount, 0)
+        let result = MailControl.MailboxMoveResult(requestedCount: routes.count,
+                                                   matchedCount: outcome.completedCount,
+                                                   movedCount: outcome.completedCount,
+                                                   errorCount: unresolved,
+                                                   firstErrorNumber: nil,
+                                                   firstErrorMessage: outcome.failureCode)
+        return (outcome, result)
     }
 
     private func applyOptimisticMailboxMove(candidates: [MailboxMoveCandidate],
-                                            moveTargets: [MailControl.InternalIDMoveTarget],
-                                            resolvedInternalIDsByNodeID: [String: String],
+                                            completedRoutes: [OrganizationMailRoute],
                                             destinationPath: String,
                                             destinationAccount: String) async {
         let destinationMailbox = destinationPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let destinationAcct = destinationAccount.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !destinationMailbox.isEmpty, !destinationAcct.isEmpty else { return }
-        let movedInternalIDs = Set(moveTargets.map { $0.internalID.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty })
+        let movedRoutes = Set(completedRoutes)
         let optimisticUpdates = candidates.compactMap { candidate -> EmailMessage? in
-            if movedInternalIDs.isEmpty {
-                return candidate.message.assigning(mailboxID: destinationMailbox, accountName: destinationAcct)
-            }
-            let resolvedInternalID = resolvedInternalIDsByNodeID[candidate.nodeID]?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let messageInternalID = candidate.message.internalMailID?.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let internalID = [resolvedInternalID, messageInternalID]
-                .compactMap({ $0 })
-                .first(where: { !$0.isEmpty }),
-                  movedInternalIDs.contains(internalID) else {
+            let route = OrganizationMailRoute(messageID: candidate.message.messageID,
+                                              account: candidate.account,
+                                              mailboxPath: candidate.mailboxPath)
+            guard movedRoutes.contains(route) else {
                 return nil
             }
             return candidate.message.assigning(mailboxID: destinationMailbox, accountName: destinationAcct)
@@ -5597,12 +5816,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 self.scheduleRethread(delay: 0)
             }
         } catch {
-            Log.app.error("Failed optimistic mailbox update after move: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed optimistic mailbox update after move: \(error.localizedDescription, privacy: .private)")
         }
     }
 
     private func cachedMessageCutoffDate(today: Date = Date(),
                                          calendar: Calendar = .current) -> Date? {
+        guard !includesAllCachedMessagesInRethread else { return nil }
         let dayCount = max(dayWindowCount, 1)
         let startOfToday = calendar.startOfDay(for: today)
         return calendar.date(byAdding: .day, value: -(dayCount - 1), to: startOfToday)
@@ -5688,6 +5908,238 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
+    /// Applies one BetterMail-only batch membership mutation through the
+    /// write-ahead organization ledger. A Group's optional Mail destination is
+    /// deliberately ignored here; physical Mail changes require a separate,
+    /// disclosed gateway authorization.
+    @discardableResult
+    internal func organizeThreads(_ rawThreadIDs: Set<String>,
+                                  intoGroupID groupID: String) async throws -> OrganizationCommandResult {
+        let threadIDs = Set(rawThreadIDs.compactMap { value -> String? in
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty ? nil : normalized
+        })
+        guard !threadIDs.isEmpty else {
+            throw OrganizationMutationStoreError.invalidCommand("at least one conversation is required")
+        }
+        let command = OrganizationGroupCommand.add(
+            operationID: "manual-group-add:\(UUID().uuidString.lowercased())",
+            groupID: groupID,
+            memberIDs: threadIDs.sorted()
+        )
+        let result = try await organizationCommandService.execute(command)
+        try await reloadOrganizationFolders()
+        return result
+    }
+
+    /// Creates a named BetterMail Group and its complete initial membership in
+    /// one serialized Core Data mutation. When supplied, the spatial intent is
+    /// durably prepared before membership commits and completed only after the
+    /// graph's JSON anchor receipt is recorded.
+    @discardableResult
+    internal func createOrganizationGroup(
+        title rawTitle: String,
+        threadIDs rawThreadIDs: Set<String>,
+        parentID: String? = nil,
+        scopeID: String? = nil,
+        anchor: CGPoint? = nil,
+        zoom: CGFloat = 1
+    ) async throws -> OrganizationCommandResult {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let threadIDs = Set(rawThreadIDs.compactMap { value -> String? in
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty ? nil : normalized
+        })
+        guard !title.isEmpty, !threadIDs.isEmpty else {
+            throw OrganizationMutationStoreError.invalidCommand("a Group name and conversations are required")
+        }
+
+        let groupID = "folder-\(UUID().uuidString.lowercased())"
+        let normalizedScopeID = scopeID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let anchorIntent: OrganizationSpatialAnchorIntent? = if let anchor,
+                                                               anchor.x.isFinite,
+                                                               anchor.y.isFinite,
+                                                               !normalizedScopeID.isEmpty {
+            OrganizationSpatialAnchorIntent(
+                opaqueScopeFingerprint: OrganizationOpaqueFingerprint.digest(
+                    namespace: "scope",
+                    rawValue: normalizedScopeID
+                ),
+                opaqueGroupFingerprint: OrganizationOpaqueFingerprint.digest(
+                    namespace: "group",
+                    rawValue: groupID
+                ),
+                x: Double(anchor.x),
+                y: Double(anchor.y),
+                zoom: Double(GraphViewport.clampedZoom(zoom))
+            )
+        } else {
+            nil
+        }
+        let command = OrganizationGroupCommand.create(
+            operationID: "manual-group-create:\(UUID().uuidString.lowercased())",
+            groupID: groupID,
+            title: title,
+            memberIDs: threadIDs.sorted(),
+            parentID: parentID,
+            anchorIntent: anchorIntent
+        )
+        let result = try await organizationCommandService.execute(command)
+        try await reloadOrganizationFolders()
+        return result
+    }
+
+    internal func completeOrganizationSpatialAnchor(operationID: String,
+                                                    intentID: String,
+                                                    opaqueStoreRevision: String,
+                                                    at date: Date = Date()) async throws {
+        let receipt = OrganizationSpatialAnchorReceipt(intentID: intentID,
+                                                       appliedAt: date,
+                                                       opaqueStoreRevision: opaqueStoreRevision)
+        _ = try await organizationOperationStore.recordSpatialAnchorReceipt(
+            id: operationID,
+            receipt: receipt,
+            at: date
+        )
+        _ = try await organizationOperationStore.advance(id: operationID,
+                                                         to: .completed,
+                                                         at: date)
+    }
+
+    /// Bridges the durable organization ledger to the graph's scoped JSON
+    /// layout store. The ledger contains only opaque scope/Group fingerprints;
+    /// the current BetterMail folders resolve the effective Group ID in memory.
+    /// No raw scope or Group identifier is added to the ledger.
+    internal func makeGraphSpatialAnchorReplaySeam() -> GraphSpatialAnchorReplaySeam {
+        GraphSpatialAnchorReplaySeam(
+            pendingIntent: { [weak self] scopeID in
+                guard let self else { return nil }
+                do {
+                    return try await self.pendingGraphSpatialAnchorIntent(scopeID: scopeID)
+                } catch {
+                    Log.app.error("Failed to resolve a pending graph spatial anchor: \(String(describing: error), privacy: .private)")
+                    return nil
+                }
+            },
+            recordReceipt: { [weak self] receipt in
+                guard let self else { return }
+                do {
+                    try await self.recordGraphSpatialAnchorReplayReceipt(receipt)
+                } catch {
+                    Log.app.error("Failed to record a graph spatial anchor receipt: \(String(describing: error), privacy: .private)")
+                }
+            }
+        )
+    }
+
+    private func pendingGraphSpatialAnchorIntent(
+        scopeID rawScopeID: String
+    ) async throws -> GraphSpatialAnchorReplayIntent? {
+        let scopeID = rawScopeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !scopeID.isEmpty else { return nil }
+        let scopeFingerprint = OrganizationOpaqueFingerprint.digest(namespace: "scope",
+                                                                    rawValue: scopeID)
+        let groupIDByFingerprint = Dictionary(uniqueKeysWithValues: threadFolders.map { folder in
+            (OrganizationOpaqueFingerprint.digest(namespace: "group", rawValue: folder.id), folder.id)
+        })
+
+        for operation in try await organizationOperationStore.allOperations() {
+            guard operation.phase == .layoutPending,
+                  let intent = operation.spatialAnchorIntent,
+                  intent.opaqueScopeFingerprint == scopeFingerprint else {
+                continue
+            }
+
+            // A termination between receipt persistence and phase advancement
+            // needs only the idempotent ledger transition, not another layout
+            // replay or duplicate receipt.
+            if operation.spatialAnchorReceipt != nil {
+                _ = try await organizationOperationStore.advance(id: operation.id,
+                                                                 to: .completed,
+                                                                 at: Date())
+                continue
+            }
+
+            guard let groupFingerprint = intent.opaqueGroupFingerprint,
+                  let groupID = groupIDByFingerprint[groupFingerprint],
+                  intent.x.isFinite,
+                  intent.y.isFinite,
+                  intent.zoom.isFinite,
+                  intent.zoom > 0 else {
+                continue
+            }
+            return GraphSpatialAnchorReplayIntent(intentID: intent.intentID,
+                                                  groupID: groupID,
+                                                  x: intent.x,
+                                                  y: intent.y,
+                                                  zoom: intent.zoom)
+        }
+        return nil
+    }
+
+    private func recordGraphSpatialAnchorReplayReceipt(
+        _ replayReceipt: GraphSpatialAnchorReplayReceipt
+    ) async throws {
+        let operations = try await organizationOperationStore.allOperations()
+        guard let operation = operations.first(where: {
+            $0.spatialAnchorIntent?.intentID == replayReceipt.intentID
+        }) else {
+            return
+        }
+        guard operation.phase == .layoutPending || operation.phase == .completed else {
+            return
+        }
+
+        if operation.spatialAnchorReceipt == nil {
+            let receipt = OrganizationSpatialAnchorReceipt(
+                intentID: replayReceipt.intentID,
+                appliedAt: replayReceipt.appliedAt,
+                opaqueStoreRevision: replayReceipt.opaqueStoreRevision
+            )
+            _ = try await organizationOperationStore.recordSpatialAnchorReceipt(
+                id: operation.id,
+                receipt: receipt,
+                at: replayReceipt.appliedAt
+            )
+        }
+        if operation.phase == .layoutPending {
+            _ = try await organizationOperationStore.advance(id: operation.id,
+                                                             to: .completed,
+                                                             at: replayReceipt.appliedAt)
+        }
+    }
+
+    private func reloadOrganizationFolders() async throws {
+        do {
+            let folders = try await store.fetchThreadFolders()
+            threadFolders = folders
+            folderMembershipByThreadID = Self.folderMembershipMap(for: folders)
+            refreshFolderSummaries(for: roots,
+                                   folders: folders,
+                                   debounceIntervalOverride: 0)
+            await organizerMetricsRecorder?.recordEvent(.groupRethreaded,
+                                                        count: 1,
+                                                        status: .success)
+            await organizerMetricsRecorder?.recordEvent(.rethreadComplete,
+                                                        count: 1,
+                                                        status: .success)
+        } catch {
+            await organizerMetricsRecorder?.recordEvent(.groupRethreaded,
+                                                        count: 1,
+                                                        status: .failure,
+                                                        failureReason: .missingRethread)
+            await organizerMetricsRecorder?.recordEvent(.recovery,
+                                                        count: 1,
+                                                        status: .failure,
+                                                        failureReason: .missingRethread)
+            _ = await organizerMetricsRecorder?.failActiveTimedEvents(
+                outcome: .failure,
+                failureReason: .missingRethread
+            )
+            throw error
+        }
+    }
+
     internal func addFolderForSelection() {
         let selectedNodes = selectedNodes(in: roots)
         guard !selectedNodes.isEmpty else { return }
@@ -5703,41 +6155,15 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             node.message.subject.isEmpty ? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing") : node.message.subject
         } ?? NSLocalizedString("threadcanvas.subject.placeholder", comment: "Placeholder subject when missing")
 
-        let folder = ThreadFolder(id: "folder-\(UUID().uuidString.lowercased())",
-                                  title: defaultTitle,
-                                  color: ThreadFolderColor.defaultNewFolder,
-                                  threadIDs: effectiveThreadIDs,
-                                  parentID: parentFolderID,
-                                  mailboxAccount: nil,
-                                  mailboxPath: nil)
-        let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
-        let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
-            var updatedFolder = existingFolder
-            updatedFolder.threadIDs.subtract(effectiveThreadIDs)
-            if updatedFolder.threadIDs.isEmpty && (childIDsByParent[updatedFolder.id]?.isEmpty ?? true) {
-                return nil
-            }
-            return updatedFolder
-        }
-        let deletedFolderIDs = Set(threadFolders.map(\.id)).subtracting(updatedExistingFolders.map(\.id))
-        let updatedFolders = updatedExistingFolders + [folder]
-
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await store.upsertThreadFolders(updatedFolders)
-                if !deletedFolderIDs.isEmpty {
-                    try await store.deleteThreadFolders(ids: Array(deletedFolderIDs))
-                }
-                await MainActor.run {
-                    self.threadFolders = updatedFolders
-                    self.folderMembershipByThreadID = Self.folderMembershipMap(for: updatedFolders)
-                    self.refreshFolderSummaries(for: self.roots,
-                                                folders: updatedFolders,
-                                                debounceIntervalOverride: 0)
-                }
+                _ = try await self.createOrganizationGroup(title: defaultTitle,
+                                                           threadIDs: effectiveThreadIDs,
+                                                           parentID: parentFolderID)
             } catch {
-                Log.app.error("Failed to save thread folder: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to save thread folder: \(error.localizedDescription, privacy: .private)")
+                self.showError(error.localizedDescription)
             }
         }
     }
@@ -5793,11 +6219,16 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         let childIDsByParent = Self.childFolderIDsByParent(folders: threadFolders + [folder])
         let updatedExistingFolders: [ThreadFolder] = threadFolders.compactMap { existingFolder in
             var updatedFolder = existingFolder
-            updatedFolder.threadIDs = Set(updatedFolder.threadIDs.filter { rawThreadID in
+            let movedThreadIDs = Set(updatedFolder.threadIDs.compactMap { rawThreadID -> String? in
                 let trimmed = rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines)
-                return !normalizedThreadIDs.contains(trimmed)
+                return normalizedThreadIDs.contains(trimmed) ? trimmed : nil
             })
-            if updatedFolder.threadIDs.isEmpty && (childIDsByParent[updatedFolder.id]?.isEmpty ?? true) {
+            updatedFolder.threadIDs = Set(updatedFolder.threadIDs.filter { rawThreadID in
+                !movedThreadIDs.contains(rawThreadID.trimmingCharacters(in: .whitespacesAndNewlines))
+            })
+            if !movedThreadIDs.isEmpty,
+               updatedFolder.threadIDs.isEmpty,
+               childIDsByParent[updatedFolder.id]?.isEmpty ?? true {
                 return nil
             }
             return updatedFolder
@@ -5835,7 +6266,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                           boundary: MessageStore.ThreadMessageBoundary) {
         if folderJumpInProgressIDs.contains(folderID) {
             coalescedFolderJumpBoundaries[folderID] = boundary
-            Log.app.debug("Coalesced folder jump request. folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public)")
+            Log.app.debug("Coalesced folder jump request. folderID=\(folderID, privacy: .private) boundary=\(String(describing: boundary), privacy: .public)")
             return
         }
         beginFolderJump(folderID: folderID, boundary: boundary)
@@ -5843,7 +6274,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     private func jumpToFolderNode(folderID: String, preferredNodeID: String) {
         if folderJumpInProgressIDs.contains(folderID) {
-            Log.app.debug("Folder minimap jump ignored while another jump is running. folderID=\(folderID, privacy: .public)")
+            Log.app.debug("Folder minimap jump ignored while another jump is running. folderID=\(folderID, privacy: .private)")
             return
         }
         folderJumpInProgressIDs.insert(folderID)
@@ -5904,13 +6335,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             do {
                 let threadIDs = folderThreadIDs(for: folderID)
                 guard !threadIDs.isEmpty else {
-                    Log.app.error("Folder jump failed. marker=resolution-failure folderID=\(folderID, privacy: .public) reason=no-thread-members")
+                    Log.app.error("Folder jump failed. marker=resolution-failure folderID=\(folderID, privacy: .private) reason=no-thread-members")
                     completeFolderJump(folderID: folderID)
                     return
                 }
                 guard let target = try await store.fetchBoundaryMessage(threadIDs: threadIDs,
                                                                         boundary: boundary) else {
-                    Log.app.error("Folder jump failed. marker=resolution-failure folderID=\(folderID, privacy: .public) reason=no-boundary-message boundary=\(String(describing: boundary), privacy: .public)")
+                    Log.app.error("Folder jump failed. marker=resolution-failure folderID=\(folderID, privacy: .private) reason=no-boundary-message boundary=\(String(describing: boundary), privacy: .public)")
                     completeFolderJump(folderID: folderID)
                     return
                 }
@@ -5918,7 +6349,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 updateJumpPhase(.expandingCoverage, folderID: folderID)
                 let expansion = await expandDayWindow(toInclude: target.date)
                 if !expansion.reachedRequiredDayCount {
-                    Log.app.error("Folder jump failed. marker=expansion-ceiling folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public) requiredDayCount=\(expansion.requiredDayCount, privacy: .public) cappedDayCount=\(expansion.cappedDayCount, privacy: .public)")
+                    Log.app.error("Folder jump failed. marker=expansion-ceiling folderID=\(folderID, privacy: .private) boundary=\(String(describing: boundary), privacy: .public) requiredDayCount=\(expansion.requiredDayCount, privacy: .public) cappedDayCount=\(expansion.cappedDayCount, privacy: .public)")
                     completeFolderJump(folderID: folderID)
                     return
                 }
@@ -5932,7 +6363,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 guard let scrollTargetID = await waitForRenderableJumpTargetID(preferredNodeID: target.messageID,
                                                                                folderThreadIDs: threadIDs,
                                                                                boundary: boundary) else {
-                    Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public) selectedNodeID=\(target.messageID, privacy: .public)")
+                    Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(folderID, privacy: .private) boundary=\(String(describing: boundary), privacy: .public) selectedNodeID=\(target.messageID, privacy: .private)")
                     completeFolderJump(folderID: folderID)
                     return
                 }
@@ -5943,14 +6374,14 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
                 updateJumpPhase(.scrolling, folderID: folderID)
                 if scrollTargetID != target.messageID {
-                    Log.app.debug("Folder jump fallback anchor selected. folderID=\(folderID, privacy: .public) boundary=\(String(describing: boundary), privacy: .public) preferredNodeID=\(target.messageID, privacy: .public) fallbackNodeID=\(scrollTargetID, privacy: .public)")
+                    Log.app.debug("Folder jump fallback anchor selected. folderID=\(folderID, privacy: .private) boundary=\(String(describing: boundary), privacy: .public) preferredNodeID=\(target.messageID, privacy: .private) fallbackNodeID=\(scrollTargetID, privacy: .private)")
                 }
                 enqueueScrollRequest(nodeID: scrollTargetID,
                                      folderID: folderID,
                                      boundary: boundary,
                                      selectedBoundaryNodeID: target.messageID)
             } catch {
-                Log.app.error("Failed to jump folder boundary node. folderID=\(folderID, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to jump folder boundary node. folderID=\(folderID, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
                 completeFolderJump(folderID: folderID)
             }
         }
@@ -6013,7 +6444,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                  boundary: boundary,
                                                                  allowFallback: false) {
                 if attempt > 0 {
-                    Log.app.debug("Folder jump preferred anchor became renderable. marker=anchor-ready preferred=true attempt=\(attempt + 1, privacy: .public) nodeID=\(targetID, privacy: .public)")
+                    Log.app.debug("Folder jump preferred anchor became renderable. marker=anchor-ready preferred=true attempt=\(attempt + 1, privacy: .public) nodeID=\(targetID, privacy: .private)")
                 }
                 return targetID
             }
@@ -6022,12 +6453,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                                                   boundary: boundary,
                                                                   allowFallback: true)
             if attempt == 0 || attempt == jumpAnchorResolutionAttempts - 1 {
-                Log.app.debug("Folder jump awaiting preferred anchor. marker=anchor-await attempt=\(attempt + 1, privacy: .public) candidateCount=\(candidates.count, privacy: .public) preferredNodeID=\(preferredNodeID, privacy: .public)")
+                Log.app.debug("Folder jump awaiting preferred anchor. marker=anchor-await attempt=\(attempt + 1, privacy: .public) candidateCount=\(candidates.count, privacy: .public) preferredNodeID=\(preferredNodeID, privacy: .private)")
             }
             try? await Task.sleep(nanoseconds: jumpAnchorRetryInterval)
         }
         if let fallbackTargetID {
-            Log.app.debug("Folder jump fallback anchor used after preferred timeout. marker=anchor-fallback fallbackNodeID=\(fallbackTargetID, privacy: .public) preferredNodeID=\(preferredNodeID, privacy: .public)")
+            Log.app.debug("Folder jump fallback anchor used after preferred timeout. marker=anchor-fallback fallbackNodeID=\(fallbackTargetID, privacy: .private) preferredNodeID=\(preferredNodeID, privacy: .private)")
         }
         return fallbackTargetID
     }
@@ -6041,7 +6472,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             pendingScrollTimeoutTasks[existing.token]?.cancel()
             pendingScrollTimeoutTasks.removeValue(forKey: existing.token)
             if let existingContext = pendingScrollContextByToken.removeValue(forKey: existing.token) {
-                Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(existingContext.folderID, privacy: .public) boundary=\(String(describing: existingContext.boundary), privacy: .public) selectedNodeID=\(existingContext.targetNodeID, privacy: .public) reason=request-superseded")
+                Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(existingContext.folderID, privacy: .private) boundary=\(String(describing: existingContext.boundary), privacy: .public) selectedNodeID=\(existingContext.targetNodeID, privacy: .private) reason=request-superseded")
                 completeFolderJump(folderID: existingContext.folderID)
             }
         }
@@ -6070,7 +6501,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         pendingScrollTimeoutTasks[token]?.cancel()
         pendingScrollTimeoutTasks.removeValue(forKey: token)
         guard let context = pendingScrollContextByToken.removeValue(forKey: token) else { return }
-        Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(context.folderID, privacy: .public) boundary=\(String(describing: context.boundary), privacy: .public) selectedNodeID=\(context.targetNodeID, privacy: .public)")
+        Log.app.error("Folder jump failed. marker=anchor-timeout folderID=\(context.folderID, privacy: .private) boundary=\(String(describing: context.boundary), privacy: .public) selectedNodeID=\(context.targetNodeID, privacy: .private)")
         completeFolderJump(folderID: context.folderID)
     }
 
@@ -6086,7 +6517,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private func updateJumpPhase(_ phase: FolderJumpPhase,
                                  folderID: String) {
         jumpPhaseByFolderID[folderID] = phase
-        Log.app.debug("Folder jump phase. folderID=\(folderID, privacy: .public) phase=\(phase.rawValue, privacy: .public)")
+        Log.app.debug("Folder jump phase. folderID=\(folderID, privacy: .private) phase=\(phase.rawValue, privacy: .public)")
     }
 
     private func renderableJumpCandidates(folderThreadIDs: Set<String>,
@@ -6349,9 +6780,9 @@ extension ThreadCanvasViewModel {
         case .oldest:
             return nodes.min { lhs, rhs in
                 if lhs.message.date == rhs.message.date {
-                    return lhs.id > rhs.id
+                    return lhs.id < rhs.id
                 }
-                return lhs.message.date > rhs.message.date
+                return lhs.message.date < rhs.message.date
             }?.id
         }
     }

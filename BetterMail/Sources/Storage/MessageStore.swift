@@ -26,6 +26,11 @@ internal final class MessageStore {
     /// delta-based undo; independent background contexts can otherwise lose a
     /// concurrent folder member.
     private let organizationWriteContext: NSManagedObjectContext
+    /// Summary cache reads and writes must not race the one-time cleanup that
+    /// compares persisted cache keys with the current message/folder snapshot.
+    /// Without this barrier, a summary written immediately after store creation
+    /// can be mistaken for an orphan by a migration using an earlier snapshot.
+    private var initialMigrationTask: Task<Void, Never>?
     private let userDefaults: UserDefaults
     private let lastSyncKey = "MessageStore.lastSync"
     private let manualGroupMigrationKey = "MessageStore.manualGroupMigrationV1"
@@ -74,7 +79,7 @@ internal final class MessageStore {
         summaryWriteContext.undoManager = nil
         organizationWriteContext = persistentContainer.newBackgroundContext()
         organizationWriteContext.undoManager = nil
-        Task { [weak self] in
+        initialMigrationTask = Task { [weak self] in
             await self?.migrateLegacyOverridesIfNeeded()
             await self?.migrateFoldersIfNeeded()
             await self?.migrateSummaryCacheIfNeeded()
@@ -473,7 +478,7 @@ internal final class MessageStore {
 
                 if mailboxCount == 0 {
                     if totalCount == 0 {
-                        self.logger.info("MessageStore count: no messages in range; mailbox=\(mailbox, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private)")
+                        self.logger.info("MessageStore count: no messages in range; mailbox=\(mailbox, privacy: .private) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private)")
                     } else {
                         let sampleRequest = NSFetchRequest<NSDictionary>(entityName: "MessageEntity")
                         sampleRequest.resultType = .dictionaryResultType
@@ -483,7 +488,7 @@ internal final class MessageStore {
                         let sampleResults = try context.fetch(sampleRequest)
                         let sampleMailboxIDs = sampleResults.compactMap { $0[#keyPath(MessageEntity.mailboxID)] as? String }
                         let uniqueSample = Array(Set(sampleMailboxIDs)).prefix(10)
-                        self.logger.info("MessageStore count: range has messages but mailbox mismatch; mailbox=\(mailbox, privacy: .public) totalInRange=\(totalCount, privacy: .public) sampleMailboxIDs=\(uniqueSample.joined(separator: ","), privacy: .public)")
+                        self.logger.info("MessageStore count: range has messages but mailbox mismatch; mailbox=\(mailbox, privacy: .private) totalInRange=\(totalCount, privacy: .public) sampleMailboxIDs=\(uniqueSample.joined(separator: ","), privacy: .private)")
                     }
                 }
 
@@ -1072,6 +1077,7 @@ internal final class MessageStore {
 
     internal func fetchThreadSummaries(for threadIDs: [String]) async throws -> [ThreadSummaryCacheEntry] {
         guard !threadIDs.isEmpty else { return [] }
+        await waitForInitialMigrations()
         return try await container.performBackgroundTask { context in
             let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
             request.predicate = NSPredicate(format: "threadID IN %@", threadIDs)
@@ -1081,6 +1087,7 @@ internal final class MessageStore {
 
     internal func upsertThreadSummaries(_ summaries: [ThreadSummaryCacheEntry]) async throws {
         guard !summaries.isEmpty else { return }
+        await waitForInitialMigrations()
         try await container.performBackgroundTask { context in
             let ids = summaries.map(\.threadID)
             let request: NSFetchRequest<ThreadSummaryEntity> = ThreadSummaryEntity.fetchRequest()
@@ -1120,6 +1127,7 @@ internal final class MessageStore {
 
     internal func fetchSummaries(scope: SummaryScope, ids: [String]) async throws -> [SummaryCacheEntry] {
         guard !ids.isEmpty else { return [] }
+        await waitForInitialMigrations()
         return try await container.performBackgroundTask { context in
             let request: NSFetchRequest<SummaryCacheEntity> = SummaryCacheEntity.fetchRequest()
             request.predicate = NSPredicate(format: "scope == %@ AND scopeID IN %@", scope.rawValue, ids)
@@ -1130,6 +1138,7 @@ internal final class MessageStore {
 
     internal func upsertSummaries(_ summaries: [SummaryCacheEntry]) async throws {
         guard !summaries.isEmpty else { return }
+        await waitForInitialMigrations()
         try await summaryWriteContext.perform {
             let context = self.summaryWriteContext
             let dedupedSummaries = Self.deduplicatedSummaryEntries(from: summaries)
@@ -1164,7 +1173,7 @@ internal final class MessageStore {
                     // overwrite the newer cache entry.
                     continue
                 }
-                let entity = lookup[key] ?? SummaryCacheEntity(context: context)
+                let entity = lookup[key] ?? Self.insertSummaryCacheEntity(into: context)
                 entity.scope = summary.scope.rawValue
                 entity.scopeID = summary.scopeID
                 entity.summaryText = summary.summaryText
@@ -1178,6 +1187,22 @@ internal final class MessageStore {
                 try context.save()
             }
         }
+    }
+
+    /// Resolve the entity through the destination context's model. Using
+    /// `SummaryCacheEntity(context:)` asks Core Data to find an entity by the
+    /// managed-object subclass globally, which is ambiguous when tests or
+    /// benchmark runtimes keep more than one programmatic model alive.
+    private static func insertSummaryCacheEntity(into context: NSManagedObjectContext) -> SummaryCacheEntity {
+        guard let description = NSEntityDescription.entity(forEntityName: "SummaryCacheEntity",
+                                                            in: context) else {
+            preconditionFailure("SummaryCacheEntity is missing from the MessageStore model")
+        }
+        return SummaryCacheEntity(entity: description, insertInto: context)
+    }
+
+    private func waitForInitialMigrations() async {
+        await initialMigrationTask?.value
     }
 
     internal func deleteSummaries(scope: SummaryScope, ids: [String]) async throws {
@@ -1261,6 +1286,25 @@ internal final class MessageStore {
 
             if context.hasChanges {
                 try context.save()
+            }
+        }
+    }
+
+    /// Runs one caller-owned BetterMail organization mutation on the
+    /// serialized organization context. Core Data rollback is handled here so
+    /// mutation facades cannot accidentally leave a partial Group delta in the
+    /// context. This API intentionally does not include the separate JSON
+    /// operation ledger; callers must use its prepared/appApplied write-ahead
+    /// protocol around this transaction.
+    internal func performOrganizationMutationTransaction<T>(
+        _ work: @escaping (NSManagedObjectContext) throws -> T
+    ) async throws -> T {
+        try await organizationWriteContext.perform {
+            do {
+                return try work(self.organizationWriteContext)
+            } catch {
+                self.organizationWriteContext.rollback()
+                throw error
             }
         }
     }
@@ -2604,7 +2648,7 @@ internal final class MessageStore {
             }
             userDefaults.set(true, forKey: manualGroupMigrationKey)
         } catch {
-            Log.app.error("Manual thread override migration failed: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Manual thread override migration failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -2625,7 +2669,7 @@ internal final class MessageStore {
             }
             userDefaults.set(true, forKey: summaryCacheMigrationKey)
         } catch {
-            Log.app.error("Summary cache migration failed: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Summary cache migration failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -2651,7 +2695,7 @@ internal final class MessageStore {
             }
             userDefaults.set(true, forKey: scopedSummaryCacheMigrationKey)
         } catch {
-            Log.app.error("Scoped summary cache migration failed: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Scoped summary cache migration failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 

@@ -1,10 +1,129 @@
 import AppKit
 import SpriteKit
 
+/// AppKit accessibility proxy for a graph mark that is rendered by SpriteKit
+/// rather than backed by its own `NSView`.
+///
+/// `SKNode` can carry accessibility metadata, but macOS does not reliably
+/// expose a usable AX frame for a custom node. A retained
+/// `NSAccessibilityElement` child of the `SKView` gives assistive clients a
+/// stable parent-space frame and a real press action.
+internal final class ObsidianGraphAccessibilityElement: NSAccessibilityElement,
+                                                          NSAccessibilityButton {
+    private var onPress: (() -> Void)?
+    private weak var organizerParentView: NSView?
+    private var organizerFrameInParentSpace = CGRect.null
+    private var organizerScreenFrame = CGRect.null
+    private var organizerLabel: String?
+    private var organizerIdentifier: String?
+
+    internal func update(parent: NSView,
+                         frameInParentSpace: CGRect,
+                         label: String,
+                         help: String?,
+                         identifier: String?,
+                         value: Any?,
+                         isSelected: Bool,
+                         customActions: [NSAccessibilityCustomAction],
+                         onPress: @escaping () -> Void) {
+        self.onPress = onPress
+        organizerParentView = parent
+        organizerFrameInParentSpace = frameInParentSpace
+        organizerScreenFrame = NSAccessibility.screenRect(fromView: parent,
+                                                           rect: frameInParentSpace)
+        organizerLabel = label
+        organizerIdentifier = identifier
+        setAccessibilityElement(true)
+        setAccessibilityEnabled(true)
+        setAccessibilityRole(.button)
+        setAccessibilityRoleDescription(NSAccessibility.Role.button.description(with: nil))
+        setAccessibilityLabel(label)
+        setAccessibilityHelp(help)
+        setAccessibilityIdentifier(identifier)
+        setAccessibilityValue(value)
+        setAccessibilitySelected(isSelected)
+        setAccessibilityParent(parent)
+        setAccessibilityFrameInParentSpace(frameInParentSpace)
+        setAccessibilityFrame(organizerScreenFrame)
+        setAccessibilityCustomActions(customActions)
+    }
+
+    /// External accessibility clients query the retained proxy rather than
+    /// the hidden SpriteKit node. Re-derive screen space from the retained
+    /// parent-space frame so moving the window cannot leave a stale AX frame.
+    override func accessibilityFrame() -> NSRect {
+        guard let organizerParentView else { return organizerScreenFrame }
+        return NSAccessibility.screenRect(fromView: organizerParentView,
+                                          rect: organizerFrameInParentSpace)
+    }
+
+    override func accessibilityParent() -> Any? {
+        organizerParentView
+    }
+
+    override func accessibilityLabel() -> String? {
+        organizerLabel
+    }
+
+    // AppKit imports the role protocol's optional identifier as nonoptional in
+    // Swift. Return an empty value for expansion-only nodes that deliberately
+    // have no stable organizer identifier.
+    override func accessibilityIdentifier() -> String {
+        organizerIdentifier ?? ""
+    }
+
+    internal func visibleScreenFrame(in parent: NSView) -> CGRect? {
+        guard organizerParentView === parent,
+              let window = parent.window,
+              window.isVisible,
+              !window.isMiniaturized,
+              window.alphaValue > 0,
+              !parent.isHiddenOrHasHiddenAncestor,
+              parent.alphaValue > 0,
+              !organizerFrameInParentSpace.isNull,
+              !organizerFrameInParentSpace.isEmpty,
+              organizerFrameInParentSpace.origin.x.isFinite,
+              organizerFrameInParentSpace.origin.y.isFinite,
+              organizerFrameInParentSpace.width.isFinite,
+              organizerFrameInParentSpace.height.isFinite else {
+            return nil
+        }
+        let clippedFrame = organizerFrameInParentSpace.intersection(parent.visibleRect)
+        guard !clippedFrame.isNull, !clippedFrame.isEmpty else { return nil }
+        let screenFrame = NSAccessibility.screenRect(fromView: parent, rect: clippedFrame)
+        guard !screenFrame.isNull,
+              !screenFrame.isEmpty,
+              screenFrame.origin.x.isFinite,
+              screenFrame.origin.y.isFinite,
+              screenFrame.width.isFinite,
+              screenFrame.height.isFinite else {
+            return nil
+        }
+        guard NSScreen.screens.contains(where: { $0.frame.intersects(screenFrame) }) else {
+            return nil
+        }
+        return screenFrame
+    }
+
+    internal func hasVisibleFrame(in parent: NSView) -> Bool {
+        visibleScreenFrame(in: parent) != nil
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard let onPress else { return false }
+        onPress()
+        return true
+    }
+}
+
 /// A deliberately restrained graph mark: a dot, a focus ring, and plain text.
 /// Keeping labels separate from the dot lets zoom fade text without shrinking
 /// the node's hit target.
 internal final class ObsidianGraphSceneNode: SKNode {
+    internal static func effectiveHitRadius(radius: CGFloat, nodeScale: CGFloat) -> CGFloat {
+        max(radius + 7, 11) * max(1, max(0.55, min(nodeScale, 2.2)))
+    }
+
     internal let graphID: String
     internal let kind: GraphNodeKind
     internal let threadID: String?
@@ -21,6 +140,68 @@ internal final class ObsidianGraphSceneNode: SKNode {
     private var nodeScale: CGFloat = 1
     private var labelBaseAlpha: CGFloat = 1
     private var onAccessibilityPress: (() -> Void)?
+    private var organizerAccessibilityIdentifier: String?
+    private var organizerAccessibilityValue: String?
+    private var organizerAccessibilityCustomActions: [NSAccessibilityCustomAction] = []
+    private var organizerAccessibilitySelected = false
+    private var appKitAccessibilityElement: ObsidianGraphAccessibilityElement?
+
+    /// SpriteKit's macOS accessibility category exposes only the core subset
+    /// of AppKit attributes to Swift. These Objective-C-visible accessors add
+    /// the identifier, value, selected state, and custom actions queried by
+    /// VoiceOver without pretending `SKNode` conforms to the full protocol.
+    @objc dynamic var accessibilityIdentifier: String? {
+        organizerAccessibilityIdentifier
+    }
+
+    @objc dynamic var accessibilityValue: Any? {
+        organizerAccessibilityValue
+    }
+
+    @objc dynamic var accessibilityCustomActions: [NSAccessibilityCustomAction]? {
+        organizerAccessibilityCustomActions
+    }
+
+    @objc dynamic var isAccessibilitySelected: Bool {
+        organizerAccessibilitySelected
+    }
+
+    internal var hasOrganizerAccessibilityDescriptor: Bool {
+        organizerAccessibilityIdentifier?.hasPrefix("bettermail.organizer.") == true
+            && isAccessibilityEnabled
+            && accessibilityRole == NSAccessibility.Role.button.rawValue
+    }
+
+    internal func isOrganizerAccessibilityVisible(in view: SKView) -> Bool {
+        hasOrganizerAccessibilityDescriptor && isAccessibilityVisible(in: view)
+    }
+
+    internal func organizerAccessibilityFrameInScreen(
+        in view: SKView
+    ) -> CGRect? {
+        guard isOrganizerAccessibilityVisible(in: view),
+              let appKitAccessibilityElement else { return nil }
+        guard let frame = appKitAccessibilityElement.visibleScreenFrame(in: view) else {
+            return nil
+        }
+        guard !frame.isNull,
+              !frame.isEmpty,
+              frame.origin.x.isFinite,
+              frame.origin.y.isFinite,
+              frame.width.isFinite,
+              frame.height.isFinite else { return nil }
+        return frame
+    }
+
+    internal func isAccessibilityVisible(in view: SKView) -> Bool {
+        guard let appKitAccessibilityElement,
+              onAccessibilityPress != nil,
+              !isHidden,
+              alpha > 0 else {
+            return false
+        }
+        return appKitAccessibilityElement.hasVisibleFrame(in: view)
+    }
 
     internal init(graphID: String,
                   kind: GraphNodeKind,
@@ -38,7 +219,8 @@ internal final class ObsidianGraphSceneNode: SKNode {
         self.theme = theme
         baseFillColor = fillColor
         baseStrokeColor = strokeColor
-        hitTarget = SKShapeNode(circleOfRadius: max(radius + 7, 11))
+        hitTarget = SKShapeNode(circleOfRadius: Self.effectiveHitRadius(radius: radius,
+                                                                       nodeScale: 1))
         dot = SKShapeNode(circleOfRadius: radius)
         focusRing = SKShapeNode(circleOfRadius: radius + 4)
         if kind == .ghostGroup || kind == .remaining {
@@ -65,6 +247,10 @@ internal final class ObsidianGraphSceneNode: SKNode {
 
         super.init()
         isUserInteractionEnabled = false
+        // The frame-backed AppKit proxy is the AX element. Exposing this
+        // SpriteKit node as a second AX element creates a duplicate button
+        // whose frame is missing in the installed app.
+        isAccessibilityElement = false
 
         hitTarget.fillColor = NSColor.white.withAlphaComponent(0.001)
         hitTarget.strokeColor = .clear
@@ -105,17 +291,108 @@ internal final class ObsidianGraphSceneNode: SKNode {
     internal func configureExpansionAccessibility(label spokenLabel: String,
                                                   onPress: @escaping () -> Void) {
         children.forEach { $0.isAccessibilityElement = false }
-        isAccessibilityElement = true
+        isAccessibilityElement = false
         accessibilityRole = NSAccessibility.Role.button.rawValue
+        accessibilityRoleDescription = NSAccessibility.Role.button.description(with: nil)
         accessibilityLabel = spokenLabel
         isAccessibilityEnabled = true
+        organizerAccessibilityIdentifier = nil
+        organizerAccessibilityValue = nil
+        organizerAccessibilityCustomActions = []
+        organizerAccessibilitySelected = false
         onAccessibilityPress = onPress
+    }
+
+    internal func configureOrganizerAccessibility(
+        _ descriptor: OrganizerAccessibilityDescriptor,
+        onAction: @escaping (OrganizerAccessibilityAction) -> Bool
+    ) {
+        children.forEach { $0.isAccessibilityElement = false }
+        isAccessibilityElement = false
+        accessibilityRole = NSAccessibility.Role.button.rawValue
+        accessibilityRoleDescription = NSAccessibility.Role.button.description(with: nil)
+        accessibilityLabel = descriptor.label
+        accessibilityHelp = descriptor.hint
+        organizerAccessibilityIdentifier = descriptor.identifier
+        organizerAccessibilityValue = descriptor.isSelected
+            ? NSLocalizedString("accessibility.organizer.node.selected",
+                                comment: "Selected organizer graph node state")
+            : NSLocalizedString("accessibility.organizer.node.not_selected",
+                                comment: "Unselected organizer graph node state")
+        organizerAccessibilitySelected = descriptor.isSelected
+        isAccessibilityEnabled = true
+        onAccessibilityPress = { _ = onAction(.activate) }
+        organizerAccessibilityCustomActions = descriptor.actions
+            .filter { $0 != .activate }
+            .map { action in
+                NSAccessibilityCustomAction(name: Self.localizedName(for: action)) {
+                    onAction(action)
+                }
+            }
+    }
+
+    /// SpriteKit does not derive a usable AppKit accessibility parent or
+    /// screen-space frame for these custom nodes. Keep the semantic hit area
+    /// synchronized with the rendered camera transform so VoiceOver and other
+    /// accessibility clients can focus and activate the actual visible mark.
+    @discardableResult
+    internal func updateAccessibilityGeometry(in scene: SKScene,
+                                               view: SKView)
+    -> ObsidianGraphAccessibilityElement? {
+        guard let spokenLabel = accessibilityLabel,
+              let onAccessibilityPress else {
+            return nil
+        }
+        accessibilityParent = view
+
+        let hitRadius = Self.effectiveHitRadius(radius: radius, nodeScale: nodeScale)
+        let lowerLeft = scene.convertPoint(toView: CGPoint(x: position.x - hitRadius,
+                                                            y: position.y - hitRadius))
+        let upperRight = scene.convertPoint(toView: CGPoint(x: position.x + hitRadius,
+                                                             y: position.y + hitRadius))
+        let frameInView = CGRect(x: min(lowerLeft.x, upperRight.x),
+                                 y: min(lowerLeft.y, upperRight.y),
+                                 width: abs(upperRight.x - lowerLeft.x),
+                                 height: abs(upperRight.y - lowerLeft.y))
+        let screenFrame = NSAccessibility.screenRect(fromView: view, rect: frameInView)
+        accessibilityFrame = screenFrame
+
+        let element: ObsidianGraphAccessibilityElement
+        if let appKitAccessibilityElement {
+            element = appKitAccessibilityElement
+        } else {
+            guard let created = ObsidianGraphAccessibilityElement.element(
+                withRole: .button,
+                frame: screenFrame,
+                label: spokenLabel,
+                parent: view
+            ) as? ObsidianGraphAccessibilityElement else {
+                return nil
+            }
+            element = created
+        }
+        appKitAccessibilityElement = element
+        element.update(parent: view,
+                       frameInParentSpace: frameInView,
+                       label: spokenLabel,
+                       help: accessibilityHelp,
+                       identifier: organizerAccessibilityIdentifier,
+                       value: organizerAccessibilityValue,
+                       isSelected: organizerAccessibilitySelected,
+                       customActions: organizerAccessibilityCustomActions,
+                       onPress: onAccessibilityPress)
+        return element
     }
 
     @objc func accessibilityPerformPress() -> Bool {
         guard let onAccessibilityPress else { return false }
         onAccessibilityPress()
         return true
+    }
+
+    private static func localizedName(for action: OrganizerAccessibilityAction) -> String {
+        NSLocalizedString("accessibility.organizer.node.action.\(action.rawValue)",
+                          comment: "Organizer graph node accessibility action")
     }
 
     internal func setNodeScale(_ scale: CGFloat) {

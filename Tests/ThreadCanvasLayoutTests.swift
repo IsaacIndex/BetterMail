@@ -709,7 +709,17 @@ final class ThreadCanvasLayoutTests: XCTestCase {
         let calendar = Calendar(identifier: .gregorian)
         let today = calendar.date(from: DateComponents(year: 2025, month: 3, day: 8, hour: 12))!
         let metrics = ThreadCanvasLayoutMetrics(zoom: 1.0)
-        let layout = ThreadCanvasViewModel.canvasLayout(for: [],
+        // Keep every day populated so this test isolates viewport intersection
+        // math from the separate empty-day collapsing behavior.
+        let roots = (0..<metrics.dayCount).map { dayIndex in
+            ThreadNode(message: makeMessage(
+                id: "visible-day-\(dayIndex)",
+                date: calendar.date(byAdding: .day,
+                                    value: -dayIndex,
+                                    to: today)!
+            ))
+        }
+        let layout = ThreadCanvasViewModel.canvasLayout(for: roots,
                                                         metrics: metrics,
                                                         today: today,
                                                         calendar: calendar)

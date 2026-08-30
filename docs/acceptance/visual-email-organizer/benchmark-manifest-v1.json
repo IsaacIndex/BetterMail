@@ -1,0 +1,220 @@
+{
+  "schemaVersion": "visual-email-organizer-benchmark-v1",
+  "protocolId": "visual-email-organizer-v1",
+  "status": "frozen-contract-no-results",
+  "fixtures": [
+    {
+      "fixtureId": "organizer-100-v1",
+      "file": "Tests/Fixtures/Organizer/organizer-100-v1.json",
+      "nodeCount": 100,
+      "labelVariants": ["short", "long"]
+    },
+    {
+      "fixtureId": "organizer-500-v1",
+      "file": "Tests/Fixtures/Organizer/organizer-500-v1.json",
+      "nodeCount": 500,
+      "labelVariants": ["short", "long"]
+    }
+  ],
+  "timing": {
+    "clock": "ContinuousClock",
+    "durationSource": "monotonic-instants-only",
+    "contractPercentile": "p80",
+    "diagnosticPercentiles": ["median", "p90"],
+    "warmTrials": 10,
+    "coldRelaunchTrials": 10,
+    "invalidTrialRule": "Only fixture-or-instrumentation failure before task-ready is invalid; rerun and disclose it. Cancellation, action failure, wrong completion, or app termination is a failed over-threshold trial.",
+    "eventOrder": [
+      "task-ready",
+      "search-start",
+      "action-start",
+      "bettermail-commit",
+      "rethread-complete",
+      "visible-result",
+      "retrieval-visible",
+      "cancelled",
+      "failure"
+    ]
+  },
+  "timedTasks": {
+    "firstOrganization": {
+      "trialCount": 20,
+      "fixtureId": "organizer-100-v1",
+      "targetNodeKey": "node-100-0000",
+      "destinationGroupKey": "group-flat-00",
+      "stopEvent": "visible-result",
+      "requiredConfirmation": ["membership-persisted", "rethread-complete", "visible-and-accessible-confirmation"],
+      "p80LimitSeconds": 30
+    },
+    "fiveConversationOrganization": {
+      "trialCount": 20,
+      "fixtureId": "organizer-100-v1",
+      "targetNodeKeys": [
+        "node-100-0000",
+        "node-100-0001",
+        "node-100-0002",
+        "node-100-0003",
+        "node-100-0004"
+      ],
+      "destinationGroupKeys": [
+        "group-flat-00",
+        "group-flat-01",
+        "group-nested-00",
+        "group-nested-01",
+        "group-flat-02"
+      ],
+      "stopEvent": "retrieval-visible",
+      "requiredConfirmation": ["all-five-memberships-persisted", "rethread-complete", "visible-confirmation", "retrieval-success"],
+      "p80LimitSeconds": 120,
+      "retrievalQueryKey": "synthetic-query-organized-0004"
+    }
+  },
+  "dropMatrix": {
+    "totalAttempts": 120,
+    "attemptsPerStratum": 10,
+    "dimensions": {
+      "nodeCount": [100, 500],
+      "zoomBand": ["low", "medium", "high"],
+      "targetShape": ["flat", "nested"],
+      "labelVariantRule": "exactly five long-label and five short-label attempts per stratum"
+    },
+    "strataCount": 12,
+    "requiredOutcome": ["target-highlighted-before-release", "exactly-one-normalized-command", "membership-persisted", "zero-unauthorized-mail-calls"],
+    "overallSuccessMinimum": 0.95,
+    "perStratumSuccessMinimum": 0.90,
+    "invalidTargetCases": ["group-suggested-00", "group-remainder-00", "canvas-outside-targets"],
+    "invalidTargetExpectedMutationCount": 0,
+    "attemptIdFormat": "drop-{nodeCount}-{zoomBand}-{targetShape}-{ordinal}"
+  },
+  "livePointer": {
+    "minimumAttempts": 40,
+    "fixtureIds": ["organizer-100-v1", "organizer-500-v1"],
+    "requiredCoverage": {
+      "selectionMode": ["single", "multi"],
+      "zoomBand": ["low", "medium", "high"],
+      "targetShape": ["flat", "nested"],
+      "labelVariant": ["short", "long"]
+    },
+    "requiredOutcome": ["target-highlight-recorded", "release-recorded", "persisted-membership-adjudicated"],
+    "successMinimum": 0.95,
+    "failedAttemptDisclosure": "Every failed attempt remains in the sanitized result artifact with a coarse reason."
+  },
+  "placementSets": [
+    {
+      "setId": "placement-set-01",
+      "fixtureId": "organizer-500-v1",
+      "resetFixtureBeforeSet": true,
+      "sourceNodeKeys": ["node-500-0000", "node-500-0001", "node-500-0002", "node-500-0003", "node-500-0004", "node-500-0005", "node-500-0006", "node-500-0007", "node-500-0008", "node-500-0009", "node-500-0010", "node-500-0011", "node-500-0012", "node-500-0013", "node-500-0014", "node-500-0015", "node-500-0016", "node-500-0017", "node-500-0018", "node-500-0019"],
+      "destinationGroupKey": "group-flat-00",
+      "placementCount": 20
+    },
+    {
+      "setId": "placement-set-02",
+      "fixtureId": "organizer-500-v1",
+      "resetFixtureBeforeSet": true,
+      "sourceNodeKeys": ["node-500-0020", "node-500-0021", "node-500-0022", "node-500-0023", "node-500-0024", "node-500-0025", "node-500-0026", "node-500-0027", "node-500-0028", "node-500-0029", "node-500-0030", "node-500-0031", "node-500-0032", "node-500-0033", "node-500-0034", "node-500-0035", "node-500-0036", "node-500-0037", "node-500-0038", "node-500-0039"],
+      "destinationGroupKey": "group-flat-01",
+      "placementCount": 20
+    },
+    {
+      "setId": "placement-set-03",
+      "fixtureId": "organizer-500-v1",
+      "resetFixtureBeforeSet": true,
+      "sourceNodeKeys": ["node-500-0040", "node-500-0041", "node-500-0042", "node-500-0043", "node-500-0044", "node-500-0045", "node-500-0046", "node-500-0047", "node-500-0048", "node-500-0049", "node-500-0050", "node-500-0051", "node-500-0052", "node-500-0053", "node-500-0054", "node-500-0055", "node-500-0056", "node-500-0057", "node-500-0058", "node-500-0059"],
+      "destinationGroupKey": "group-nested-00",
+      "placementCount": 20
+    },
+    {
+      "setId": "placement-set-04",
+      "fixtureId": "organizer-500-v1",
+      "resetFixtureBeforeSet": true,
+      "sourceNodeKeys": ["node-500-0060", "node-500-0061", "node-500-0062", "node-500-0063", "node-500-0064", "node-500-0065", "node-500-0066", "node-500-0067", "node-500-0068", "node-500-0069", "node-500-0070", "node-500-0071", "node-500-0072", "node-500-0073", "node-500-0074", "node-500-0075", "node-500-0076", "node-500-0077", "node-500-0078", "node-500-0079"],
+      "destinationGroupKey": "group-nested-01",
+      "placementCount": 20
+    },
+    {
+      "setId": "placement-set-05",
+      "fixtureId": "organizer-500-v1",
+      "resetFixtureBeforeSet": true,
+      "sourceNodeKeys": ["node-500-0080", "node-500-0081", "node-500-0082", "node-500-0083", "node-500-0084", "node-500-0085", "node-500-0086", "node-500-0087", "node-500-0088", "node-500-0089", "node-500-0090", "node-500-0091", "node-500-0092", "node-500-0093", "node-500-0094", "node-500-0095", "node-500-0096", "node-500-0097", "node-500-0098", "node-500-0099"],
+      "destinationGroupKey": "group-flat-02",
+      "placementCount": 20
+    }
+  ],
+  "suggestionEvaluation": {
+    "acceptanceCorpusId": "organizer-suggestion-v2",
+    "acceptanceArtifactStatus": "passed",
+    "acceptanceArtifacts": {
+      "inputFile": "Tests/Fixtures/Organizer/suggestion-input-v2.json",
+      "inputSchemaVersion": "organizer-suggestion-input-v2",
+      "goldFile": "Tests/Fixtures/Organizer/suggestion-gold-v2.json",
+      "goldSchemaVersion": "organizer-suggestion-gold-v2",
+      "predictionFile": "Tests/Fixtures/Organizer/suggestion-predictions-v2.json",
+      "predictionSchemaVersion": "organizer-suggestion-predictions-v2",
+      "preparationRecordFile": "docs/acceptance/visual-email-organizer/results/suggestion-corpus-v2-preparation.json",
+      "evaluationResultFile": "docs/acceptance/visual-email-organizer/results/suggestion-evaluation-v2.json",
+      "inputArtifactSHA256": "f64fc47227cf8771eff62955fa450187c40c4bf20e04dc1d276d68029c117f43",
+      "goldArtifactSHA256": "3fcdb90ee18c6214eb3605c0a13e0084582cc4ccfb4e904778200e76efb83d4c",
+      "predictionArtifactSHA256": "19866f0806af2eb7162028e8a1b104d73249c591cebc2fd3276d59e6b496cef3",
+      "evaluationResultSHA256": "4fac5e4956d8d86b0512320d817374bef47bbb02ced0ac73ab21148ebf2602eb",
+      "inputKeyPolicy": "random-before-adjudication-v1",
+      "inputContentPolicy": "synthetic-production-relevant-v1",
+      "unrelatedOutcomePolicy": "correct-rejection-v1",
+      "predictionInputBinding": "sha256-of-exact-input-artifact-bytes"
+    },
+    "legacyHarnessCorpus": {
+      "corpusId": "organizer-suggestion-gold-v1",
+      "corpusFile": "Tests/Fixtures/Organizer/suggestion-gold-v1.json",
+      "acceptanceEligible": false,
+      "reason": "Sequential keys leak labels and no separate production-relevant provider input exists."
+    },
+    "minimumCandidates": 200,
+    "minimumAcceptedOverall": 100,
+    "minimumQualifyingDecisionCountPerSlice": 25,
+    "requiredRelations": ["attach", "append", "unrelated"],
+    "requiredConfidenceBands": ["low", "medium", "high", "very-high"],
+    "requiredProvenance": ["heuristic", "foundation-model"],
+    "sliceDenominators": {
+      "relation.attach": "acceptedPlacements",
+      "relation.append": "acceptedPlacements",
+      "relation.unrelated": "nonAbstainedDecisions",
+      "confidenceBand.low": "acceptedPlacements",
+      "confidenceBand.medium": "acceptedPlacements",
+      "confidenceBand.high": "acceptedPlacements",
+      "confidenceBand.very-high": "acceptedPlacements",
+      "provenance.heuristic": "acceptedPlacements",
+      "provenance.foundation-model": "acceptedPlacements"
+    },
+    "deduplicationKey": "sourceKey",
+    "duplicateRule": "Identical duplicates are counted once after disclosure; conflicting gold or predictions are insufficient evidence.",
+    "precisionFormula": "correct accepted or auto-applied placements / all accepted or auto-applied placements",
+    "overallPrecisionMinimum": 0.80,
+    "conservativePrecisionMinimum": 0.85,
+    "overallNonAbstainedCoverageMinimum": 0.50,
+    "acceptedEvidenceOrigins": ["productionProvider", "frozenProductionPredictions"],
+    "resultMustPin": ["corpusId", "provider", "modelVersion", "promptOrPolicyVersion", "strictness", "appBuild", "evidenceOrigin", "inputArtifactSHA256", "goldArtifactSHA256"],
+    "insufficientEvidenceRule": "A missing denominator, slice, version field, or coverage value is insufficient evidence and is not a pass."
+  },
+  "retrieval": {
+    "queryKey": "synthetic-query-organized-0004",
+    "expectedFixtureId": "organizer-100-v1",
+    "expectedNodeKey": "node-100-0004",
+    "minimumPostCommitTrials": 20,
+    "minimumPostRelaunchTrials": 20,
+    "timeLimitSeconds": 5,
+    "requiredOutcome": ["correct-conversation-visible", "accessibility-selectable"],
+    "missRule": "Failed, wrong-result, cancelled, and crashed trials count as misses."
+  },
+  "evidenceTypes": [
+    "automated-logic",
+    "build",
+    "installed-app-launch",
+    "live-pointer",
+    "accessibility-audit",
+    "timed-human-task"
+  ],
+  "privacy": {
+    "allowedData": ["fixtureKey", "coarseActionType", "durationMilliseconds", "status", "coarseFailureReason", "aggregateCounts"],
+    "forbiddenData": ["raw-subject", "sender", "body", "snippet", "account", "mailbox", "exact-route", "raw-message-or-thread-id", "authorization-token", "provider-prompt"]
+  }
+}

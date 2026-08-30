@@ -230,6 +230,92 @@ internal final class GraphCanvasSettings: ObservableObject {
 
     internal init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+        _storedMode = AppStorage(wrappedValue: GraphCanvasMode.timeline.rawValue,
+                                 StorageKey.mode,
+                                 store: userDefaults)
+        _storedVariant = AppStorage(wrappedValue: GraphCanvasVariant.botanical.rawValue,
+                                    StorageKey.variant,
+                                    store: userDefaults)
+        _storedSoundOn = AppStorage(wrappedValue: false,
+                                    StorageKey.soundOn,
+                                    store: userDefaults)
+        _storedReduceMotionOverride = AppStorage(
+            wrappedValue: GraphReduceMotionOverride.system.rawValue,
+            StorageKey.reduceMotionOverride,
+            store: userDefaults
+        )
+        _storedSnipParentMailboxPath = AppStorage(wrappedValue: "Unimportant",
+                                                  StorageKey.snipParentMailboxPath,
+                                                  store: userDefaults)
+        _storedForceCenter = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.center),
+                                        StorageKey.forceCenter,
+                                        store: userDefaults)
+        _storedForceRepel = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.repel),
+                                       StorageKey.forceRepel,
+                                       store: userDefaults)
+        _storedForceRepelCutoff = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.repelCutoff),
+                                             StorageKey.forceRepelCutoff,
+                                             store: userDefaults)
+        _storedForceLinkSpring = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.linkSpring),
+                                            StorageKey.forceLinkSpring,
+                                            store: userDefaults)
+        _storedForceTrunkLength = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.trunkLength),
+                                             StorageKey.forceTrunkLength,
+                                             store: userDefaults)
+        _storedForceChainLength = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.chainLength),
+                                             StorageKey.forceChainLength,
+                                             store: userDefaults)
+        _storedForceDamping = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.damping),
+                                         StorageKey.forceDamping,
+                                         store: userDefaults)
+        _storedForceBreezeAmplitude = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.breezeAmplitude),
+                                                 StorageKey.forceBreezeAmplitude,
+                                                 store: userDefaults)
+        _storedForceCurl = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.curl),
+                                      StorageKey.forceCurl,
+                                      store: userDefaults)
+        _storedForceCurlVariability = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.curlVariability),
+                                                 StorageKey.forceCurlVariability,
+                                                 store: userDefaults)
+        _storedForceSplineTension = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.splineTension),
+                                               StorageKey.forceSplineTension,
+                                               store: userDefaults)
+        _storedForceCurlFalloff = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.curlFalloff),
+                                             StorageKey.forceCurlFalloff,
+                                             store: userDefaults)
+        _storedForceLabelRepelOn = AppStorage(wrappedValue: GraphForceConstants.defaults.labelRepelOn,
+                                              StorageKey.forceLabelRepelOn,
+                                              store: userDefaults)
+        _storedForceLabelRepelStrength = AppStorage(wrappedValue: Double(GraphForceConstants.defaults.labelRepelStrength),
+                                                    StorageKey.forceLabelRepelStrength,
+                                                    store: userDefaults)
+        _storedObsidianCenterStrength = AppStorage(wrappedValue: Double(ObsidianGraphForceConfig.defaults.centerStrength),
+                                                   StorageKey.obsidianCenterStrength,
+                                                   store: userDefaults)
+        _storedObsidianRepelStrength = AppStorage(wrappedValue: Double(ObsidianGraphForceConfig.defaults.repelStrength),
+                                                  StorageKey.obsidianRepelStrength,
+                                                  store: userDefaults)
+        _storedObsidianLinkStrength = AppStorage(wrappedValue: Double(ObsidianGraphForceConfig.defaults.linkStrength),
+                                                 StorageKey.obsidianLinkStrength,
+                                                 store: userDefaults)
+        _storedObsidianLinkDistance = AppStorage(wrappedValue: Double(ObsidianGraphForceConfig.defaults.linkDistance),
+                                                 StorageKey.obsidianLinkDistance,
+                                                 store: userDefaults)
+        _storedObsidianDamping = AppStorage(wrappedValue: Double(ObsidianGraphForceConfig.defaults.damping),
+                                            StorageKey.obsidianDamping,
+                                            store: userDefaults)
+        _storedObsidianShowsArrows = AppStorage(wrappedValue: ObsidianGraphDisplayConfig.defaults.showsArrows,
+                                                StorageKey.obsidianShowsArrows,
+                                                store: userDefaults)
+        _storedObsidianTextFadeThreshold = AppStorage(wrappedValue: Double(ObsidianGraphDisplayConfig.defaults.textFadeThreshold),
+                                                      StorageKey.obsidianTextFadeThreshold,
+                                                      store: userDefaults)
+        _storedObsidianNodeSize = AppStorage(wrappedValue: Double(ObsidianGraphDisplayConfig.defaults.nodeSize),
+                                             StorageKey.obsidianNodeSize,
+                                             store: userDefaults)
+        _storedObsidianLinkThickness = AppStorage(wrappedValue: Double(ObsidianGraphDisplayConfig.defaults.linkThickness),
+                                                  StorageKey.obsidianLinkThickness,
+                                                  store: userDefaults)
         mode = GraphCanvasMode(rawValue: storedMode) ?? .timeline
         variant = GraphCanvasVariant(rawValue: storedVariant) ?? .botanical
         soundOn = storedSoundOn

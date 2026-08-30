@@ -28,7 +28,15 @@ internal final class InspectorViewSettings: ObservableObject {
         }
     }
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        _storedSnippetLineLimit = AppStorage(
+            wrappedValue: Self.defaultSnippetLineLimit,
+            "inspectorSnippetLineLimit",
+            store: userDefaults
+        )
+        _storedStopPhrases = AppStorage(wrappedValue: "",
+                                        "inspectorSnippetStopWords",
+                                        store: userDefaults)
         let normalized = Self.clampLineLimit(_storedSnippetLineLimit.wrappedValue)
         storedSnippetLineLimit = normalized
         snippetLineLimit = normalized

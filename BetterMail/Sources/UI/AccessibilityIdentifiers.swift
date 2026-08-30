@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 internal enum AccessibilityID {
@@ -64,6 +65,7 @@ internal enum AccessibilityID {
     internal static let graphToolbarArchive = "bettermail.graph-toolbar.archive"
     internal static let graphToolbarSettings = "bettermail.graph-toolbar.settings"
     internal static let graphToolbarAutomation = "bettermail.graph-toolbar.automation"
+    internal static let graphToolbarLasso = "bettermail.graph-toolbar.lasso"
     internal static let graphToolbarZoomOut = "bettermail.graph-toolbar.zoom-out"
     internal static let graphToolbarZoomIn = "bettermail.graph-toolbar.zoom-in"
     internal static let graphToolbarRecenter = "bettermail.graph-toolbar.recenter"
@@ -98,6 +100,30 @@ internal enum AccessibilityID {
     internal static let graphAutomationMasterPause = "bettermail.graph-automation.master-pause"
     internal static let graphAutomationScanCurrentMail = "bettermail.graph-automation.scan-current-mail"
     internal static let graphAutomationFollowMailbox = "bettermail.graph-automation.follow-mailbox"
+    internal static let organizationMailConsentStatus = "bettermail.organization-mail-consent.status"
+    internal static let organizationMailConsentGrant = "bettermail.organization-mail-consent.grant"
+    internal static let organizationMailConsentRevoke = "bettermail.organization-mail-consent.revoke"
+
+    // Organizer workspace IDs use a stable digest rather than exposing
+    // message, conversation, account, or mailbox identifiers to UI tests.
+    internal static let organizerWorkspace = "bettermail.organizer.workspace"
+    internal static let organizerRail = "bettermail.organizer.rail"
+    internal static let organizerRailToggle = "bettermail.organizer.rail.toggle"
+    internal static let organizerRailCount = "bettermail.organizer.rail.count"
+    internal static let organizerRailEmpty = "bettermail.organizer.rail.empty"
+    internal static let organizerActions = "bettermail.organizer.actions"
+    internal static let organizerSelectedCount = "bettermail.organizer.selected-count"
+    internal static let organizerGroupButton = "bettermail.organizer.action.group"
+    internal static let organizerMoveButton = "bettermail.organizer.action.move"
+    internal static let organizerArchiveButton = "bettermail.organizer.action.archive"
+    internal static let organizerSuggestions = "bettermail.organizer.suggestions"
+    internal static let organizerGroupComposer = "bettermail.organizer.group-composer"
+    internal static let organizerGroupNameField = "bettermail.organizer.group-name"
+    internal static let organizerGroupCreateConfirm = "bettermail.organizer.group-create-confirm"
+    internal static let organizerResetLayout = "bettermail.organizer.layout.reset"
+    internal static let organizerUndoLayoutReset = "bettermail.organizer.layout.reset.undo"
+    internal static let organizerBenchmarkBanner = "bettermail.organizer.benchmark.banner"
+    internal static let organizerBenchmarkError = "bettermail.organizer.benchmark.error"
 
     internal static let settingsView = "bettermail.settings.view"
     internal static let settingsAppearancePicker = "bettermail.settings.appearance-picker"
@@ -174,6 +200,14 @@ internal enum AccessibilityID {
         "bettermail.graph-automation.row.\(stable(id))"
     }
 
+    internal static func organizerRailRow(_ conversationID: String) -> String {
+        "bettermail.organizer.rail.row.\(opaqueDigest(conversationID))"
+    }
+
+    internal static func organizerSuggestionRow(_ proposalID: String) -> String {
+        "bettermail.organizer.suggestion.\(opaqueDigest(proposalID))"
+    }
+
     internal static let graphAutomationApproveAll = "bettermail.graph-automation.approve-all"
 
     internal static func graphModeSegment(_ mode: GraphCanvasMode) -> String {
@@ -191,5 +225,12 @@ internal enum AccessibilityID {
             .joined()
         let trimmed = converted.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return trimmed.isEmpty ? "unknown" : trimmed
+    }
+
+    private static func opaqueDigest(_ rawValue: String) -> String {
+        SHA256.hash(data: Data(rawValue.utf8))
+            .prefix(8)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }

@@ -78,6 +78,10 @@ internal struct GraphGrouping: Identifiable, Codable, Hashable {
     internal let normalizedTopic: String?
     internal let supportingReason: String?
     internal let reviewMembers: [GraphTopicMember]
+    /// Zero-based depth in the persisted BetterMail Group hierarchy. Suggested
+    /// Groups have no hierarchy depth. Keeping this optional preserves decode
+    /// compatibility with older in-memory/test fixtures.
+    internal let hierarchyDepth: Int?
 
     internal init(id: String,
                   title: String,
@@ -88,7 +92,8 @@ internal struct GraphGrouping: Identifiable, Codable, Hashable {
                   sourceTag: String?,
                   normalizedTopic: String? = nil,
                   supportingReason: String? = nil,
-                  reviewMembers: [GraphTopicMember] = []) {
+                  reviewMembers: [GraphTopicMember] = [],
+                  hierarchyDepth: Int? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -99,6 +104,7 @@ internal struct GraphGrouping: Identifiable, Codable, Hashable {
         self.normalizedTopic = normalizedTopic
         self.supportingReason = supportingReason
         self.reviewMembers = reviewMembers
+        self.hierarchyDepth = hierarchyDepth.map { max(0, $0) }
     }
 
     internal var isSuggestion: Bool {
@@ -537,6 +543,7 @@ internal struct GraphData: Codable, Hashable {
         }
         let folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
         let folderTitleByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.title) })
+        let folderHierarchyDepthByID = folderHierarchyDepths(folders: folders)
         let metadataCandidates = candidates.map { candidate in
             let nodes = flatten(candidate.root)
             let lastUpdated = nodes.map(\.message.date).max() ?? candidate.root.message.date
@@ -570,6 +577,18 @@ internal struct GraphData: Codable, Hashable {
 
         var primaryBranches: [GraphPrimaryBranch] = []
         var primaryBranchIndexByID: [String: Int] = [:]
+        // Confirmed Groups are organization targets even before they contain a
+        // conversation. Keeping empty folders in the primary projection makes
+        // the first drag possible without manufacturing placeholder mail and
+        // preserves nested Group depth from the start.
+        for (folderIndex, folder) in folders.sorted(by: { $0.id < $1.id }).enumerated() {
+            let branchID = "folder:\(folder.id)"
+            primaryBranchIndexByID[branchID] = primaryBranches.count
+            primaryBranches.append(GraphPrimaryBranch(id: branchID,
+                                                      folder: folder,
+                                                      sourceIndex: folderIndex,
+                                                      candidates: []))
+        }
         for candidate in metadataCandidates {
             let branchID = candidate.folderID.map { "folder:\($0)" } ?? candidate.threadID
             if let branchIndex = primaryBranchIndexByID[branchID] {
@@ -773,7 +792,8 @@ internal struct GraphData: Codable, Hashable {
                                          threadIDs: visibleChildren.map(\.threadID),
                                          rawThreadIDs: branch.candidates.map(\.rawThreadID),
                                          sourceFolderID: folder.id,
-                                         sourceTag: nil)
+                                         sourceTag: nil,
+                                         hierarchyDepth: folderHierarchyDepthByID[folder.id])
             groupings.append(grouping)
             edges.append(GraphEdge(sourceID: GraphCenter.you.id,
                                    targetID: grouping.id,
@@ -875,6 +895,30 @@ internal struct GraphData: Codable, Hashable {
                          edges: edges,
                          visiblePrimaryBranchCount: visiblePrimaryBranches.count,
                          totalPrimaryBranchCount: primaryBranches.count)
+    }
+
+    private static func folderHierarchyDepths(folders: [ThreadFolder]) -> [String: Int] {
+        let byID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        var cache: [String: Int] = [:]
+
+        func resolve(_ folderID: String, visiting: Set<String>) -> Int {
+            if let cached = cache[folderID] { return cached }
+            guard let folder = byID[folderID],
+                  let parentID = folder.parentID,
+                  byID[parentID] != nil,
+                  !visiting.contains(parentID) else {
+                cache[folderID] = 0
+                return 0
+            }
+            let depth = resolve(parentID, visiting: visiting.union([folderID])) + 1
+            cache[folderID] = depth
+            return depth
+        }
+
+        for folderID in byID.keys.sorted() {
+            _ = resolve(folderID, visiting: [])
+        }
+        return cache
     }
 
     private static func isManualBoundary(between lhs: ThreadNode,
