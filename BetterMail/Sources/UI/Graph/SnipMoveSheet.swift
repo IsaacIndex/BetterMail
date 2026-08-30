@@ -19,6 +19,7 @@ internal struct SnipMoveSheet: View {
             folderList
             Divider()
             allocationRows
+            exactEffectDisclosure
             footer
         }
         .padding(20)
@@ -195,7 +196,11 @@ internal struct SnipMoveSheet: View {
             .disabled(isMoving)
             Button(NSLocalizedString("graph.snip.batch.move",
                                      comment: "Run every Batch Snip allocation")) {
-                Task { await viewModel.confirmSnipBatch(request: request) }
+                guard let disclosure = currentDisclosure else { return }
+                Task {
+                    await viewModel.confirmSnipBatch(request: request,
+                                                     disclosedEffects: disclosure)
+                }
             }
             .disabled(!canMove || isMoving)
             .keyboardShortcut(.defaultAction)
@@ -208,12 +213,84 @@ internal struct SnipMoveSheet: View {
     }
 
     private var canMove: Bool {
-        viewModel.canConfirmSnipAllocations && Self.allocationsAreValid(
+        currentDisclosure != nil && viewModel.canConfirmSnipAllocations && Self.allocationsAreValid(
             items: request.items,
             allocations: viewModel.snipAllocations,
             accountName: request.accountName,
             validPaths: Set(allRows.map(\.path))
         )
+    }
+
+    private var currentDisclosure: GraphSnipBatchDisclosure? {
+        viewModel.currentSnipBatchDisclosure(for: request)
+    }
+
+    @ViewBuilder
+    private var exactEffectDisclosure: some View {
+        if let disclosure = currentDisclosure {
+            VStack(alignment: .leading, spacing: 7) {
+                Label(NSLocalizedString("organization.effect.review.title",
+                                        comment: "Exact Apple Mail effect review heading"),
+                      systemImage: "exclamationmark.shield")
+                    .font(.headline)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("organization.effect.message_count",
+                                      comment: "Affected Apple Mail message count"),
+                    disclosure.affectedMessageCount
+                ))
+                .font(.caption)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 9) {
+                        ForEach(disclosure.items) { row in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(row.subject.isEmpty
+                                     ? NSLocalizedString("threadcanvas.subject.placeholder",
+                                                         comment: "Missing email subject")
+                                     : row.subject)
+                                    .font(.caption.bold())
+                                if let effect = row.effect {
+                                    ForEach(effect.sourceRouteGroups) { route in
+                                        Text(String.localizedStringWithFormat(
+                                            NSLocalizedString("organization.effect.source_route",
+                                                              comment: "Exact source account, mailbox, and count"),
+                                            route.account,
+                                            route.mailboxPath,
+                                            route.messageCount
+                                        ))
+                                        .font(.caption2)
+                                        .textSelection(.enabled)
+                                    }
+                                    Text(String.localizedStringWithFormat(
+                                        NSLocalizedString("organization.effect.destination",
+                                                          comment: "Exact Mail destination"),
+                                        row.destinationAccountName,
+                                        row.destinationMailboxPath
+                                    ))
+                                    .font(.caption2)
+                                    Text(NSLocalizedString(effect.reversibility.localizationKey,
+                                                           comment: "Mail effect reversibility disclosure"))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text(NSLocalizedString("organization.effect.no_mail_move",
+                                                           comment: "No Apple Mail message needs to move"))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .frame(maxHeight: 130)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.orange.opacity(0.1))
+            )
+            .accessibilityElement(children: .contain)
+        }
     }
 
     internal static func allocationsAreValid(

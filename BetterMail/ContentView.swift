@@ -7,21 +7,33 @@ internal struct ContentView: View {
     @ObservedObject internal var pinnedFolderSettings: PinnedFolderSettings
     @ObservedObject internal var activityCenter: ProcessingActivityCenter
     @StateObject private var viewModel: ThreadCanvasViewModel
+    private let graphSettings: GraphCanvasSettings?
+    private let graphViewModel: GraphCanvasViewModel?
+    private let onRenderedOrganizerReceipt: OrganizerRenderedGraphReceiptHandler
 
     internal init(settings: AutoRefreshSettings,
                   inspectorSettings: InspectorViewSettings,
                   displaySettings: ThreadCanvasDisplaySettings,
                   pinnedFolderSettings: PinnedFolderSettings,
-                  activityCenter: ProcessingActivityCenter) {
+                  activityCenter: ProcessingActivityCenter,
+                  viewModel: ThreadCanvasViewModel? = nil,
+                  graphSettings: GraphCanvasSettings? = nil,
+                  graphViewModel: GraphCanvasViewModel? = nil,
+                  onRenderedOrganizerReceipt: @escaping OrganizerRenderedGraphReceiptHandler = { _ in }) {
         self.settings = settings
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
         self.pinnedFolderSettings = pinnedFolderSettings
         self.activityCenter = activityCenter
-        _viewModel = StateObject(wrappedValue: ThreadCanvasViewModel(settings: settings,
-                                                                     inspectorSettings: inspectorSettings,
-                                                                     pinnedFolderSettings: pinnedFolderSettings,
-                                                                     activityCenter: activityCenter))
+        self.graphSettings = graphSettings
+        self.graphViewModel = graphViewModel
+        self.onRenderedOrganizerReceipt = onRenderedOrganizerReceipt
+        _viewModel = StateObject(wrappedValue: viewModel ?? ThreadCanvasViewModel(
+            settings: settings,
+            inspectorSettings: inspectorSettings,
+            pinnedFolderSettings: pinnedFolderSettings,
+            activityCenter: activityCenter
+        ))
     }
 
     internal var body: some View {
@@ -38,8 +50,12 @@ internal struct ContentView: View {
                 ThreadListView(viewModel: viewModel,
                                settings: settings,
                                inspectorSettings: inspectorSettings,
-                               displaySettings: displaySettings)
-                    .frame(minWidth: 720, minHeight: 520)
+                               displaySettings: displaySettings,
+                               graphSettings: graphSettings,
+                               graphViewModel: graphViewModel,
+                               onRenderedOrganizerReceipt: onRenderedOrganizerReceipt)
+                    .frame(minWidth: OrganizerWorkspaceLayout.organizerDetailMinimumWidth,
+                           minHeight: 520)
             }
         }
         .navigationSplitViewStyle(.balanced)

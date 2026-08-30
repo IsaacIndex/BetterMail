@@ -212,6 +212,123 @@ final class GraphAutomationTests: XCTestCase {
         XCTAssertFalse(persistedFolder.threadIDs.contains("thread-established"))
     }
 
+    func testApproveAll_appliesEveryPendingProposalInQueue() async throws {
+        let defaults = makeDefaults()
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = GraphAutomationSettings(userDefaults: defaults)
+        settings.attachMode = .review
+        settings.appendMode = .review
+        let relationshipProvider = IBMRelationshipProvider()
+        let coordinator = makeCoordinator(store: store,
+                                          settings: settings,
+                                          relationshipProvider: relationshipProvider)
+        let roots = [
+            makeRoot(threadID: "thread-established",
+                     messageID: "established@example.com",
+                     subject: "Join the Pru Feedback Loop team on IBM Consulting Advantage",
+                     date: Date(timeIntervalSince1970: 100)),
+            makeRoot(threadID: "thread-angus",
+                     messageID: "angus@example.com",
+                     subject: "Invites Angus Lo to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                     date: Date(timeIntervalSince1970: 200)),
+            makeRoot(threadID: "thread-anthony",
+                     messageID: "anthony@example.com",
+                     subject: "Invites Anthony Liu to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                     date: Date(timeIntervalSince1970: 300)),
+            makeRoot(threadID: "thread-roadmap",
+                     messageID: "roadmap@example.com",
+                     subject: "IBM Consulting Advantage quarterly roadmap",
+                     date: Date(timeIntervalSince1970: 400))
+        ]
+        let folder = makeFolder(threadIDs: ["thread-established"])
+        let secondFolder = ThreadFolder(id: "folder-review",
+                                        title: "Review Destination",
+                                        color: ThreadFolderColor(red: 0.5, green: 0.3, blue: 0.7, alpha: 1),
+                                        threadIDs: [],
+                                        parentID: "folder-work")
+        try await store.upsertThreadFolders([folder, secondFolder])
+        let snapshot = makeSnapshot(roots: roots, folders: [folder, secondFolder])
+
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: false)
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: true)
+
+        let attachment = try XCTUnwrap(coordinator.pendingProposals.first {
+            $0.action == .attachToThread
+        })
+        await coordinator.changeDestination(proposalID: attachment.id, folderID: secondFolder.id)
+
+        let pendingIDs = Set(coordinator.pendingProposals.map(\.id))
+        XCTAssertEqual(pendingIDs.count, 3)
+        XCTAssertEqual(Set(coordinator.pendingProposals.map(\.action)),
+                       Set([.attachToThread, .appendToFolder]))
+        XCTAssertEqual(Set(coordinator.pendingProposals.compactMap(\.target.folderID)),
+                       Set([folder.id, secondFolder.id]))
+
+        await coordinator.approveAll(mailEffectsConfirmed: true)
+
+        XCTAssertTrue(coordinator.pendingProposals.isEmpty)
+        XCTAssertEqual(Set(coordinator.proposals.filter { $0.status == .applied }.map(\.id)), pendingIDs)
+    }
+
+    func testApproveAll_duplicateSourceProposalsRemainPendingConflictsAndAreNotCountedApplied() async throws {
+        let defaults = makeDefaults()
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let source = makeSource(threadID: "duplicate-source")
+        let firstFolder = ThreadFolder(id: "folder-one",
+                                       title: "First destination",
+                                       color: ThreadFolderColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1),
+                                       threadIDs: [])
+        let secondFolder = ThreadFolder(id: "folder-two",
+                                        title: "Second destination",
+                                        color: ThreadFolderColor(red: 0.5, green: 0.3, blue: 0.7, alpha: 1),
+                                        threadIDs: [])
+        let proposals = [
+            makeAppendProposal(id: "duplicate-one", source: source, folder: firstFolder),
+            makeAppendProposal(id: "duplicate-two", source: source, folder: secondFolder)
+        ]
+        try await store.upsertThreadFolders([firstFolder, secondFolder])
+        try await store.upsertGraphAutomationProposals(proposals)
+        let coordinator = GraphAutomationCoordinator(
+            store: store,
+            settings: GraphAutomationSettings(userDefaults: defaults),
+            organizationOperationStore: makeInMemoryOrganizationOperationStore(label: "duplicate-approve-all"),
+            relationshipCapabilityProvider: {
+                GraphRelationshipCapability(provider: nil,
+                                            providerVersion: "unavailable",
+                                            statusMessage: "Unavailable",
+                                            shouldRetry: false)
+            },
+            topicCapabilityProvider: {
+                GraphTopicCapability(provider: nil,
+                                     statusMessage: "Unavailable",
+                                     providerID: "unavailable",
+                                     shouldRetry: false)
+            }
+        )
+        let root = makeRoot(threadID: source.effectiveThreadID,
+                            messageID: "duplicate-source@example.com",
+                            subject: "Duplicate source",
+                            date: Date(timeIntervalSince1970: 100))
+        let snapshot = makeSnapshot(roots: [root], folders: [firstFolder, secondFolder])
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: false)
+
+        let plan = coordinator.approvalPlanForAllPending()
+        XCTAssertEqual(plan.pendingIDs, Set(proposals.map(\.id)))
+        XCTAssertEqual(plan.betterMailOnlyCount, 2)
+        XCTAssertEqual(plan.mailChangingCount, 0)
+        XCTAssertEqual(plan.conflictingProposalIDs, Set(proposals.map(\.id)))
+
+        await coordinator.approveAll(plan: plan)
+
+        XCTAssertEqual(Set(coordinator.pendingProposals.map(\.id)), Set(proposals.map(\.id)))
+        XCTAssertTrue(coordinator.proposals.allSatisfy { $0.mutationDelta == nil })
+        XCTAssertTrue(coordinator.proposals.allSatisfy {
+            $0.lastError == NSLocalizedString("graph.automation.error.duplicate_source_conflict",
+                                              comment: "Approve All duplicate source conflict")
+        })
+        XCTAssertTrue(coordinator.proposals.filter { $0.status == .applied }.isEmpty)
+    }
+
     func testExactRejectionSuppressesOnlyUnchangedEvidence() async throws {
         let defaults = makeDefaults()
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
@@ -382,14 +499,19 @@ final class GraphAutomationTests: XCTestCase {
         })
     }
 
-    func testMappedMailPartialMoveWithIncompleteCompensationRequiresRecovery() async throws {
+    func testMappedMailPartialMoveWithoutRestoreConsentRequiresRecoveryAndDoesNotCompensate() async throws {
         let defaults = makeDefaults()
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let mover = ScriptedAutomationMailMover(responses: [.moved(["source-1@example.com"]), .moved([])])
         let coordinator = makeCoordinator(store: store,
                                           settings: GraphAutomationSettings(userDefaults: defaults),
                                           relationshipProvider: IBMRelationshipProvider(),
-                                          mailClient: mover)
+                                          mailClient: mover,
+                                          mailAutomationConsentProvider: {
+                                              .current(.userGranted(
+                                                  allowedEffects: [.messageMove]
+                                              ))
+                                          })
         let target = makeRoot(threadID: "target-thread",
                               messageID: "target@example.com",
                               subject: "Join the Pru Feedback Loop team on IBM Consulting Advantage",
@@ -419,10 +541,218 @@ final class GraphAutomationTests: XCTestCase {
         XCTAssertEqual(proposal.mailStatus, .recoveryNeeded)
         XCTAssertEqual(proposal.movedMessages.map(\.messageID), ["source-1@example.com"])
         let moveCalls = await mover.calls()
-        XCTAssertEqual(moveCalls.count, 2,
-                       "A partial move must immediately attempt exact-route compensation once")
+        XCTAssertEqual(moveCalls.count, 1,
+                       "Move-only consent must never authorize a separate restore mutation")
         XCTAssertNotNil(proposal.mutationDelta,
                         "Mail failure must retain the committed BetterMail grouping")
+    }
+
+    func testMappedMailUnknownExternalOutcomeRequiresManualRecoveryAndNeverRepeats() async throws {
+        let defaults = makeDefaults()
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let mover = ScriptedAutomationMailMover(responses: [.failure])
+        let coordinator = makeCoordinator(
+            store: store,
+            settings: GraphAutomationSettings(userDefaults: defaults),
+            relationshipProvider: IBMRelationshipProvider(),
+            mailClient: mover,
+            mailAutomationConsentProvider: {
+                .current(.userGranted(allowedEffects: [.messageMove, .messageRestore]))
+            }
+        )
+        let target = makeRoot(threadID: "target-thread",
+                              messageID: "target@example.com",
+                              subject: "Join the Pru Feedback Loop team on IBM Consulting Advantage",
+                              date: Date(timeIntervalSince1970: 100))
+        let source = makeRoot(threadID: "source-thread",
+                              messageID: "source@example.com",
+                              subject: "Invite Angus to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                              date: Date(timeIntervalSince1970: 200))
+        let folder = makeFolder(threadIDs: ["target-thread"],
+                                mailboxAccount: "Work",
+                                mailboxPath: "Projects/IBM Consulting Advantage")
+        try await store.upsertThreadFolders([folder])
+        let snapshot = makeSnapshot(roots: [target, source], folders: [folder])
+
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: false)
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: true)
+
+        let recovery = try XCTUnwrap(coordinator.proposals.first {
+            $0.source.effectiveThreadID == "source-thread"
+        })
+        XCTAssertEqual(recovery.status, .recoveryNeeded)
+        XCTAssertEqual(recovery.mailStatus, .recoveryNeeded)
+        XCTAssertNil(recovery.nextRetryAt)
+        XCTAssertFalse(recovery.canRetryOrganizationWork)
+        XCTAssertNotNil(recovery.mutationDelta)
+        let callsBeforeRetry = await mover.calls()
+        XCTAssertEqual(callsBeforeRetry.count, 1)
+
+        await coordinator.retry(recovery.id)
+
+        let callsAfterRetry = await mover.calls()
+        XCTAssertEqual(callsAfterRetry.count, 1,
+                       "An unknown external outcome must never be repeated by Retry")
+        XCTAssertEqual(coordinator.proposals.first { $0.id == recovery.id }?.status,
+                       .recoveryNeeded)
+    }
+
+    func testMappedMailCompensationRetryRestoresOnlyExactResidualAndKeepsGroupingFailed() async throws {
+        let defaults = makeDefaults()
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let mover = ScriptedAutomationMailMover(responses: [
+            .moved(["source-1@example.com", "source-2@example.com"]),
+            .moved(["source-1@example.com"]),
+            .moved(["source-2@example.com"])
+        ])
+        let coordinator = makeCoordinator(
+            store: store,
+            settings: GraphAutomationSettings(userDefaults: defaults),
+            relationshipProvider: IBMRelationshipProvider(),
+            mailClient: mover,
+            mailAutomationConsentProvider: {
+                .current(.userGranted(allowedEffects: [.messageMove, .messageRestore]))
+            }
+        )
+        let target = makeRoot(threadID: "target-thread",
+                              messageID: "target@example.com",
+                              subject: "Join the Pru Feedback Loop team on IBM Consulting Advantage",
+                              date: Date(timeIntervalSince1970: 100))
+        let source = ThreadNode(
+            message: makeMessage(messageID: "source-1@example.com",
+                                 threadID: "source-thread",
+                                 subject: "Invite Angus to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                                 date: Date(timeIntervalSince1970: 200)),
+            children: [
+                ThreadNode(message: makeMessage(messageID: "source-2@example.com",
+                                                threadID: "source-thread",
+                                                subject: "Invite two",
+                                                date: Date(timeIntervalSince1970: 210))),
+                ThreadNode(message: makeMessage(messageID: "source-3@example.com",
+                                                threadID: "source-thread",
+                                                subject: "Invite three",
+                                                date: Date(timeIntervalSince1970: 220)))
+            ]
+        )
+        let folder = makeFolder(threadIDs: ["target-thread"],
+                                mailboxAccount: "Work",
+                                mailboxPath: "Projects/IBM Consulting Advantage")
+        try await store.upsertThreadFolders([folder])
+        let snapshot = makeSnapshot(roots: [target, source], folders: [folder])
+
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: false)
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: true)
+
+        let recovery = try XCTUnwrap(coordinator.proposals.first {
+            $0.source.effectiveThreadID == "source-thread"
+        })
+        XCTAssertEqual(recovery.status, .recoveryNeeded)
+        XCTAssertEqual(recovery.mailStatus, .compensating)
+        XCTAssertEqual(recovery.movedMessages.map(\.messageID), ["source-2@example.com"])
+        XCTAssertTrue(recovery.canRetryOrganizationWork)
+
+        await coordinator.retry(recovery.id)
+
+        let resolved = try XCTUnwrap(coordinator.proposals.first { $0.id == recovery.id })
+        XCTAssertEqual(resolved.status, .failed,
+                       "Completing compensation must not claim the BetterMail grouping was undone")
+        XCTAssertEqual(resolved.mailStatus, .failed)
+        XCTAssertTrue(resolved.movedMessages.isEmpty)
+        XCTAssertNotNil(resolved.mutationDelta)
+        let calls = await mover.calls()
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls.last?.messageIDs, ["source-2@example.com"])
+        XCTAssertEqual(calls.last?.sourceMailboxPath, "Projects/IBM Consulting Advantage")
+        XCTAssertEqual(calls.last?.destinationMailboxPath, "Inbox")
+    }
+
+    func testMappedMailWithoutSeparateConsentKeepsGroupingAndNeverCallsMail() async throws {
+        let defaults = makeDefaults()
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let mover = ScriptedAutomationMailMover(responses: [.moved(["source@example.com"])])
+        let coordinator = makeCoordinator(store: store,
+                                          settings: GraphAutomationSettings(userDefaults: defaults),
+                                          relationshipProvider: IBMRelationshipProvider(),
+                                          mailClient: mover,
+                                          mailAutomationConsentProvider: { .absent })
+        let target = makeRoot(threadID: "target-thread",
+                              messageID: "target@example.com",
+                              subject: "Join the Pru Feedback Loop team on IBM Consulting Advantage",
+                              date: Date(timeIntervalSince1970: 100))
+        let source = makeRoot(threadID: "source-thread",
+                              messageID: "source@example.com",
+                              subject: "Invite Angus to join the Pru Feedback Loop team on IBM Consulting Advantage",
+                              date: Date(timeIntervalSince1970: 200))
+        let folder = makeFolder(threadIDs: ["target-thread"],
+                                mailboxAccount: "Work",
+                                mailboxPath: "Projects/IBM Consulting Advantage")
+        try await store.upsertThreadFolders([folder])
+        let snapshot = makeSnapshot(roots: [target, source], folders: [folder])
+
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: false)
+        await coordinator.evaluateNow(snapshot: snapshot, scansCurrentMail: true)
+
+        let proposal = try XCTUnwrap(coordinator.proposals.first {
+            $0.source.effectiveThreadID == "source-thread"
+        })
+        XCTAssertEqual(proposal.status, .failed)
+        XCTAssertEqual(proposal.mailStatus, .failed)
+        XCTAssertNotNil(proposal.mutationDelta)
+        XCTAssertTrue(proposal.lastError?.localizedCaseInsensitiveContains("authorized") == true)
+        let moveCalls = await mover.calls()
+        XCTAssertTrue(moveCalls.isEmpty)
+    }
+
+    func testOrganizationSourceSnapshotBuilder_preservesExactRoutesAndDeduplicatesPhysicalMail() throws {
+        let root = ThreadNode(
+            message: makeMessage(messageID: "<Exact-A@Example.COM>",
+                                 threadID: "thread-a",
+                                 subject: "Planning",
+                                 date: Date(timeIntervalSince1970: 100)),
+            children: [
+                ThreadNode(message: makeMessage(messageID: "<exact-a@example.com>",
+                                                threadID: "thread-a",
+                                                subject: "Planning follow-up",
+                                                date: Date(timeIntervalSince1970: 101)))
+            ]
+        )
+        let sources = OrganizationSourceSnapshotBuilder.build(
+            from: makeSnapshot(roots: [root], folders: [])
+        )
+
+        let source = try XCTUnwrap(sources.first)
+        XCTAssertEqual(sources.count, 1)
+        XCTAssertEqual(source.messages.count, 1)
+        XCTAssertEqual(source.messages.first?.messageID, "<Exact-A@Example.COM>")
+        XCTAssertEqual(source.messages.first?.accountName, "Work")
+        XCTAssertEqual(source.messages.first?.mailboxPath, "Inbox")
+    }
+
+    func testOrganizationPlacementPolicy_preservesConfiguredThresholdAndConflictRules() {
+        let thresholds = GraphAutomationStrictness.conservative.thresholds
+        XCTAssertTrue(OrganizationPlacementPolicy.isReviewable(score: thresholds.reviewFloor,
+                                                                thresholds: thresholds))
+        XCTAssertTrue(OrganizationPlacementPolicy.isAmbiguous(
+            winnerScore: 0.90,
+            runnerUpScore: 0.81,
+            thresholds: thresholds
+        ))
+        XCTAssertTrue(OrganizationPlacementPolicy.allowsAutomatic(
+            score: thresholds.autoAttach,
+            automaticThreshold: thresholds.autoAttach,
+            isPaused: false,
+            isAmbiguous: false,
+            hasExistingFolderConflict: false,
+            hasManualGroupMergeConflict: false
+        ))
+        XCTAssertFalse(OrganizationPlacementPolicy.allowsAutomatic(
+            score: 1,
+            automaticThreshold: thresholds.autoAttach,
+            isPaused: false,
+            isAmbiguous: false,
+            hasExistingFolderConflict: true,
+            hasManualGroupMergeConflict: false
+        ))
     }
 }
 
@@ -434,11 +764,18 @@ private extension GraphAutomationTests {
     func makeCoordinator(store: MessageStore,
                          settings: GraphAutomationSettings,
                          relationshipProvider: GraphRelationshipProviding,
-                         mailClient: (any GraphSnipMailMoving)? = nil) -> GraphAutomationCoordinator {
+                         mailClient: (any GraphSnipMailMoving)? = nil,
+                         mailAutomationConsentProvider: @escaping @MainActor () -> OrganizationMailAutomationConsentResolution = {
+                             .absent
+                         }) -> GraphAutomationCoordinator {
         GraphAutomationCoordinator(
             store: store,
             settings: settings,
             mailClient: mailClient,
+            organizationOperationStore: makeInMemoryOrganizationOperationStore(
+                label: "graph-automation-\(UUID().uuidString)"
+            ),
+            mailAutomationConsentProvider: mailAutomationConsentProvider,
             relationshipCapabilityProvider: {
                 GraphRelationshipCapability(provider: relationshipProvider,
                                             providerVersion: "relationship-test-v1",
@@ -666,6 +1003,7 @@ private actor CountingTopicProvider: GraphTopicProviding {
 private actor ScriptedAutomationMailMover: GraphSnipMailMoving {
     enum Response: Sendable {
         case moved([String])
+        case failure
     }
 
     struct Call: Sendable {
@@ -697,8 +1035,14 @@ private actor ScriptedAutomationMailMover: GraphSnipMailMoving {
         switch responses.removeFirst() {
         case .moved(let ids):
             return GraphMailMoveResult(movedMessageIDs: ids)
+        case .failure:
+            throw ScriptedAutomationMailMoverError.failed
         }
     }
 
     func calls() -> [Call] { recordedCalls }
+}
+
+private enum ScriptedAutomationMailMoverError: Error, Sendable {
+    case failed
 }

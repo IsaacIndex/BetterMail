@@ -17,7 +17,7 @@ private enum ThreadListCanvasViewMode: String, CaseIterable, Identifiable {
             return NSLocalizedString("threadlist.viewmode.timeline.segment",
                                      comment: "Timeline thread canvas view mode segment")
         case .graph:
-            return NSLocalizedString("graph.mode.graph", comment: "Graph graph mode segment")
+            return NSLocalizedString("organizer.mode.organize", comment: "Organize workspace mode segment")
         }
     }
 }
@@ -27,11 +27,9 @@ internal struct ThreadListView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
-    @StateObject private var graphSettings = GraphCanvasSettings()
-    @StateObject private var graphViewModel = GraphCanvasViewModel(
-        graphTitleCapabilityProvider: GraphTitleProviderFactory.makeCapability,
-        graphTopicCapabilityProvider: GraphTopicProviderFactory.makeCapability
-    )
+    @StateObject private var graphSettings: GraphCanvasSettings
+    @StateObject private var graphViewModel: GraphCanvasViewModel
+    private let onRenderedOrganizerReceipt: OrganizerRenderedGraphReceiptHandler
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
     @State private var navHeight: CGFloat = 96
@@ -52,9 +50,31 @@ internal struct ThreadListView: View {
     private let inspectorWidth: CGFloat = 320
     private let graphSelectionBarReservation: CGFloat = 78
 
+    internal init(viewModel: ThreadCanvasViewModel,
+                  settings: AutoRefreshSettings,
+                  inspectorSettings: InspectorViewSettings,
+                  displaySettings: ThreadCanvasDisplaySettings,
+                  graphSettings: GraphCanvasSettings? = nil,
+                  graphViewModel: GraphCanvasViewModel? = nil,
+                  onRenderedOrganizerReceipt: @escaping OrganizerRenderedGraphReceiptHandler = { _ in }) {
+        self.viewModel = viewModel
+        self.settings = settings
+        self.inspectorSettings = inspectorSettings
+        self.displaySettings = displaySettings
+        self.onRenderedOrganizerReceipt = onRenderedOrganizerReceipt
+        _graphSettings = StateObject(wrappedValue: graphSettings ?? GraphCanvasSettings())
+        _graphViewModel = StateObject(wrappedValue: graphViewModel ?? GraphCanvasViewModel(
+            graphTitleCapabilityProvider: GraphTitleProviderFactory.makeCapability,
+            graphTopicCapabilityProvider: GraphTopicProviderFactory.makeCapability,
+            graphSpatialAnchorReplay: viewModel.makeGraphSpatialAnchorReplaySeam()
+        ))
+    }
+
     internal var body: some View {
         content
-            .frame(minWidth: 480, minHeight: 400)
+            .frame(minWidth: OrganizerWorkspaceLayout.detailMinimumWidth(
+                isOrganizerMode: graphSettings.mode == .graph
+            ), minHeight: 400)
             .focusable()
             .onKeyPress(.upArrow) { handleCanvasNavigation(.up) }
             .onKeyPress(.downArrow) { handleCanvasNavigation(.down) }
@@ -135,29 +155,14 @@ internal struct ThreadListView: View {
         ZStack(alignment: .top) {
             GlassWindowBackground()
                 .ignoresSafeArea()
-            glassLayeredContent
+            layeredContent
         }
         .accessibilityIdentifier(AccessibilityID.threadList)
     }
 
-    @ViewBuilder
-    private var glassLayeredContent: some View {
-        if #available(macOS 26, *) {
-            layeredContent
-        } else {
-            layeredContent
-        }
-    }
-
     private var layeredContent: some View {
         ZStack(alignment: .top) {
-            if #available(macOS 26, *) {
-                GlassEffectContainer {
-                    canvasContent
-                }
-            } else {
-                canvasContent
-            }
+            canvasContent
             inspectorOverlay
             navigationBarOverlay
             selectionActionBar
@@ -175,13 +180,15 @@ internal struct ThreadListView: View {
     private var canvasContent: some View {
         Group {
             if graphSettings.mode == .graph {
-                GraphCanvasView(threadViewModel: viewModel,
-                                graphViewModel: graphViewModel,
-                                automationCoordinator: viewModel.graphAutomationCoordinator,
-                                graphSettings: graphSettings,
-                                displaySettings: displaySettings,
-                                topInset: canvasTopPadding,
-                                bottomChromeInset: graphBottomChromeReservation)
+                OrganizerWorkspaceView(threadViewModel: viewModel,
+                                       graphViewModel: graphViewModel,
+                                       automationCoordinator: viewModel.graphAutomationCoordinator,
+                                       graphSettings: graphSettings,
+                                       displaySettings: displaySettings,
+                                       topInset: canvasTopPadding,
+                                       bottomChromeInset: graphBottomChromeReservation,
+                                       onRenderedOrganizerReceipt: onRenderedOrganizerReceipt,
+                                       onMoveSelection: { isShowingMailboxMoveSheet = true })
                 .animation(.easeInOut(duration: 0.2),
                            value: graphBottomChromeReservation)
             } else {
@@ -1168,6 +1175,9 @@ private struct MailboxFolderMoveSheet: View {
     @State private var selectedParentPath: String?
     @State private var newFolderName: String = ""
     @State private var folderSearchQuery: String = ""
+    @State private var preparedMoveConfirmation: MailboxMoveConfirmation?
+    @State private var isPreparingMoveConfirmation = false
+    @State private var moveReviewError: String?
     private let isCreateAndMoveEnabled = false
 
     private var forcedAccount: String? {
@@ -1231,12 +1241,16 @@ private struct MailboxFolderMoveSheet: View {
     private var canSubmit: Bool {
         guard !selectedAccount.isEmpty else { return false }
         guard viewModel.mailboxActionDisabledReason == nil else { return false }
-        guard !viewModel.isMailboxActionRunning else { return false }
+        guard !viewModel.isMailboxActionRunning, !isPreparingMoveConfirmation else { return false }
         if !isCreateAndMoveEnabled && mode == .create {
             return false
         }
         switch mode {
         case .existing:
+            if let preparedMoveConfirmation {
+                return preparedMoveConfirmation.account == selectedAccount
+                    && preparedMoveConfirmation.destinationPath == selectedExistingPath
+            }
             return selectedExistingPath != nil && !folderChoices.isEmpty
         case .create:
             return !trimmedNewFolderName.isEmpty
@@ -1246,7 +1260,11 @@ private struct MailboxFolderMoveSheet: View {
     private var submitButtonTitle: String {
         switch mode {
         case .existing:
-            return NSLocalizedString("mailbox.sheet.action.move", comment: "Primary action to move selection to an existing folder")
+            return preparedMoveConfirmation == nil
+                ? NSLocalizedString("mailbox.sheet.action.review_move",
+                                    comment: "Primary action to prepare an exact mailbox move disclosure")
+                : NSLocalizedString("mailbox.sheet.action.confirm_move",
+                                    comment: "Primary action to confirm an exact mailbox move disclosure")
         case .create:
             return NSLocalizedString("mailbox.sheet.action.create_and_move", comment: "Primary action to create folder and move selection")
         }
@@ -1303,8 +1321,32 @@ private struct MailboxFolderMoveSheet: View {
         switch mode {
         case .existing:
             guard let selectedExistingPath else { return }
-            viewModel.moveSelectionToMailboxFolder(path: selectedExistingPath, in: selectedAccount)
-            dismiss()
+            if let preparedMoveConfirmation {
+                Task {
+                    let didComplete = await viewModel.moveSelectionToMailboxFolder(
+                        confirmation: preparedMoveConfirmation
+                    )
+                    if didComplete {
+                        dismiss()
+                    } else {
+                        self.preparedMoveConfirmation = nil
+                    }
+                }
+            } else {
+                isPreparingMoveConfirmation = true
+                moveReviewError = nil
+                Task {
+                    do {
+                        preparedMoveConfirmation = try await viewModel.prepareMailboxMoveConfirmation(
+                            path: selectedExistingPath,
+                            in: selectedAccount
+                        )
+                    } catch {
+                        moveReviewError = error.localizedDescription
+                    }
+                    isPreparingMoveConfirmation = false
+                }
+            }
         case .create:
             viewModel.createMailboxFolderAndMoveSelection(name: trimmedNewFolderName,
                                                           in: selectedAccount,
@@ -1327,7 +1369,7 @@ private struct MailboxFolderMoveSheet: View {
                     .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if viewModel.isMailboxActionRunning {
+                if viewModel.isMailboxActionRunning || isPreparingMoveConfirmation {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -1454,6 +1496,16 @@ private struct MailboxFolderMoveSheet: View {
                     .stroke(cardStrokeColor)
             )
 
+            if let preparedMoveConfirmation {
+                mailboxMoveDisclosure(preparedMoveConfirmation)
+            }
+
+            if let moveReviewError {
+                Text(moveReviewError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
             if let status = viewModel.mailboxActionStatusMessage {
                 Text(status)
                     .font(.caption)
@@ -1501,7 +1553,74 @@ private struct MailboxFolderMoveSheet: View {
             selectedExistingPath = folderChoices.first(where: { Self.isInboxPath($0.path) })?.path ?? folderChoices.first?.path
             selectedParentPath = nil
             folderSearchQuery = ""
+            resetPreparedMoveConfirmation()
         }
+        .onChange(of: selectedExistingPath) { _, _ in
+            resetPreparedMoveConfirmation()
+        }
+        .onChange(of: viewModel.selectedNodeIDs) { _, _ in
+            resetPreparedMoveConfirmation()
+        }
+    }
+
+    private func resetPreparedMoveConfirmation() {
+        preparedMoveConfirmation = nil
+        moveReviewError = nil
+    }
+
+    @ViewBuilder
+    private func mailboxMoveDisclosure(_ confirmation: MailboxMoveConfirmation) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label(NSLocalizedString("organization.effect.review.title",
+                                    comment: "Exact Apple Mail effect review heading"),
+                  systemImage: "exclamationmark.shield")
+                .font(.headline)
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("organization.effect.message_count",
+                                  comment: "Affected Apple Mail message count"),
+                confirmation.messageCount
+            ))
+            .font(.caption)
+            if confirmation.sourceRouteGroups.isEmpty {
+                Text(NSLocalizedString("organization.effect.no_mail_move",
+                                       comment: "No Apple Mail message needs to move"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(NSLocalizedString("organization.effect.source_routes",
+                                       comment: "Exact source routes heading"))
+                    .font(.caption.bold())
+                ForEach(confirmation.sourceRouteGroups) { route in
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("organization.effect.source_route",
+                                          comment: "Exact source account, mailbox, and count"),
+                        route.account,
+                        route.mailboxPath,
+                        route.messageCount
+                    ))
+                    .font(.caption)
+                    .textSelection(.enabled)
+                }
+            }
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("organization.effect.destination",
+                                  comment: "Exact Mail destination"),
+                confirmation.account,
+                confirmation.destinationPath
+            ))
+            .font(.caption)
+            Text(NSLocalizedString(confirmation.reversibility.localizationKey,
+                                   comment: "Mail effect reversibility disclosure"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.orange.opacity(0.1))
+        )
+        .accessibilityElement(children: .contain)
     }
 
 }

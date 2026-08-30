@@ -541,6 +541,116 @@ final class ThreadFolderMailboxTests: XCTestCase {
         XCTAssertNil(viewModel.bottomBarMailboxActionStatusMessage)
     }
 
+    func testPrepareMailboxMoveConfirmation_disclosesExactMultiMailboxEffect() async throws {
+        let suiteName = "ThreadFolderMailboxDisclosure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(
+            settings: AutoRefreshSettings(userDefaults: defaults),
+            store: store,
+            performsInitialSourceRefresh: false
+        )
+        let now = Date()
+        let rootMessage = EmailMessage(messageID: "message-inbox",
+                                       mailboxID: "Inbox",
+                                       accountName: "Work",
+                                       subject: "Exact disclosure",
+                                       from: "a@example.com",
+                                       to: "me@example.com",
+                                       date: now,
+                                       snippet: "",
+                                       isUnread: false,
+                                       inReplyTo: nil,
+                                       references: [],
+                                       threadID: "thread-exact")
+        let archiveMessage = EmailMessage(messageID: "message-archive",
+                                          mailboxID: "Archive",
+                                          accountName: "Work",
+                                          subject: "Re: Exact disclosure",
+                                          from: "b@example.com",
+                                          to: "me@example.com",
+                                          date: now.addingTimeInterval(60),
+                                          snippet: "",
+                                          isUnread: false,
+                                          inReplyTo: "message-inbox",
+                                          references: ["message-inbox"],
+                                          threadID: "thread-exact")
+        try await store.upsert(messages: [rootMessage, archiveMessage])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: rootMessage)])
+        viewModel.selectNode(id: rootMessage.messageID)
+
+        let confirmation = try await viewModel.prepareMailboxMoveConfirmation(
+            path: "Projects/Filed",
+            in: "Work"
+        )
+
+        XCTAssertEqual(confirmation.messageCount, 2)
+        XCTAssertEqual(confirmation.sourceRouteGroups, [
+            OrganizationMailRouteGroup(account: "Work", mailboxPath: "Archive", messageCount: 1),
+            OrganizationMailRouteGroup(account: "Work", mailboxPath: "Inbox", messageCount: 1)
+        ])
+        XCTAssertEqual(confirmation.effect?.destination,
+                       .mailbox(account: "Work", path: "Projects/Filed"))
+        XCTAssertEqual(confirmation.reversibility, .conditionallyReversible)
+        XCTAssertTrue(confirmation.effect?.hasCompleteMailDisclosure == true)
+    }
+
+    func testMoveSelectionToMailboxFolder_revalidatesChangedSourceRouteBeforeMailService() async throws {
+        let suiteName = "ThreadFolderMailboxStaleDisclosure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let mailService = ThreadFolderMailboxMailServiceSpy()
+        let viewModel = ThreadCanvasViewModel(
+            settings: AutoRefreshSettings(userDefaults: defaults),
+            store: store,
+            organizationMailService: mailService,
+            performsInitialSourceRefresh: false
+        )
+        let original = EmailMessage(messageID: "message-stale",
+                                    mailboxID: "Inbox",
+                                    accountName: "Work",
+                                    subject: "Stale disclosure",
+                                    from: "a@example.com",
+                                    to: "me@example.com",
+                                    date: Date(),
+                                    snippet: "",
+                                    isUnread: false,
+                                    inReplyTo: nil,
+                                    references: [],
+                                    threadID: "thread-stale")
+        try await store.upsert(messages: [original])
+        viewModel.applyRethreadResultForTesting(roots: [ThreadNode(message: original)])
+        viewModel.selectNode(id: original.messageID)
+        let confirmation = try await viewModel.prepareMailboxMoveConfirmation(path: "Filed",
+                                                                               in: "Work")
+        let movedExternally = EmailMessage(messageID: original.messageID,
+                                           mailboxID: "Archive",
+                                           accountName: original.accountName,
+                                           subject: original.subject,
+                                           from: original.from,
+                                           to: original.to,
+                                           date: original.date,
+                                           snippet: original.snippet,
+                                           isUnread: original.isUnread,
+                                           inReplyTo: original.inReplyTo,
+                                           references: original.references,
+                                           threadID: original.threadID)
+        try await store.upsert(messages: [movedExternally])
+
+        let didComplete = await viewModel.moveSelectionToMailboxFolder(confirmation: confirmation)
+        let moveCallCount = await mailService.moveCallCount()
+
+        XCTAssertFalse(didComplete)
+        XCTAssertEqual(moveCallCount, 0)
+        XCTAssertEqual(viewModel.mailboxActionStatusMessage,
+                       String.localizedStringWithFormat(
+                        NSLocalizedString("mailbox.action.move.failed", comment: ""),
+                        NSLocalizedString("mailbox.action.error.stale_confirmation", comment: "")
+                       ))
+    }
+
     func testBottomBarMailboxStatus_expiresAfterFiveMinutes() {
         let viewModel = ThreadCanvasViewModel(settings: AutoRefreshSettings())
         let now = Date()
@@ -569,4 +679,29 @@ final class ThreadFolderMailboxTests: XCTestCase {
 
         XCTAssertNil(viewModel.bottomBarMailboxActionStatusMessage)
     }
+}
+
+private actor ThreadFolderMailboxMailServiceSpy: OrganizationMailExecutionServicing {
+    private var moves = 0
+
+    func move(_ request: OrganizationMailMoveExecution) async throws -> OrganizationMailGatewayOutcome {
+        moves += 1
+        throw ThreadFolderMailboxMailServiceSpyError.unexpectedCall
+    }
+
+    func restore(_ request: OrganizationMailRestoreExecution) async throws -> OrganizationMailGatewayOutcome {
+        throw ThreadFolderMailboxMailServiceSpyError.unexpectedCall
+    }
+
+    func createMailbox(_ request: OrganizationMailboxCreationExecution) async throws -> OrganizationMailGatewayOutcome {
+        throw ThreadFolderMailboxMailServiceSpyError.unexpectedCall
+    }
+
+    func moveCallCount() -> Int {
+        moves
+    }
+}
+
+private enum ThreadFolderMailboxMailServiceSpyError: Error {
+    case unexpectedCall
 }

@@ -6,6 +6,7 @@ internal struct GraphToolbar: View {
     internal let textScale: CGFloat
     internal let selectedThreadID: String?
     internal let restoreHistoryEntries: [GraphCompostEntry]
+    internal let organizationHistoryItems: [OrganizationHistoryItem]
     internal let restoringHistoryEntryIDs: Set<String>
     internal let automationAttentionCount: Int
     internal let onRestoreHistoryEntry: (GraphCompostEntry) -> Void
@@ -36,6 +37,7 @@ internal struct GraphToolbar: View {
                                                   comment: "Help for archiving the selected graph thread"),
                               action: performArchive)
                 GraphRestoreHistoryControl(entries: restoreHistoryEntries,
+                                           historyItems: organizationHistoryItems,
                                            restoringEntryIDs: restoringHistoryEntryIDs,
                                            textScale: textScale,
                                            onRestore: onRestoreHistoryEntry,
@@ -50,6 +52,15 @@ internal struct GraphToolbar: View {
                               help: NSLocalizedString("graph.toolbar.automation.help",
                                                       comment: "Help for graph automation queue"),
                               action: onAutomation)
+                plainToggleButton(systemImage: "rectangle.dashed",
+                                  title: NSLocalizedString("graph.toolbar.lasso",
+                                                           comment: "Graph area selection mode"),
+                                  accessibilityID: AccessibilityID.graphToolbarLasso,
+                                  isOn: viewModel.isLassoSelectionActive,
+                                  isDisabled: viewModel.isArchiveDisabledForSnip,
+                                  help: NSLocalizedString("graph.toolbar.lasso.help",
+                                                          comment: "Help for graph area selection mode"),
+                                  action: viewModel.toggleLassoSelection)
             }
             .controlSize(.small)
 
@@ -185,5 +196,34 @@ internal struct GraphToolbar: View {
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityID)
         .help(title)
+    }
+
+    private func plainToggleButton(systemImage: String,
+                                   title: String,
+                                   accessibilityID: String,
+                                   isOn: Bool,
+                                   isDisabled: Bool,
+                                   help: String,
+                                   action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+                .foregroundStyle(isOn ? Color.white : DesignTokens.Graph.AppTheme.inkSecondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isOn ? DesignTokens.Graph.AppTheme.accent : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focusEffectDisabled()
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .accessibilityIdentifier(accessibilityID)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
+        .help(help)
     }
 }

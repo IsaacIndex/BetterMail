@@ -201,14 +201,14 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         let stopPhrases = stopPhrasesProvider()
 
         let mailboxLabel = regenerationMailbox ?? "all-mailboxes"
-        logger.info("RegenAI start: mailbox=\(mailboxLabel, privacy: .public) rangeStart=\(orderedRange.start, privacy: .private) rangeEnd=\(orderedRange.end, privacy: .private) snippetLimit=\(snippetLimit, privacy: .public) stopPhrases=\(stopPhrases.count, privacy: .public)")
+        logger.info("RegenAI start: mailbox=\(mailboxLabel, privacy: .private) rangeStart=\(orderedRange.start, privacy: .private) rangeEnd=\(orderedRange.end, privacy: .private) snippetLimit=\(snippetLimit, privacy: .public) stopPhrases=\(stopPhrases.count, privacy: .public)")
 
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let total = try await regenerationService.countMessages(in: orderedRange, mailbox: regenerationMailbox)
                 try Task.checkCancellation()
-                logger.info("RegenAI count: total=\(total, privacy: .public) mailbox=\(mailboxLabel, privacy: .public)")
+                logger.info("RegenAI count: total=\(total, privacy: .public) mailbox=\(mailboxLabel, privacy: .private)")
                 await handleCountResult(total)
                 guard total > 0 else { return }
 
@@ -265,7 +265,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                     self.currentAction = nil
                     self.runTask = nil
                 }
-                logger.error("RegenAI failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("RegenAI failed: \(error.localizedDescription, privacy: .private)")
             }
         }
     }

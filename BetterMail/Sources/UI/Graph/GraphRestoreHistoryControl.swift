@@ -2,6 +2,7 @@ import SwiftUI
 
 internal struct GraphRestoreHistoryControl: View {
     internal let entries: [GraphCompostEntry]
+    internal let historyItems: [OrganizationHistoryItem]
     internal let restoringEntryIDs: Set<String>
     internal let textScale: CGFloat
     internal let onRestore: (GraphCompostEntry) -> Void
@@ -44,7 +45,7 @@ internal struct GraphRestoreHistoryControl: View {
                 "graph.restore_history.accessibility.count",
                 comment: "Restore History item count"
             ),
-            entries.count
+            displayedHistoryItems.count
         ))
         .accessibilityIdentifier(AccessibilityID.graphRestoreHistoryControl)
         .help(NSLocalizedString(
@@ -95,8 +96,15 @@ internal struct GraphRestoreHistoryControl: View {
                 "graph.restore_history.toolbar",
                 comment: "Restore History toolbar title and count"
             ),
-            entries.count
+            displayedHistoryItems.count
         )
+    }
+
+    private var displayedHistoryItems: [OrganizationHistoryItem] {
+        guard historyItems.isEmpty, !entries.isEmpty else { return historyItems }
+        return OrganizationHistoryProjection.make(operations: [],
+                                                  legacyCompost: entries,
+                                                  legacyAutomation: [])
     }
 
     private var popoverContent: some View {
@@ -127,7 +135,7 @@ internal struct GraphRestoreHistoryControl: View {
 
             Divider()
 
-            if entries.isEmpty {
+            if displayedHistoryItems.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 22))
@@ -145,26 +153,20 @@ internal struct GraphRestoreHistoryControl: View {
                 .padding(.vertical, 32)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(GraphRestoreHistorySection.make(from: entries)) { section in
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(section.localizedTitle)
-                                    .font(DesignTokens.font(size: 10.5,
-                                                            weight: .semibold,
-                                                            textScale: textScale))
-                                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
-                                    .textCase(.uppercase)
-
-                                ForEach(section.entries) { entry in
-                                    GraphRestoreHistoryRow(
-                                        entry: entry,
-                                        isRestoring: restoringEntryIDs.contains(entry.id),
-                                        actionsDisabled: !restoringEntryIDs.isEmpty,
-                                        textScale: textScale,
-                                        onRestore: { onRestore(entry) },
-                                        onDismiss: { dismissalCandidate = entry }
-                                    )
-                                }
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(displayedHistoryItems) { item in
+                            if let entry = legacyEntry(for: item) {
+                                GraphRestoreHistoryRow(
+                                    entry: entry,
+                                    isRestoring: restoringEntryIDs.contains(entry.id),
+                                    actionsDisabled: !restoringEntryIDs.isEmpty,
+                                    textScale: textScale,
+                                    onRestore: { onRestore(entry) },
+                                    onDismiss: { dismissalCandidate = entry }
+                                )
+                            } else {
+                                OrganizationHistorySummaryRow(item: item,
+                                                              textScale: textScale)
                             }
                         }
                     }
@@ -176,6 +178,120 @@ internal struct GraphRestoreHistoryControl: View {
         .frame(width: 344)
         .background(DesignTokens.Graph.AppTheme.panel)
         .accessibilityIdentifier(AccessibilityID.graphRestoreHistoryPopover)
+    }
+
+    private func legacyEntry(for item: OrganizationHistoryItem) -> GraphCompostEntry? {
+        guard item.source == .legacyGraphArchive || item.source == .legacySnip else {
+            return nil
+        }
+        let prefix = "legacy-compost:"
+        guard item.id.hasPrefix(prefix) else { return nil }
+        return entries.first { $0.id == String(item.id.dropFirst(prefix.count)) }
+    }
+}
+
+private struct OrganizationHistorySummaryRow: View {
+    let item: OrganizationHistoryItem
+    let textScale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
+                Text(NSLocalizedString(item.titleLocalizationKey,
+                                       comment: "Organization History operation title"))
+                    .font(DesignTokens.font(size: 12,
+                                            weight: .semibold,
+                                            textScale: textScale))
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                Spacer(minLength: 8)
+                Text(item.updatedAt,
+                     format: .dateTime.month(.abbreviated).day().hour().minute())
+                    .font(DesignTokens.font(size: 9.5,
+                                            weight: .regular,
+                                            textScale: textScale))
+                    .monospacedDigit()
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+            }
+
+            HStack(spacing: 10) {
+                Label(localizedStatus, systemImage: statusIcon)
+                    .foregroundStyle(statusColor)
+                Text(localizedEffect)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+                Spacer(minLength: 0)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("organizer.history.affected_count",
+                                      comment: "Organization History affected item count"),
+                    item.affectedCount
+                ))
+                .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+            }
+            .font(DesignTokens.font(size: 10.5,
+                                    weight: .medium,
+                                    textScale: textScale))
+
+            if item.needsRecovery {
+                Label(NSLocalizedString("organizer.history.recovery.detail",
+                                        comment: "Organization History recovery detail"),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(DesignTokens.font(size: 10.5,
+                                            weight: .medium,
+                                            textScale: textScale))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panelSecondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var localizedStatus: String {
+        NSLocalizedString("organizer.history.status.\(item.status.rawValue)",
+                          comment: "Organization History status")
+    }
+
+    private var localizedEffect: String {
+        NSLocalizedString("organizer.history.effect.\(item.effect.rawValue)",
+                          comment: "Organization History effect")
+    }
+
+    private var accessibilityIdentifier: String {
+        let token = OrganizationOpaqueFingerprint.digest(namespace: "history-accessibility",
+                                                         rawValue: item.id)
+        return "bettermail.organizer.history.\(token.prefix(24))"
+    }
+
+    private var statusIcon: String {
+        switch item.status {
+        case .prepared: "clock"
+        case .applying: "hourglass"
+        case .completed: "checkmark.circle.fill"
+        case .partial: "circle.lefthalf.filled"
+        case .recovery: "exclamationmark.triangle.fill"
+        case .undone: "arrow.uturn.backward.circle.fill"
+        case .rejected: "xmark.circle"
+        case .stale: "clock.badge.exclamationmark"
+        }
+    }
+
+    private var statusColor: Color {
+        switch item.status {
+        case .completed: .green
+        case .partial, .recovery: .orange
+        case .applying, .prepared: DesignTokens.Graph.AppTheme.accent
+        case .undone, .rejected, .stale: DesignTokens.Graph.AppTheme.inkTertiary
+        }
     }
 }
 

@@ -74,14 +74,14 @@ internal struct ObsidianGraphPhysicsNode: Identifiable, Equatable {
 }
 
 /// A native, deterministic force simulation tailored to BetterMail's graph
-/// projection. Every node, including the initially centered `You` node, remains
-/// freely movable to match Obsidian's single-node drag behavior.
+/// projection. Conversation and Group nodes remain freely movable, while the
+/// `You` root stays pinned to the scene midpoint as the graph's spatial anchor.
 internal struct ObsidianGraphForceSimulator {
     internal private(set) var nodesByID: [String: ObsidianGraphPhysicsNode] = [:]
     internal private(set) var edges: [GraphEdge] = []
     internal private(set) var size: CGSize = .zero
 
-    private var draggedNodeID: String?
+    private var draggedNodeIDs: Set<String> = []
     private var stationaryNodeIDsDuringDrag: Set<String> = []
     private static let interGroupRepelMultiplier: CGFloat = 3.2
     private static let interGroupRepelRangeMultiplier: CGFloat = 1.45
@@ -110,13 +110,13 @@ internal struct ObsidianGraphForceSimulator {
         nodesByID = Dictionary(uniqueKeysWithValues: nodeDescriptors.enumerated().map { index, descriptor in
             let retainedPosition = positions[descriptor.id] ?? previousNodes[descriptor.id]?.position
             let position: CGPoint
-            if let retainedPosition {
+            if descriptor.kind == .center {
+                position = center
+            } else if let retainedPosition {
                 position = previousSize == .zero
                     ? retainedPosition
                     : CGPoint(x: retainedPosition.x + centerShift.dx,
                               y: retainedPosition.y + centerShift.dy)
-            } else if descriptor.kind == .center {
-                position = center
             } else {
                 let chronologyRank = descriptor.threadID.flatMap { chronologyRankByThreadID[$0] } ?? 0
                 position = Self.initialPosition(for: descriptor.id,
@@ -126,7 +126,9 @@ internal struct ObsidianGraphForceSimulator {
                                                 center: center,
                                                 linkDistance: config.linkDistance)
             }
-            let previousVelocity = previousNodes[descriptor.id]?.velocity ?? .zero
+            let previousVelocity = descriptor.kind == .center
+                ? CGVector.zero
+                : previousNodes[descriptor.id]?.velocity ?? .zero
             return (descriptor.id,
                     ObsidianGraphPhysicsNode(id: descriptor.id,
                                              kind: descriptor.kind,
@@ -136,11 +138,11 @@ internal struct ObsidianGraphForceSimulator {
                                              chronologyRank: descriptor.threadID.flatMap { chronologyRankByThreadID[$0] },
                                              position: position,
                                              velocity: previousVelocity,
-                                             isPinned: false))
+                                             isPinned: descriptor.kind == .center))
         })
         edges = data.edges.filter { nodesByID[$0.sourceID] != nil && nodesByID[$0.targetID] != nil }
         size = nextSize
-        draggedNodeID = nil
+        draggedNodeIDs = []
         stationaryNodeIDsDuringDrag = []
     }
 
@@ -161,38 +163,82 @@ internal struct ObsidianGraphForceSimulator {
 
     internal mutating func beginDragging(nodeID: String,
                                          keepingStationary stationaryNodeIDs: Set<String> = []) {
-        guard nodesByID[nodeID] != nil else { return }
-        releaseStationaryNodesAfterDrag()
-        draggedNodeID = nodeID
+        beginDragging(nodeIDs: [nodeID], keepingStationary: stationaryNodeIDs)
+    }
+
+    /// Pins a drag cohort as one unit while keeping eligible drop targets
+    /// stationary. Missing and duplicate IDs are ignored, and an empty cohort
+    /// leaves the simulator unchanged.
+    internal mutating func beginDragging(nodeIDs: Set<String>,
+                                         keepingStationary stationaryNodeIDs: Set<String> = []) {
+        let validNodeIDs = nodeIDs
+            .intersection(Set(nodesByID.keys))
+            .subtracting([GraphCenter.you.id])
+        guard !validNodeIDs.isEmpty else { return }
+        cancelDragging()
+        draggedNodeIDs = validNodeIDs
         stationaryNodeIDsDuringDrag = stationaryNodeIDs
             .intersection(Set(nodesByID.keys))
-            .subtracting([nodeID])
+            .subtracting(validNodeIDs)
         for stationaryNodeID in stationaryNodeIDsDuringDrag {
             nodesByID[stationaryNodeID]?.isPinned = true
             nodesByID[stationaryNodeID]?.velocity = .zero
         }
-        nodesByID[nodeID]?.isPinned = true
-        nodesByID[nodeID]?.velocity = .zero
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = true
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
     }
 
     internal mutating func drag(nodeID: String, to position: CGPoint) {
-        guard draggedNodeID == nodeID else { return }
-        nodesByID[nodeID]?.position = position
-        nodesByID[nodeID]?.velocity = .zero
+        drag(nodePositions: [nodeID: position])
+    }
+
+    /// Applies world-space positions only to nodes in the active drag cohort.
+    /// Callers normally calculate these positions from one shared translation
+    /// so the relative layout remains stable.
+    internal mutating func drag(nodePositions: [String: CGPoint]) {
+        guard !draggedNodeIDs.isEmpty else { return }
+        for draggedNodeID in draggedNodeIDs {
+            guard let position = nodePositions[draggedNodeID] else { continue }
+            nodesByID[draggedNodeID]?.position = position
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
     }
 
     internal mutating func endDragging(nodeID: String, at position: CGPoint) {
-        guard draggedNodeID == nodeID else { return }
-        nodesByID[nodeID]?.position = position
-        nodesByID[nodeID]?.velocity = .zero
-        nodesByID[nodeID]?.isPinned = false
-        draggedNodeID = nil
+        guard draggedNodeIDs.contains(nodeID) else { return }
+        endDragging(nodePositions: [nodeID: position])
+    }
+
+    /// Commits the final world-space positions and releases every temporary
+    /// drag/stationary pin. Positions omitted from the dictionary keep their
+    /// most recently dragged value.
+    internal mutating func endDragging(nodePositions: [String: CGPoint]) {
+        guard !draggedNodeIDs.isEmpty else { return }
+        drag(nodePositions: nodePositions)
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = draggedNodeID == GraphCenter.you.id
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
+        draggedNodeIDs = []
+        releaseStationaryNodesAfterDrag()
+    }
+
+    /// Releases temporary pins without moving nodes. This is the cancellation
+    /// path used by Escape, teardown, and a replacement drag gesture.
+    internal mutating func cancelDragging() {
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = draggedNodeID == GraphCenter.you.id
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
+        draggedNodeIDs = []
         releaseStationaryNodesAfterDrag()
     }
 
     private mutating func releaseStationaryNodesAfterDrag() {
         for stationaryNodeID in stationaryNodeIDsDuringDrag {
-            nodesByID[stationaryNodeID]?.isPinned = false
+            nodesByID[stationaryNodeID]?.isPinned = stationaryNodeID == GraphCenter.you.id
             nodesByID[stationaryNodeID]?.velocity = .zero
         }
         stationaryNodeIDsDuringDrag = []
@@ -287,7 +333,8 @@ internal struct ObsidianGraphForceSimulator {
         if let graphCenter = nodesByID[GraphCenter.you.id] {
             for id in ids {
                 guard let node = nodesByID[id],
-                      node.kind == .thread,
+                      node.kind == .thread
+                        || (node.kind == .message && config.linkStrength > 0),
                       let chronologyRank = node.chronologyRank else { continue }
                 var dx = node.position.x - graphCenter.position.x
                 var dy = node.position.y - graphCenter.position.y

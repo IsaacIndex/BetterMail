@@ -500,6 +500,18 @@ final class GraphMappingTests: XCTestCase {
     }
 }
 
+@MainActor
+private extension GraphCanvasViewModel {
+    func confirmSnipBatchAfterCapturingDisclosure(
+        request: GraphSnipBatchRequest
+    ) async -> GraphSnipBatchResult? {
+        guard let disclosure = currentSnipBatchDisclosure(for: request) else {
+            return nil
+        }
+        return await confirmSnipBatch(request: request, disclosedEffects: disclosure)
+    }
+}
+
 final class GraphSuggestionDismissalSettingsTests: XCTestCase {
     @MainActor
     func test_dismissSuggestedTopic_whenSettingsAreRecreated_persistsDismissal() throws {
@@ -905,6 +917,156 @@ final class GraphSuggestionReviewViewModelTests: XCTestCase {
                        "A parent with a child folder must remain even when its direct membership empties")
         XCTAssertTrue(try XCTUnwrap(impactByID[emptiedChild.id]).willBeRemoved)
         XCTAssertFalse(try XCTUnwrap(impactByID[partiallyMovedLeaf.id]).willBeRemoved)
+    }
+
+    @MainActor
+    func test_confirmGraphFolderSuggestion_unrelatedEmptyFolder_preservesFolder() async throws {
+        let suiteName = "GraphFolderSuggestionConfirmationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let threadViewModel = ThreadCanvasViewModel(
+            settings: AutoRefreshSettings(),
+            inspectorSettings: InspectorViewSettings(),
+            store: store,
+            summaryCapability: EmailSummaryCapability(provider: nil,
+                                                      statusMessage: "Unavailable",
+                                                      providerID: "test-none"),
+            tagCapability: EmailTagCapability(provider: nil,
+                                              statusMessage: "Unavailable",
+                                              providerID: "test-none")
+        )
+        let unrelatedEmpty = ThreadFolder(id: "folder-empty",
+                                          title: "Empty destination",
+                                          color: .defaultNewFolder,
+                                          threadIDs: [],
+                                          parentID: nil)
+        let emptiedByMove = ThreadFolder(id: "folder-emptied",
+                                         title: "Moved source",
+                                         color: .defaultNewFolder,
+                                         threadIDs: ["root-a"],
+                                         parentID: nil)
+        let partiallyMoved = ThreadFolder(id: "folder-partial",
+                                          title: "Partial source",
+                                          color: .defaultNewFolder,
+                                          threadIDs: ["root-b", "root-c"],
+                                          parentID: nil)
+        let initialFolders = [unrelatedEmpty, emptiedByMove, partiallyMoved]
+        try await store.upsertThreadFolders(initialFolders)
+        threadViewModel.applyRethreadResultForTesting(
+            roots: [],
+            folders: initialFolders
+        )
+
+        let newFolderID = try await threadViewModel.confirmGraphFolderSuggestion(
+            title: "Reviewed Group",
+            threadIDs: ["root-a", "root-b"]
+        )
+
+        let folders = try await store.fetchThreadFolders()
+        let folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        XCTAssertNotNil(folderByID[unrelatedEmpty.id])
+        XCTAssertNil(folderByID[emptiedByMove.id])
+        XCTAssertEqual(folderByID[partiallyMoved.id]?.threadIDs, ["root-c"])
+        XCTAssertEqual(folderByID[newFolderID]?.threadIDs, ["root-a", "root-b"])
+    }
+
+    @MainActor
+    func test_confirmGraphFolderSuggestion_trimmedNestedMembership_preservesUnrelatedChild() async throws {
+        let suiteName = "GraphNestedSuggestionConfirmationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let threadViewModel = ThreadCanvasViewModel(
+            settings: AutoRefreshSettings(),
+            inspectorSettings: InspectorViewSettings(),
+            store: store,
+            summaryCapability: EmailSummaryCapability(provider: nil,
+                                                      statusMessage: "Unavailable",
+                                                      providerID: "test-none"),
+            tagCapability: EmailTagCapability(provider: nil,
+                                              statusMessage: "Unavailable",
+                                              providerID: "test-none")
+        )
+        let parent = ThreadFolder(id: "folder-parent",
+                                  title: "Parent",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["  root-a\n"],
+                                  parentID: nil)
+        let emptiedChild = ThreadFolder(id: "folder-child-moved",
+                                        title: "Moved child",
+                                        color: .defaultNewFolder,
+                                        threadIDs: ["\troot-b "],
+                                        parentID: parent.id)
+        let unrelatedEmptyChild = ThreadFolder(id: "folder-child-empty",
+                                               title: "Empty child",
+                                               color: .defaultNewFolder,
+                                               threadIDs: [],
+                                               parentID: parent.id)
+        let initialFolders = [parent, emptiedChild, unrelatedEmptyChild]
+        try await store.upsertThreadFolders(initialFolders)
+        threadViewModel.applyRethreadResultForTesting(
+            roots: [],
+            folders: initialFolders
+        )
+
+        let newFolderID = try await threadViewModel.confirmGraphFolderSuggestion(
+            title: "Reviewed Nested Group",
+            threadIDs: ["root-a", "root-b"]
+        )
+
+        let folders = try await store.fetchThreadFolders()
+        let folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        XCTAssertEqual(folderByID[parent.id]?.threadIDs, [])
+        XCTAssertNil(folderByID[emptiedChild.id])
+        XCTAssertEqual(folderByID[unrelatedEmptyChild.id]?.parentID, parent.id)
+        XCTAssertEqual(folderByID[newFolderID]?.threadIDs, ["root-a", "root-b"])
+    }
+}
+
+final class GraphRenderGenerationTests: XCTestCase {
+    @MainActor
+    func test_filterGenerationInvalidatesQueuedReceiptWhenSearchChanges() {
+        let suiteName = "GraphRenderGenerationTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let viewModel = GraphCanvasViewModel(
+            store: MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        )
+        let roots = [makeThread(rootID: "receipt-thread", messageCount: 1)]
+
+        viewModel.update(roots: roots,
+                         searchQuery: OrganizerMetricsRecorder.frozenRetrievalQuery,
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:])
+        let frozenGeneration = viewModel.organizerRenderFilterGeneration
+        let queuedReceipt = viewModel.renderedOrganizerReceipt(
+            for: OrganizerRenderedGraphSnapshot(
+                confirmedMemberCountsByGroupID: [:],
+                filteredAccessibleConversationRawThreadIDs: [
+                    OrganizerMetricsRecorder.frozenRetrievalRawThreadID
+                ]
+            ),
+            filterGeneration: frozenGeneration
+        )
+        XCTAssertTrue(queuedReceipt.matchesFilterGeneration(frozenGeneration))
+
+        viewModel.update(roots: roots,
+                         searchQuery: "  \(OrganizerMetricsRecorder.frozenRetrievalQuery.uppercased())  ",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:])
+        XCTAssertEqual(viewModel.organizerRenderFilterGeneration, frozenGeneration,
+                       "Equivalent normalized filters share one render generation")
+
+        viewModel.update(roots: roots,
+                         searchQuery: "different synthetic query",
+                         tagsByNodeID: [:],
+                         summariesByNodeID: [:])
+
+        XCTAssertGreaterThan(viewModel.organizerRenderFilterGeneration, frozenGeneration)
+        XCTAssertFalse(queuedReceipt.matchesFilterGeneration(
+            viewModel.organizerRenderFilterGeneration
+        ))
     }
 }
 
@@ -2015,7 +2177,7 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
         XCTAssertEqual(migrated.linkDistance, ObsidianGraphForceConfig.defaults.linkDistance)
     }
 
-    func test_reset_centersMovableYouNodeAndCreatesFiniteDeterministicLayout() {
+    func test_reset_centersAndPinsYouNodeAndCreatesFiniteDeterministicLayout() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root-a", messageCount: 3),
                                            makeThread(rootID: "root-b", messageCount: 2)],
                                    now: Date(timeIntervalSince1970: 10_000))
@@ -2028,7 +2190,7 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
 
         assertPointsEqual(first.nodesByID[GraphCenter.you.id]?.position,
                           CGPoint(x: 400, y: 260))
-        XCTAssertFalse(first.nodesByID[GraphCenter.you.id]?.isPinned ?? true)
+        XCTAssertTrue(first.nodesByID[GraphCenter.you.id]?.isPinned ?? false)
         XCTAssertEqual(first.positionsByID(), second.positionsByID())
         XCTAssertTrue(first.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
     }
@@ -2261,13 +2423,14 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
         XCTAssertFalse(simulator.nodesByID[draggedNodeID]?.isPinned ?? true)
     }
 
-    func test_drag_youNode_movesAndReleasesLikeAnyOtherNode() throws {
+    func test_drag_youNode_remainsPinnedAtSceneMidpoint() throws {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
                                    now: Date(timeIntervalSince1970: 10_000))
         let youID = GraphCenter.you.id
         let threadID = GraphData.threadNodeID(for: "root")
         var simulator = ObsidianGraphForceSimulator()
         simulator.reset(data: graph, size: CGSize(width: 700, height: 480))
+        let center = CGPoint(x: 350, y: 240)
         let threadStart = try XCTUnwrap(simulator.nodesByID[threadID]?.position)
         let target = CGPoint(x: 190, y: 150)
         let config = ObsidianGraphForceConfig(centerStrength: 0,
@@ -2284,23 +2447,34 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
             simulator.step(deltaTime: 1.0 / 60.0, reduceMotion: false, config: config)
         }
 
-        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
+        assertPointsEqual(simulator.nodesByID[youID]?.position, center)
         XCTAssertGreaterThan(pointDistance(threadStart,
                                            simulator.nodesByID[threadID]?.position),
                              0.001)
 
         simulator.endDragging(nodeID: youID, at: target)
 
-        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
-        XCTAssertFalse(simulator.nodesByID[youID]?.isPinned ?? true)
+        assertPointsEqual(simulator.nodesByID[youID]?.position, center)
+        XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
 
         simulator.reset(data: graph,
                         size: CGSize(width: 700, height: 480),
-                        preserving: simulator.positionsByID(),
+                        preserving: simulator.positionsByID().merging([youID: target]) { _, replacement in
+                            replacement
+                        },
                         config: config)
 
-        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
-        XCTAssertFalse(simulator.nodesByID[youID]?.isPinned ?? true)
+        assertPointsEqual(simulator.nodesByID[youID]?.position, center)
+        XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
+
+        simulator.reset(data: graph,
+                        size: CGSize(width: 900, height: 600),
+                        preserving: [youID: target],
+                        config: config)
+
+        assertPointsEqual(simulator.nodesByID[youID]?.position,
+                          CGPoint(x: 450, y: 300))
+        XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
     }
 
     func test_reset_preservesExistingNodePositions() {
@@ -3106,6 +3280,48 @@ final class GraphTitleGenerationTests: XCTestCase {
 
 final class GraphTopicGenerationTests: XCTestCase {
     @MainActor
+    func test_update_freshTopicSignalsOverride_replacesStaleSuggestionImmediately() throws {
+        let suiteName = "GraphTopicOverrideTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let viewModel = GraphCanvasViewModel(
+            store: MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        )
+        let roots = [makeThread(rootID: "root-a", messageCount: 1),
+                     makeThread(rootID: "root-b", messageCount: 1)]
+
+        viewModel.update(
+            roots: roots,
+            searchQuery: "",
+            tagsByNodeID: [:],
+            summariesByNodeID: [:],
+            topicSignalsOverride: [
+                "root-a": makeTopicSignal("CR59 legacy rollout", confidence: 0.90),
+                "root-b": makeTopicSignal("CR59 legacy rollout", confidence: 0.88)
+            ]
+        )
+        XCTAssertEqual(viewModel.data.groupings.first(where: \.isSuggestion)?.normalizedTopic,
+                       "cr59 legacy rollout")
+
+        viewModel.update(
+            roots: roots,
+            searchQuery: "",
+            tagsByNodeID: [:],
+            summariesByNodeID: [:],
+            topicSignalsOverride: [
+                "root-a": makeTopicSignal("CR60 booking rollout", confidence: 0.92),
+                "root-b": makeTopicSignal("CR60 booking rollout", confidence: 0.90)
+            ]
+        )
+
+        XCTAssertEqual(viewModel.data.groupings.first(where: \.isSuggestion)?.normalizedTopic,
+                       "cr60 booking rollout")
+        XCTAssertFalse(viewModel.data.groupings.contains {
+            $0.normalizedTopic == "cr59 legacy rollout"
+        })
+    }
+
+    @MainActor
     func test_viewModel_generatesOneWholeConversationSignalPerThreadAndReusesCache() async throws {
         let suiteName = "GraphTopicGenerationTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -3231,6 +3447,63 @@ final class GraphTopicGenerationTests: XCTestCase {
 }
 
 final class ObsidianGraphSceneTests: XCTestCase {
+    private func attachToVisibleWindow(_ view: NSView) -> NSWindow {
+        let visibleFrame = NSScreen.main?.visibleFrame
+            ?? CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        let contentRect = CGRect(
+            x: visibleFrame.minX + 20,
+            y: visibleFrame.minY + 20,
+            width: min(800, visibleFrame.width - 40),
+            height: min(600, visibleFrame.height - 40)
+        )
+        let window = NSWindow(contentRect: contentRect,
+                              styleMask: [.borderless],
+                              backing: .buffered,
+                              defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderFrontRegardless()
+        view.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    func test_blankCanvasDoubleClick_publishesReplaceSelectionIntent() throws {
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "root", messageCount: 1)],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let blankPoint = CGPoint(x: 20, y: 20)
+        XCTAssertNil(scene.hitTestNodeID(at: blankPoint))
+
+        var callbackCount = 0
+        var receivedNodeID: String? = "not-called"
+        var receivedIntent: OrganizerPointerSelectionIntent?
+        scene.onSelectGraphNodeWithIntent = { nodeID, intent in
+            callbackCount += 1
+            receivedNodeID = nodeID
+            receivedIntent = intent
+        }
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: blankPoint,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 2,
+            pressure: 1
+        ))
+
+        scene.mouseDown(with: event)
+
+        XCTAssertEqual(callbackCount, 1)
+        XCTAssertNil(receivedNodeID)
+        XCTAssertEqual(receivedIntent, .replace)
+    }
+
     func test_remainingNodeActivation_invokesOwningParentExactlyOnce() throws {
         let groupedIDs = ["grouped-0", "grouped-1", "grouped-2"]
         let folder = ThreadFolder(id: "folder-paged",
@@ -3299,6 +3572,381 @@ final class ObsidianGraphSceneTests: XCTestCase {
         XCTAssertEqual(node.accessibilityLabel, remainder.accessibilityLabel)
         XCTAssertTrue(node.accessibilityPerformPress())
         XCTAssertEqual(expandedScopes, [.messages(threadID: threadID)])
+    }
+
+    func test_organizerAccessibilityNode_exposesButtonParentAndNonzeroScreenFrame() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "accessible-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "accessible-thread")
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+
+        configure(scene, data: graph)
+
+        let node = try XCTUnwrap(scene.children
+            .compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == threadID })
+        XCTAssertEqual(node.accessibilityRole, NSAccessibility.Role.button.rawValue)
+        XCTAssertEqual(node.accessibilityRoleDescription,
+                       NSAccessibility.Role.button.description(with: nil))
+        XCTAssertTrue(node.accessibilityParent === view)
+        XCTAssertGreaterThan(node.accessibilityFrame.width, 0)
+        XCTAssertGreaterThan(node.accessibilityFrame.height, 0)
+        XCTAssertTrue(node.hasOrganizerAccessibilityDescriptor)
+        XCTAssertFalse(node.isOrganizerAccessibilityVisible(in: view),
+                       "An unattached view must not satisfy installed readiness")
+    }
+
+    func test_graphSKView_exposesFrameBackedAccessibilityChildAndPressAction() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "frame-backed-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "frame-backed-thread")
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var activatedNodeID: String?
+        scene.onSelectGraphNodeWithIntent = { nodeID, _ in
+            activatedNodeID = nodeID
+        }
+
+        configure(scene, data: graph)
+
+        let element = try XCTUnwrap(view.graphAccessibilityElements.first)
+        XCTAssertTrue(element is any NSAccessibilityButton)
+        let nativeChildren = try XCTUnwrap(view.accessibilityChildren())
+        XCTAssertTrue(nativeChildren.contains { ($0 as? ObsidianGraphAccessibilityElement) === element })
+        XCTAssertTrue(element.accessibilityParent() as? GraphSKView === view)
+        XCTAssertGreaterThan(element.accessibilityFrameInParentSpace().width, 0)
+        XCTAssertGreaterThan(element.accessibilityFrameInParentSpace().height, 0)
+        XCTAssertGreaterThan(element.accessibilityFrame().width, 0)
+        XCTAssertGreaterThan(element.accessibilityFrame().height, 0)
+        XCTAssertEqual(
+            element.accessibilityFrame(),
+            NSAccessibility.screenRect(fromView: view,
+                                       rect: element.accessibilityFrameInParentSpace())
+        )
+        XCTAssertTrue(element.hasVisibleFrame(in: view))
+        XCTAssertTrue(element.accessibilityPerformPress())
+        XCTAssertEqual(activatedNodeID, threadID)
+
+        let sceneNode = try XCTUnwrap(scene.children
+            .compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == threadID })
+        XCTAssertFalse(sceneNode.isAccessibilityElement)
+    }
+
+    func test_confirmedGroupAccessibilityProxy_exposesScreenFrameAndMoveSelectionAction() throws {
+        let folder = ThreadFolder(id: "accessible-folder",
+                                  title: "Accessible Group",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: [
+                makeThread(rootID: "foldered-thread", messageCount: 1),
+                makeThread(rootID: "selected-a", messageCount: 1),
+                makeThread(rootID: "selected-b", messageCount: 1)
+            ],
+            folders: [folder],
+            folderMembershipByThreadID: ["foldered-thread": folder.id],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var moveCalls: [([String], String)] = []
+        scene.onMoveThreadsToFolder = { threadIDs, folderID in
+            moveCalls.append((threadIDs, folderID))
+        }
+
+        configure(
+            scene,
+            data: graph,
+            selectedGraphNodeIDs: [
+                GraphData.threadNodeID(for: "selected-a"),
+                GraphData.threadNodeID(for: "selected-b")
+            ]
+        )
+
+        let element = try XCTUnwrap(view.graphAccessibilityElements.first {
+            $0.accessibilityLabel() == folder.title
+        })
+        XCTAssertEqual(
+            element.accessibilityFrame(),
+            NSAccessibility.screenRect(fromView: view,
+                                       rect: element.accessibilityFrameInParentSpace())
+        )
+        let moveActionName = NSLocalizedString(
+            "accessibility.organizer.node.action.moveSelectionHere",
+            comment: "Organizer graph node accessibility action"
+        )
+        let moveAction = try XCTUnwrap(element.accessibilityCustomActions()?.first {
+            $0.name == moveActionName
+        })
+
+        XCTAssertTrue(moveAction.handler?() == true)
+        XCTAssertEqual(moveCalls.count, 1)
+        XCTAssertEqual(moveCalls.first?.0, ["selected-a", "selected-b"])
+        XCTAssertEqual(moveCalls.first?.1, folder.id)
+    }
+
+    func test_windowAttachmentRepublishesPreviouslyModelOnlySnapshotAsVisible() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "attach-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let thread = try XCTUnwrap(graph.threads.first)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var latestSnapshot: OrganizerRenderedGraphSnapshot?
+        scene.onRenderedOrganizerSnapshot = { latestSnapshot = $0 }
+        configure(scene, data: graph)
+        XCTAssertFalse(latestSnapshot?.accessibleConversationRawThreadIDs.contains(
+            thread.rawThreadID
+        ) ?? true)
+
+        let becameVisible = expectation(description: "window attachment republishes AX readiness")
+        var didFulfill = false
+        scene.onRenderedOrganizerSnapshot = { snapshot in
+            latestSnapshot = snapshot
+            if !didFulfill,
+               snapshot.accessibleConversationRawThreadIDs.contains(thread.rawThreadID) {
+                didFulfill = true
+                becameVisible.fulfill()
+            }
+        }
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+
+        wait(for: [becameVisible], timeout: 1)
+        XCTAssertTrue(latestSnapshot?.accessibleConversationRawThreadIDs.contains(
+            thread.rawThreadID
+        ) == true)
+    }
+
+    func test_sceneResizePublishesSnapshotAfterRefreshingNativeAccessibilityFrames() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "resize-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let thread = try XCTUnwrap(graph.threads.first)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        configure(scene, data: graph)
+        var callbackCount = 0
+        var lastSnapshot: OrganizerRenderedGraphSnapshot?
+        scene.onRenderedOrganizerSnapshot = { snapshot in
+            callbackCount += 1
+            lastSnapshot = snapshot
+        }
+
+        scene.size = CGSize(width: 900, height: 700)
+
+        XCTAssertGreaterThanOrEqual(callbackCount, 1)
+        XCTAssertTrue(lastSnapshot?.accessibleConversationRawThreadIDs.contains(
+            thread.rawThreadID
+        ) == true)
+        XCTAssertTrue(view.graphAccessibilityElements.allSatisfy {
+            $0.hasVisibleFrame(in: view)
+        })
+    }
+
+    func test_organizerAccessibilityNode_updatesScreenFrameWithViewport() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "viewport-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let threadID = GraphData.threadNodeID(for: "viewport-thread")
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        configure(scene, data: graph)
+
+        let node = try XCTUnwrap(scene.children
+            .compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == threadID })
+        let initialFrame = node.accessibilityFrame
+        let initialElement = try XCTUnwrap(view.graphAccessibilityElements.first)
+        let initialProxyFrame = initialElement.accessibilityFrame()
+
+        configure(scene,
+                  data: graph,
+                  zoomScale: 2,
+                  panOffset: CGPoint(x: 80, y: 40))
+        let transformedFrame = node.accessibilityFrame
+        let transformedElement = try XCTUnwrap(view.graphAccessibilityElements.first)
+        let transformedProxyFrame = transformedElement.accessibilityFrame()
+
+        XCTAssertNotEqual(transformedFrame, initialFrame)
+        XCTAssertGreaterThan(transformedFrame.width, initialFrame.width)
+        XCTAssertGreaterThan(transformedFrame.height, initialFrame.height)
+        XCTAssertTrue(initialElement === transformedElement)
+        XCTAssertNotEqual(transformedProxyFrame, initialProxyFrame)
+        XCTAssertGreaterThan(transformedProxyFrame.width, initialProxyFrame.width)
+        XCTAssertGreaterThan(transformedProxyFrame.height, initialProxyFrame.height)
+        XCTAssertEqual(
+            transformedProxyFrame,
+            NSAccessibility.screenRect(fromView: view,
+                                       rect: transformedElement.accessibilityFrameInParentSpace())
+        )
+    }
+
+    func test_organizerAccessibilityProxy_rederivesScreenFrameAfterWindowMove() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "window-move-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        configure(scene, data: graph)
+
+        let element = try XCTUnwrap(view.graphAccessibilityElements.first)
+        let initialFrame = element.accessibilityFrame()
+        let rawThreadID = try XCTUnwrap(graph.threads.first?.rawThreadID)
+        let movedReceipt = expectation(description: "window move republishes screen geometry")
+        var didFulfillMovedReceipt = false
+        scene.onRenderedOrganizerSnapshot = { snapshot in
+            guard !didFulfillMovedReceipt,
+                  let frame = snapshot.accessibleConversationFramesByRawThreadID[rawThreadID],
+                  frame.x > initialFrame.origin.x + 10 else { return }
+            didFulfillMovedReceipt = true
+            movedReceipt.fulfill()
+        }
+        window.setFrameOrigin(CGPoint(x: window.frame.minX + 12,
+                                      y: window.frame.minY + 9))
+        view.layoutSubtreeIfNeeded()
+        wait(for: [movedReceipt], timeout: 1)
+
+        XCTAssertEqual(element.accessibilityFrame().origin.x,
+                       initialFrame.origin.x + 12,
+                       accuracy: 0.5)
+        XCTAssertEqual(element.accessibilityFrame().origin.y,
+                       initialFrame.origin.y + 9,
+                       accuracy: 0.5)
+    }
+
+    func test_renderedOrganizerSnapshot_clipsPartiallyVisiblePointerFrame() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "clipped-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let rawThreadID = try XCTUnwrap(graph.threads.first?.rawThreadID)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var snapshot: OrganizerRenderedGraphSnapshot?
+        scene.onRenderedOrganizerSnapshot = { snapshot = $0 }
+        configure(scene, data: graph)
+
+        let element = try XCTUnwrap(view.graphAccessibilityElements.first)
+        let initialParentFrame = element.accessibilityFrameInParentSpace()
+        configure(scene,
+                  data: graph,
+                  zoomScale: 1,
+                  panOffset: CGPoint(x: initialParentFrame.midX - 2, y: 0))
+
+        let partialParentFrame = element.accessibilityFrameInParentSpace()
+        XCTAssertLessThan(partialParentFrame.minX, view.visibleRect.minX)
+        XCTAssertGreaterThan(partialParentFrame.maxX, view.visibleRect.minX)
+        let clippedParentFrame = partialParentFrame.intersection(view.visibleRect)
+        let expectedScreenFrame = NSAccessibility.screenRect(fromView: view,
+                                                               rect: clippedParentFrame)
+        let renderedFrame = try XCTUnwrap(
+            snapshot?.accessibleConversationFramesByRawThreadID[rawThreadID]
+        )
+        XCTAssertEqual(renderedFrame.x, expectedScreenFrame.origin.x, accuracy: 0.5)
+        XCTAssertEqual(renderedFrame.y, expectedScreenFrame.origin.y, accuracy: 0.5)
+        XCTAssertEqual(renderedFrame.width, expectedScreenFrame.width, accuracy: 0.5)
+        XCTAssertEqual(renderedFrame.height, expectedScreenFrame.height, accuracy: 0.5)
+        XCTAssertLessThan(renderedFrame.width, element.accessibilityFrame().width)
+    }
+
+    func test_layoutSettlementRepublishesFinalRenderedAccessibilityFrames() throws {
+        let graph = GraphData.make(
+            roots: [
+                makeThread(rootID: "settle-a", messageCount: 1),
+                makeThread(rootID: "settle-b", messageCount: 1)
+            ],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var snapshots: [OrganizerRenderedGraphSnapshot] = []
+        scene.onRenderedOrganizerSnapshot = { snapshots.append($0) }
+
+        configure(scene, data: graph, reduceMotion: true)
+        XCTAssertEqual(snapshots.last?.isLayoutSettled, false)
+        for frame in 1...60 {
+            scene.update(Double(frame) * 0.016)
+        }
+
+        let finalSnapshot = try XCTUnwrap(snapshots.last)
+        XCTAssertTrue(finalSnapshot.isLayoutSettled)
+        XCTAssertGreaterThanOrEqual(snapshots.count, 2)
+        XCTAssertEqual(
+            Set(finalSnapshot.accessibleConversationFramesByRawThreadID.keys),
+            Set(graph.threads.map(\.rawThreadID))
+        )
+    }
+
+    func test_renderedRetrievalSnapshot_requiresAccessibleConversationNodeNotReply() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "retrieval-thread", messageCount: 2)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let thread = try XCTUnwrap(graph.threads.first)
+        let message = try XCTUnwrap(graph.messages.first)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var snapshot: OrganizerRenderedGraphSnapshot?
+        scene.onRenderedOrganizerSnapshot = { snapshot = $0 }
+
+        configure(scene, data: graph, filteredNodeIDs: [message.id])
+        XCTAssertEqual(snapshot?.filteredAccessibleConversationCount, 0)
+        XCTAssertFalse(snapshot?.containsAccessibleConversation(rawThreadID: thread.rawThreadID) ?? true)
+
+        configure(scene, data: graph, filteredNodeIDs: [thread.id])
+        XCTAssertEqual(snapshot?.filteredAccessibleConversationCount, 1)
+        XCTAssertTrue(snapshot?.containsAccessibleConversation(rawThreadID: thread.rawThreadID) == true)
+    }
+
+    func test_renderedRetrievalSnapshot_excludesAccessibleThreadOutsideVisibleViewport() throws {
+        let graph = GraphData.make(roots: [makeThread(rootID: "offscreen-thread", messageCount: 1)],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let thread = try XCTUnwrap(graph.threads.first)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let window = attachToVisibleWindow(view)
+        defer { window.orderOut(nil) }
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        var snapshot: OrganizerRenderedGraphSnapshot?
+        scene.onRenderedOrganizerSnapshot = { snapshot = $0 }
+
+        configure(scene,
+                  data: graph,
+                  filteredNodeIDs: [thread.id],
+                  zoomScale: 1,
+                  panOffset: CGPoint(x: 20_000, y: 20_000))
+
+        let node = try XCTUnwrap(scene.children
+            .compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == thread.id })
+        let visibleScreenFrame = NSAccessibility.screenRect(fromView: view,
+                                                             rect: view.bounds)
+        XCTAssertFalse(node.isOrganizerAccessibilityVisible(in: view),
+                       "node=\(node.accessibilityFrame) visible=\(visibleScreenFrame)")
+        XCTAssertEqual(snapshot?.filteredAccessibleConversationCount, 0)
+        XCTAssertFalse(snapshot?.containsAccessibleConversation(rawThreadID: thread.rawThreadID) ?? true)
     }
 
     func test_hitTest_whenPointerIsOnLabel_selectsOnlyTheNodeShape() throws {
@@ -3412,6 +4060,89 @@ final class ObsidianGraphSceneTests: XCTestCase {
             ),
             [grouping.id]
         )
+    }
+
+    func test_railBatchDrop_overConfirmedGroupUsesOneDeduplicatedCommandCallback() throws {
+        let folder = ThreadFolder(id: "folder-planning",
+                                  title: "Planning",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: [
+                makeThread(rootID: "foldered-thread", messageCount: 1),
+                makeThread(rootID: "rail-a", messageCount: 1),
+                makeThread(rootID: "rail-b", messageCount: 1)
+            ],
+            folders: [folder],
+            folderMembershipByThreadID: ["foldered-thread": folder.id],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph)
+        let folderNode = try XCTUnwrap(
+            scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+                .first { $0.graphID == grouping.id }
+        )
+        var commandCalls: [([String], String)] = []
+        scene.onMoveThreadsToFolder = { threadIDs, folderID in
+            commandCalls.append((threadIDs, folderID))
+        }
+
+        let didMove = scene.performBatchFolderDrop(
+            at: folderNode.position,
+            rawThreadIDs: [" rail-b ", "rail-a", "rail-b"]
+        )
+
+        XCTAssertTrue(didMove)
+        XCTAssertEqual(commandCalls.count, 1)
+        XCTAssertEqual(commandCalls.first?.0, ["rail-a", "rail-b"])
+        XCTAssertEqual(commandCalls.first?.1, folder.id)
+    }
+
+    func test_confirmedGroupActionMenu_movesCurrentMultiSelectionWithoutReplacingIt() throws {
+        let folder = ThreadFolder(id: "folder-planning",
+                                  title: "Planning",
+                                  color: .defaultNewFolder,
+                                  threadIDs: ["foldered-thread"],
+                                  parentID: nil)
+        let graph = GraphData.make(
+            roots: [
+                makeThread(rootID: "foldered-thread", messageCount: 1),
+                makeThread(rootID: "selected-a", messageCount: 1),
+                makeThread(rootID: "selected-b", messageCount: 1)
+            ],
+            folders: [folder],
+            folderMembershipByThreadID: ["foldered-thread": folder.id],
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+        let selectedIDs: Set<String> = [
+            GraphData.threadNodeID(for: "selected-a"),
+            GraphData.threadNodeID(for: "selected-b")
+        ]
+        let grouping = try XCTUnwrap(graph.groupings.first { $0.sourceFolderID == folder.id })
+        let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
+        configure(scene, data: graph, selectedGraphNodeIDs: selectedIDs)
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        view.presentScene(scene)
+        let folderNode = try XCTUnwrap(
+            scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+                .first { $0.graphID == grouping.id }
+        )
+        var replacementSelectionCalls = 0
+        var moved: ([String], String)?
+        scene.onSelectGraphNodeWithIntent = { _, _ in replacementSelectionCalls += 1 }
+        scene.onMoveThreadsToFolder = { moved = ($0, $1) }
+
+        let menu = try XCTUnwrap(scene.contextMenu(at: scene.convertPoint(toView: folderNode.position)))
+        let item = try XCTUnwrap(menu.items.first)
+        let action = try XCTUnwrap(item.representedObject as? GraphContextMenuAction)
+        action.perform(item)
+
+        XCTAssertEqual(replacementSelectionCalls, 0)
+        XCTAssertEqual(moved?.0, ["selected-a", "selected-b"])
+        XCTAssertEqual(moved?.1, folder.id)
     }
 
     func test_folderDropTarget_nearConfirmedFolder_usesZoomAwareMagnet() throws {
@@ -3720,13 +4451,16 @@ final class ObsidianGraphSceneTests: XCTestCase {
 
     private func configure(_ scene: ObsidianGraphScene,
                            data: GraphData,
+                           selectedGraphNodeIDs: Set<String> = [],
+                           filteredNodeIDs: Set<String>? = nil,
                            reduceMotion: Bool = false,
                            zoomScale: CGFloat = 1,
                            panOffset: CGPoint = .zero) {
         scene.configure(data: data,
                         selectedGraphNodeID: nil,
+                        selectedGraphNodeIDs: selectedGraphNodeIDs,
                         pruneMode: .idle,
-                        filteredNodeIDs: data.allNodeIDs,
+                        filteredNodeIDs: filteredNodeIDs ?? data.allNodeIDs,
                         wateredCounts: [:],
                         reduceMotion: reduceMotion,
                         sproutingMessageIDs: [],
@@ -4194,6 +4928,46 @@ final class GraphSelectionTests: XCTestCase {
         }
     }
 
+    func test_lassoSelectionMode_isMutuallyExclusiveWithArchiveAndSnip() async {
+        await MainActor.run {
+            let suiteName = "GraphLassoSelectionTests-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else {
+                return XCTFail("Expected isolated defaults")
+            }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+            let viewModel = GraphCanvasViewModel(store: store)
+
+            viewModel.toggleLassoSelection()
+            XCTAssertTrue(viewModel.isLassoSelectionActive)
+            XCTAssertEqual(viewModel.pruneMode, .idle)
+
+            viewModel.toggleArchiveMode()
+            XCTAssertFalse(viewModel.isLassoSelectionActive)
+            XCTAssertEqual(viewModel.pruneMode, .archive)
+
+            viewModel.toggleLassoSelection()
+            XCTAssertTrue(viewModel.isLassoSelectionActive)
+            XCTAssertEqual(viewModel.pruneMode, .idle)
+
+            viewModel.activateSnip()
+            XCTAssertFalse(viewModel.isLassoSelectionActive)
+            XCTAssertEqual(viewModel.pruneMode, .snip)
+
+            viewModel.toggleArchiveMode()
+            XCTAssertEqual(viewModel.snipPhase, .idle)
+            XCTAssertEqual(viewModel.pruneMode, .archive)
+
+            viewModel.toggleArchiveMode()
+            viewModel.activateSnip()
+            XCTAssertEqual(viewModel.snipPhase, .staging)
+
+            viewModel.requestArchive(threadID: "missing-thread")
+            XCTAssertEqual(viewModel.snipPhase, .idle)
+            XCTAssertEqual(viewModel.pruneMode, .archive)
+        }
+    }
+
     func test_archiveThread_keepsBranchUntilPruneAnimationFinishes() async {
         let suiteName = "GraphSelectionTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
@@ -4310,7 +5084,7 @@ final class GraphRestoreHistoryTests: XCTestCase {
             setup.viewModel,
             destinations: [GraphData.threadNodeID(for: "root"): "Filed"]
         )
-        _ = await setup.viewModel.confirmSnipBatch(request: request)
+        _ = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let entry = try XCTUnwrap(setup.viewModel.compostEntries.first)
         let callsBeforeDismiss = await mover.recordedCalls()
 
@@ -4335,7 +5109,7 @@ final class GraphRestoreHistoryTests: XCTestCase {
             setup.viewModel,
             destinations: [firstThreadID: "Filed", secondThreadID: "Filed"]
         )
-        _ = await setup.viewModel.confirmSnipBatch(request: request)
+        _ = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let firstEntry = try XCTUnwrap(
             setup.viewModel.compostEntries.first { $0.threadID == firstThreadID }
         )
@@ -4428,6 +5202,78 @@ final class GraphRestoreHistoryTests: XCTestCase {
 }
 
 final class GraphBatchSnipTests: XCTestCase {
+    func test_batchDisclosure_showsExactMultiMailboxRoutesDestinationCountAndReversibility() async throws {
+        let mover = TestGraphSnipMailMover([])
+        let root = ThreadNode(
+            message: makeMessage(id: "root",
+                                 date: Date(timeIntervalSince1970: 10_000),
+                                 threadID: "root",
+                                 mailboxID: "Inbox",
+                                 accountName: "Work"),
+            children: [
+                ThreadNode(message: makeMessage(id: "child",
+                                                date: Date(timeIntervalSince1970: 9_940),
+                                                threadID: "root",
+                                                mailboxID: "Archive",
+                                                accountName: "Work"))
+            ]
+        )
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [root], mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(
+                setup.viewModel,
+                destinations: [GraphData.threadNodeID(for: "root"): "Projects/Filed"]
+            )
+        }
+
+        let disclosure = try await MainActor.run {
+            try XCTUnwrap(setup.viewModel.currentSnipBatchDisclosure(for: request))
+        }
+        let effect = try XCTUnwrap(disclosure.items.first?.effect)
+
+        XCTAssertEqual(disclosure.affectedMessageCount, 2)
+        XCTAssertEqual(effect.sourceRouteGroups, [
+            OrganizationMailRouteGroup(account: "Work", mailboxPath: "Archive", messageCount: 1),
+            OrganizationMailRouteGroup(account: "Work", mailboxPath: "Inbox", messageCount: 1)
+        ])
+        XCTAssertEqual(effect.destination,
+                       .mailbox(account: "Work", path: "Projects/Filed"))
+        XCTAssertEqual(effect.reversibility, .conditionallyReversible)
+    }
+
+    func test_batchConfirmation_rejectsStaleDestinationBeforeMailService() async throws {
+        let mover = TestGraphSnipMailMover([.moved(["root"])])
+        let setup = await MainActor.run {
+            makeGraphSnipViewModel(roots: [makeThread(rootID: "root", messageCount: 1)],
+                                   mailMover: mover)
+        }
+        defer { removeGraphSnipTestDefaults(setup.suiteName) }
+        let threadID = GraphData.threadNodeID(for: "root")
+        let request = try await MainActor.run {
+            try stageGraphSnipBatch(setup.viewModel,
+                                    destinations: [threadID: "Filed/Reviewed"])
+        }
+        let disclosed = try await MainActor.run {
+            try XCTUnwrap(setup.viewModel.currentSnipBatchDisclosure(for: request))
+        }
+        await MainActor.run {
+            setup.viewModel.setSnipAllocation(threadID: threadID,
+                                              destinationPath: "Filed/Changed")
+        }
+
+        let result = await setup.viewModel.confirmSnipBatch(request: request,
+                                                            disclosedEffects: disclosed)
+        let calls = await mover.recordedCalls()
+        let phase = await MainActor.run { setup.viewModel.snipPhase }
+
+        XCTAssertNil(result)
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(phase, .allocating)
+    }
+
     func test_firstSnipClick_entersStagingWithoutConsumingSelection() async {
         let mover = TestGraphSnipMailMover([])
         let setup = await MainActor.run {
@@ -4662,7 +5508,7 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [GraphData.threadNodeID(for: "root@example.com"): "Filed/Done"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
         XCTAssertEqual(result.succeeded.count, 1)
         XCTAssertEqual(result.attemptedCount, 1)
@@ -4683,7 +5529,7 @@ final class GraphBatchSnipTests: XCTestCase {
         XCTAssertTrue(compostIsEmpty)
     }
 
-    func test_batchMove_partialMoveWithSuccessfulCompensationRollsBack() async throws {
+    func test_batchMove_partialMoveWithoutSeparateRestoreAuthorizationRequiresRecovery() async throws {
         let mover = TestGraphSnipMailMover([
             .moved(["root"]),
             .moved(["root"])
@@ -4698,17 +5544,18 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
-        XCTAssertEqual(result.rolledBack.count, 1)
-        XCTAssertTrue(result.recoveryNeeded.isEmpty)
-        let compostIsEmpty = await MainActor.run { setup.viewModel.compostEntries.isEmpty }
-        XCTAssertTrue(compostIsEmpty)
+        XCTAssertTrue(result.rolledBack.isEmpty)
+        XCTAssertEqual(result.recoveryNeeded.count, 1)
+        let recoveryEntry = try await MainActor.run {
+            try XCTUnwrap(setup.viewModel.compostEntries.first)
+        }
+        XCTAssertTrue(recoveryEntry.requiresRecovery)
+        XCTAssertEqual(recoveryEntry.movedMessages.map(\.messageID), ["root"])
         let calls = await mover.recordedCalls()
-        XCTAssertEqual(calls.count, 2)
-        XCTAssertEqual(calls[1].messageIDs, ["root"])
-        XCTAssertEqual(calls[1].sourceMailboxPath, "Filed")
-        XCTAssertEqual(calls[1].destinationMailboxPath, "Inbox")
+        XCTAssertEqual(calls.count, 1,
+                       "A move authorization must not implicitly authorize compensation")
     }
 
     func test_batchMove_incompleteCompensationKeepsRecoveryBranchAndOnlyDisplacedIDs() async throws {
@@ -4726,7 +5573,7 @@ final class GraphBatchSnipTests: XCTestCase {
             try stageGraphSnipBatch(setup.viewModel, destinations: [threadID: "Filed"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
         XCTAssertEqual(result.recoveryNeeded.count, 1)
         let entry = try await MainActor.run { try XCTUnwrap(setup.viewModel.compostEntries.first) }
@@ -4761,7 +5608,7 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [firstID: "Filed/A", secondID: "Filed/B"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
         XCTAssertEqual(result.unchanged.map(\.item.threadID), [firstID])
         XCTAssertEqual(result.succeeded.map(\.item.threadID), [secondID])
@@ -4790,7 +5637,7 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [firstID: "Filed", secondID: "Filed"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
         XCTAssertEqual(result.succeeded.count, 2)
         let completionRequest = await MainActor.run { setup.viewModel.pruneAnimationRequest }
@@ -4819,7 +5666,7 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [successID: "Filed", recoveryID: "Filed"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
         XCTAssertEqual(result.succeeded.map(\.item.threadID), [successID])
         XCTAssertEqual(result.recoveryNeeded.map(\.item.threadID), [recoveryID])
@@ -4846,7 +5693,9 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
         }
 
-        let execution = Task { await setup.viewModel.confirmSnipBatch(request: request) }
+        let execution = Task {
+            await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
+        }
         await mover.waitUntilStarted()
         await MainActor.run {
             XCTAssertEqual(setup.viewModel.snipPhase, .moving)
@@ -4872,7 +5721,8 @@ final class GraphBatchSnipTests: XCTestCase {
             .moved(["duplicate@example.com"]),
             .moved(["DUPLICATE@EXAMPLE.COM"]),
             .moved(["duplicate@example.com"]),
-            .moved([])
+            .moved([]),
+            .moved(["DUPLICATE@EXAMPLE.COM"])
         ])
         let setup = await MainActor.run { () -> GraphSnipTestSetup in
             let inboxCopy = ThreadNode(
@@ -4905,7 +5755,7 @@ final class GraphBatchSnipTests: XCTestCase {
                                     destinations: [GraphData.threadNodeID(for: "root"): "Filed"])
         }
 
-        let batchResult = await setup.viewModel.confirmSnipBatch(request: request)
+        let batchResult = await setup.viewModel.confirmSnipBatchAfterCapturingDisclosure(request: request)
         let result = try XCTUnwrap(batchResult)
         XCTAssertEqual(result.succeeded.count, 1)
         let entry = try await MainActor.run { try XCTUnwrap(setup.viewModel.compostEntries.first) }
@@ -4924,6 +5774,19 @@ final class GraphBatchSnipTests: XCTestCase {
         XCTAssertTrue(residual.requiresRecovery)
         XCTAssertEqual(residual.movedMessages.count, 1)
         XCTAssertEqual(residual.movedMessages.first?.sourceMailboxPath, "Inbox")
+
+        try await setup.viewModel.restore(residual)
+
+        let finalEntries = await MainActor.run { setup.viewModel.compostEntries }
+        XCTAssertTrue(finalEntries.isEmpty,
+                      "Residual retry must create a route-bound operation and restore only the unresolved location")
+        let calls = await mover.recordedCalls()
+        XCTAssertEqual(calls.count, 5)
+        XCTAssertEqual(calls.last?.messageIDs,
+                       residual.movedMessages.map(\.messageID),
+                       "Residual retry must preserve the exact unresolved route identity")
+        XCTAssertEqual(calls.last?.sourceMailboxPath, "Filed")
+        XCTAssertEqual(calls.last?.destinationMailboxPath, "Inbox")
     }
 
     func test_mailMoveResult_normalizesAndDeduplicatesCaseInsensitively() {
@@ -5216,7 +6079,13 @@ private func makeGraphSnipViewModel(
         fatalError("Expected isolated defaults")
     }
     let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
-    let viewModel = GraphCanvasViewModel(store: store, mailClient: mailMover)
+    let viewModel = GraphCanvasViewModel(
+        store: store,
+        mailClient: mailMover,
+        organizationOperationStore: makeInMemoryOrganizationOperationStore(
+            label: "graph-snip-\(UUID().uuidString)"
+        )
+    )
     viewModel.update(roots: roots,
                      searchQuery: "",
                      tagsByNodeID: [:],

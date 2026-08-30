@@ -114,7 +114,7 @@ internal func runAppleScript(_ script: String) throws -> NSAppleEventDescriptor 
     
     debugContext("runAppleScript caller")
     let preview = script.split(separator: "\n").first.map(String.init) ?? "empty script"
-    Log.appleScript.debug("Executing AppleScript. length=\(script.count, privacy: .public) firstLine=\(preview, privacy: .public)")
+    Log.appleScript.debug("Executing AppleScript. length=\(script.count, privacy: .public) firstLine=\(preview, privacy: .private)")
 
     guard let appleScript = NSAppleScript(source: script) else {
         Log.appleScript.error("Failed to initialize NSAppleScript (source invalid).")
@@ -128,7 +128,7 @@ internal func runAppleScript(_ script: String) throws -> NSAppleEventDescriptor 
         let message = errorDict[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error"
         let number = errorDict[NSAppleScript.errorNumber] as? Int ?? 0
         let range = errorDict[NSAppleScript.errorRange] as? NSValue
-        Log.appleScript.error("AppleScript execution failed. message=\(message, privacy: .public) code=\(number, privacy: .public) range=\(String(describing: range), privacy: .public)")
+        Log.appleScript.error("AppleScript execution failed. message=\(message, privacy: .private) code=\(number, privacy: .public) range=\(String(describing: range), privacy: .public)")
         throw AppleScriptError.executionFailed(message)
     }
 

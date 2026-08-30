@@ -1,18 +1,24 @@
 import SwiftUI
 
-/// Floating controls intentionally mirror Obsidian's Filters / Groups /
-/// Display / Forces vocabulary while exposing only controls BetterMail can
-/// honor against its existing graph projection.
+/// Task-first graph controls. Group context stays visible while paging,
+/// display, force, and diagnostic tuning live behind one Advanced disclosure.
+/// Existing settings bindings and persisted keys remain unchanged.
 internal struct ObsidianGraphControls: View {
     @ObservedObject internal var settings: GraphCanvasSettings
     internal let data: GraphData
     internal let textScale: CGFloat
+    internal let canUndoLayoutReset: Bool
+    internal let onResetLayout: () -> Void
+    internal let onUndoLayoutReset: () -> Void
 
     @State private var isCollapsed = true
-    @State private var showsFilters = true
-    @State private var showsGroups = false
+    @State private var showsGroups = true
+    @State private var showsAdvanced = false
+    @State private var showsPaging = false
     @State private var showsDisplay = false
     @State private var showsForces = false
+    @State private var showsLayout = false
+    @State private var showsResetLayoutConfirmation = false
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,29 +28,18 @@ internal struct ObsidianGraphControls: View {
                     .overlay(DesignTokens.Graph.AppTheme.line)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
-                        controlSection(NSLocalizedString("graph.controls.filters",
-                                                         comment: "Graph filters controls heading"),
-                                       systemImage: "line.3.horizontal.decrease.circle",
-                                       isExpanded: $showsFilters) {
-                            filters
-                        }
                         controlSection(NSLocalizedString("graph.controls.groups",
                                                          comment: "Graph groups controls heading"),
                                        systemImage: "circle.grid.cross",
                                        isExpanded: $showsGroups) {
                             groups
                         }
-                        controlSection(NSLocalizedString("graph.controls.display",
-                                                         comment: "Graph display controls heading"),
-                                       systemImage: "eye",
-                                       isExpanded: $showsDisplay) {
-                            display
-                        }
-                        controlSection(NSLocalizedString("graph.controls.forces",
-                                                         comment: "Graph forces controls heading"),
-                                       systemImage: "point.3.connected.trianglepath.dotted",
-                                       isExpanded: $showsForces) {
-                            forces
+                        controlSection(NSLocalizedString("organizer.controls.advanced",
+                                                         value: "Advanced",
+                                                         comment: "Advanced organizer graph controls heading"),
+                                       systemImage: "slider.horizontal.3",
+                                       isExpanded: $showsAdvanced) {
+                            advanced
                         }
                     }
                     .padding(8)
@@ -64,6 +59,22 @@ internal struct ObsidianGraphControls: View {
         )
         .accessibilityIdentifier(AccessibilityID.graphControls)
         .animation(.easeOut(duration: 0.16), value: isCollapsed)
+        .confirmationDialog(
+            NSLocalizedString("organizer.layout.reset.confirm.title",
+                              comment: "Confirm active organizer layout reset"),
+            isPresented: $showsResetLayoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(NSLocalizedString("organizer.layout.reset.confirm.action",
+                                     comment: "Confirm active organizer layout reset"),
+                   role: .destructive,
+                   action: onResetLayout)
+            Button(NSLocalizedString("common.cancel", comment: "Cancel action"),
+                   role: .cancel) {}
+        } message: {
+            Text(NSLocalizedString("organizer.layout.reset.confirm.message",
+                                   comment: "Active mailbox layout reset explanation"))
+        }
     }
 
     private var header: some View {
@@ -100,7 +111,7 @@ internal struct ObsidianGraphControls: View {
                                               comment: "Show or hide graph controls"))
     }
 
-    private var filters: some View {
+    private var paging: some View {
         VStack(alignment: .leading, spacing: 9) {
             Stepper(value: $settings.visibleBranchCount,
                     in: GraphCanvasSettings.visibleBranchCountRange) {
@@ -138,6 +149,64 @@ internal struct ObsidianGraphControls: View {
             .font(.caption)
             .help(NSLocalizedString("graph.settings.visible_emails_per_thread.help",
                                     comment: "Help for the per-thread email node limit"))
+        }
+    }
+
+    private var advanced: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            nestedSection(NSLocalizedString("graph.controls.filters",
+                                             comment: "Graph paging controls heading"),
+                          systemImage: "rectangle.stack",
+                          isExpanded: $showsPaging) {
+                paging
+            }
+            nestedSection(NSLocalizedString("graph.controls.display",
+                                             comment: "Graph display controls heading"),
+                          systemImage: "eye",
+                          isExpanded: $showsDisplay) {
+                display
+            }
+            nestedSection(NSLocalizedString("graph.controls.forces",
+                                             comment: "Graph forces controls heading"),
+                          systemImage: "point.3.connected.trianglepath.dotted",
+                          isExpanded: $showsForces) {
+                forces
+            }
+            nestedSection(NSLocalizedString("organizer.layout.controls.title",
+                                             comment: "Organizer layout controls heading"),
+                          systemImage: "arrow.counterclockwise",
+                          isExpanded: $showsLayout) {
+                layoutActions
+            }
+        }
+    }
+
+    private var layoutActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                showsResetLayoutConfirmation = true
+            } label: {
+                Label(NSLocalizedString("organizer.layout.reset",
+                                        comment: "Reset active organizer layout"),
+                      systemImage: "arrow.counterclockwise")
+            }
+            .buttonStyle(.link)
+            .accessibilityIdentifier(AccessibilityID.organizerResetLayout)
+
+            Button(action: onUndoLayoutReset) {
+                Label(NSLocalizedString("organizer.layout.reset.undo",
+                                        comment: "Undo active organizer layout reset"),
+                      systemImage: "arrow.uturn.backward")
+            }
+            .buttonStyle(.link)
+            .disabled(!canUndoLayoutReset)
+            .accessibilityIdentifier(AccessibilityID.organizerUndoLayoutReset)
+
+            Text(NSLocalizedString("organizer.layout.reset.scope_note",
+                                   comment: "Active mailbox layout reset scope note"))
+                .font(.caption2)
+                .foregroundStyle(DesignTokens.Graph.AppTheme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -244,6 +313,22 @@ internal struct ObsidianGraphControls: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 6)
+    }
+
+    private func nestedSection<Content: View>(_ title: String,
+                                              systemImage: String,
+                                              isExpanded: Binding<Bool>,
+                                              @ViewBuilder content: @escaping () -> Content) -> some View {
+        DisclosureGroup(isExpanded: isExpanded) {
+            content()
+                .padding(.top, 7)
+                .padding(.bottom, 5)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.caption)
+                .foregroundStyle(DesignTokens.Graph.AppTheme.inkSecondary)
+        }
+        .padding(.vertical, 4)
     }
 
     private func controlSlider(_ title: String,

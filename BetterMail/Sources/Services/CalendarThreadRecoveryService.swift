@@ -78,7 +78,7 @@ internal actor CalendarThreadRecoveryService {
                 } catch {
                     sawTransientFailure = true
                     await MainActor.run {
-                        Log.refresh.error("Calendar classification repair batch failed. count=\(batch.count, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+                        Log.refresh.error("Calendar classification repair batch failed. count=\(batch.count, privacy: .public) error=\(error.localizedDescription, privacy: .private)")
                     }
                 }
             }
@@ -236,7 +236,7 @@ internal actor CalendarThreadRecoveryService {
                     } catch {
                         hadTransientFailure = true
                         await MainActor.run {
-                            Log.refresh.error("Calendar ancestor lookup batch failed. count=\(batch.count, privacy: .public) account=\(account, privacy: .private) error=\(error.localizedDescription, privacy: .public)")
+                            Log.refresh.error("Calendar ancestor lookup batch failed. count=\(batch.count, privacy: .public) account=\(account, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
                         }
                     }
                 }
