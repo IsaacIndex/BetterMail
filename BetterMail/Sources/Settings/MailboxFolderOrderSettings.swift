@@ -17,7 +17,10 @@ internal final class MailboxFolderOrderSettings: ObservableObject {
         }
     }
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        _storedOrderedFolderIDs = AppStorage(wrappedValue: "",
+                                             "mailboxSidebarOrderedFolderIDs",
+                                             store: userDefaults)
         orderedFolderIDs = Self.decode(storedOrderedFolderIDs)
     }
 

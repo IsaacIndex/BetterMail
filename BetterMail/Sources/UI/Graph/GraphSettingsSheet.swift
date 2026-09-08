@@ -6,6 +6,7 @@ internal struct GraphSettingsSheet: View {
     @ObservedObject internal var automationCoordinator: GraphAutomationCoordinator
     internal let onScanCurrentMail: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var mailConsentSettings = OrganizationMailAutomationConsentSettings()
 
     internal var body: some View {
         ScrollView {
@@ -70,6 +71,7 @@ internal struct GraphSettingsSheet: View {
                 GraphAutomationSettingsSection(settings: automationCoordinator.settings,
                                                coordinator: automationCoordinator,
                                                onScanCurrentMail: onScanCurrentMail)
+                OrganizationMailAutomationConsentSection(settings: mailConsentSettings)
                 forcesSection
                 HStack {
                     Spacer()
@@ -226,6 +228,135 @@ internal struct GraphSettingsSheet: View {
 
     private static func formatted(_ value: CGFloat, precision: Int) -> String {
         String(format: "%.\(precision)f", Double(value))
+    }
+}
+
+private struct OrganizationMailAutomationConsentSection: View {
+    @ObservedObject var settings: OrganizationMailAutomationConsentSettings
+
+    @State private var draftEffects: Set<OrganizationMailAutomationEffect> = []
+    @State private var isShowingGrantConfirmation = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(NSLocalizedString("organization.mail.consent.title",
+                                       comment: "Apple Mail automation consent section title"))
+                    .font(.headline)
+                    .foregroundStyle(DesignTokens.Graph.AppTheme.ink)
+                Spacer()
+                Text(statusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isCurrent ? Color.green : Color.secondary)
+                    .accessibilityIdentifier(AccessibilityID.organizationMailConsentStatus)
+            }
+            Text(NSLocalizedString("organization.mail.consent.detail",
+                                   comment: "Explanation of separate Mail automation consent"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            consentToggle(.messageMove,
+                          titleKey: "organization.mail.consent.effect.move")
+            consentToggle(.messageRestore,
+                          titleKey: "organization.mail.consent.effect.restore")
+            consentToggle(.mailboxCreation,
+                          titleKey: "organization.mail.consent.effect.create")
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button(NSLocalizedString("organization.mail.consent.grant",
+                                         comment: "Grant selected Apple Mail automation consent")) {
+                    isShowingGrantConfirmation = true
+                }
+                .disabled(draftEffects.isEmpty)
+                .accessibilityIdentifier(AccessibilityID.organizationMailConsentGrant)
+                if isCurrent {
+                    Button(NSLocalizedString("organization.mail.consent.revoke",
+                                             comment: "Revoke Apple Mail automation consent"),
+                           role: .destructive) {
+                        do {
+                            try settings.revoke()
+                            draftEffects = []
+                            errorMessage = nil
+                        } catch {
+                            errorMessage = NSLocalizedString("organization.mail.consent.error.save",
+                                                             comment: "Failed to save Apple Mail consent")
+                        }
+                    }
+                    .accessibilityIdentifier(AccessibilityID.organizationMailConsentRevoke)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DesignTokens.Graph.AppTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
+        )
+        .onAppear(perform: syncDraft)
+        .onChange(of: settings.resolution) { _, _ in syncDraft() }
+        .alert(NSLocalizedString("organization.mail.consent.confirm.title",
+                                 comment: "Confirm Apple Mail automation consent title"),
+               isPresented: $isShowingGrantConfirmation) {
+            Button(NSLocalizedString("organization.mail.consent.confirm.action",
+                                     comment: "Confirm Apple Mail automation consent")) {
+                do {
+                    try settings.grant(allowedEffects: draftEffects)
+                    errorMessage = nil
+                } catch {
+                    errorMessage = NSLocalizedString("organization.mail.consent.error.save",
+                                                     comment: "Failed to save Apple Mail consent")
+                }
+            }
+            Button(NSLocalizedString("common.cancel", comment: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("organization.mail.consent.confirm.message",
+                                  comment: "Confirm selected Mail automation effect count"),
+                draftEffects.count
+            ))
+        }
+    }
+
+    private var isCurrent: Bool {
+        if case .current = settings.resolution { return true }
+        return false
+    }
+
+    private var statusText: String {
+        NSLocalizedString(settings.resolution.status.localizationKey,
+                          comment: "Apple Mail automation consent status")
+    }
+
+    private func consentToggle(_ effect: OrganizationMailAutomationEffect,
+                               titleKey: String) -> some View {
+        Toggle(NSLocalizedString(titleKey, comment: "Apple Mail automation effect"),
+               isOn: Binding(
+                   get: { draftEffects.contains(effect) },
+                   set: { isEnabled in
+                       if isEnabled {
+                           draftEffects.insert(effect)
+                       } else {
+                           draftEffects.remove(effect)
+                       }
+                   }
+               ))
+            .accessibilityIdentifier("bettermail.organization-mail-consent.effect.\(effect.rawValue)")
+    }
+
+    private func syncDraft() {
+        draftEffects = settings.allowedEffects
     }
 }
 

@@ -5,27 +5,75 @@
 //  Created by Isaac IBM on 5/11/2025.
 //
 
+import Foundation
 import SwiftUI
 
 @main
 internal struct BetterMailApp: App {
-    @StateObject private var settings = AutoRefreshSettings()
-    @StateObject private var inspectorSettings = InspectorViewSettings()
-    @StateObject private var displaySettings = ThreadCanvasDisplaySettings()
-    @StateObject private var pinnedFolderSettings = PinnedFolderSettings()
-    @StateObject private var appearanceSettings = AppearanceSettings()
-    @StateObject private var activityCenter = ProcessingActivityCenter()
+    @StateObject private var settings: AutoRefreshSettings
+    @StateObject private var inspectorSettings: InspectorViewSettings
+    @StateObject private var displaySettings: ThreadCanvasDisplaySettings
+    @StateObject private var pinnedFolderSettings: PinnedFolderSettings
+    @StateObject private var appearanceSettings: AppearanceSettings
+    @StateObject private var activityCenter: ProcessingActivityCenter
+
+#if DEBUG
+    private let organizerBenchmarkLaunchSelection: OrganizerBenchmarkLaunchSelection
+    private let runsAsXCTestHost: Bool
+#endif
 
     @FocusedValue(\.canvasViewModel) private var focusedViewModel
     @FocusedValue(\.displaySettings) private var focusedDisplaySettings
 
+    internal init() {
+        let defaults: UserDefaults
+#if DEBUG
+        let processInfo = ProcessInfo.processInfo
+        let isXCTestHost = Self.isXCTestHost(environment: processInfo.environment)
+        runsAsXCTestHost = isXCTestHost
+        var benchmarkSelection: OrganizerBenchmarkLaunchSelection = isXCTestHost
+            ? .inactive
+            : OrganizerBenchmarkLaunchSelection.parse(arguments: processInfo.arguments)
+        if !isXCTestHost, case .active(let configuration) = benchmarkSelection {
+            do {
+                try OrganizerBenchmarkEnvironment.prepare(configuration)
+            } catch {
+                benchmarkSelection = .invalid(
+                    error.localizedDescription.isEmpty
+                        ? "The synthetic benchmark workspace could not be prepared."
+                        : error.localizedDescription
+                )
+            }
+        }
+        organizerBenchmarkLaunchSelection = benchmarkSelection
+        if isXCTestHost {
+            defaults = UserDefaults(
+                suiteName: "com.bettermail.xctest-host.\(processInfo.processIdentifier)"
+            ) ?? .standard
+        } else {
+            switch benchmarkSelection {
+            case .active(let configuration):
+                defaults = UserDefaults(suiteName: configuration.defaultsSuiteName) ?? .standard
+            case .invalid:
+                defaults = UserDefaults(suiteName: "com.bettermail.organizer-benchmark.invalid") ?? .standard
+            case .inactive:
+                defaults = .standard
+            }
+        }
+#else
+        defaults = .standard
+#endif
+        _settings = StateObject(wrappedValue: AutoRefreshSettings(userDefaults: defaults))
+        _inspectorSettings = StateObject(wrappedValue: InspectorViewSettings(userDefaults: defaults))
+        _displaySettings = StateObject(wrappedValue: ThreadCanvasDisplaySettings(userDefaults: defaults))
+        _pinnedFolderSettings = StateObject(wrappedValue: PinnedFolderSettings(userDefaults: defaults))
+        _appearanceSettings = StateObject(wrappedValue: AppearanceSettings(userDefaults: defaults))
+        _activityCenter = StateObject(wrappedValue: ProcessingActivityCenter())
+    }
+
     internal var body: some Scene {
         WindowGroup {
-            ContentView(settings: settings,
-                        inspectorSettings: inspectorSettings,
-                        displaySettings: displaySettings,
-                        pinnedFolderSettings: pinnedFolderSettings,
-                        activityCenter: activityCenter)
+            rootContent
                 .preferredColorScheme(appearanceSettings.preferredColorScheme)
         }
         .commands {
@@ -104,5 +152,45 @@ internal struct BetterMailApp: App {
                                     activityCenter: activityCenter)
                 .preferredColorScheme(appearanceSettings.preferredColorScheme)
         }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+#if DEBUG
+        if runsAsXCTestHost {
+            Color.clear
+        } else {
+            switch organizerBenchmarkLaunchSelection {
+            case .inactive:
+                productionContent
+            case .active(let configuration):
+                OrganizerBenchmarkRootView(configuration: configuration,
+                                           settings: settings,
+                                           inspectorSettings: inspectorSettings,
+                                           displaySettings: displaySettings,
+                                           pinnedFolderSettings: pinnedFolderSettings,
+                                           activityCenter: activityCenter)
+            case .invalid(let message):
+                OrganizerBenchmarkLaunchErrorView(message: message)
+            }
+        }
+#else
+        productionContent
+#endif
+    }
+
+#if DEBUG
+    internal nonisolated static func isXCTestHost(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+    }
+#endif
+
+    private var productionContent: some View {
+        ContentView(settings: settings,
+                    inspectorSettings: inspectorSettings,
+                    displaySettings: displaySettings,
+                    pinnedFolderSettings: pinnedFolderSettings,
+                    activityCenter: activityCenter)
     }
 }

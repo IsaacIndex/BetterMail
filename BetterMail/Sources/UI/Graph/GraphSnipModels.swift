@@ -92,6 +92,30 @@ internal nonisolated struct GraphSnipBatchRequest: Identifiable, Equatable, Send
     }
 }
 
+/// One per-thread disclosure row retained by the Batch Snip confirmation
+/// surface. `effect` is nil only when every message is already at the selected
+/// destination and therefore no Apple Mail mutation will run.
+internal nonisolated struct GraphSnipEffectDisclosure: Identifiable, Equatable, Sendable {
+    internal let threadID: String
+    internal let subject: String
+    internal let destinationAccountName: String
+    internal let destinationMailboxPath: String
+    internal let effect: OrganizationEffect?
+
+    internal var id: String { threadID }
+}
+
+/// Immutable exact effect snapshot passed from review UI to execution. The
+/// view model recomputes and compares it immediately before any authorization.
+internal nonisolated struct GraphSnipBatchDisclosure: Equatable, Sendable {
+    internal let requestID: UUID
+    internal let items: [GraphSnipEffectDisclosure]
+
+    internal var affectedMessageCount: Int {
+        items.reduce(0) { $0 + ($1.effect?.messageCount ?? 0) }
+    }
+}
+
 internal nonisolated struct GraphMailMoveResult: Equatable, Sendable {
     internal let movedMessageIDs: [String]
 

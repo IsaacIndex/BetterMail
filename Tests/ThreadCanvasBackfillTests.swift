@@ -104,16 +104,22 @@ final class ThreadCanvasBackfillTests: XCTestCase {
                         NSLocalizedString("threadlist.backfill.status.complete", comment: ""),
                         1
                        ))
-        XCTAssertEqual(await backfillService.recordedCountMailbox, "inbox")
-        XCTAssertEqual(await backfillService.recordedRunMailbox, "inbox")
-        XCTAssertNil(await backfillService.recordedCountAccount)
-        XCTAssertNil(await backfillService.recordedRunAccount)
-        XCTAssertEqual(await backfillService.recordedPreferredBatchSize, 7)
-        XCTAssertEqual(await backfillService.recordedSnippetLineLimit, inspectorSettings.snippetLineLimit)
+        let recordedCountMailbox = await backfillService.recordedCountMailbox
+        let recordedRunMailbox = await backfillService.recordedRunMailbox
+        let recordedCountAccount = await backfillService.recordedCountAccount
+        let recordedRunAccount = await backfillService.recordedRunAccount
+        let recordedPreferredBatchSize = await backfillService.recordedPreferredBatchSize
+        let recordedSnippetLineLimit = await backfillService.recordedSnippetLineLimit
+        XCTAssertEqual(recordedCountMailbox, "inbox")
+        XCTAssertEqual(recordedRunMailbox, "inbox")
+        XCTAssertNil(recordedCountAccount)
+        XCTAssertNil(recordedRunAccount)
+        XCTAssertEqual(recordedPreferredBatchSize, BatchBackfillService.maximumFetchCount)
+        XCTAssertEqual(recordedSnippetLineLimit, inspectorSettings.snippetLineLimit)
         XCTAssertEqual(viewModel.roots.count, 1)
     }
 
-    func test_BackfillVisibleRange_WhenCountZero_CompletesWithoutRethread() async throws {
+    func test_BackfillVisibleRange_WhenCountZero_RecordsZeroMessageCoverageWithoutRethread() async throws {
         let defaults = UserDefaults(suiteName: "ThreadCanvasBackfillTests-\(UUID().uuidString)")!
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let settings = AutoRefreshSettings()
@@ -137,7 +143,10 @@ final class ThreadCanvasBackfillTests: XCTestCase {
                         NSLocalizedString("threadlist.backfill.status.complete", comment: ""),
                         0
                        ))
-        XCTAssertFalse(await backfillService.didRunBackfill)
+        let didRunBackfill = await backfillService.didRunBackfill
+        let recordedTotalExpected = await backfillService.recordedTotalExpected
+        XCTAssertTrue(didRunBackfill)
+        XCTAssertEqual(recordedTotalExpected, 0)
         XCTAssertTrue(viewModel.roots.isEmpty)
     }
 
@@ -193,7 +202,7 @@ final class ThreadCanvasBackfillTests: XCTestCase {
                        NSLocalizedString("threadlist.backfill.status.fetching", comment: ""))
     }
 
-    func test_FolderRefreshPlan_groupsByMailboxAndNormalizedSubject() {
+    func test_FolderRefreshPlan_groupsByMailboxAndNormalizedSubject() throws {
         let inboxFirst = EmailMessage(messageID: "msg-1",
                                       mailboxID: "All Inboxes",
                                       accountName: "",
@@ -315,29 +324,22 @@ final class ThreadCanvasBackfillTests: XCTestCase {
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
-        let client = StubMailCanvasClient(
-            refreshOutcomes: [
-                .failure(Self.timeoutScriptError()),
-                .success([
-                    Self.refreshMessage(id: "refresh-success", date: Date(timeIntervalSince1970: 1_710_000_000))
-                ])
-            ]
-        )
+        let coordinator = StubDayFetchCoordinator(outcomes: [.timeoutFailure, .success])
 
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
                                               store: store,
-                                              client: client)
+                                              dayFetchCoordinator: coordinator,
+                                              performsInitialSourceRefresh: false)
 
         viewModel.fetchLimit = 9
         viewModel.refreshNow()
         try await waitForRefreshCompletion(viewModel)
 
-        let requests = await client.refreshRequestsSnapshot()
+        let requests = await coordinator.requestsSnapshot()
         XCTAssertEqual(requests.count, 2)
         XCTAssertTrue(requests.allSatisfy { $0.limit == 4 })
         XCTAssertTrue(requests.allSatisfy { $0.profile == .refresh })
-        XCTAssertEqual(store.lastSyncDate, Date(timeIntervalSince1970: 1_710_000_000))
         XCTAssertFalse(viewModel.status.localizedCaseInsensitiveContains("failed"))
     }
 
@@ -346,21 +348,18 @@ final class ThreadCanvasBackfillTests: XCTestCase {
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
-        let client = StubMailCanvasClient(
-            refreshOutcomes: [
-                .failure(Self.privilegeScriptError())
-            ]
-        )
+        let coordinator = StubDayFetchCoordinator(outcomes: [.privilegeFailure])
 
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
                                               store: store,
-                                              client: client)
+                                              dayFetchCoordinator: coordinator,
+                                              performsInitialSourceRefresh: false)
 
         viewModel.refreshNow(limit: 3)
         try await waitForRefreshCompletion(viewModel)
 
-        let requests = await client.refreshRequestsSnapshot()
+        let requests = await coordinator.requestsSnapshot()
         XCTAssertEqual(requests.count, 1)
         XCTAssertTrue(viewModel.status.localizedCaseInsensitiveContains("failed"))
     }
@@ -370,54 +369,22 @@ final class ThreadCanvasBackfillTests: XCTestCase {
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
         let settings = AutoRefreshSettings()
         let inspectorSettings = InspectorViewSettings()
-        let client = StubMailCanvasClient(
-            refreshOutcomes: [
-                .failure(Self.timeoutScriptError()),
-                .failure(Self.timeoutScriptError()),
-                .failure(Self.timeoutScriptError())
-            ]
+        let coordinator = StubDayFetchCoordinator(
+            outcomes: [.timeoutFailure, .timeoutFailure, .timeoutFailure]
         )
 
         let viewModel = ThreadCanvasViewModel(settings: settings,
                                               inspectorSettings: inspectorSettings,
                                               store: store,
-                                              client: client)
+                                              dayFetchCoordinator: coordinator,
+                                              performsInitialSourceRefresh: false)
 
         viewModel.refreshNow(limit: 2)
         try await waitForRefreshCompletion(viewModel)
 
-        let requests = await client.refreshRequestsSnapshot()
+        let requests = await coordinator.requestsSnapshot()
         XCTAssertEqual(requests.count, 3)
         XCTAssertTrue(viewModel.status.localizedCaseInsensitiveContains("timed out"))
-    }
-
-    private static func refreshMessage(id: String, date: Date) -> EmailMessage {
-        EmailMessage(messageID: id,
-                     mailboxID: "inbox",
-                     accountName: "",
-                     subject: id,
-                     from: "sender@example.com",
-                     to: "me@example.com",
-                     date: date,
-                     snippet: "Snippet",
-                     isUnread: false,
-                     inReplyTo: nil,
-                     references: [],
-                     threadID: "thread-\(id)")
-    }
-
-    private static func timeoutScriptError() -> NSAppleScriptRunner.ScriptError {
-        .executionFailed([
-            NSAppleScript.errorNumber: -1712,
-            NSAppleScript.errorMessage: "Mail got an error: AppleEvent timed out."
-        ])
-    }
-
-    private static func privilegeScriptError() -> NSAppleScriptRunner.ScriptError {
-        .executionFailed([
-            NSAppleScript.errorNumber: -10004,
-            NSAppleScript.errorMessage: "Not authorized to send Apple events to Mail."
-        ])
     }
 
     private func waitForRefreshCompletion(_ viewModel: ThreadCanvasViewModel,
@@ -457,6 +424,7 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
     private(set) var recordedRunAccount: String?
     private(set) var recordedPreferredBatchSize: Int?
     private(set) var recordedSnippetLineLimit: Int?
+    private(set) var recordedTotalExpected: Int?
     private(set) var didRunBackfill = false
     private(set) var countCalls: [(mailbox: String, account: String?)] = []
     private(set) var runCalls: [(mailbox: String, account: String?)] = []
@@ -499,6 +467,7 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
         recordedRunAccount = account
         recordedPreferredBatchSize = preferredBatchSize
         recordedSnippetLineLimit = snippetLineLimit
+        recordedTotalExpected = totalExpected
         runCalls.append((mailbox: mailbox, account: account))
         if let runError {
             throw runError
@@ -538,9 +507,10 @@ private actor StubBatchBackfillService: BatchBackfillServicing {
     }
 }
 
-private enum StubRefreshOutcome {
-    case success([EmailMessage])
-    case failure(Error)
+private enum StubRefreshOutcome: Sendable {
+    case success
+    case timeoutFailure
+    case privilegeFailure
 }
 
 private struct StubRefreshRequest: Equatable {
@@ -550,64 +520,88 @@ private struct StubRefreshRequest: Equatable {
     let profile: MailFetchProfile
 }
 
-private actor StubMailCanvasClient: MailCanvasClient {
+private actor StubDayFetchCoordinator: DayFetchCoordinating {
     private var refreshOutcomes: [StubRefreshOutcome]
     private(set) var refreshRequests: [StubRefreshRequest] = []
 
-    init(refreshOutcomes: [StubRefreshOutcome]) {
-        self.refreshOutcomes = refreshOutcomes
+    init(outcomes: [StubRefreshOutcome]) {
+        self.refreshOutcomes = outcomes
     }
 
-    func fetchMessages(since date: Date?,
-                       limit: Int,
-                       mailbox: String,
-                       account: String?,
-                       snippetLineLimit: Int,
-                       profile: MailFetchProfile) async throws -> [EmailMessage] {
-        refreshRequests.append(StubRefreshRequest(limit: limit,
-                                                  mailbox: mailbox,
-                                                  account: account,
-                                                  profile: profile))
-        let nextOutcome = refreshOutcomes.isEmpty ? .success([]) : refreshOutcomes.removeFirst()
+    func fetchDay(containing date: Date,
+                  scope: DayFetchScope,
+                  mode: DayFetchMode,
+                  requestBatchSize: Int,
+                  snippetLineLimit: Int,
+                  referenceDate: Date,
+                  progressHandler: @Sendable (DayFetchProgress) -> Void) async throws -> DayFetchResult {
+        refreshRequests.append(StubRefreshRequest(limit: requestBatchSize,
+                                                  mailbox: scope.mailbox,
+                                                  account: scope.account,
+                                                  profile: mode.profile))
+        let nextOutcome = refreshOutcomes.isEmpty ? .success : refreshOutcomes.removeFirst()
         switch nextOutcome {
-        case let .success(messages):
-            return messages
-        case let .failure(error):
-            throw error
+        case .success:
+            let calendar = Calendar(identifier: .gregorian)
+            let dayInterval = calendar.dateInterval(of: .day, for: date)
+                ?? DateInterval(start: date, duration: 86_400)
+            let completedAt = Date()
+            let coveredThrough = min(dayInterval.end, referenceDate)
+            let state: DayCoverageState = coveredThrough >= dayInterval.end ? .verified : .partial
+            let coverage = DayFetchCoverage(id: "stub-\(refreshRequests.count)",
+                                            scopeKey: scope.key,
+                                            mailbox: scope.mailbox,
+                                            account: scope.account,
+                                            dayStart: dayInterval.start,
+                                            dayEnd: dayInterval.end,
+                                            firstTouchedAt: completedAt,
+                                            lastAttemptAt: completedAt,
+                                            lastSuccessAt: completedAt,
+                                            coveredThrough: coveredThrough,
+                                            expectedCount: 0,
+                                            fetchedCount: 0,
+                                            absentCount: 0,
+                                            state: state,
+                                            errorMessage: nil)
+            return DayFetchResult(dayInterval: dayInterval,
+                                  coveredThrough: coveredThrough,
+                                  expectedCount: 0,
+                                  fetchedCount: 0,
+                                  downloadedCount: 0,
+                                  absentCount: 0,
+                                  coverage: coverage)
+        case .timeoutFailure:
+            throw NSAppleScriptRunner.ScriptError.executionFailed([
+                NSAppleScript.errorNumber: -1712,
+                NSAppleScript.errorMessage: "Mail got an error: AppleEvent timed out."
+            ])
+        case .privilegeFailure:
+            throw NSAppleScriptRunner.ScriptError.executionFailed([
+                NSAppleScript.errorNumber: -10004,
+                NSAppleScript.errorMessage: "Not authorized to send Apple events to Mail."
+            ])
         }
     }
 
-    func fetchMailboxHierarchy() async throws -> [MailboxFolder] {
-        []
+    func fetchRange(_ range: DateInterval,
+                    scope: DayFetchScope,
+                    mode: DayFetchMode,
+                    requestBatchSize: Int,
+                    snippetLineLimit: Int,
+                    referenceDate: Date,
+                    progressHandler: @Sendable (DayFetchProgress) -> Void) async throws -> [DayFetchResult] {
+        [try await fetchDay(containing: range.start,
+                            scope: scope,
+                            mode: mode,
+                            requestBatchSize: requestBatchSize,
+                            snippetLineLimit: snippetLineLimit,
+                            referenceDate: referenceDate,
+                            progressHandler: progressHandler)]
     }
 
-    func countMessages(in range: DateInterval, mailbox: String, account: String?) async throws -> Int {
-        0
-    }
+    func cancelCurrentFetch() async {}
 
-    func fetchMessages(in range: DateInterval,
-                       limit: Int,
-                       mailbox: String,
-                       account: String?,
-                       snippetLineLimit: Int) async throws -> [EmailMessage] {
-        []
-    }
-
-    func countMessages(matchingNormalizedSubjects normalizedSubjects: [String],
-                       mailbox: String,
-                       account: String?) async throws -> Int {
-        0
-    }
-
-    func fetchMessages(matchingNormalizedSubjects normalizedSubjects: [String],
-                       limit: Int,
-                       mailbox: String,
-                       account: String?,
-                       snippetLineLimit: Int) async throws -> [EmailMessage] {
-        []
-    }
-
-    func refreshRequestsSnapshot() -> [StubRefreshRequest] {
+    func requestsSnapshot() -> [StubRefreshRequest] {
         refreshRequests
     }
 }

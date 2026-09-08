@@ -13,13 +13,61 @@ internal struct GraphAutomationSnapshot {
     internal let summariesByNodeID: [String: ThreadSummaryState]
 }
 
+internal nonisolated struct GraphAutomationApprovalPlan: Equatable, Sendable {
+    internal let pendingIDs: Set<String>
+    internal let betterMailOnlyCount: Int
+    internal let mailChangingCount: Int
+    internal let conflictingProposalIDs: Set<String>
+
+    internal var conflictCount: Int { conflictingProposalIDs.count }
+    internal var requiresMailConfirmation: Bool { mailChangingCount > 0 }
+}
+
+internal nonisolated enum GraphAutomationApprovalPlanner {
+    internal static func make(proposals: [GraphAutomationProposal],
+                              restrictingTo requestedIDs: Set<String>? = nil) -> GraphAutomationApprovalPlan {
+        let pending = proposals.filter { proposal in
+            proposal.status == .pendingReview
+                && (requestedIDs?.contains(proposal.id) ?? true)
+        }
+        let sourceCounts = Dictionary(grouping: pending, by: { $0.source.effectiveThreadID })
+            .mapValues(\.count)
+        let conflictingIDs = Set(pending.compactMap { proposal in
+            (sourceCounts[proposal.source.effectiveThreadID] ?? 0) > 1 ? proposal.id : nil
+        })
+        let mailChangingCount = pending.filter { proposal in
+            proposal.steps.contains { step in
+                if case .mailbox = step { return true }
+                return false
+            }
+        }.count
+        return GraphAutomationApprovalPlan(
+            pendingIDs: Set(pending.map(\.id)),
+            betterMailOnlyCount: pending.count - mailChangingCount,
+            mailChangingCount: mailChangingCount,
+            conflictingProposalIDs: conflictingIDs
+        )
+    }
+}
+
 @MainActor
 internal final class GraphAutomationCoordinator: ObservableObject {
+    private enum MailRestorePurpose: Equatable {
+        case compensation
+        case undo
+    }
+
+    private struct MailRestoreAttempt {
+        let remaining: [GraphSnipMovedMessage]
+        let requiresManualRecovery: Bool
+    }
+
     @Published internal private(set) var proposals: [GraphAutomationProposal] = []
     @Published internal private(set) var topicSignalsByRawThreadID: [String: GraphTopicSignal] = [:]
     @Published internal private(set) var isEvaluating = false
     @Published internal private(set) var providerStatusMessage = ""
     @Published internal private(set) var lastEvaluatedAt: Date?
+    @Published internal private(set) var mailAutomationConsentStatus: OrganizationMailAutomationConsentStatus = .absent
 
     internal let settings: GraphAutomationSettings
     internal var onOrganizationChanged: (() -> Void)?
@@ -33,7 +81,9 @@ internal final class GraphAutomationCoordinator: ObservableObject {
     }
 
     private let store: MessageStore
-    private let mailClient: (any GraphSnipMailMoving)?
+    private let organizationMailService: (any OrganizationMailExecutionServicing)?
+    private let metricsRecorder: OrganizerMetricsRecorder?
+    private let mailAutomationConsentProvider: @MainActor () -> OrganizationMailAutomationConsentResolution
     private let relationshipCapabilityProvider: @MainActor () -> GraphRelationshipCapability
     private let topicCapabilityProvider: @MainActor () -> GraphTopicCapability
     private var currentSnapshot: GraphAutomationSnapshot?
@@ -45,14 +95,33 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         store: MessageStore,
         settings: GraphAutomationSettings? = nil,
         mailClient: (any GraphSnipMailMoving)? = nil,
+        organizationOperationStore: OrganizationOperationStore = .shared,
+        organizationMailService: (any OrganizationMailExecutionServicing)? = nil,
+        metricsRecorder: OrganizerMetricsRecorder? = nil,
+        mailAutomationConsentProvider: @escaping @MainActor () -> OrganizationMailAutomationConsentResolution = {
+            OrganizationMailAutomationConsent.resolve(from: .standard)
+        },
         relationshipCapabilityProvider: @escaping @MainActor () -> GraphRelationshipCapability = GraphRelationshipProviderFactory.makeCapability,
         topicCapabilityProvider: @escaping @MainActor () -> GraphTopicCapability = GraphTopicProviderFactory.makeCapability
     ) {
         self.store = store
         self.settings = settings ?? GraphAutomationSettings()
-        self.mailClient = mailClient
+        self.metricsRecorder = metricsRecorder
+        if let organizationMailService {
+            self.organizationMailService = organizationMailService
+        } else if let mailClient {
+            self.organizationMailService = OrganizationMailExecutionService(
+                operationStore: organizationOperationStore,
+                transport: DefaultOrganizationMailGatewayTransport(mailClient: mailClient),
+                metricsRecorder: metricsRecorder
+            )
+        } else {
+            self.organizationMailService = nil
+        }
+        self.mailAutomationConsentProvider = mailAutomationConsentProvider
         self.relationshipCapabilityProvider = relationshipCapabilityProvider
         self.topicCapabilityProvider = topicCapabilityProvider
+        self.mailAutomationConsentStatus = mailAutomationConsentProvider().status
     }
 
     deinit {
@@ -116,10 +185,19 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         await apply(selected, snapshot: snapshot, allowsReviewedConflicts: true)
     }
 
-    internal func approveAll(destinationFolderID: String) async {
-        await approve(ids: Set(proposals.filter {
-            $0.status == .pendingReview && $0.target.folderID == destinationFolderID
-        }.map(\.id)))
+    internal func approvalPlanForAllPending() -> GraphAutomationApprovalPlan {
+        GraphAutomationApprovalPlanner.make(proposals: proposals)
+    }
+
+    /// Applies the exact pending set captured when Approve All was invoked.
+    /// A batch containing physical Mail work cannot start unless the caller
+    /// records a separate confirmation for that disclosed category.
+    internal func approveAll(plan: GraphAutomationApprovalPlan? = nil,
+                             mailEffectsConfirmed: Bool = false) async {
+        let frozenPlan = plan ?? approvalPlanForAllPending()
+        guard !frozenPlan.pendingIDs.isEmpty else { return }
+        guard !frozenPlan.requiresMailConfirmation || mailEffectsConfirmed else { return }
+        await approve(ids: frozenPlan.pendingIDs)
     }
 
     internal func reject(ids: Set<String>) async {
@@ -136,8 +214,18 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         do {
             try await store.upsertGraphAutomationProposals(changed)
             try await store.pruneGraphAutomationHistory(now: now)
+            if !changed.isEmpty {
+                await metricsRecorder?.recordEvent(.suggestionDecision,
+                                                   count: changed.count,
+                                                   status: .success)
+            }
         } catch {
-            Log.app.error("Failed to persist graph automation rejection: \(error.localizedDescription, privacy: .public)")
+            if !changed.isEmpty {
+                await metricsRecorder?.recordEvent(.suggestionDecision,
+                                                   count: changed.count,
+                                                   status: .failure)
+            }
+            Log.app.error("Failed to persist graph automation rejection: \(error.localizedDescription, privacy: .private)")
         }
         sortPublishedProposals()
     }
@@ -148,7 +236,7 @@ internal final class GraphAutomationCoordinator: ObservableObject {
               let folder = snapshot.folders.first(where: { $0.id == folderID }) else { return }
         let old = proposals[oldIndex]
         let folderFingerprint = Self.folderFingerprint(folder)
-        let targetSource = Self.makeSources(from: snapshot).first {
+        let targetSource = OrganizationSourceSnapshotBuilder.build(from: snapshot).first {
             $0.effectiveThreadID == old.target.threadID
         }
         let target = GraphAutomationTarget(threadID: old.target.threadID,
@@ -208,16 +296,28 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         do {
             try await store.upsertGraphAutomationProposals([superseded, replacement])
         } catch {
-            Log.app.error("Failed to persist edited automation destination: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to persist edited automation destination: \(error.localizedDescription, privacy: .private)")
         }
         sortPublishedProposals()
     }
 
     internal func retry(_ proposalID: String) async {
         guard let proposal = proposals.first(where: { $0.id == proposalID }) else { return }
-        if proposal.status == .recoveryNeeded ||
-            (proposal.status == .undoing && !proposal.movedMessages.isEmpty) {
-            await finishUndoMail(for: proposal)
+        if proposal.status == .recoveryNeeded {
+            switch proposal.mailStatus {
+            case .compensating:
+                await finishMailRestore(for: proposal, purpose: .compensation)
+            case .restoring:
+                await finishMailRestore(for: proposal, purpose: .undo)
+            default:
+                // Unknown external outcomes require reconciliation and must not
+                // be repeated through an ordinary Retry action.
+                return
+            }
+            return
+        }
+        if proposal.status == .undoing, !proposal.movedMessages.isEmpty {
+            await finishMailRestore(for: proposal, purpose: .undo)
             return
         }
         if proposal.mutationDelta != nil {
@@ -239,9 +339,18 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             mergePersisted(result.proposals)
             onOrganizationChanged?()
             if let undoing = result.proposals.first {
-                await finishUndoMail(for: undoing)
+                await finishMailRestore(for: undoing, purpose: .undo)
             }
+            await metricsRecorder?.recordEvent(.undo,
+                                               count: 1,
+                                               status: .success)
         } catch {
+            await metricsRecorder?.recordEvent(.undo,
+                                               count: 1,
+                                               status: .failure)
+            await metricsRecorder?.recordEvent(.recovery,
+                                               count: 1,
+                                               status: .failure)
             await mark(proposal, status: .recoveryNeeded, error: error.localizedDescription)
         }
     }
@@ -254,13 +363,14 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                 scheduleEvaluation(snapshot: currentSnapshot)
             }
         } catch {
-            Log.app.error("Failed to reset graph automation history: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to reset graph automation history: \(error.localizedDescription, privacy: .private)")
         }
     }
 
     private func evaluate(snapshot: GraphAutomationSnapshot,
                           scansCurrentMail: Bool,
                           refreshID requestedRefreshID: UUID) async {
+        mailAutomationConsentStatus = mailAutomationConsentProvider().status
         isEvaluating = true
         defer {
             if self.refreshID == requestedRefreshID {
@@ -277,7 +387,7 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                 return
             }
 
-            let sources = Self.makeSources(from: snapshot)
+            let sources = OrganizationSourceSnapshotBuilder.build(from: snapshot)
             let topicCapability = topicCapabilityProvider()
             topicSignalsByRawThreadID = await loadAndGenerateTopics(
                 sources: sources,
@@ -354,12 +464,15 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             lastEvaluatedAt = now
 
             let automatic = candidates.filter { proposal in
-                guard settings.mode(for: proposal.action) == .automatic,
-                      !settings.isPaused,
-                      !proposal.isAmbiguous,
-                      !proposal.hasExistingFolderConflict,
-                      !proposal.hasManualGroupMergeConflict else { return false }
-                return proposal.score >= settings.automaticThreshold(for: proposal.action)
+                guard settings.mode(for: proposal.action) == .automatic else { return false }
+                return OrganizationPlacementPolicy.allowsAutomatic(
+                    score: proposal.score,
+                    automaticThreshold: settings.automaticThreshold(for: proposal.action),
+                    isPaused: settings.isPaused,
+                    isAmbiguous: proposal.isAmbiguous,
+                    hasExistingFolderConflict: proposal.hasExistingFolderConflict,
+                    hasManualGroupMergeConflict: proposal.hasManualGroupMergeConflict
+                )
             }
             await apply(automatic, snapshot: snapshot, allowsReviewedConflicts: false)
             await retryDueMailboxOperations(now: now)
@@ -368,7 +481,7 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             return
         } catch {
             providerStatusMessage = error.localizedDescription
-            Log.app.error("Graph automation evaluation failed: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Graph automation evaluation failed: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -399,7 +512,7 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         do {
             cached = try await store.fetchSummaries(scope: .graphTopic, ids: Array(inputs.keys))
         } catch {
-            Log.app.error("Failed to load refresh-owned graph topic cache: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to load refresh-owned graph topic cache: \(error.localizedDescription, privacy: .private)")
             return signals
         }
         let cachedByID = Dictionary(uniqueKeysWithValues: cached.map { ($0.scopeID, $0) })
@@ -436,7 +549,7 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             } catch is CancellationError {
                 return signals
             } catch {
-                Log.app.error("Refresh-owned graph topic generation failed: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Refresh-owned graph topic generation failed: \(error.localizedDescription, privacy: .private)")
             }
         }
         return signals
@@ -514,14 +627,20 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             let orderedAttach = attachMatches.sorted { lhs, rhs in
                 Self.matchComesFirst(lhs, rhs, folders: snapshot.folders)
             }
-            if let winner = orderedAttach.first, winner.score >= attachThresholds.reviewFloor,
+            if let winner = orderedAttach.first,
+               OrganizationPlacementPolicy.isReviewable(score: winner.score,
+                                                        thresholds: attachThresholds),
                let targetSource = winner.source {
                 let winnerPriority = Self.attachmentPriority(targetSource, folders: snapshot.folders)
                 let runnerUpScore = orderedAttach.dropFirst().first(where: { match in
                     guard let candidate = match.source else { return false }
                     return Self.attachmentPriority(candidate, folders: snapshot.folders) == winnerPriority
                 })?.score ?? 0
-                let isAmbiguous = winner.score - runnerUpScore < attachThresholds.winnerMargin
+                let isAmbiguous = OrganizationPlacementPolicy.isAmbiguous(
+                    winnerScore: winner.score,
+                    runnerUpScore: runnerUpScore,
+                    thresholds: attachThresholds
+                )
                 let targetFolderID = Self.folderID(for: targetSource.effectiveThreadID, in: snapshot.folders)
                 let folder = targetFolderID.flatMap { id in snapshot.folders.first { $0.id == id } }
                 let manualMergeConflict = source.manualGroupID != nil &&
@@ -579,7 +698,8 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                 return ($0.folderProfile?.folder.id ?? "") < ($1.folderProfile?.folder.id ?? "")
             }
             guard let winner = orderedTopics.first,
-                  winner.score >= folderThresholds.reviewFloor,
+                  OrganizationPlacementPolicy.isReviewable(score: winner.score,
+                                                           thresholds: folderThresholds),
                   let profile = winner.folderProfile else { continue }
             let runnerUpScore = orderedTopics.dropFirst().first?.score ?? 0
             generated.append(Self.makeProposal(
@@ -590,7 +710,11 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                 folder: profile.folder,
                 match: winner,
                 providerVersion: providerVersion,
-                isAmbiguous: winner.score - runnerUpScore < folderThresholds.winnerMargin,
+                isAmbiguous: OrganizationPlacementPolicy.isAmbiguous(
+                    winnerScore: winner.score,
+                    runnerUpScore: runnerUpScore,
+                    thresholds: folderThresholds
+                ),
                 hasExistingFolderConflict: sourceFolderID != nil && sourceFolderID != profile.folder.id,
                 hasManualGroupMergeConflict: false,
                 followsMailboxMapping: settings.followsFolderMailboxMapping
@@ -636,15 +760,25 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                        snapshot: GraphAutomationSnapshot,
                        allowsReviewedConflicts: Bool) async {
         guard !selected.isEmpty else { return }
-        let currentSources = Self.makeSources(from: snapshot)
+        let currentSources = OrganizationSourceSnapshotBuilder.build(from: snapshot)
         let sourceByID = Dictionary(uniqueKeysWithValues: currentSources.map { ($0.effectiveThreadID, $0) })
-        var seenSourceIDs = Set<String>()
+        let sourceCounts = Dictionary(grouping: selected, by: { $0.source.effectiveThreadID })
+            .mapValues(\.count)
         var valid: [GraphAutomationProposal] = []
         var invalid: [GraphAutomationProposal] = []
 
         for original in selected.sorted(by: Self.proposalComesFirst) {
             var proposal = original
-            guard seenSourceIDs.insert(proposal.source.effectiveThreadID).inserted else { continue }
+            if (sourceCounts[proposal.source.effectiveThreadID] ?? 0) > 1 {
+                proposal.status = .pendingReview
+                proposal.lastError = NSLocalizedString(
+                    "graph.automation.error.duplicate_source_conflict",
+                    comment: "Approve All conflict when multiple proposals use the same source"
+                )
+                proposal.updatedAt = Date()
+                invalid.append(proposal)
+                continue
+            }
             guard let currentSource = sourceByID[proposal.source.effectiveThreadID],
                   currentSource.fingerprint == proposal.source.fingerprint else {
                 proposal.status = .pendingReview
@@ -709,8 +843,13 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         if !invalid.isEmpty {
             mergePersisted(invalid)
             try? await store.upsertGraphAutomationProposals(invalid)
+            await metricsRecorder?.recordEvent(.suggestionDecision,
+                                               count: invalid.count,
+                                               status: .failure)
         }
         guard !valid.isEmpty else { return }
+        await metricsRecorder?.recordEvent(.actionStart,
+                                           count: 1)
         do {
             let result = try await store.applyGraphAutomationBatch(valid)
             mergePersisted(result.proposals)
@@ -724,6 +863,15 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                 }
             }
             onOrganizationChanged?()
+            await metricsRecorder?.recordEvent(.suggestionDecision,
+                                               count: result.proposals.count,
+                                               status: .success)
+            await metricsRecorder?.recordEvent(.groupCommitted,
+                                               count: result.proposals.count,
+                                               status: .success)
+            await metricsRecorder?.recordEvent(.betterMailCommit,
+                                               count: 1,
+                                               status: .success)
             for applied in result.proposals where applied.mailStatus == .pending {
                 await executeMailboxPhase(for: applied, isManualRetry: false)
             }
@@ -736,6 +884,13 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             }
             mergePersisted(failures)
             try? await store.upsertGraphAutomationProposals(failures)
+            await metricsRecorder?.recordEvent(.suggestionDecision,
+                                               count: failures.count,
+                                               status: .failure)
+            await metricsRecorder?.recordEvent(.groupCommitted,
+                                               count: failures.count,
+                                               status: .failure,
+                                               failureReason: .actionFailure)
         }
     }
 
@@ -756,7 +911,20 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             await persistAndMerge(proposal)
             return
         }
-        guard let mailClient else {
+        guard let currentConsent = currentMailAutomationConsent(allows: .messageMove) else {
+            proposal.status = .failed
+            proposal.mailStatus = .failed
+            proposal.retryCount = 0
+            proposal.nextRetryAt = nil
+            proposal.lastError = NSLocalizedString(
+                "graph.automation.error.mail_consent_required",
+                comment: "Automatic Mail movement requires separate current consent"
+            )
+            proposal.updatedAt = Date()
+            await persistAndMerge(proposal)
+            return
+        }
+        guard let organizationMailService else {
             proposal.status = .failed
             proposal.mailStatus = .failed
             proposal.retryCount = 3
@@ -778,36 +946,131 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         await persistAndMerge(proposal)
 
         let destination = MailLocation(account: destinationAccount, mailbox: destinationPath)
-        let sourceMessages = Dictionary(grouping: proposal.source.messages.filter {
+        let messagesRequiringMove = proposal.source.messages.filter {
             !$0.messageID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 !destination.matches(account: $0.accountName, mailbox: $0.mailboxPath)
-        }, by: { MailLocation(account: $0.accountName, mailbox: $0.mailboxPath) })
-        var moved: [GraphSnipMovedMessage] = []
-        for (source, messages) in sourceMessages.sorted(by: { $0.key.id < $1.key.id }) {
-            do {
-                let result = try await mailClient.moveMessages(messageIDs: messages.map(\.messageID),
-                                                               toMailboxPath: destination.mailbox,
-                                                               account: destination.account,
-                                                               sourceMailboxPath: source.mailbox,
-                                                               sourceAccount: source.account)
-                moved.append(contentsOf: messages.filter { result.contains($0.messageID) }.map {
-                    GraphSnipMovedMessage(messageID: $0.messageID,
-                                          sourceMailboxPath: $0.mailboxPath,
-                                          sourceAccountName: $0.accountName,
-                                          destinationMailboxPath: destination.mailbox,
-                                          destinationAccountName: destination.account)
-                })
-            } catch {
-                Log.app.error("Graph automation Mail move failed: \(error.localizedDescription, privacy: .public)")
-            }
         }
-        let requiredIDs = Set(sourceMessages.values.flatMap { $0 }.map {
+        guard !messagesRequiringMove.isEmpty else {
+            proposal.status = .applied
+            proposal.mailStatus = .moved
+            proposal.movedMessages = []
+            proposal.retryCount = 0
+            proposal.nextRetryAt = nil
+            proposal.lastError = nil
+            proposal.updatedAt = Date()
+            await persistAndMerge(proposal)
+            return
+        }
+        let exactRoutes = messagesRequiringMove.map {
+            OrganizationMailRoute(messageID: $0.messageID,
+                                  account: $0.accountName,
+                                  mailboxPath: $0.mailboxPath)
+        }
+        let disclosedEffect = OrganizationEffect.mixed(
+            operation: .mappedAutomation,
+            betterMailChange: .groupMembership,
+            mailMutations: [.messageMove],
+            messageCount: exactRoutes.count,
+            sourceRoutes: exactRoutes,
+            destination: .mailbox(account: destination.account, path: destination.mailbox),
+            reversibility: .conditionallyReversible
+        )
+        let authorization: OrganizationMailAuthorization
+        do {
+            authorization = try OrganizationMailAuthorization.fromCurrentConsent(
+                effect: disclosedEffect,
+                consent: currentConsent
+            )
+        } catch {
+            proposal.status = .failed
+            proposal.mailStatus = .failed
+            proposal.retryCount = 0
+            proposal.nextRetryAt = nil
+            proposal.lastError = NSLocalizedString(
+                "graph.automation.error.mail_disclosure_incomplete",
+                comment: "Automatic Mail movement requires complete exact source routes"
+            )
+            proposal.updatedAt = Date()
+            await persistAndMerge(proposal)
+            return
+        }
+        let gatewayOutcome: OrganizationMailGatewayOutcome
+        do {
+            gatewayOutcome = try await organizationMailService.move(
+                OrganizationMailMoveExecution(
+                    operationID: OrganizationMailOperationIdentifier.make(
+                        namespace: "graph-automation-move",
+                        seed: "\(proposal.id)|attempt:\(proposal.retryCount)"
+                    ),
+                    kind: .automation,
+                    effect: disclosedEffect,
+                    authorization: authorization,
+                    currentConsent: currentConsent,
+                    routes: exactRoutes,
+                    destination: .mailbox(account: destination.account,
+                                          path: destination.mailbox),
+                    now: Date()
+                )
+            )
+        } catch {
+            Log.app.error("Graph automation Mail move failed. messageCount=\(exactRoutes.count, privacy: .public) error=\(String(describing: type(of: error)), privacy: .public)")
+            proposal.movedMessages = []
+            if Self.requiresManualMailRecovery(error) {
+                proposal.status = .recoveryNeeded
+                proposal.mailStatus = .recoveryNeeded
+                proposal.nextRetryAt = nil
+                proposal.lastError = NSLocalizedString(
+                    "graph.automation.error.mail_recovery_required",
+                    comment: "Mail outcome is unknown and requires manual recovery"
+                )
+            } else {
+                proposal.status = .failed
+                proposal.mailStatus = .failed
+                proposal.retryCount = min(3, proposal.retryCount + 1)
+                proposal.nextRetryAt = Self.nextRetryDate(count: proposal.retryCount,
+                                                          now: Date(),
+                                                          manualRetry: isManualRetry)
+                proposal.lastError = NSLocalizedString(
+                    "graph.automation.error.mail_move_failed",
+                    comment: "Mail move failed but app grouping was retained"
+                )
+            }
+            proposal.updatedAt = Date()
+            await persistAndMerge(proposal)
+            return
+        }
+        let completedRoutes = Set(gatewayOutcome.completedRoutes)
+        let moved = messagesRequiringMove.compactMap { message -> GraphSnipMovedMessage? in
+            let route = OrganizationMailRoute(messageID: message.messageID,
+                                              account: message.accountName,
+                                              mailboxPath: message.mailboxPath)
+            guard completedRoutes.contains(route) else { return nil }
+            return GraphSnipMovedMessage(messageID: message.messageID,
+                                         sourceMailboxPath: message.mailboxPath,
+                                         sourceAccountName: message.accountName,
+                                         destinationMailboxPath: destination.mailbox,
+                                         destinationAccountName: destination.account)
+        }
+        let requiredIDs = Set(messagesRequiringMove.map {
             GraphSnipMessage.locationIdentity(messageID: $0.messageID,
                                               accountName: $0.accountName,
                                               mailboxPath: $0.mailboxPath)
         })
         let movedIDs = Set(moved.map(\.id))
-        if requiredIDs.isSubset(of: movedIDs) {
+        if gatewayOutcome.phase == .recovery {
+            proposal.status = .recoveryNeeded
+            proposal.mailStatus = .recoveryNeeded
+            proposal.movedMessages = moved.sorted { $0.id < $1.id }
+            proposal.nextRetryAt = nil
+            proposal.lastError = NSLocalizedString(
+                "graph.automation.error.mail_recovery_required",
+                comment: "Mail outcome is unknown and requires manual recovery"
+            )
+            proposal.updatedAt = Date()
+            await persistAndMerge(proposal)
+            return
+        }
+        if gatewayOutcome.isComplete, requiredIDs.isSubset(of: movedIDs) {
             proposal.status = .applied
             proposal.mailStatus = .moved
             proposal.movedMessages = moved.sorted { $0.id < $1.id }
@@ -819,13 +1082,42 @@ internal final class GraphAutomationCoordinator: ObservableObject {
             return
         }
         if !moved.isEmpty {
-            proposal.mailStatus = .compensating
-            await persistAndMerge(proposal)
-            let displaced = await restoreMovedMessages(moved, with: mailClient)
-            if !displaced.isEmpty {
+            guard currentMailAutomationConsent(allows: .messageRestore) != nil else {
                 proposal.status = .recoveryNeeded
                 proposal.mailStatus = .recoveryNeeded
-                proposal.movedMessages = displaced
+                proposal.movedMessages = moved.sorted { $0.id < $1.id }
+                proposal.nextRetryAt = nil
+                proposal.lastError = NSLocalizedString(
+                    "graph.automation.error.mail_restore_consent_required",
+                    comment: "Automatic Mail restoration requires separate current consent"
+                )
+                proposal.updatedAt = Date()
+                await persistAndMerge(proposal)
+                return
+            }
+            proposal.mailStatus = .compensating
+            await persistAndMerge(proposal)
+            let restoreAttempt = await restoreMovedMessages(
+                moved,
+                operationSeed: "compensate|\(proposal.id)"
+            )
+            if restoreAttempt.requiresManualRecovery {
+                proposal.status = .recoveryNeeded
+                proposal.mailStatus = .recoveryNeeded
+                proposal.movedMessages = restoreAttempt.remaining
+                proposal.nextRetryAt = nil
+                proposal.lastError = NSLocalizedString(
+                    "graph.automation.error.mail_recovery_required",
+                    comment: "Mail outcome is unknown and requires manual recovery"
+                )
+                proposal.updatedAt = Date()
+                await persistAndMerge(proposal)
+                return
+            }
+            if !restoreAttempt.remaining.isEmpty {
+                proposal.status = .recoveryNeeded
+                proposal.mailStatus = .compensating
+                proposal.movedMessages = restoreAttempt.remaining
                 proposal.nextRetryAt = nil
                 proposal.lastError = NSLocalizedString("graph.automation.error.partial_recovery",
                                                        comment: "Mail compensation was incomplete")
@@ -845,6 +1137,9 @@ internal final class GraphAutomationCoordinator: ObservableObject {
                                                comment: "Mail move failed but app grouping was retained")
         proposal.updatedAt = Date()
         await persistAndMerge(proposal)
+        await metricsRecorder?.recordEvent(.recovery,
+                                           count: max(original.movedMessages.count, 1),
+                                           status: proposal.status == .recoveryNeeded ? .failure : .success)
     }
 
     private func retryDueMailboxOperations(now: Date) async {
@@ -859,63 +1154,168 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         }
     }
 
-    private func finishUndoMail(for original: GraphAutomationProposal) async {
+    private func finishMailRestore(for original: GraphAutomationProposal,
+                                   purpose: MailRestorePurpose) async {
         var proposal = original
         guard !proposal.movedMessages.isEmpty else {
-            proposal.status = .undone
-            proposal.mailStatus = .restored
+            proposal.status = purpose == .undo ? .undone : .failed
+            proposal.mailStatus = purpose == .undo ? .restored : .failed
             proposal.lastError = nil
             proposal.updatedAt = Date()
             await persistAndMerge(proposal)
             return
         }
-        guard let mailClient else {
+        guard currentMailAutomationConsent(allows: .messageRestore) != nil else {
             proposal.status = .recoveryNeeded
-            proposal.mailStatus = .recoveryNeeded
+            proposal.mailStatus = purpose == .undo ? .restoring : .compensating
+            proposal.lastError = NSLocalizedString(
+                "graph.automation.error.mail_restore_consent_required",
+                comment: "Automatic Mail restoration requires separate current consent"
+            )
+            proposal.updatedAt = Date()
+            await persistAndMerge(proposal)
+            return
+        }
+        guard organizationMailService != nil else {
+            proposal.status = .recoveryNeeded
+            proposal.mailStatus = purpose == .undo ? .restoring : .compensating
             proposal.lastError = NSLocalizedString("graph.automation.error.mail_unavailable",
                                                    comment: "Mail movement is unavailable")
             proposal.updatedAt = Date()
             await persistAndMerge(proposal)
             return
         }
-        let remaining = await restoreMovedMessages(proposal.movedMessages, with: mailClient)
-        proposal.movedMessages = remaining
-        proposal.status = remaining.isEmpty ? .undone : .recoveryNeeded
-        proposal.mailStatus = remaining.isEmpty ? .restored : .recoveryNeeded
-        proposal.lastError = remaining.isEmpty ? nil : NSLocalizedString(
-            "graph.automation.error.undo_recovery",
-            comment: "Automation undo requires Mail recovery"
+        let seedPrefix = purpose == .undo ? "undo" : "compensate"
+        let restoreAttempt = await restoreMovedMessages(
+            proposal.movedMessages,
+            operationSeed: "\(seedPrefix)|\(proposal.id)"
         )
+        proposal.movedMessages = restoreAttempt.remaining
+        if restoreAttempt.requiresManualRecovery {
+            proposal.status = .recoveryNeeded
+            proposal.mailStatus = .recoveryNeeded
+            proposal.lastError = NSLocalizedString(
+                "graph.automation.error.mail_recovery_required",
+                comment: "Mail outcome is unknown and requires manual recovery"
+            )
+        } else if restoreAttempt.remaining.isEmpty {
+            proposal.status = purpose == .undo ? .undone : .failed
+            proposal.mailStatus = purpose == .undo ? .restored : .failed
+            proposal.lastError = purpose == .undo ? nil : NSLocalizedString(
+                "graph.automation.error.mail_move_failed",
+                comment: "Mail move failed but app grouping was retained"
+            )
+        } else {
+            proposal.status = .recoveryNeeded
+            proposal.mailStatus = purpose == .undo ? .restoring : .compensating
+            proposal.lastError = NSLocalizedString(
+                purpose == .undo
+                    ? "graph.automation.error.undo_recovery"
+                    : "graph.automation.error.partial_recovery",
+                comment: "Automation restore has exact residual routes"
+            )
+        }
         proposal.updatedAt = Date()
         await persistAndMerge(proposal)
     }
 
+    private func currentMailAutomationConsent(
+        allows effect: OrganizationMailAutomationEffect
+    ) -> OrganizationMailAutomationConsent? {
+        let resolution = mailAutomationConsentProvider()
+        mailAutomationConsentStatus = resolution.status
+        guard case .current(let consent) = resolution,
+              consent.allows(effect) else {
+            return nil
+        }
+        return consent
+    }
+
     private func restoreMovedMessages(
         _ movedMessages: [GraphSnipMovedMessage],
-        with mailClient: any GraphSnipMailMoving
-    ) async -> [GraphSnipMovedMessage] {
-        let grouped = Dictionary(grouping: movedMessages) { message in
-            MailRestoreRoute(destination: MailLocation(account: message.destinationAccountName,
-                                                       mailbox: message.destinationMailboxPath),
-                             origin: MailLocation(account: message.sourceAccountName,
-                                                  mailbox: message.sourceMailboxPath))
+        operationSeed: String
+    ) async -> MailRestoreAttempt {
+        guard let organizationMailService,
+              let currentConsent = currentMailAutomationConsent(allows: .messageRestore) else {
+            return MailRestoreAttempt(remaining: movedMessages,
+                                      requiresManualRecovery: false)
         }
-        var restored = Set<String>()
-        for (route, messages) in grouped.sorted(by: { $0.key.id < $1.key.id }) {
-            do {
-                let result = try await mailClient.moveMessages(messageIDs: messages.map(\.messageID),
-                                                               toMailboxPath: route.origin.mailbox,
-                                                               account: route.origin.account,
-                                                               sourceMailboxPath: route.destination.mailbox,
-                                                               sourceAccount: route.destination.account)
-                for message in messages where result.contains(message.messageID) {
-                    restored.insert(message.id)
-                }
-            } catch {
-                Log.app.error("Graph automation Mail restore failed: \(error.localizedDescription, privacy: .public)")
+        let routes = movedMessages.map { message in
+            OrganizationMailRestoreRoute(
+                current: OrganizationMailRoute(messageID: message.messageID,
+                                               account: message.destinationAccountName,
+                                               mailboxPath: message.destinationMailboxPath),
+                destination: OrganizationMailRoute(messageID: message.messageID,
+                                                   account: message.sourceAccountName,
+                                                   mailboxPath: message.sourceMailboxPath)
+            )
+        }
+        let now = Date()
+        let effect = OrganizationEffect.appleMail(
+            operation: .automationRecovery,
+            mutation: .messageRestore,
+            messageCount: routes.count,
+            sourceRoutes: routes.map(\.current),
+            destination: .originalSourceRoutes,
+            reversibility: .conditionallyReversible
+        )
+        do {
+            let authorization = try OrganizationMailAuthorization.fromCurrentConsent(
+                effect: effect,
+                consent: currentConsent,
+                now: now
+            )
+            let outcome = try await organizationMailService.restore(
+                OrganizationMailRestoreExecution(
+                    operationID: OrganizationMailOperationIdentifier.makeRestore(
+                        namespace: "graph-automation-restore",
+                        seed: operationSeed,
+                        routes: routes
+                    ),
+                    kind: .recovery,
+                    effect: effect,
+                    authorization: authorization,
+                    currentConsent: currentConsent,
+                    routes: routes,
+                    now: now
+                )
+            )
+            if outcome.phase == .recovery {
+                return MailRestoreAttempt(remaining: movedMessages,
+                                          requiresManualRecovery: true)
+            }
+            let completed = Set(outcome.completedRoutes)
+            let remaining = movedMessages.filter { message in
+                let current = OrganizationMailRoute(messageID: message.messageID,
+                                                    account: message.destinationAccountName,
+                                                    mailboxPath: message.destinationMailboxPath)
+                return !completed.contains(current)
+            }
+            return MailRestoreAttempt(remaining: remaining,
+                                      requiresManualRecovery: false)
+        } catch {
+            Log.app.error("Graph automation Mail restore failed. messageCount=\(routes.count, privacy: .public) error=\(String(describing: type(of: error)), privacy: .public)")
+            return MailRestoreAttempt(
+                remaining: movedMessages,
+                requiresManualRecovery: Self.requiresManualMailRecovery(error)
+            )
+        }
+    }
+
+    private static func requiresManualMailRecovery(_ error: Error) -> Bool {
+        if let gatewayError = error as? OrganizationMailGatewayError {
+            switch gatewayError {
+            case .transportFailed, .invalidTransportResult, .ledgerFailureAfterExternalCall:
+                return true
+            default:
+                return false
             }
         }
-        return movedMessages.filter { !restored.contains($0.id) }
+        if let serviceError = error as? OrganizationMailExecutionServiceError,
+           case .operationInFlight = serviceError {
+            return true
+        }
+        return false
     }
 
     private func mark(_ original: GraphAutomationProposal,
@@ -932,7 +1332,7 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         do {
             try await store.upsertGraphAutomationProposals([proposal])
         } catch {
-            Log.app.error("Failed to persist graph automation state: \(error.localizedDescription, privacy: .public)")
+            Log.app.error("Failed to persist graph automation state: \(error.localizedDescription, privacy: .private)")
         }
         mergePersisted([proposal])
     }
@@ -968,90 +1368,6 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         case .rejected: 5
         case .undone: 6
         case .stale: 7
-        }
-    }
-
-    private static func makeSources(from snapshot: GraphAutomationSnapshot) -> [GraphAutomationSource] {
-        snapshot.roots.compactMap { root in
-            let rawThreadID = GraphData.rawThreadID(for: root)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !rawThreadID.isEmpty else { return nil }
-            let nodes = flatten(root).sorted {
-                if $0.message.date != $1.message.date { return $0.message.date < $1.message.date }
-                return $0.id < $1.id
-            }
-            guard !nodes.isEmpty else { return nil }
-            let accounts = Set(nodes.map { $0.message.physicalSource.accountName.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty })
-            let accountName = accounts.count == 1 ? accounts.first ?? "" : ""
-            let manualGroup = snapshot.manualGroups[rawThreadID]
-            let automaticThreadIDs = Set(nodes.compactMap { snapshot.jwzThreadMap[$0.message.threadKey] })
-            let isBranch = manualGroup != nil || nodes.count > 1
-            let jwzThreadIDs: Set<String>
-            let manualMessageKeys: Set<String>
-            if let manualGroup {
-                jwzThreadIDs = manualGroup.jwzThreadIDs
-                manualMessageKeys = manualGroup.manualMessageKeys
-            } else if isBranch {
-                jwzThreadIDs = automaticThreadIDs.isEmpty ? [rawThreadID] : automaticThreadIDs
-                manualMessageKeys = []
-            } else {
-                jwzThreadIDs = []
-                manualMessageKeys = [nodes[0].message.threadKey]
-            }
-            var seenPhysicalSources = Set<String>()
-            let messages = nodes.compactMap { node -> GraphAutomationMessageSource? in
-                let physical = node.message.physicalSource
-                let identity = GraphAutomationIdentity.make([
-                    physical.accountName.lowercased(),
-                    physical.mailboxID.lowercased(),
-                    physical.internalMailID ?? "",
-                    physical.messageID.lowercased()
-                ])
-                guard seenPhysicalSources.insert(identity).inserted else { return nil }
-                return GraphAutomationMessageSource(messageID: physical.messageID,
-                                                    messageKey: node.message.threadKey,
-                                                    internalMailID: physical.internalMailID,
-                                                    accountName: physical.accountName,
-                                                    mailboxPath: physical.mailboxID,
-                                                    date: physical.date)
-            }
-            let summary = nodes.reversed().compactMap { node -> String? in
-                let value = (snapshot.summariesByNodeID[node.id]
-                    ?? snapshot.summariesByNodeID[GraphData.messageNodeID(for: node.id)])?.text
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return value.isEmpty ? nil : value
-            }.first ?? ""
-            let content = representativeContent(nodes)
-            let fingerprintComponents = [
-                "graph-automation-source-v1",
-                rawThreadID,
-                manualGroup?.id ?? "",
-                jwzThreadIDs.sorted().joined(separator: ","),
-                manualMessageKeys.sorted().joined(separator: ",")
-            ] + nodes.map { node in
-                let message = node.message
-                return [
-                    message.physicalSource.accountName.lowercased(),
-                    message.physicalSource.messageID.lowercased(),
-                    String(message.physicalSource.date.timeIntervalSinceReferenceDate),
-                    message.subject,
-                    message.snippet,
-                    message.inReplyTo ?? "",
-                    message.references.joined(separator: ",")
-                ].joined(separator: "|")
-            }
-            return GraphAutomationSource(rawThreadID: rawThreadID,
-                                         effectiveThreadID: rawThreadID,
-                                         manualGroupID: manualGroup?.id,
-                                         subject: root.message.subject.trimmingCharacters(in: .whitespacesAndNewlines),
-                                         summary: summary,
-                                         representativeContent: content,
-                                         accountName: accountName,
-                                         jwzThreadIDs: jwzThreadIDs,
-                                         manualMessageKeys: manualMessageKeys,
-                                         messages: messages,
-                                         fingerprint: GraphAutomationIdentity.make(fingerprintComponents))
         }
     }
 
@@ -1344,23 +1660,6 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         return lhs.id < rhs.id
     }
 
-    private static func flatten(_ node: ThreadNode) -> [ThreadNode] {
-        [node] + node.children.flatMap(flatten)
-    }
-
-    private static func representativeContent(_ nodes: [ThreadNode]) -> String {
-        let indices: [Int]
-        if nodes.count <= 4 {
-            indices = Array(nodes.indices)
-        } else {
-            indices = Array(Set([0, nodes.count / 3, (nodes.count * 2) / 3, nodes.count - 1])).sorted()
-        }
-        return indices.enumerated().map { offset, index in
-            let message = nodes[index].message
-            return "\(offset + 1). Subject: \(String(message.subject.prefix(200))) | From: \(String(message.from.prefix(120))) | Content: \(String(message.snippet.prefix(600)))"
-        }.joined(separator: "\n")
-    }
-
     private static func jaccard(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
         let union = lhs.union(rhs)
         guard !union.isEmpty else { return 0 }
@@ -1407,11 +1706,4 @@ private struct MailLocation: Hashable {
         account.caseInsensitiveCompare(candidateAccount) == .orderedSame &&
             mailbox.caseInsensitiveCompare(candidateMailbox) == .orderedSame
     }
-}
-
-private struct MailRestoreRoute: Hashable {
-    let destination: MailLocation
-    let origin: MailLocation
-
-    var id: String { destination.id + "->" + origin.id }
 }

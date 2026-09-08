@@ -5,6 +5,7 @@ internal struct GraphAutomationQueueSheet: View {
     internal let folders: [ThreadFolder]
     @Environment(\.dismiss) private var dismiss
     @State private var selectedIDs = Set<String>()
+    @State private var approveAllPlan: GraphAutomationApprovalPlan?
 
     internal var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +35,31 @@ internal struct GraphAutomationQueueSheet: View {
         .frame(minWidth: 720, idealWidth: 820, minHeight: 520, idealHeight: 640)
         .background(DesignTokens.Graph.AppTheme.background)
         .accessibilityIdentifier(AccessibilityID.graphAutomationSheet)
+        .alert(NSLocalizedString("graph.automation.approve_all.confirm.title",
+                                 comment: "Approve All confirmation title"),
+               isPresented: Binding(
+                   get: { approveAllPlan != nil },
+                   set: { isPresented in
+                       if !isPresented { approveAllPlan = nil }
+                   }
+               )) {
+            Button(approveAllConfirmationActionTitle) {
+                guard let plan = approveAllPlan else { return }
+                approveAllPlan = nil
+                Task {
+                    await coordinator.approveAll(
+                        plan: plan,
+                        mailEffectsConfirmed: plan.requiresMailConfirmation
+                    )
+                    selectedIDs.subtract(plan.pendingIDs)
+                }
+            }
+            Button(NSLocalizedString("common.cancel", comment: "Cancel"), role: .cancel) {
+                approveAllPlan = nil
+            }
+        } message: {
+            Text(approveAllConfirmationMessage)
+        }
     }
 
     private var header: some View {
@@ -45,6 +71,14 @@ internal struct GraphAutomationQueueSheet: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("graph.automation.mail_consent_status",
+                                      comment: "Current Apple Mail automation consent status"),
+                    NSLocalizedString(coordinator.mailAutomationConsentStatus.localizationKey,
+                                      comment: "Apple Mail automation consent status")
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
             if coordinator.isEvaluating {
@@ -81,6 +115,12 @@ internal struct GraphAutomationQueueSheet: View {
             }
             .disabled(selectedPendingIDs.isEmpty)
             .accessibilityIdentifier(AccessibilityID.graphAutomationRejectSelected)
+            Button(NSLocalizedString("graph.automation.approve_all",
+                                     comment: "Approve every pending automation proposal")) {
+                approveAllPlan = coordinator.approvalPlanForAllPending()
+            }
+            .disabled(coordinator.pendingProposals.isEmpty)
+            .accessibilityIdentifier(AccessibilityID.graphAutomationApproveAll)
             Button(NSLocalizedString("graph.automation.approve_selected",
                                      comment: "Approve selected automation proposals")) {
                 let ids = selectedPendingIDs
@@ -103,15 +143,6 @@ internal struct GraphAutomationQueueSheet: View {
                 Label(group.title, systemImage: group.folderID == nil ? "point.3.connected.trianglepath.dotted" : "folder.fill")
                     .font(.headline)
                 Spacer()
-                let pending = group.proposals.filter { $0.status == .pendingReview }
-                if let folderID = group.folderID, !pending.isEmpty {
-                    Button(NSLocalizedString("graph.automation.approve_all_destination",
-                                             comment: "Approve every proposal for one destination")) {
-                        Task { await coordinator.approveAll(destinationFolderID: folderID) }
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier(AccessibilityID.graphAutomationApproveAll(folderID))
-                }
             }
             ForEach(StatusSection.allCases) { statusSection in
                 let rows = group.proposals.filter { statusSection.contains($0.status) }
@@ -227,7 +258,7 @@ internal struct GraphAutomationQueueSheet: View {
                     }
                     .menuStyle(.borderlessButton)
                 }
-                if proposal.status == .failed || proposal.status == .recoveryNeeded {
+                if proposal.canRetryOrganizationWork {
                     Button(NSLocalizedString("graph.automation.retry", comment: "Retry automation")) {
                         Task { await coordinator.retry(proposal.id) }
                     }
@@ -252,6 +283,24 @@ internal struct GraphAutomationQueueSheet: View {
 
     private var selectedPendingIDs: Set<String> {
         selectedIDs.intersection(coordinator.pendingProposals.map(\.id))
+    }
+
+    private var approveAllConfirmationActionTitle: String {
+        let key = approveAllPlan?.requiresMailConfirmation == true
+            ? "graph.automation.approve_all.confirm.action_mail"
+            : "graph.automation.approve_all.confirm.action"
+        return NSLocalizedString(key, comment: "Approve All confirmation action")
+    }
+
+    private var approveAllConfirmationMessage: String {
+        guard let plan = approveAllPlan else { return "" }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("graph.automation.approve_all.confirm.message",
+                              comment: "Approve All counts by effect and conflict"),
+            plan.betterMailOnlyCount,
+            plan.mailChangingCount,
+            plan.conflictCount
+        )
     }
 
     private func selectionBinding(for id: String) -> Binding<Bool> {

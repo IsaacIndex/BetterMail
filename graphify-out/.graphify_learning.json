@@ -1,6 +1,22 @@
 {
-  "generated_at": "2026-08-20T09:07:06.602420+00:00",
+  "generated_at": "2026-08-30T14:14:46.423155+00:00",
   "nodes": {
+    "bettermail": {
+      "code_fingerprint": "7738b530f721718c6800651d62a76f2b8e36318aa4038e97d9948225009eebe1",
+      "label": "BetterMail",
+      "last": "2026-08-24T02:28:42.847022+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-24T02:28:42.847022+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        }
+      ],
+      "score": 0.860743942,
+      "source_file": "Tests/ThreadSummaryCacheTests.swift",
+      "status": "tentative",
+      "uses": 1
+    },
     "bettermail_sources_datasource_mailapplescriptclient_headerdecoder": {
       "code_fingerprint": "43e91053b7c97c0492a32ffb1dde2a8f6d813c9d18f7ffda29f8b20cdfbd2bce",
       "label": "HeaderDecoder",
@@ -12,7 +28,7 @@
           "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
         }
       ],
-      "score": 0.998176129,
+      "score": 0.78835161,
       "source_file": "BetterMail/Sources/DataSource/MailAppleScriptClient.swift",
       "status": "tentative",
       "uses": 1
@@ -28,26 +44,75 @@
           "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
         }
       ],
-      "score": 0.998176129,
+      "score": 0.78835161,
       "source_file": "BetterMail/Sources/Models/EmailThread.swift",
       "status": "tentative",
       "uses": 1
     },
-    "bettermail_sources_storage_messagestore_messagestore": {
-      "code_fingerprint": "a78a260f017e68cf51bbcb392aa66036f4c7619750e6d261ea65e10da4558f04",
-      "label": "MessageStore",
-      "last": "2026-08-20T07:13:20.070786+00:00",
+    "bettermail_sources_models_threadfolder_threadfolder": {
+      "code_fingerprint": "42e7943df9c937be070940833052defdfce417129a43c0c81c55fe934c16c6ad",
+      "label": "ThreadFolder",
+      "last": "2026-08-23T16:54:19.673431+00:00",
       "provenance": [
+        {
+          "date": "2026-08-23T16:54:19.673431+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        }
+      ],
+      "score": 0.852847709,
+      "source_file": "BetterMail/Sources/Models/ThreadFolder.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_settings_graphcanvassettings_graphcanvassettings": {
+      "code_fingerprint": "4b97763650de5dff2c7b602fdaffe4b1ac1188ace71ef928f167df7717df6896",
+      "label": "GraphCanvasSettings",
+      "last": "2026-08-23T17:29:06.865149+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-23T17:29:06.865149+00:00",
+          "outcome": "useful",
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        }
+      ],
+      "score": 0.85332386,
+      "source_file": "BetterMail/Sources/Settings/GraphCanvasSettings.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_storage_messagestore_messagestore": {
+      "code_fingerprint": "b51359256ec582dbdbd78dffec6eeb4e5184a3de3e5db819022cf6ecc1fcd68e",
+      "label": "MessageStore",
+      "last": "2026-08-30T06:54:49.029207+00:00",
+      "neg": 2,
+      "provenance": [
+        {
+          "date": "2026-08-24T02:28:42.847022+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        },
+        {
+          "date": "2026-08-23T17:29:06.865149+00:00",
+          "outcome": "useful",
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        },
+        {
+          "date": "2026-08-23T16:54:19.673431+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        },
         {
           "date": "2026-08-20T07:13:20.070786+00:00",
           "outcome": "useful",
           "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
         }
       ],
-      "score": 0.998176129,
+      "score": 1.369383907,
       "source_file": "BetterMail/Sources/Storage/MessageStore.swift",
-      "status": "tentative",
-      "uses": 1
+      "status": "contested",
+      "uses": 4,
+      "verdict": "useful"
     },
     "bettermail_sources_threading_jwzthreader_jwzthreader": {
       "code_fingerprint": "fb40eaace79a1c527d9abe9f36f948eddbfe1973ab81a4b2d110f77aa717e645",
@@ -60,42 +125,189 @@
           "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
         }
       ],
-      "score": 0.998176129,
+      "score": 0.78835161,
       "source_file": "BetterMail/Sources/Threading/JWZThreader.swift",
       "status": "tentative",
       "uses": 1
     },
-    "bettermail_sources_viewmodels_graphcanvasviewmodel_graphcanvasviewmodel": {
-      "code_fingerprint": "c0d6ca998d3b46269763ec502d23d7ece18e7422df01df09dba1577f0fe39467",
-      "label": "GraphCanvasViewModel",
-      "last": "2026-08-20T07:13:20.070786+00:00",
+    "bettermail_sources_ui_graph_graphdata_graphdata": {
+      "code_fingerprint": "e13380bf95731bf1162ae3b043750cf16cb1851ce995ee89c98b2adf2d0851f9",
+      "label": "GraphData",
+      "last": "2026-08-30T06:54:49.029207+00:00",
+      "neg": 1,
       "provenance": [
         {
-          "date": "2026-08-20T07:13:20.070786+00:00",
+          "date": "2026-08-23T17:29:06.865149+00:00",
           "outcome": "useful",
-          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        },
+        {
+          "date": "2026-08-23T16:54:19.673431+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
         }
       ],
-      "score": 0.998176129,
-      "source_file": "BetterMail/Sources/ViewModels/GraphCanvasViewModel.swift",
+      "score": 0.713205847,
+      "source_file": "BetterMail/Sources/UI/Graph/GraphData.swift",
+      "status": "contested",
+      "uses": 2,
+      "verdict": "useful"
+    },
+    "bettermail_sources_ui_graph_graphrepresentable_graphrepresentable": {
+      "code_fingerprint": "a20840e10bcfd5acbf4f25b64b9774d569fb7ac156a38a5b352de11b6526d36c",
+      "label": "GraphRepresentable",
+      "last": "2026-08-24T02:28:42.847022+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-24T02:28:42.847022+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        }
+      ],
+      "score": 0.860743942,
+      "source_file": "BetterMail/Sources/UI/Graph/GraphRepresentable.swift",
       "status": "tentative",
       "uses": 1
     },
-    "bettermail_sources_viewmodels_threadcanvasviewmodel_threadcanvasviewmodel": {
-      "code_fingerprint": "089b3ce5bf39647d7c892b7ee9f575668a30aeefe40c7408f53b2e7451c3b24a",
-      "label": "ThreadCanvasViewModel",
-      "last": "2026-08-20T07:13:20.070786+00:00",
+    "bettermail_sources_ui_graph_graphsuggestionreviewsheet_graphsuggestionreviewviewmodel": {
+      "code_fingerprint": "5c1e763dac58afe102146a6c88ae176668e2ff594a5a36a36f05f8027aea160b",
+      "label": "GraphSuggestionReviewViewModel",
+      "last": "2026-08-23T17:29:06.865149+00:00",
       "provenance": [
+        {
+          "date": "2026-08-23T17:29:06.865149+00:00",
+          "outcome": "useful",
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        }
+      ],
+      "score": 0.85332386,
+      "source_file": "BetterMail/Sources/UI/Graph/GraphSuggestionReviewSheet.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_ui_graph_obsidiangraphforcesimulator_obsidiangraphforcesimulator": {
+      "code_fingerprint": "657991c71126fcfd9e22a2f026f7b8e1bf31ca5a6827860e617804398b65bdb2",
+      "label": "ObsidianGraphForceSimulator",
+      "last": "2026-08-24T02:28:42.847022+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-24T02:28:42.847022+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        }
+      ],
+      "score": 0.860743942,
+      "source_file": "BetterMail/Sources/UI/Graph/ObsidianGraphForceSimulator.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_ui_graph_obsidiangraphscene_obsidiangraphscene": {
+      "code_fingerprint": "9a9a5100406964671c16a363e4dc2023cac495ed6cf931df48ac20dae75063fe",
+      "label": "ObsidianGraphScene",
+      "last": "2026-08-24T02:28:42.847022+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-24T02:28:42.847022+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        },
+        {
+          "date": "2026-08-23T17:29:06.865149+00:00",
+          "outcome": "useful",
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        },
+        {
+          "date": "2026-08-23T16:54:19.673431+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        }
+      ],
+      "score": 2.566915511,
+      "source_file": "BetterMail/Sources/UI/Graph/ObsidianGraphScene.swift",
+      "status": "preferred",
+      "uses": 3
+    },
+    "bettermail_sources_ui_threadlistview_threadlistview": {
+      "code_fingerprint": "9db411cacc054a15e2b2c4d047c8ce5b2ee31adbc8b83f025aaa889d603835ae",
+      "label": "ThreadListView",
+      "last": "2026-08-24T02:28:42.847022+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-24T02:28:42.847022+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        }
+      ],
+      "score": 0.860743942,
+      "source_file": "BetterMail/Sources/UI/ThreadListView.swift",
+      "status": "tentative",
+      "uses": 1
+    },
+    "bettermail_sources_viewmodels_graphcanvasviewmodel_graphcanvasviewmodel": {
+      "code_fingerprint": "443e8a4ffdedeeb35f60e79eaff02d88ef2a95d8622e00bb607c8197274ab13f",
+      "label": "GraphCanvasViewModel",
+      "last": "2026-08-30T06:51:47.396702+00:00",
+      "neg": 2,
+      "provenance": [
+        {
+          "date": "2026-08-24T04:17:36.107823+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and implement the seven suggested visual email organizer improvements while upholding the selected success targets."
+        },
+        {
+          "date": "2026-08-23T17:29:06.865149+00:00",
+          "outcome": "useful",
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        },
+        {
+          "date": "2026-08-23T16:54:19.673431+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        },
         {
           "date": "2026-08-20T07:13:20.070786+00:00",
           "outcome": "useful",
           "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
         }
       ],
-      "score": 0.998176129,
+      "score": 1.497966195,
+      "source_file": "BetterMail/Sources/ViewModels/GraphCanvasViewModel.swift",
+      "status": "contested",
+      "uses": 4,
+      "verdict": "useful"
+    },
+    "bettermail_sources_viewmodels_threadcanvasviewmodel_threadcanvasviewmodel": {
+      "code_fingerprint": "323fa1d3b75d37a4d5d3f785601bd87b2e2713336aade6ee82474209c9da2ec3",
+      "label": "ThreadCanvasViewModel",
+      "last": "2026-08-30T06:51:47.396702+00:00",
+      "neg": 2,
+      "provenance": [
+        {
+          "date": "2026-08-24T04:17:36.107823+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and implement the seven suggested visual email organizer improvements while upholding the selected success targets."
+        },
+        {
+          "date": "2026-08-23T17:29:06.865149+00:00",
+          "outcome": "useful",
+          "q": "Yes help me make the 7 suggested changes. As well as uphold the success targets mentioned in the selection"
+        },
+        {
+          "date": "2026-08-23T16:54:19.673431+00:00",
+          "outcome": "useful",
+          "q": "Review the entire report and suggest directions or approaches to improve the app. Again, to reemphasize, the main objective of the app is to allow user to quickly and visually organize the emails that he or she has."
+        },
+        {
+          "date": "2026-08-20T07:13:20.070786+00:00",
+          "outcome": "useful",
+          "q": "Where should forwarded and quoted collapsed email history be parsed, persisted, threaded, and rendered as individual graph nodes?"
+        }
+      ],
+      "score": 1.497966195,
       "source_file": "BetterMail/Sources/ViewModels/ThreadCanvasViewModel.swift",
-      "status": "tentative",
-      "uses": 1
+      "status": "contested",
+      "uses": 4,
+      "verdict": "useful"
     }
   },
   "version": 1

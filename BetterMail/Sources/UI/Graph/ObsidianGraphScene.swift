@@ -18,6 +18,106 @@ internal enum ObsidianGraphEdgeStyle {
     }
 }
 
+/// Builds the immutable lookup tables used by the live SpriteKit scene.
+/// Keeping this index beside the scene avoids rebuilding every GraphData
+/// dictionary once per rendered node during each SwiftUI update.
+internal struct GraphSceneLookupIndex {
+    internal let groupingByID: [String: GraphGrouping]
+    internal let threadByID: [String: GraphThread]
+    internal let messageByID: [String: GraphMessage]
+    internal let remainingBranchByID: [String: GraphRemainingBranch]
+
+    internal init(data: GraphData) {
+        groupingByID = Dictionary(uniqueKeysWithValues: data.groupings.map { ($0.id, $0) })
+        threadByID = Dictionary(uniqueKeysWithValues: data.threads.map { ($0.id, $0) })
+        messageByID = Dictionary(uniqueKeysWithValues: data.messages.map { ($0.id, $0) })
+        remainingBranchByID = Dictionary(uniqueKeysWithValues: data.remainingBranches.map { ($0.id, $0) })
+    }
+
+    internal func eligibleDragNodeIDs(from nodeIDs: Set<String>) -> Set<String> {
+        nodeIDs.filter { threadByID[$0] != nil || messageByID[$0] != nil }
+    }
+
+    /// Returns nodes that may participate in direct visual manipulation.
+    /// Confirmed folders are intentionally included here without changing the
+    /// semantic conversation-only eligibility used by organization actions.
+    internal func visualDragNodeIDs(from nodeIDs: Set<String>) -> Set<String> {
+        nodeIDs.filter { nodeID in
+            if threadByID[nodeID] != nil || messageByID[nodeID] != nil {
+                return true
+            }
+            guard let grouping = groupingByID[nodeID] else { return false }
+            return grouping.kind == .folder && grouping.sourceFolderID != nil
+        }
+    }
+}
+
+@MainActor
+internal struct GraphSpatialSceneConfiguration: Equatable {
+    internal let nodePositions: [String: CGPoint]
+    internal let confirmedGroupAnchors: [String: CGPoint]
+    internal let forceApply: Bool
+
+    internal init(nodePositions: [String: CGPoint],
+                  confirmedGroupAnchors: [String: CGPoint],
+                  forceApply: Bool = false) {
+        self.nodePositions = nodePositions
+        self.confirmedGroupAnchors = confirmedGroupAnchors
+        self.forceApply = forceApply
+    }
+}
+
+#if DEBUG
+internal struct ObsidianGraphSceneWorkMetrics: Equatable {
+    internal var fullRenderPassCount = 0
+    internal var dragRenderPassCount = 0
+    internal var forceStepCount = 0
+    internal var dragSimulationStepCount = 0
+    internal var dragCollisionCheckCount = 0
+    internal var accessibilityRefreshCount = 0
+}
+#endif
+
+/// The mounted SwiftUI adapter owns scene creation. This narrow main-actor
+/// handoff lets the presenter publish restored positions before the next scene
+/// configuration without changing the existing selection/drag callbacks.
+@MainActor
+internal enum GraphSpatialSceneBridge {
+    private static var pendingConfiguration: GraphSpatialSceneConfiguration?
+
+    internal static func publish(nodePositions: [String: CGPoint],
+                                 confirmedGroupAnchors: [String: CGPoint],
+                                 forceApply: Bool = false) {
+        pendingConfiguration = GraphSpatialSceneConfiguration(
+            nodePositions: nodePositions,
+            confirmedGroupAnchors: confirmedGroupAnchors,
+            forceApply: forceApply
+        )
+    }
+
+    internal static func consume(for data: GraphData) -> GraphSpatialSceneConfiguration? {
+        guard let pendingConfiguration else { return nil }
+        if pendingConfiguration.forceApply {
+            self.pendingConfiguration = nil
+            return pendingConfiguration
+        }
+        let hasNodeMatch = pendingConfiguration.nodePositions.keys.contains { data.allNodeIDs.contains($0) }
+        let confirmedGroupIDs = Set(data.groupings.compactMap { grouping in
+            grouping.kind == .folder ? grouping.sourceFolderID : nil
+        })
+        let hasGroupMatch = pendingConfiguration.confirmedGroupAnchors.keys.contains {
+            confirmedGroupIDs.contains($0)
+        }
+        guard hasNodeMatch || hasGroupMatch else { return nil }
+        self.pendingConfiguration = nil
+        return pendingConfiguration
+    }
+
+    internal static func clear() {
+        pendingConfiguration = nil
+    }
+}
+
 /// BetterMail's native Obsidian-style graph adapter. It consumes the existing
 /// GraphData projection and emits the same selection/action callbacks as the
 /// previous botanical renderer, while owning only layout and interaction.
@@ -32,17 +132,25 @@ internal final class ObsidianGraphScene: SKScene {
     private static let reducedMotionSettlingFrames = 48
 
     internal var onSelectGraphNode: ((String?, Bool) -> Void)?
+    internal var onSelectGraphNodeWithIntent: ((String?, OrganizerPointerSelectionIntent) -> Void)?
+    internal var onLassoGraphNodeIDs: ((Set<String>, Bool) -> Void)?
     internal var onExpandRemainingBranches: ((GraphRemainderScope) -> Void)?
     internal var onHoverItem: ((GraphHoverItem?) -> Void)?
     internal var onWaterThread: ((String) -> Void)?
     internal var onToggleActionItem: ((String) -> Void)?
     internal var isActionItem: ((String) -> Bool)?
     internal var onMoveThreadToFolder: ((String, String) -> Void)?
+    internal var onMoveThreadsToFolder: (([String], String) -> Void)?
+    /// Raw conversation IDs, overlay point, and world-space anchor.
+    internal var onCreateGroupAtCanvasPoint: (([String], CGPoint, CGPoint) -> Void)?
+    internal var onDropLifecycle: ((OrganizerDropLifecycleSignal) -> Void)?
+    internal var onRenderedOrganizerSnapshot: ((OrganizerRenderedGraphSnapshot) -> Void)?
     internal var onSnipTarget: ((GraphSnipTarget) -> Void)?
     internal var onPruneThread: ((String) -> Void)?
     internal var onPruneAnimationFinished: ((UUID) -> Void)?
     internal var onViewportChanged: ((CGFloat, CGPoint) -> Void)?
     internal var onPositionsChanged: (([String: CGPoint]) -> Void)?
+    internal var onLayoutSettled: (([String: CGPoint]) -> Void)?
     internal var onFrameRatePreferenceChanged: ((Int) -> Void)?
 
     internal var preferredFramesPerSecond: Int {
@@ -68,6 +176,7 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private var graphData: GraphData = .empty
+    private var graphLookupIndex = GraphSceneLookupIndex(data: .empty)
     private var simulator = ObsidianGraphForceSimulator()
     private var graphNodesByID: [String: ObsidianGraphSceneNode] = [:]
     private var edgeVisualsByID: [String: EdgeVisual] = [:]
@@ -76,6 +185,8 @@ internal final class ObsidianGraphScene: SKScene {
     private var displayConfig = ObsidianGraphDisplayConfig.defaults
     private var theme = DesignTokens.Graph.AppTheme.Palette(isDark: false)
     private var selectedGraphNodeIDs: Set<String> = []
+    private var eligibleSelectedDragNodeIDs: Set<String> = []
+    private var isLassoSelectionActive = false
     private var hoveredGraphNodeID: String?
     private var pruneMode: GraphPruneMode = .idle
     private var filteredNodeIDs: Set<String> = []
@@ -86,6 +197,8 @@ internal final class ObsidianGraphScene: SKScene {
     private var stagedSnipThreadIDs: Set<String> = []
     private var fullyStagedSnipGroupingIDs: Set<String> = []
     private var partiallyStagedSnipGroupingIDs: Set<String> = []
+    private var restoredNodePositions: [String: CGPoint] = [:]
+    private var restoredGroupAnchors: [String: CGPoint] = [:]
 
     private var lastUpdateTime: TimeInterval?
     private var lastInteractionTime: TimeInterval?
@@ -96,20 +209,34 @@ internal final class ObsidianGraphScene: SKScene {
     private var positionsReportedAfterSettling = false
     private var publishedFramesPerSecond = ObsidianGraphScene.activeFramesPerSecond
 
-    private var draggedNodeID: String?
-    private var draggedNodeOffset = CGPoint.zero
+    private var pointerStateMachine = OrganizerPointerStateMachine()
+    private var pointerAnchorNodeID: String?
+    private var activeDragPlan: OrganizerMultiDragPlan?
+    private var activeDraggedNodeIDs: Set<String> = []
+    private var activeDragRawThreadIDs: [String] = []
+    private var activeDragReactiveNodeIDs: Set<String> = []
+    private var localReturningNodeOrigins: [String: CGPoint] = [:]
+    private var dragFrameNeedsRender = false
     private var activeFolderDropTarget: GraphFolderDropTarget?
-    private var hasDraggedNode = false
-    private var isPanning = false
-    private var hasPanned = false
-    private var pendingSelectionID: String?
-    private var pendingSelectionIsAdditive = false
-    private var hasPendingSelection = false
+    private var activeDropItemCount = 0
+    private var activeDropHadVisibleHighlight = false
+    private var activeDropDidRelease = false
+    private var isPointerGestureActive = false
+    private var isSecondaryPanning = false
+    private let lassoNode = SKShapeNode()
 
     private var runningPruneAnimationID: UUID?
     private var runningSnipVisualTransitionID: UUID?
     private var remainingPruneAnimationNodes = 0
     private let cameraNode = SKCameraNode()
+
+#if DEBUG
+    internal private(set) var workMetrics = ObsidianGraphSceneWorkMetrics()
+
+    internal func resetWorkMetricsForTesting() {
+        workMetrics = ObsidianGraphSceneWorkMetrics()
+    }
+#endif
 
     override init(size: CGSize) {
         super.init(size: size)
@@ -124,6 +251,7 @@ internal final class ObsidianGraphScene: SKScene {
     internal func configure(data: GraphData,
                             selectedGraphNodeID: String?,
                             selectedGraphNodeIDs: Set<String> = [],
+                            isLassoSelectionActive: Bool = false,
                             pruneMode: GraphPruneMode,
                             filteredNodeIDs: Set<String>,
                             wateredCounts: [String: Int],
@@ -139,15 +267,38 @@ internal final class ObsidianGraphScene: SKScene {
                             fullyStagedSnipGroupingIDs: Set<String> = [],
                             partiallyStagedSnipGroupingIDs: Set<String> = [],
                             snipVisualTransition: GraphSnipVisualTransition? = nil,
-                            pruneAnimationRequest: GraphPruneAnimationRequest? = nil) {
+                            pruneAnimationRequest: GraphPruneAnimationRequest? = nil,
+                            restoredNodePositions: [String: CGPoint]? = nil,
+                            restoredGroupAnchors: [String: CGPoint]? = nil) {
         let dataChanged = data != graphData
         let themeChanged = theme != self.theme
         let textScaleChanged = textScale != self.textScale
         let forceChanged = forceConfig != self.forceConfig
         let displayChanged = displayConfig != self.displayConfig
         let reduceMotionChanged = reduceMotion != self.reduceMotion
+        let requestedSpatialConfiguration: GraphSpatialSceneConfiguration?
+        if let restoredNodePositions, let restoredGroupAnchors {
+            requestedSpatialConfiguration = GraphSpatialSceneConfiguration(
+                nodePositions: restoredNodePositions,
+                confirmedGroupAnchors: restoredGroupAnchors,
+                forceApply: true
+            )
+        } else {
+            requestedSpatialConfiguration = GraphSpatialSceneBridge.consume(for: data)
+        }
+        let spatialConfigurationChanged = requestedSpatialConfiguration.map {
+            $0.nodePositions != self.restoredNodePositions
+                || $0.confirmedGroupAnchors != self.restoredGroupAnchors
+        } ?? false
+        if let requestedSpatialConfiguration {
+            self.restoredNodePositions = requestedSpatialConfiguration.nodePositions
+            self.restoredGroupAnchors = requestedSpatialConfiguration.confirmedGroupAnchors
+        }
 
         graphData = data
+        if dataChanged {
+            graphLookupIndex = GraphSceneLookupIndex(data: data)
+        }
         if dataChanged, hoveredGraphNodeID != nil {
             hoveredGraphNodeID = nil
             onHoverItem?(nil)
@@ -160,6 +311,10 @@ internal final class ObsidianGraphScene: SKScene {
            data.allNodeIDs.contains(selectedGraphNodeID) {
             self.selectedGraphNodeIDs.insert(selectedGraphNodeID)
         }
+        eligibleSelectedDragNodeIDs = graphLookupIndex.eligibleDragNodeIDs(
+            from: self.selectedGraphNodeIDs
+        )
+        self.isLassoSelectionActive = isLassoSelectionActive
         self.pruneMode = pruneMode
         self.filteredNodeIDs = filteredNodeIDs
         self.wateredCounts = wateredCounts
@@ -174,8 +329,9 @@ internal final class ObsidianGraphScene: SKScene {
         self.textScale = textScale
 
         applyViewport(zoomScale: zoomScale, panOffset: panOffset)
-        if dataChanged || themeChanged || textScaleChanged || simulator.size != size {
-            rebuildGraph(restartLayout: dataChanged || simulator.nodesByID.isEmpty)
+        if dataChanged || themeChanged || textScaleChanged || spatialConfigurationChanged || simulator.size != size {
+            rebuildGraph(restartLayout: dataChanged || simulator.nodesByID.isEmpty,
+                         preservingExistingPositions: requestedSpatialConfiguration?.forceApply != true)
         } else {
             if forceChanged || reduceMotionChanged {
                 wakeLayout()
@@ -189,16 +345,20 @@ internal final class ObsidianGraphScene: SKScene {
         startSnipVisualTransitionIfNeeded(snipVisualTransition)
         startPruneAnimationIfNeeded(pruneAnimationRequest)
         publishFrameRatePreferenceIfNeeded()
+        onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
         guard size.width > 0, size.height > 0 else { return }
-        let currentPositions = simulator.positionsByID()
+        var currentPositions = simulator.positionsByID()
+        currentPositions.merge(localReturningNodeOrigins) { _, origin in origin }
         simulator.reset(data: graphData,
                         size: size,
                         preserving: currentPositions,
                         config: forceConfig)
+        activeDragReactiveNodeIDs = []
+        localReturningNodeOrigins = [:]
         let oldCenter = CGPoint(x: oldSize.width / 2, y: oldSize.height / 2)
         let pan = CGPoint(x: cameraNode.position.x - oldCenter.x,
                           y: cameraNode.position.y - oldCenter.y)
@@ -206,25 +366,86 @@ internal final class ObsidianGraphScene: SKScene {
         cameraNode.position = CGPoint(x: center.x + pan.x, y: center.y + pan.y)
         wakeLayout()
         renderGraph()
+        onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
+    }
+
+    /// Re-evaluates native accessibility visibility when AppKit attaches,
+    /// detaches, shows, or otherwise changes the hosting window. A model-only
+    /// render must never make benchmark readiness appear onscreen.
+    internal func refreshRenderedOrganizerSnapshotForWindowState() {
+        renderGraph()
+        onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
     }
 
     override func update(_ currentTime: TimeInterval) {
         let previousTime = lastUpdateTime ?? currentTime
         lastUpdateTime = currentTime
-        let shouldSimulate = !layoutIsSettled || draggedNodeID != nil
-        if shouldSimulate {
+        let wasLayoutSettled = layoutIsSettled
+        let isDragging = !activeDraggedNodeIDs.isEmpty
+        let isLocallySettling = !localReturningNodeOrigins.isEmpty
+            && !isDragging
+            && !isPointerGestureActive
+        let shouldSimulate = !layoutIsSettled
+            && !isPointerGestureActive
+            && localReturningNodeOrigins.isEmpty
+        if isDragging {
+#if DEBUG
+            workMetrics.dragSimulationStepCount += 1
+#endif
+            let changedNodeIDs = simulator.stepDragging(
+                deltaTime: min(max(currentTime - previousTime, 1.0 / 240.0), 1.0 / 20.0),
+                reduceMotion: reduceMotion
+            )
+#if DEBUG
+            workMetrics.dragCollisionCheckCount += simulator.lastDragCollisionCheckCount
+#endif
+            activeDragReactiveNodeIDs.formUnion(changedNodeIDs)
+            if dragFrameNeedsRender || !changedNodeIDs.isEmpty {
+                renderDragFrame()
+                dragFrameNeedsRender = false
+            }
+        } else if isLocallySettling {
+            let changedNodeIDs = simulator.stepLocalSettling(
+                deltaTime: min(max(currentTime - previousTime, 1.0 / 240.0), 1.0 / 20.0),
+                returningNodeOrigins: localReturningNodeOrigins,
+                reduceMotion: reduceMotion
+            )
+            activeDragReactiveNodeIDs.formUnion(changedNodeIDs)
+            if !changedNodeIDs.isEmpty {
+                renderDragFrame()
+            }
+            if simulator.isAtPositions(localReturningNodeOrigins) {
+                simulator.restorePositions(localReturningNodeOrigins)
+                localReturningNodeOrigins = [:]
+                activeDragReactiveNodeIDs = []
+                wakeLayout()
+                renderGraph()
+            }
+        } else if shouldSimulate {
+#if DEBUG
+            workMetrics.forceStepCount += 1
+#endif
             simulator.step(deltaTime: min(max(currentTime - previousTime, 1.0 / 240.0), 1.0 / 20.0),
                            reduceMotion: reduceMotion,
                            config: forceConfig)
             updateSettlingState()
             renderGraph()
         }
+        if !wasLayoutSettled, layoutIsSettled {
+            onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
+        }
+        if cameraNode.action(forKey: "obsidian-camera-recenter") != nil {
+            updateLabels()
+            updateAccessibilityGeometry()
+        }
         if shouldReportPositions,
            currentTime - lastPositionReportTime >= 0.2 {
             lastPositionReportTime = currentTime
-            onPositionsChanged?(simulator.positionsByID())
+            let positions = simulator.positionsByID()
+            onPositionsChanged?(positions)
             if layoutIsSettled {
                 positionsReportedAfterSettling = true
+                onLayoutSettled?(positions)
             }
         }
         publishFrameRatePreferenceIfNeeded()
@@ -249,26 +470,35 @@ internal final class ObsidianGraphScene: SKScene {
         graphNodesByID.removeAll()
         edgeVisualsByID.removeAll()
         neighborIDsByNodeID.removeAll()
+        activeDragReactiveNodeIDs = []
+        localReturningNodeOrigins = [:]
         onSelectGraphNode = nil
+        onSelectGraphNodeWithIntent = nil
+        onLassoGraphNodeIDs = nil
         onExpandRemainingBranches = nil
         onHoverItem = nil
         onWaterThread = nil
         onToggleActionItem = nil
         isActionItem = nil
         onMoveThreadToFolder = nil
+        onMoveThreadsToFolder = nil
+        onCreateGroupAtCanvasPoint = nil
+        onDropLifecycle = nil
+        onRenderedOrganizerSnapshot = nil
         onSnipTarget = nil
         onPruneThread = nil
         onPruneAnimationFinished = nil
         onViewportChanged = nil
         onPositionsChanged = nil
+        onLayoutSettled = nil
         onFrameRatePreferenceChanged = nil
         selectedGraphNodeIDs = []
+        eligibleSelectedDragNodeIDs = []
         hoveredGraphNodeID = nil
-        pendingSelectionID = nil
-        pendingSelectionIsAdditive = false
-        draggedNodeID = nil
+        cancelDirectManipulation()
         activeFolderDropTarget = nil
         graphData = .empty
+        graphLookupIndex = GraphSceneLookupIndex(data: .empty)
         simulator = ObsidianGraphForceSimulator()
         filteredNodeIDs = []
         wateredCounts = [:]
@@ -276,6 +506,9 @@ internal final class ObsidianGraphScene: SKScene {
         stagedSnipThreadIDs = []
         fullyStagedSnipGroupingIDs = []
         partiallyStagedSnipGroupingIDs = []
+        restoredNodePositions = [:]
+        restoredGroupAnchors = [:]
+        GraphSpatialSceneBridge.clear()
         runningSnipVisualTransitionID = nil
         lastUpdateTime = nil
         lastInteractionTime = nil
@@ -285,12 +518,8 @@ internal final class ObsidianGraphScene: SKScene {
 
     override func mouseDown(with event: NSEvent) {
         markInteraction()
+        cancelDirectManipulation()
         setActiveFolderDropTarget(nil)
-        hasPanned = false
-        hasDraggedNode = false
-        hasPendingSelection = false
-        pendingSelectionID = nil
-        pendingSelectionIsAdditive = false
         let location = event.location(in: self)
         let hitNodeID = hitTestNodeID(at: location)
 
@@ -313,37 +542,35 @@ internal final class ObsidianGraphScene: SKScene {
                 return
             }
             if event.clickCount >= 2,
-               graphData.threadByID[hitNodeID] != nil,
+               graphLookupIndex.threadByID[hitNodeID] != nil,
                let threadID = threadID(forGraphNodeID: hitNodeID) {
                 onWaterThread?(threadID)
                 graphNodesByID[hitNodeID]?.runWaterPulse(reduceMotion: reduceMotion)
                 return
             }
-            pendingSelectionID = hitNodeID
-            pendingSelectionIsAdditive = event.modifierFlags.contains(.command)
-            hasPendingSelection = true
-            if let physicsNode = simulator.nodesByID[hitNodeID] {
-                draggedNodeID = hitNodeID
-                draggedNodeOffset = CGPoint(x: physicsNode.position.x - location.x,
-                                            y: physicsNode.position.y - location.y)
-            }
+            pointerAnchorNodeID = hitNodeID == GraphCenter.you.id ? nil : hitNodeID
+        }
+
+        if event.clickCount >= 2 {
+            publishSelection(nodeID: nil, intent: .replace)
+            recenterCamera(animated: true)
             return
         }
 
-        pendingSelectionID = nil
-        hasPendingSelection = true
-        isPanning = true
-        if event.clickCount >= 2 {
-            hasPendingSelection = false
-            isPanning = false
-            onSelectGraphNode?(nil, false)
-            recenterCamera(animated: true)
-        }
+        pointerStateMachine.begin(
+            at: location,
+            hitNodeID: hitNodeID,
+            selectedNodeIDs: visualDragNodeIDs(from: selectedGraphNodeIDs,
+                                                anchoredNodeID: hitNodeID),
+            modifiers: organizerModifiers(from: event.modifierFlags),
+            lassoArmed: isLassoSelectionActive
+        )
+        isPointerGestureActive = true
     }
 
     @discardableResult
     internal func expandRemainingBranchIfPresent(nodeID: String) -> Bool {
-        guard let remaining = graphData.remainingBranchByID[nodeID] else { return false }
+        guard let remaining = graphLookupIndex.remainingBranchByID[nodeID] else { return false }
         onExpandRemainingBranches?(remaining.scope)
         return true
     }
@@ -352,120 +579,296 @@ internal final class ObsidianGraphScene: SKScene {
         markInteraction()
         clearHover()
         let location = event.location(in: self)
-        if let draggedNodeID {
-            let target = CGPoint(x: location.x + draggedNodeOffset.x,
-                                 y: location.y + draggedNodeOffset.y)
-            if !hasDraggedNode {
+        switch pointerStateMachine.move(to: location, zoomScale: currentZoomScale) {
+        case .none:
+            return
+        case .pan(let delta):
+            panByWorld(delta: delta)
+            publishViewport()
+        case .lasso(let rect):
+            showLasso(rect)
+        case .drag(let requestedNodeIDs, let delta):
+            guard let anchorNodeID = pointerAnchorNodeID else {
+                return
+            }
+            let visualNodeIDs = visualDragNodeIDs(from: Set(requestedNodeIDs),
+                                                   anchoredNodeID: anchorNodeID)
+            guard visualNodeIDs.contains(anchorNodeID),
+                  let plan = activeDragPlan ?? OrganizerMultiDragPlan(
+                    anchorNodeID: anchorNodeID,
+                    selectedNodeIDs: visualNodeIDs,
+                    positions: simulator.positionsByID()
+                  ) else {
+                return
+            }
+            if activeDragPlan == nil {
+                activeDragPlan = plan
+                activeDraggedNodeIDs = Set(plan.nodeIDs)
+                activeDragRawThreadIDs = rawThreadIDs(forGraphNodeIDs: activeDraggedNodeIDs)
+                activeDragReactiveNodeIDs = []
+                localReturningNodeOrigins = [:]
                 simulator.beginDragging(
-                    nodeID: draggedNodeID,
-                    keepingStationary: stationaryFolderDropNodeIDs(
-                        forDraggedGraphNodeID: draggedNodeID
+                    nodeIDs: activeDraggedNodeIDs,
+                    keepingStationary: stationaryFolderNodeIDs(
+                        forDraggedGraphNodeIDs: activeDraggedNodeIDs
                     )
                 )
             }
-            hasDraggedNode = true
-            hasPendingSelection = false
-            simulator.drag(nodeID: draggedNodeID, to: target)
-            setActiveFolderDropTarget(folderDropTarget(at: location,
-                                                       draggedGraphNodeID: draggedNodeID))
-            wakeLayout()
-            renderGraph()
-            return
+            simulator.drag(nodePositions: plan.positions(byApplying: delta))
+            let target = activeDragRawThreadIDs.isEmpty
+                ? nil
+                : batchFolderDropTarget(at: location,
+                                        rawThreadIDs: activeDragRawThreadIDs)
+            let itemCount = activeDragRawThreadIDs.count
+            if itemCount >= 2 || target != nil {
+                beginDropLifecycleIfNeeded(itemCount: itemCount)
+            }
+            if target != nil {
+                noteVisibleDropHighlight(itemCount: itemCount)
+            }
+            setActiveFolderDropTarget(target?.singleCompatibilityTarget)
+            dragFrameNeedsRender = true
         }
-        guard isPanning else { return }
-        hasPanned = true
-        hasPendingSelection = false
-        panBy(deltaX: event.deltaX, deltaY: event.deltaY)
-        publishViewport()
     }
 
     override func mouseUp(with event: NSEvent) {
         markInteraction()
-        if let draggedNodeID, hasDraggedNode {
-            let location = event.location(in: self)
-            simulator.endDragging(nodeID: draggedNodeID,
-                                  at: CGPoint(x: location.x + draggedNodeOffset.x,
-                                              y: location.y + draggedNodeOffset.y))
-            performFolderDrop(at: location, draggedGraphNodeID: draggedNodeID)
-            wakeLayout()
-        } else if hasPendingSelection && !hasPanned {
-            onSelectGraphNode?(pendingSelectionID, pendingSelectionIsAdditive)
+        let location = event.location(in: self)
+        let hadActiveDrag = !activeDraggedNodeIDs.isEmpty
+        var dragReturningNodeOrigins: [String: CGPoint] = [:]
+        switch pointerStateMachine.end(at: location) {
+        case .none:
+            if hadActiveDrag {
+                dragReturningNodeOrigins = simulator.lastDragReactiveNodeOrigins
+                simulator.cancelDragging()
+            }
+        case .select(let nodeID, let intent):
+            publishSelection(nodeID: nodeID, intent: intent)
+        case .clearSelection:
+            publishSelection(nodeID: nil, intent: .replace)
+        case .finishPan:
+            publishViewport()
+        case .finishLasso(let rect, let additive):
+            let nodeIDs = Set(OrganizerLassoGeometry.selectedNodeIDs(
+                in: rect,
+                regions: selectableRegions()
+            ))
+            onLassoGraphNodeIDs?(nodeIDs, additive)
+        case .finishDrag(let nodeIDs, _, let delta):
+            guard hadActiveDrag, let plan = activeDragPlan else {
+                dragReturningNodeOrigins = simulator.lastDragReactiveNodeOrigins
+                simulator.cancelDragging()
+                break
+            }
+            dragReturningNodeOrigins = simulator.lastDragReactiveNodeOrigins
+            simulator.endDragging(nodePositions: plan.positions(byApplying: delta))
+            let draggedIDs = activeDraggedNodeIDs.isEmpty ? Set(nodeIDs) : activeDraggedNodeIDs
+            let rawThreadIDs = activeDragRawThreadIDs.isEmpty
+                ? rawThreadIDs(forGraphNodeIDs: draggedIDs)
+                : activeDragRawThreadIDs
+            let target = rawThreadIDs.isEmpty
+                ? nil
+                : batchFolderDropTarget(at: location,
+                                        rawThreadIDs: rawThreadIDs)
+            let blockingNodeID = hitTestNodeID(at: location, excluding: draggedIDs)
+            if let target {
+                beginDropLifecycleIfNeeded(itemCount: rawThreadIDs.count)
+                noteVisibleDropHighlight(itemCount: rawThreadIDs.count)
+                releaseDropLifecycle(destination: .confirmedGroup)
+                _ = performBatchFolderDrop(target)
+            } else if rawThreadIDs.count >= 2, blockingNodeID == nil {
+                beginDropLifecycleIfNeeded(itemCount: rawThreadIDs.count)
+                releaseDropLifecycle(destination: .emptyCanvas)
+                onCreateGroupAtCanvasPoint?(rawThreadIDs,
+                                            overlayPoint(for: location),
+                                            location)
+            } else if blockingNodeID != nil || activeDropItemCount > 0 {
+                beginDropLifecycleIfNeeded(itemCount: rawThreadIDs.count)
+                releaseDropLifecycle(destination: .invalidTarget)
+            }
         }
-        draggedNodeID = nil
-        draggedNodeOffset = .zero
+        if hadActiveDrag {
+            if dragReturningNodeOrigins.isEmpty {
+                activeDragReactiveNodeIDs = []
+                wakeLayout()
+            } else {
+                beginLocalSettling(returningNodeOrigins: dragReturningNodeOrigins)
+            }
+        }
+        hideLasso()
+        activeDragPlan = nil
+        activeDraggedNodeIDs = []
+        activeDragRawThreadIDs = []
+        dragFrameNeedsRender = false
+        pointerAnchorNodeID = nil
+        isPointerGestureActive = false
         setActiveFolderDropTarget(nil)
-        hasDraggedNode = false
-        isPanning = false
-        hasPanned = false
-        pendingSelectionID = nil
-        pendingSelectionIsAdditive = false
-        hasPendingSelection = false
+        resetDropLifecycle()
+        if hadActiveDrag {
+            renderGraph()
+        }
         publishFrameRatePreferenceIfNeeded()
     }
 
     override func rightMouseDown(with event: NSEvent) {
         markInteraction()
         clearHover()
-        isPanning = true
-        hasPanned = false
-        hasPendingSelection = false
-        pendingSelectionIsAdditive = false
+        cancelDirectManipulation()
+        isSecondaryPanning = true
     }
 
     override func rightMouseDragged(with event: NSEvent) {
         markInteraction()
-        guard isPanning else { return }
-        hasPanned = true
+        guard isSecondaryPanning else { return }
         panBy(deltaX: event.deltaX, deltaY: event.deltaY)
         publishViewport()
     }
 
     override func rightMouseUp(with event: NSEvent) {
         markInteraction()
-        isPanning = false
-        hasPanned = false
+        isSecondaryPanning = false
     }
 
     internal func contextMenu(at viewPoint: CGPoint) -> NSMenu? {
         let location = convertPoint(fromView: viewPoint)
-        guard let graphNodeID = hitTestNodeID(at: location) else { return nil }
         markInteraction()
         clearHover()
-        return actionItemContextMenu(forGraphNodeID: graphNodeID)
+        guard let graphNodeID = hitTestNodeID(at: location) else {
+            return createGroupContextMenu(at: location)
+        }
+        if let grouping = graphLookupIndex.groupingByID[graphNodeID],
+           grouping.kind == .folder {
+            return confirmedGroupContextMenu(grouping: grouping, at: location)
+        }
+        return conversationContextMenu(forGraphNodeID: graphNodeID, at: location)
     }
 
     internal func actionItemContextMenu(forGraphNodeID graphNodeID: String) -> NSMenu? {
         guard pruneMode == .idle,
-              graphData.threadByID[graphNodeID] != nil || graphData.messageByID[graphNodeID] != nil,
+              graphLookupIndex.threadByID[graphNodeID] != nil || graphLookupIndex.messageByID[graphNodeID] != nil,
               let onToggleActionItem else {
             return nil
         }
 
-        onSelectGraphNode?(graphNodeID, false)
+        if !selectedGraphNodeIDs.contains(graphNodeID) {
+            publishSelection(nodeID: graphNodeID, intent: .replace)
+        }
         let isActionItem = isActionItem?(graphNodeID) ?? false
         let title = isActionItem
             ? NSLocalizedString("graph.actions.remove_action_item",
                                 comment: "Remove selected graph email from action items")
             : NSLocalizedString("graph.actions.action_item",
                                 comment: "Mark selected graph email as an action item")
-        let action = GraphContextMenuAction {
+        let menu = NSMenu()
+        menu.addItem(contextMenuItem(title: title,
+                                     systemImage: isActionItem ? "checkmark.circle.fill" : "bolt.circle") {
             onToggleActionItem(graphNodeID)
+        })
+        return menu
+    }
+
+    private func conversationContextMenu(forGraphNodeID graphNodeID: String,
+                                         at location: CGPoint) -> NSMenu? {
+        guard pruneMode == .idle,
+              graphLookupIndex.threadByID[graphNodeID] != nil || graphLookupIndex.messageByID[graphNodeID] != nil else {
+            return nil
         }
+        if !selectedGraphNodeIDs.contains(graphNodeID) {
+            publishSelection(nodeID: graphNodeID, intent: .replace)
+        }
+        let menuSelection = selectedGraphNodeIDs.contains(graphNodeID)
+            ? eligibleDragNodeIDs(from: selectedGraphNodeIDs)
+            : [graphNodeID]
+        let rawThreadIDs = rawThreadIDs(forGraphNodeIDs: menuSelection)
+        let menu = NSMenu()
+
+        if rawThreadIDs.count >= 2 {
+            menu.addItem(contextMenuItem(
+                title: NSLocalizedString("graph.actions.create_group_here",
+                                         comment: "Create a BetterMail Group from the graph action menu"),
+                systemImage: "folder.badge.plus"
+            ) { [weak self] in
+                guard let self else { return }
+                self.onCreateGroupAtCanvasPoint?(rawThreadIDs,
+                                                  self.overlayPoint(for: location),
+                                                  location)
+            })
+        }
+
+        if let onToggleActionItem {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let isActionItem = isActionItem?(graphNodeID) ?? false
+            let title = isActionItem
+                ? NSLocalizedString("graph.actions.remove_action_item",
+                                    comment: "Remove selected graph email from action items")
+                : NSLocalizedString("graph.actions.action_item",
+                                    comment: "Mark selected graph email as an action item")
+            menu.addItem(contextMenuItem(title: title,
+                                         systemImage: isActionItem ? "checkmark.circle.fill" : "bolt.circle") {
+                onToggleActionItem(graphNodeID)
+            })
+        }
+        return menu.items.isEmpty ? nil : menu
+    }
+
+    private func confirmedGroupContextMenu(grouping: GraphGrouping,
+                                           at location: CGPoint) -> NSMenu? {
+        let selectedIDs = eligibleDragNodeIDs(from: selectedGraphNodeIDs)
+        guard !selectedIDs.isEmpty,
+              let target = batchFolderDropTarget(at: location,
+                                                 draggedGraphNodeIDs: selectedIDs) else {
+            return nil
+        }
+        let menu = NSMenu()
+        menu.addItem(contextMenuItem(
+            title: NSLocalizedString("graph.actions.move_selection_here",
+                                     comment: "Move selected conversations into a confirmed Group"),
+            systemImage: "folder"
+        ) { [weak self] in
+            _ = self?.performBatchFolderDrop(at: location,
+                                             rawThreadIDs: target.rawThreadIDs)
+        })
+        return menu
+    }
+
+    private func createGroupContextMenu(at location: CGPoint) -> NSMenu? {
+        let rawThreadIDs = rawThreadIDs(
+            forGraphNodeIDs: eligibleDragNodeIDs(from: selectedGraphNodeIDs)
+        )
+        guard rawThreadIDs.count >= 2 else { return nil }
+        let menu = NSMenu()
+        menu.addItem(contextMenuItem(
+            title: NSLocalizedString("graph.actions.create_group_here",
+                                     comment: "Create a BetterMail Group from the graph action menu"),
+            systemImage: "folder.badge.plus"
+        ) { [weak self] in
+            guard let self else { return }
+            self.onCreateGroupAtCanvasPoint?(rawThreadIDs,
+                                              self.overlayPoint(for: location),
+                                              location)
+        })
+        return menu
+    }
+
+    private func contextMenuItem(title: String,
+                                 systemImage: String,
+                                 handler: @escaping () -> Void) -> NSMenuItem {
+        let action = GraphContextMenuAction(handler: handler)
         let item = NSMenuItem(title: title,
                               action: #selector(GraphContextMenuAction.perform(_:)),
                               keyEquivalent: "")
-        item.image = NSImage(systemSymbolName: isActionItem ? "checkmark.circle.fill" : "bolt.circle",
+        item.image = NSImage(systemSymbolName: systemImage,
                              accessibilityDescription: title)
         item.target = action
         item.representedObject = action
-        let menu = NSMenu()
-        menu.addItem(item)
-        return menu
+        return item
     }
 
     override func mouseMoved(with event: NSEvent) {
         markInteraction()
-        guard draggedNodeID == nil, !isPanning else {
+        guard activeDraggedNodeIDs.isEmpty,
+              !isPointerGestureActive,
+              !isSecondaryPanning else {
             clearHover()
             return
         }
@@ -514,13 +917,13 @@ internal final class ObsidianGraphScene: SKScene {
             return
         }
         let overlayLocation = overlayPoint(for: location)
-        if let grouping = graphData.groupingByID[nextHoveredID] {
+        if let grouping = graphLookupIndex.groupingByID[nextHoveredID] {
             onHoverItem?(.grouping(grouping, overlayLocation))
-        } else if let thread = graphData.threadByID[nextHoveredID] {
+        } else if let thread = graphLookupIndex.threadByID[nextHoveredID] {
             onHoverItem?(.thread(thread, overlayLocation))
-        } else if let remaining = graphData.remainingBranchByID[nextHoveredID] {
+        } else if let remaining = graphLookupIndex.remainingBranchByID[nextHoveredID] {
             onHoverItem?(.remaining(remaining, overlayLocation))
-        } else if let message = graphData.messageByID[nextHoveredID] {
+        } else if let message = graphLookupIndex.messageByID[nextHoveredID] {
             onHoverItem?(.message(message, overlayLocation))
         } else {
             onHoverItem?(nil)
@@ -533,16 +936,36 @@ internal final class ObsidianGraphScene: SKScene {
         scaleMode = .resizeFill
         camera = cameraNode
         addChild(cameraNode)
+        lassoNode.fillColor = theme.accentNS.withAlphaComponent(0.08)
+        lassoNode.strokeColor = theme.accentNS.withAlphaComponent(0.82)
+        lassoNode.lineWidth = 1.5
+        lassoNode.zPosition = 100
+        lassoNode.isHidden = true
+        addChild(lassoNode)
     }
 
-    private func rebuildGraph(restartLayout: Bool) {
+    private func rebuildGraph(restartLayout: Bool,
+                              preservingExistingPositions: Bool = true) {
         runningPruneAnimationID = nil
         remainingPruneAnimationNodes = 0
-        let existingPositions = simulator.positionsByID()
+        var existingPositions = preservingExistingPositions ? simulator.positionsByID() : [:]
+        existingPositions.merge(localReturningNodeOrigins) { _, origin in origin }
+        for (nodeID, position) in restoredNodePositions where position.x.isFinite && position.y.isFinite {
+            existingPositions[nodeID] = position
+        }
+        for grouping in graphData.groupings where grouping.kind == .folder {
+            guard let folderID = grouping.sourceFolderID,
+                  let anchor = restoredGroupAnchors[folderID],
+                  anchor.x.isFinite,
+                  anchor.y.isFinite else { continue }
+            existingPositions[grouping.id] = anchor
+        }
         simulator.reset(data: graphData,
                         size: size,
                         preserving: existingPositions,
                         config: forceConfig)
+        activeDragReactiveNodeIDs = []
+        localReturningNodeOrigins = [:]
 
         graphNodesByID.values.forEach { $0.removeFromParent() }
         edgeVisualsByID.values.forEach {
@@ -565,10 +988,12 @@ internal final class ObsidianGraphScene: SKScene {
                                               theme: theme)
             node.zPosition = 2
             node.position = physicsNode.position
-            if let remaining = graphData.remainingBranchByID[physicsNode.id] {
+            if let remaining = graphLookupIndex.remainingBranchByID[physicsNode.id] {
                 node.configureExpansionAccessibility(label: remaining.accessibilityLabel) { [weak self] in
                     _ = self?.expandRemainingBranchIfPresent(nodeID: remaining.id)
                 }
+            } else {
+                configureOrganizerAccessibility(forGraphNodeID: physicsNode.id, node: node)
             }
             graphNodesByID[physicsNode.id] = node
             addChild(node)
@@ -595,9 +1020,14 @@ internal final class ObsidianGraphScene: SKScene {
             positionsReportedAfterSettling = false
         }
         renderGraph()
+        restoredNodePositions = [:]
+        restoredGroupAnchors = [:]
     }
 
     private func renderGraph() {
+#if DEBUG
+        workMetrics.fullRenderPassCount += 1
+#endif
         for physicsNode in simulator.nodes {
             graphNodesByID[physicsNode.id]?.position = physicsNode.position
         }
@@ -605,6 +1035,44 @@ internal final class ObsidianGraphScene: SKScene {
             render(edge: edge)
         }
         updateLabels()
+        updateAccessibilityGeometry()
+    }
+
+    /// Pointer events can arrive substantially faster than the display refresh
+    /// rate. During a drag, the global layout is frozen, so only the dragged
+    /// cohort, locally reacting nodes, and their incident edges need geometry
+    /// updates on the next frame. Labels move with their parent nodes;
+    /// accessibility geometry is refreshed by the full render on release or
+    /// cancellation.
+    private func renderDragFrame() {
+#if DEBUG
+        workMetrics.dragRenderPassCount += 1
+#endif
+        let renderedNodeIDs = activeDraggedNodeIDs.union(activeDragReactiveNodeIDs)
+        for nodeID in renderedNodeIDs {
+            guard let physicsNode = simulator.nodesByID[nodeID] else { continue }
+            graphNodesByID[nodeID]?.position = physicsNode.position
+        }
+        for edge in graphData.edges where renderedNodeIDs.contains(edge.sourceID)
+            || renderedNodeIDs.contains(edge.targetID) {
+            render(edge: edge)
+        }
+    }
+
+    private func updateAccessibilityGeometry() {
+        guard let view else { return }
+#if DEBUG
+        workMetrics.accessibilityRefreshCount += 1
+#endif
+        let visibleElements: [ObsidianGraphAccessibilityElement] = graphNodesByID.keys.sorted().compactMap { nodeID in
+            guard let node = graphNodesByID[nodeID],
+                  let element = node.updateAccessibilityGeometry(in: self, view: view),
+                  node.isAccessibilityVisible(in: view) else {
+                return nil
+            }
+            return element
+        }
+        (view as? GraphSKView)?.updateGraphAccessibilityElements(visibleElements)
     }
 
     private func render(edge: GraphEdge) {
@@ -648,6 +1116,7 @@ internal final class ObsidianGraphScene: SKScene {
                             isDimmed: isFiltered,
                             hasFocusedNode: !focusedNodeIDs.isEmpty,
                             snipState: snipState)
+            configureOrganizerAccessibility(forGraphNodeID: id, node: node)
         }
         for edge in graphData.edges {
             guard let visual = edgeVisualsByID[edge.id] else { continue }
@@ -730,25 +1199,121 @@ internal final class ObsidianGraphScene: SKScene {
         }
     }
 
+    private func configureOrganizerAccessibility(forGraphNodeID graphNodeID: String,
+                                                  node: ObsidianGraphSceneNode) {
+        let role: OrganizerAccessibilityRole
+        let label: String
+        let rawTokenSource: String
+        let actions: [OrganizerAccessibilityAction]
+
+        if let grouping = graphLookupIndex.groupingByID[graphNodeID] {
+            role = grouping.isSuggestion ? .suggestedGroup : .confirmedGroup
+            label = grouping.title
+            rawTokenSource = grouping.sourceFolderID ?? grouping.id
+            if grouping.kind == .folder,
+               !eligibleSelectedDragNodeIDs.isEmpty {
+                actions = [.activate, .moveSelectionHere]
+            } else {
+                actions = [.activate]
+            }
+        } else if let thread = graphLookupIndex.threadByID[graphNodeID] {
+            role = .conversation
+            label = thread.displayTitle
+            rawTokenSource = thread.rawThreadID
+            var conversationActions: [OrganizerAccessibilityAction] = [
+                .activate,
+                selectedGraphNodeIDs.contains(graphNodeID) ? .removeFromSelection : .addToSelection
+            ]
+            if selectedGraphNodeIDs.contains(graphNodeID),
+               eligibleSelectedDragNodeIDs.count >= 2 {
+                conversationActions.append(.createGroupHere)
+            }
+            actions = conversationActions
+        } else if let message = graphLookupIndex.messageByID[graphNodeID] {
+            role = .conversation
+            label = message.displayTitle
+            rawTokenSource = message.rawMessageID
+            var conversationActions: [OrganizerAccessibilityAction] = [
+                .activate,
+                selectedGraphNodeIDs.contains(graphNodeID) ? .removeFromSelection : .addToSelection
+            ]
+            if selectedGraphNodeIDs.contains(graphNodeID),
+               eligibleSelectedDragNodeIDs.count >= 2 {
+                conversationActions.append(.createGroupHere)
+            }
+            actions = conversationActions
+        } else {
+            return
+        }
+
+        let token = OrganizationOpaqueFingerprint.digest(namespace: "accessibility-\(role.rawValue)",
+                                                           rawValue: rawTokenSource)
+        guard let descriptor = OrganizerAccessibilityDescriptor(
+            role: role,
+            opaqueToken: token,
+            label: label,
+            hint: NSLocalizedString("accessibility.organizer.node.hint",
+                                    comment: "Organizer graph node accessibility hint"),
+            isSelected: selectedGraphNodeIDs.contains(graphNodeID),
+            actions: actions
+        ) else {
+            return
+        }
+        node.configureOrganizerAccessibility(descriptor) { [weak self] action in
+            self?.performOrganizerAccessibilityAction(action,
+                                                      graphNodeID: graphNodeID) ?? false
+        }
+    }
+
+    private func performOrganizerAccessibilityAction(_ action: OrganizerAccessibilityAction,
+                                                      graphNodeID: String) -> Bool {
+        switch action {
+        case .activate:
+            publishSelection(nodeID: graphNodeID, intent: .replace)
+            return true
+        case .addToSelection, .removeFromSelection:
+            publishSelection(nodeID: graphNodeID, intent: .toggle)
+            return true
+        case .moveSelectionHere:
+            guard graphLookupIndex.groupingByID[graphNodeID]?.kind == .folder,
+                  let point = simulator.nodesByID[graphNodeID]?.position else {
+                return false
+            }
+            return performBatchFolderDrop(
+                at: point,
+                draggedGraphNodeIDs: eligibleDragNodeIDs(from: selectedGraphNodeIDs)
+            )
+        case .createGroupHere:
+            let selectedIDs = eligibleDragNodeIDs(from: selectedGraphNodeIDs)
+            let rawThreadIDs = rawThreadIDs(forGraphNodeIDs: selectedIDs)
+            guard rawThreadIDs.count >= 2,
+                  let point = simulator.nodesByID[graphNodeID]?.position else {
+                return false
+            }
+            onCreateGroupAtCanvasPoint?(rawThreadIDs, overlayPoint(for: point), point)
+            return true
+        }
+    }
+
     private func nodeDescriptor(for physicsNode: ObsidianGraphPhysicsNode)
     -> (title: String?, threadID: String?, fill: NSColor, stroke: NSColor) {
         if physicsNode.kind == .center {
             return (graphData.center.title, nil, theme.accentNS, theme.accentNS)
         }
-        if let grouping = graphData.groupingByID[physicsNode.id] {
+        if let grouping = graphLookupIndex.groupingByID[physicsNode.id] {
             return (grouping.title,
                     nil,
                     grouping.isSuggestion ? theme.panelSecondaryNS : theme.accentSoftNS,
                     theme.accentNS)
         }
-        if let thread = graphData.threadByID[physicsNode.id] {
+        if let thread = graphLookupIndex.threadByID[physicsNode.id] {
             let stroke = thread.isLive ? theme.liveNS : strokeColor(for: thread.importance)
             return (thread.displayTitle, thread.id, theme.panelNS, stroke)
         }
-        if let remaining = graphData.remainingBranchByID[physicsNode.id] {
+        if let remaining = graphLookupIndex.remainingBranchByID[physicsNode.id] {
             return (remaining.title, nil, theme.panelSecondaryNS, theme.archiveNS)
         }
-        if let message = graphData.messageByID[physicsNode.id] {
+        if let message = graphLookupIndex.messageByID[physicsNode.id] {
             return (message.displayTitle,
                     message.threadID,
                     message.unread ? theme.accentNS : theme.panelNS,
@@ -774,7 +1339,7 @@ internal final class ObsidianGraphScene: SKScene {
 
     private var interactionFocusedNodeIDs: Set<String> {
         if let activeFolderDropTarget {
-            return Set([activeFolderDropTarget.graphNodeID, draggedNodeID].compactMap { $0 })
+            return activeDraggedNodeIDs.union([activeFolderDropTarget.graphNodeID])
         }
         return hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
     }
@@ -783,6 +1348,122 @@ internal final class ObsidianGraphScene: SKScene {
         guard target != activeFolderDropTarget else { return }
         activeFolderDropTarget = target
         applyVisualState()
+    }
+
+    private func beginDropLifecycleIfNeeded(itemCount: Int) {
+        guard activeDropItemCount == 0, itemCount > 0 else { return }
+        activeDropItemCount = itemCount
+        activeDropHadVisibleHighlight = false
+        activeDropDidRelease = false
+        onDropLifecycle?(.intent(itemCount: itemCount))
+    }
+
+    private func noteVisibleDropHighlight(itemCount: Int) {
+        beginDropLifecycleIfNeeded(itemCount: itemCount)
+        guard activeDropItemCount > 0,
+              !activeDropHadVisibleHighlight else { return }
+        activeDropHadVisibleHighlight = true
+        onDropLifecycle?(.highlight(itemCount: activeDropItemCount))
+    }
+
+    private func releaseDropLifecycle(destination: OrganizerDropDestinationKind) {
+        guard activeDropItemCount > 0, !activeDropDidRelease else { return }
+        activeDropDidRelease = true
+        onDropLifecycle?(.release(itemCount: activeDropItemCount,
+                                  destination: destination,
+                                  hadVisibleHighlight: activeDropHadVisibleHighlight))
+    }
+
+    private func cancelDropLifecycleIfNeeded() {
+        guard activeDropItemCount > 0, !activeDropDidRelease else { return }
+        onDropLifecycle?(.cancelled(itemCount: activeDropItemCount))
+    }
+
+    private func resetDropLifecycle() {
+        activeDropItemCount = 0
+        activeDropHadVisibleHighlight = false
+        activeDropDidRelease = false
+    }
+
+    private func renderedOrganizerSnapshot() -> OrganizerRenderedGraphSnapshot {
+        let memberCounts = graphData.groupings.reduce(into: [String: Int]()) { result, grouping in
+            guard grouping.kind == .folder else { return }
+            result[grouping.id] = OrganizerRenderedGraphSnapshot.confirmedMemberCount(
+                rawThreadIDs: grouping.rawThreadIDs,
+                renderedThreadIDs: grouping.threadIDs
+            )
+        }
+        let membershipsByGroupKey = graphData.groupings.reduce(
+            into: [String: Set<String>]()
+        ) { result, grouping in
+            guard grouping.kind == .folder,
+                  let sourceFolderID = grouping.sourceFolderID else { return }
+            result[sourceFolderID] = Set(grouping.rawThreadIDs)
+        }
+        let accessibleFilteredConversationRawThreadIDs = filteredNodeIDs.reduce(into: Set<String>()) {
+            rawThreadIDs, nodeID in
+            guard let view,
+                  graphNodesByID[nodeID]?.isOrganizerAccessibilityVisible(in: view) == true,
+                  let rawThreadID = graphLookupIndex.threadByID[nodeID]?.rawThreadID else {
+                return
+            }
+            rawThreadIDs.insert(rawThreadID)
+        }
+        let accessibleConversationRawThreadIDs = graphData.threads.reduce(into: Set<String>()) {
+            rawThreadIDs, thread in
+            guard let view,
+                  graphNodesByID[thread.id]?.isOrganizerAccessibilityVisible(in: view) == true else {
+                return
+            }
+            rawThreadIDs.insert(thread.rawThreadID)
+        }
+        let accessibleConfirmedGroupKeys = graphData.groupings.reduce(into: Set<String>()) {
+            groupKeys, grouping in
+            guard grouping.kind == .folder,
+                  let sourceFolderID = grouping.sourceFolderID,
+                  let view,
+                  graphNodesByID[grouping.id]?.isOrganizerAccessibilityVisible(in: view) == true else {
+                return
+            }
+            groupKeys.insert(sourceFolderID)
+        }
+        let accessibleConversationFramesByRawThreadID = graphData.threads.reduce(
+            into: [String: OrganizerRenderedAccessibilityFrame]()
+        ) { frames, thread in
+            guard let view,
+                  let frame = graphNodesByID[thread.id]?
+                    .organizerAccessibilityFrameInScreen(in: view) else { return }
+            frames[thread.rawThreadID] = OrganizerRenderedAccessibilityFrame(frame)
+        }
+        let accessibleConfirmedGroupFramesByGroupKey = graphData.groupings.reduce(
+            into: [String: OrganizerRenderedAccessibilityFrame]()
+        ) { frames, grouping in
+            guard grouping.kind == .folder,
+                  let sourceFolderID = grouping.sourceFolderID,
+                  let view,
+                  let frame = graphNodesByID[grouping.id]?
+                    .organizerAccessibilityFrameInScreen(in: view) else { return }
+            frames[sourceFolderID] = OrganizerRenderedAccessibilityFrame(frame)
+        }
+        let accessibilityScreenFrame: OrganizerRenderedAccessibilityFrame?
+        if let screen = view?.window?.screen {
+            accessibilityScreenFrame = OrganizerRenderedAccessibilityFrame(screen.frame)
+        } else {
+            accessibilityScreenFrame = nil
+        }
+        return OrganizerRenderedGraphSnapshot(
+            isLayoutSettled: layoutIsSettled,
+            confirmedMemberCountsByGroupID: memberCounts,
+            filteredAccessibleConversationRawThreadIDs: accessibleFilteredConversationRawThreadIDs,
+            accessibleConversationRawThreadIDs: accessibleConversationRawThreadIDs,
+            accessibleConfirmedGroupKeys: accessibleConfirmedGroupKeys,
+            accessibleConversationFramesByRawThreadID:
+                accessibleConversationFramesByRawThreadID,
+            accessibleConfirmedGroupFramesByGroupKey:
+                accessibleConfirmedGroupFramesByGroupKey,
+            accessibilityScreenFrame: accessibilityScreenFrame,
+            confirmedRawThreadIDsByGroupKey: membershipsByGroupKey
+        )
     }
 
     private func overlayPoint(for scenePoint: CGPoint) -> CGPoint {
@@ -822,6 +1503,115 @@ internal final class ObsidianGraphScene: SKScene {
                                       y: cameraNode.position.y + deltaY * cameraNode.yScale)
     }
 
+    private func panByWorld(delta: CGVector) {
+        cameraNode.position = CGPoint(x: cameraNode.position.x - delta.dx,
+                                      y: cameraNode.position.y - delta.dy)
+    }
+
+    private func organizerModifiers(from flags: NSEvent.ModifierFlags) -> OrganizerPointerModifiers {
+        var modifiers: OrganizerPointerModifiers = []
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        return modifiers
+    }
+
+    private func eligibleDragNodeIDs(from nodeIDs: Set<String>) -> Set<String> {
+        graphLookupIndex.eligibleDragNodeIDs(from: nodeIDs)
+    }
+
+    private func visualDragNodeIDs(from nodeIDs: Set<String>,
+                                   anchoredNodeID: String?) -> Set<String> {
+        let candidates = graphLookupIndex.visualDragNodeIDs(from: nodeIDs)
+        guard let anchoredNodeID,
+              let grouping = graphLookupIndex.groupingByID[anchoredNodeID],
+              grouping.kind == .folder,
+              grouping.sourceFolderID != nil else {
+            return candidates.filter { graphLookupIndex.groupingByID[$0]?.kind != .folder }
+        }
+        // A folder drag is visual-only. It takes precedence over any stale
+        // mixed selection so its conversations cannot become a merge payload.
+        return [anchoredNodeID]
+    }
+
+    private func rawThreadIDs(forGraphNodeIDs nodeIDs: Set<String>) -> [String] {
+        Set(nodeIDs.compactMap(rawThreadID(forGraphNodeID:))).sorted()
+    }
+
+    private func publishSelection(nodeID: String?, intent: OrganizerPointerSelectionIntent) {
+        if let onSelectGraphNodeWithIntent {
+            onSelectGraphNodeWithIntent(nodeID, intent)
+            return
+        }
+        onSelectGraphNode?(nodeID, intent == .toggle)
+    }
+
+    private func selectableRegions() -> [OrganizerSelectableRegion] {
+        let nodeScale = max(displayConfig.nodeSize, 0.55)
+        return simulator.nodes.compactMap { node in
+            guard graphLookupIndex.threadByID[node.id] != nil || graphLookupIndex.messageByID[node.id] != nil else {
+                return nil
+            }
+            return OrganizerSelectableRegion(
+                nodeID: node.id,
+                center: node.position,
+                radius: ObsidianGraphSceneNode.effectiveHitRadius(
+                    radius: node.radius,
+                    nodeScale: nodeScale
+                )
+            )
+        }
+    }
+
+    private func showLasso(_ rect: CGRect) {
+        lassoNode.path = CGPath(rect: rect, transform: nil)
+        lassoNode.fillColor = theme.accentNS.withAlphaComponent(0.08)
+        lassoNode.strokeColor = theme.accentNS.withAlphaComponent(0.82)
+        lassoNode.isHidden = false
+    }
+
+    private func hideLasso() {
+        lassoNode.path = nil
+        lassoNode.isHidden = true
+    }
+
+    /// Releases every gesture-owned simulator pin and visual without
+    /// publishing a selection or mutation. Escape and teardown use the same
+    /// cancellation path as a superseding pointer gesture.
+    internal func cancelDirectManipulation() {
+        let hadActiveDrag = !activeDraggedNodeIDs.isEmpty
+        let returningNodeOrigins = simulator.lastDragReactiveNodeOrigins
+        cancelDropLifecycleIfNeeded()
+        pointerStateMachine.cancel()
+        simulator.cancelDragging()
+        pointerAnchorNodeID = nil
+        activeDragPlan = nil
+        activeDraggedNodeIDs = []
+        activeDragRawThreadIDs = []
+        dragFrameNeedsRender = false
+        isPointerGestureActive = false
+        isSecondaryPanning = false
+        hideLasso()
+        setActiveFolderDropTarget(nil)
+        resetDropLifecycle()
+        if hadActiveDrag {
+            if returningNodeOrigins.isEmpty {
+                activeDragReactiveNodeIDs = []
+                wakeLayout()
+            } else {
+                beginLocalSettling(returningNodeOrigins: returningNodeOrigins)
+            }
+            renderGraph()
+        } else {
+            let hadLocalSettle = !localReturningNodeOrigins.isEmpty
+            simulator.restorePositions(localReturningNodeOrigins)
+            activeDragReactiveNodeIDs = []
+            localReturningNodeOrigins = [:]
+            if hadLocalSettle {
+                renderGraph()
+            }
+        }
+    }
+
     internal func recenterCamera(animated: Bool) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         cameraNode.removeAction(forKey: "obsidian-camera-recenter")
@@ -842,6 +1632,8 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func publishViewport() {
+        updateAccessibilityGeometry()
+        onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         onViewportChanged?(currentZoomScale,
                            CGPoint(x: cameraNode.position.x - center.x,
@@ -856,8 +1648,24 @@ internal final class ObsidianGraphScene: SKScene {
         publishFrameRatePreferenceIfNeeded()
     }
 
+    private func beginLocalSettling(returningNodeOrigins: [String: CGPoint]) {
+        localReturningNodeOrigins = returningNodeOrigins.filter { nodeID, origin in
+            simulator.nodesByID[nodeID] != nil && origin.x.isFinite && origin.y.isFinite
+        }
+        guard !localReturningNodeOrigins.isEmpty else {
+            activeDragReactiveNodeIDs = []
+            wakeLayout()
+            return
+        }
+        settlingFrames = 0
+        stableFrames = 0
+        layoutIsSettled = false
+        positionsReportedAfterSettling = false
+        publishFrameRatePreferenceIfNeeded()
+    }
+
     private func updateSettlingState() {
-        guard draggedNodeID == nil else { return }
+        guard activeDraggedNodeIDs.isEmpty else { return }
         settlingFrames += 1
         let energyPerNode = simulator.totalEnergy() / CGFloat(max(simulator.nodesByID.count, 1))
         stableFrames = energyPerNode < 0.035 ? stableFrames + 1 : 0
@@ -874,8 +1682,9 @@ internal final class ObsidianGraphScene: SKScene {
 
     private var needsActiveFrameRate: Bool {
         !layoutIsSettled
-            || draggedNodeID != nil
-            || isPanning
+            || !activeDraggedNodeIDs.isEmpty
+            || isPointerGestureActive
+            || isSecondaryPanning
             || hasRecentInteraction
             || cameraNode.hasActions()
             || graphNodesByID.values.contains { $0.hasActions() }
@@ -901,11 +1710,17 @@ internal final class ObsidianGraphScene: SKScene {
     /// Hit-tests only the visible circular mark. Labels intentionally remain
     /// pointer-transparent so text never selects or drags a node.
     internal func hitTestNodeID(at location: CGPoint) -> String? {
+        hitTestNodeID(at: location, excluding: [])
+    }
+
+    private func hitTestNodeID(at location: CGPoint,
+                               excluding excludedNodeIDs: Set<String>) -> String? {
         let scale = max(displayConfig.nodeSize, 0.55)
         var bestNodeID: String?
         var bestDistance = CGFloat.greatestFiniteMagnitude
-        for node in simulator.nodes {
-            let radius = node.radius * scale
+        for node in simulator.nodes where !excludedNodeIDs.contains(node.id) {
+            let radius = ObsidianGraphSceneNode.effectiveHitRadius(radius: node.radius,
+                                                                  nodeScale: scale)
             let distance = hypot(node.position.x - location.x, node.position.y - location.y)
             guard distance <= radius else { continue }
             if distance < bestDistance {
@@ -918,35 +1733,93 @@ internal final class ObsidianGraphScene: SKScene {
 
     internal func folderDropTarget(at location: CGPoint,
                                    draggedGraphNodeID: String) -> GraphFolderDropTarget? {
-        guard let rawThreadID = rawThreadID(forGraphNodeID: draggedGraphNodeID) else { return nil }
+        batchFolderDropTarget(at: location,
+                              draggedGraphNodeIDs: [draggedGraphNodeID])?
+            .singleCompatibilityTarget
+    }
+
+    internal func batchFolderDropTarget(
+        at location: CGPoint,
+        draggedGraphNodeIDs: Set<String>
+    ) -> GraphBatchFolderDropTarget? {
+        batchFolderDropTarget(at: location,
+                              rawThreadIDs: rawThreadIDs(forGraphNodeIDs: draggedGraphNodeIDs))
+    }
+
+    internal func batchFolderDropTarget(
+        at location: CGPoint,
+        rawThreadIDs suppliedRawThreadIDs: [String]
+    ) -> GraphBatchFolderDropTarget? {
+        guard let payload = OrganizerRailDragPayload(rawThreadIDs: suppliedRawThreadIDs) else {
+            return nil
+        }
+        let rawThreadIDs = payload.rawThreadIDs
+        let rawThreadIDSet = Set(rawThreadIDs)
         let scale = max(displayConfig.nodeSize, 0.55)
         let zoomAdjustedMagnetRadius = Self.folderDropMagnetRadius * max(cameraNode.xScale, 0.2)
 
-        return graphData.groupings.compactMap { grouping -> (CGFloat, GraphFolderDropTarget)? in
+        let groupingsByGraphID = Dictionary(uniqueKeysWithValues: graphData.groupings.map { ($0.id, $0) })
+        let candidates = graphData.groupings.compactMap { grouping -> OrganizerConfirmedGroupDropCandidate? in
             guard grouping.kind == .folder,
                   let folderID = grouping.sourceFolderID,
-                  !grouping.rawThreadIDs.contains(rawThreadID),
+                  Set(grouping.rawThreadIDs).isDisjoint(with: rawThreadIDSet),
                   let folderNode = simulator.nodesByID[grouping.id] else {
                 return nil
             }
-            let distance = hypot(folderNode.position.x - location.x,
-                                 folderNode.position.y - location.y)
-            let dropRadius = max(folderNode.radius * scale, zoomAdjustedMagnetRadius)
-            guard distance <= dropRadius else { return nil }
-            return (distance,
-                    GraphFolderDropTarget(graphNodeID: grouping.id,
-                                          rawThreadID: rawThreadID,
-                                          folderID: folderID))
+            let visibleRadius = ObsidianGraphSceneNode.effectiveHitRadius(
+                radius: folderNode.radius,
+                nodeScale: scale
+            )
+            let dropRadius = max(visibleRadius, zoomAdjustedMagnetRadius)
+            return OrganizerConfirmedGroupDropCandidate(
+                groupID: grouping.id,
+                center: folderNode.position,
+                hitRadius: dropRadius,
+                hierarchyDepth: grouping.hierarchyDepth ?? 0,
+                visibleArea: .pi * visibleRadius * visibleRadius,
+                isConfirmed: !folderID.isEmpty
+            )
         }
-        .min { $0.0 < $1.0 }?.1
+        guard let resolved = OrganizerDropTargetResolver.resolve(at: location,
+                                                                 candidates: candidates),
+              let grouping = groupingsByGraphID[resolved.groupID],
+              let folderID = grouping.sourceFolderID else {
+            return nil
+        }
+        return GraphBatchFolderDropTarget(graphNodeID: grouping.id,
+                                          rawThreadIDs: rawThreadIDs,
+                                          folderID: folderID)
     }
 
     internal func stationaryFolderDropNodeIDs(forDraggedGraphNodeID graphNodeID: String) -> Set<String> {
-        guard let rawThreadID = rawThreadID(forGraphNodeID: graphNodeID) else { return [] }
+        stationaryFolderDropNodeIDs(forDraggedGraphNodeIDs: [graphNodeID])
+    }
+
+    internal func stationaryFolderDropNodeIDs(
+        forDraggedGraphNodeIDs graphNodeIDs: Set<String>
+    ) -> Set<String> {
+        let rawThreadIDs = Set(rawThreadIDs(forGraphNodeIDs: graphNodeIDs))
+        guard !rawThreadIDs.isEmpty else { return [] }
         return Set(graphData.groupings.compactMap { grouping in
             guard grouping.kind == .folder,
                   grouping.sourceFolderID != nil,
-                  !grouping.rawThreadIDs.contains(rawThreadID) else {
+                  Set(grouping.rawThreadIDs).isDisjoint(with: rawThreadIDs) else {
+                return nil
+            }
+            return grouping.id
+        })
+    }
+
+    /// Confirmed folders are spatial anchors and remain stationary while any
+    /// other graph node is dragged. This is separate from the drop-target
+    /// helper above, which retains its conversation-membership semantics.
+    private func stationaryFolderNodeIDs(
+        forDraggedGraphNodeIDs graphNodeIDs: Set<String>
+    ) -> Set<String> {
+        Set(graphData.groupings.compactMap { grouping in
+            guard grouping.kind == .folder,
+                  grouping.sourceFolderID != nil,
+                  !graphNodeIDs.contains(grouping.id) else {
                 return nil
             }
             return grouping.id
@@ -956,13 +1829,107 @@ internal final class ObsidianGraphScene: SKScene {
     @discardableResult
     internal func performFolderDrop(at location: CGPoint,
                                     draggedGraphNodeID: String) -> Bool {
-        guard let target = folderDropTarget(at: location,
-                                            draggedGraphNodeID: draggedGraphNodeID),
+        performBatchFolderDrop(at: location,
+                               draggedGraphNodeIDs: [draggedGraphNodeID])
+    }
+
+    @discardableResult
+    internal func performBatchFolderDrop(at location: CGPoint,
+                                         draggedGraphNodeIDs: Set<String>) -> Bool {
+        performBatchFolderDrop(
+            at: location,
+            rawThreadIDs: rawThreadIDs(forGraphNodeIDs: draggedGraphNodeIDs)
+        )
+    }
+
+    @discardableResult
+    internal func performBatchFolderDrop(at location: CGPoint,
+                                         rawThreadIDs: [String]) -> Bool {
+        guard let target = batchFolderDropTarget(at: location,
+                                                 rawThreadIDs: rawThreadIDs) else {
+            return false
+        }
+        return performBatchFolderDrop(target)
+    }
+
+    @discardableResult
+    private func performBatchFolderDrop(_ target: GraphBatchFolderDropTarget) -> Bool {
+        if let onMoveThreadsToFolder {
+            onMoveThreadsToFolder(target.rawThreadIDs, target.folderID)
+            return true
+        }
+        guard target.rawThreadIDs.count == 1,
+              let rawThreadID = target.rawThreadIDs.first,
               let onMoveThreadToFolder else {
             return false
         }
-        onMoveThreadToFolder(target.rawThreadID, target.folderID)
+        onMoveThreadToFolder(rawThreadID, target.folderID)
         return true
+    }
+
+    /// Updates the confirmed Group highlight for a process-local rail drag.
+    /// Returns whether the current location accepts a drop: either a confirmed
+    /// Group, or empty canvas for a batch that can create a new Group.
+    internal func updateRailDrag(at viewPoint: CGPoint,
+                                 rawThreadIDs: [String]) -> Bool {
+        guard let payload = OrganizerRailDragPayload(rawThreadIDs: rawThreadIDs) else {
+            cancelDropLifecycleIfNeeded()
+            resetDropLifecycle()
+            setActiveFolderDropTarget(nil)
+            return false
+        }
+        beginDropLifecycleIfNeeded(itemCount: payload.rawThreadIDs.count)
+        markInteraction()
+        clearHover()
+        let location = convertPoint(fromView: viewPoint)
+        let target = batchFolderDropTarget(at: location,
+                                           rawThreadIDs: payload.rawThreadIDs)
+        if target != nil {
+            noteVisibleDropHighlight(itemCount: payload.rawThreadIDs.count)
+        }
+        setActiveFolderDropTarget(target?.singleCompatibilityTarget)
+        return target != nil
+            || (payload.rawThreadIDs.count >= 2 && hitTestNodeID(at: location) == nil)
+    }
+
+    /// Commits a rail-originated drop through the same callbacks as graph
+    /// direct manipulation. A batch on empty canvas opens the accessible Group
+    /// composer; no mutation occurs for an invalid single-item empty drop.
+    @discardableResult
+    internal func performRailDrop(at viewPoint: CGPoint,
+                                  rawThreadIDs: [String]) -> Bool {
+        defer {
+            setActiveFolderDropTarget(nil)
+            resetDropLifecycle()
+        }
+        guard let payload = OrganizerRailDragPayload(rawThreadIDs: rawThreadIDs) else {
+            cancelDropLifecycleIfNeeded()
+            return false
+        }
+        beginDropLifecycleIfNeeded(itemCount: payload.rawThreadIDs.count)
+        let location = convertPoint(fromView: viewPoint)
+        if let target = batchFolderDropTarget(at: location,
+                                              rawThreadIDs: payload.rawThreadIDs) {
+            noteVisibleDropHighlight(itemCount: payload.rawThreadIDs.count)
+            releaseDropLifecycle(destination: .confirmedGroup)
+            return performBatchFolderDrop(target)
+        }
+        guard payload.rawThreadIDs.count >= 2,
+              hitTestNodeID(at: location) == nil else {
+            releaseDropLifecycle(destination: .invalidTarget)
+            return false
+        }
+        releaseDropLifecycle(destination: .emptyCanvas)
+        onCreateGroupAtCanvasPoint?(payload.rawThreadIDs,
+                                    overlayPoint(for: location),
+                                    location)
+        return onCreateGroupAtCanvasPoint != nil
+    }
+
+    internal func cancelRailDrag() {
+        cancelDropLifecycleIfNeeded()
+        resetDropLifecycle()
+        setActiveFolderDropTarget(nil)
     }
 
     private func nearestSnipTarget(to location: CGPoint) -> GraphSnipTarget? {
@@ -983,16 +1950,16 @@ internal final class ObsidianGraphScene: SKScene {
     internal func snipTarget(for edge: GraphEdge) -> GraphSnipTarget? {
         guard edge.kind != .suggested, edge.kind != .remaining else { return nil }
         if edge.kind == .trunk,
-           let grouping = graphData.groupingByID[edge.targetID],
+           let grouping = graphLookupIndex.groupingByID[edge.targetID],
            grouping.kind == .folder {
             return .confirmedGroup(grouping.id)
         }
-        guard graphData.threadByID[edge.threadID] != nil else { return nil }
+        guard graphLookupIndex.threadByID[edge.threadID] != nil else { return nil }
         return .thread(edge.threadID)
     }
 
     internal func snipTarget(forGraphNodeID graphNodeID: String) -> GraphSnipTarget? {
-        if let grouping = graphData.groupingByID[graphNodeID], grouping.kind == .folder {
+        if let grouping = graphLookupIndex.groupingByID[graphNodeID], grouping.kind == .folder {
             return .confirmedGroup(grouping.id)
         }
         return threadID(forGraphNodeID: graphNodeID).map(GraphSnipTarget.thread)
@@ -1002,7 +1969,7 @@ internal final class ObsidianGraphScene: SKScene {
         let tolerance = Self.pruneEdgeHitTolerance * max(cameraNode.xScale, 0.2)
         return graphData.edges.compactMap { edge -> (String, CGFloat)? in
             guard edge.kind != .suggested,
-                  graphData.threadByID[edge.threadID] != nil,
+                  graphLookupIndex.threadByID[edge.threadID] != nil,
                   let source = simulator.nodesByID[edge.sourceID],
                   let target = simulator.nodesByID[edge.targetID] else { return nil }
             return (edge.threadID,
@@ -1013,15 +1980,15 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func threadID(forGraphNodeID graphNodeID: String) -> String? {
-        if graphData.threadByID[graphNodeID] != nil { return graphNodeID }
-        return graphData.messageByID[graphNodeID]?.threadID
+        if graphLookupIndex.threadByID[graphNodeID] != nil { return graphNodeID }
+        return graphLookupIndex.messageByID[graphNodeID]?.threadID
     }
 
     private func rawThreadID(forGraphNodeID graphNodeID: String) -> String? {
-        if let thread = graphData.threadByID[graphNodeID] {
+        if let thread = graphLookupIndex.threadByID[graphNodeID] {
             return thread.rawThreadID
         }
-        return graphData.messageByID[graphNodeID]?.rawThreadID
+        return graphLookupIndex.messageByID[graphNodeID]?.rawThreadID
     }
 
     private func startSnipVisualTransitionIfNeeded(_ transition: GraphSnipVisualTransition?) {
@@ -1162,6 +2129,19 @@ internal struct GraphFolderDropTarget: Equatable {
     internal let graphNodeID: String
     internal let rawThreadID: String
     internal let folderID: String
+}
+
+internal struct GraphBatchFolderDropTarget: Equatable {
+    internal let graphNodeID: String
+    internal let rawThreadIDs: [String]
+    internal let folderID: String
+
+    internal var singleCompatibilityTarget: GraphFolderDropTarget? {
+        guard let rawThreadID = rawThreadIDs.first else { return nil }
+        return GraphFolderDropTarget(graphNodeID: graphNodeID,
+                                     rawThreadID: rawThreadID,
+                                     folderID: folderID)
+    }
 }
 
 internal final class GraphContextMenuAction: NSObject {

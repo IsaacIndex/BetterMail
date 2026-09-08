@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "visual-email-organizer-metrics-v1",
+  "statusValues": ["pass", "fail", "invalid", "pending", "insufficient-evidence"],
+  "evidenceTypes": [
+    "automated-logic",
+    "build",
+    "installed-app-launch",
+    "live-pointer",
+    "accessibility-audit",
+    "timed-human-task"
+  ],
+  "requiredRunFields": [
+    "runId",
+    "protocolId",
+    "fixtureId",
+    "appBuild",
+    "evidenceType",
+    "status"
+  ],
+  "trialFields": {
+    "trialId": "opaque deterministic or local run key",
+    "taskId": "diagnostic, live-pointer, placement-set, first-organization, five-conversation-organization, or retrieval",
+    "sourceNodeKeys": "frozen synthetic fixture node keys only; empty for non-task diagnostics",
+    "destinationGroupKeys": "frozen synthetic fixture Group keys only; empty for non-task diagnostics",
+    "queryKey": "frozen synthetic query key or null",
+    "stratum": "warm, cold-relaunch, or named drop/placement stratum",
+    "status": "pass, fail, invalid, pending, or insufficient-evidence",
+    "durationMilliseconds": "monotonic ContinuousClock duration; omit when not timed",
+    "eventSummary": "coarse event names and monotonic offsets only",
+    "coarseFailureReason": "required for fail or invalid; no free-form personal content",
+    "targetOutcome": "coarse intended outcome classification",
+    "mailCallCount": "aggregate count only",
+    "normalizedCommandCount": "aggregate count only"
+  },
+  "timingRules": {
+    "contractPercentile": "p80",
+    "diagnosticPercentiles": ["median", "p90"],
+    "warmAndColdMustRemainSeparate": true,
+    "invalidBeforeTaskReadyOnly": true
+  },
+  "privacyForbiddenFields": [
+    "rawSubject",
+    "sender",
+    "body",
+    "snippet",
+    "accountName",
+    "mailboxPath",
+    "exactRoute",
+    "rawMessageId",
+    "rawThreadId",
+    "authorizationToken",
+    "encryptionKey",
+    "providerPrompt"
+  ],
+  "targetGates": {
+    "firstOrganizationP80Seconds": 30,
+    "fiveConversationOrganizationP80Seconds": 120,
+    "dropOverallSuccess": 0.95,
+    "dropPerStratumSuccess": 0.90,
+    "livePointerSuccess": 0.95,
+    "suggestionMinimumCandidates": 200,
+    "suggestionMinimumAcceptedOverall": 100,
+    "suggestionMinimumQualifyingDecisionsPerSlice": 25,
+    "suggestionUnrelatedSliceDenominator": "nonAbstainedDecisions",
+    "suggestionOverallPrecision": 0.80,
+    "suggestionConservativePrecision": 0.85,
+    "suggestionNonAbstainedCoverage": 0.50,
+    "retrievalStratumSuccessWithinSeconds": 5,
+    "retrievalStratumSuccessRate": 0.95
+  }
+}

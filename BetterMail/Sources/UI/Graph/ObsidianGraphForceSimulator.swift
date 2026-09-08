@@ -74,15 +74,29 @@ internal struct ObsidianGraphPhysicsNode: Identifiable, Equatable {
 }
 
 /// A native, deterministic force simulation tailored to BetterMail's graph
-/// projection. Every node, including the initially centered `You` node, remains
-/// freely movable to match Obsidian's single-node drag behavior.
+/// projection. Conversation and Group nodes remain freely movable, while the
+/// `You` root stays pinned to the scene midpoint as the graph's spatial anchor.
 internal struct ObsidianGraphForceSimulator {
+    private struct DragGridCell: Hashable {
+        let x: Int
+        let y: Int
+    }
+
     internal private(set) var nodesByID: [String: ObsidianGraphPhysicsNode] = [:]
     internal private(set) var edges: [GraphEdge] = []
     internal private(set) var size: CGSize = .zero
 
-    private var draggedNodeID: String?
+    private var draggedNodeIDs: Set<String> = []
     private var stationaryNodeIDsDuringDrag: Set<String> = []
+    private var dragOriginPositions: [String: CGPoint] = [:]
+    internal private(set) var lastDragReactiveNodeIDs: Set<String> = []
+    internal private(set) var lastDragReactiveNodeOrigins: [String: CGPoint] = [:]
+    internal private(set) var lastDragCollisionCheckCount = 0
+    private static let dragGridCellSize: CGFloat = 128
+    private static let dragCollisionInfluence: CGFloat = 96
+    private static let dragObstacleMaximumDisplacementPerStep: CGFloat = 1.25
+    private static let dragObstacleMaximumTotalDisplacement: CGFloat = 9
+    private static let dragObstacleReturnRate: CGFloat = 0.42
     private static let interGroupRepelMultiplier: CGFloat = 3.2
     private static let interGroupRepelRangeMultiplier: CGFloat = 1.45
     private static let chronologyRadiusMultiplier: CGFloat = 1.8
@@ -110,13 +124,13 @@ internal struct ObsidianGraphForceSimulator {
         nodesByID = Dictionary(uniqueKeysWithValues: nodeDescriptors.enumerated().map { index, descriptor in
             let retainedPosition = positions[descriptor.id] ?? previousNodes[descriptor.id]?.position
             let position: CGPoint
-            if let retainedPosition {
+            if descriptor.kind == .center {
+                position = center
+            } else if let retainedPosition {
                 position = previousSize == .zero
                     ? retainedPosition
                     : CGPoint(x: retainedPosition.x + centerShift.dx,
                               y: retainedPosition.y + centerShift.dy)
-            } else if descriptor.kind == .center {
-                position = center
             } else {
                 let chronologyRank = descriptor.threadID.flatMap { chronologyRankByThreadID[$0] } ?? 0
                 position = Self.initialPosition(for: descriptor.id,
@@ -126,7 +140,9 @@ internal struct ObsidianGraphForceSimulator {
                                                 center: center,
                                                 linkDistance: config.linkDistance)
             }
-            let previousVelocity = previousNodes[descriptor.id]?.velocity ?? .zero
+            let previousVelocity = descriptor.kind == .center
+                ? CGVector.zero
+                : previousNodes[descriptor.id]?.velocity ?? .zero
             return (descriptor.id,
                     ObsidianGraphPhysicsNode(id: descriptor.id,
                                              kind: descriptor.kind,
@@ -136,12 +152,16 @@ internal struct ObsidianGraphForceSimulator {
                                              chronologyRank: descriptor.threadID.flatMap { chronologyRankByThreadID[$0] },
                                              position: position,
                                              velocity: previousVelocity,
-                                             isPinned: false))
+                                             isPinned: descriptor.kind == .center))
         })
         edges = data.edges.filter { nodesByID[$0.sourceID] != nil && nodesByID[$0.targetID] != nil }
         size = nextSize
-        draggedNodeID = nil
+        draggedNodeIDs = []
         stationaryNodeIDsDuringDrag = []
+        dragOriginPositions = [:]
+        lastDragReactiveNodeIDs = []
+        lastDragReactiveNodeOrigins = [:]
+        lastDragCollisionCheckCount = 0
     }
 
     internal mutating func step(deltaTime: TimeInterval,
@@ -161,38 +181,262 @@ internal struct ObsidianGraphForceSimulator {
 
     internal mutating func beginDragging(nodeID: String,
                                          keepingStationary stationaryNodeIDs: Set<String> = []) {
-        guard nodesByID[nodeID] != nil else { return }
-        releaseStationaryNodesAfterDrag()
-        draggedNodeID = nodeID
+        beginDragging(nodeIDs: [nodeID], keepingStationary: stationaryNodeIDs)
+    }
+
+    /// Pins a drag cohort as one unit while keeping eligible drop targets
+    /// stationary. Missing and duplicate IDs are ignored, and an empty cohort
+    /// leaves the simulator unchanged.
+    internal mutating func beginDragging(nodeIDs: Set<String>,
+                                         keepingStationary stationaryNodeIDs: Set<String> = []) {
+        let validNodeIDs = nodeIDs
+            .intersection(Set(nodesByID.keys))
+            .subtracting([GraphCenter.you.id])
+        guard !validNodeIDs.isEmpty else { return }
+        cancelDragging()
+        draggedNodeIDs = validNodeIDs
         stationaryNodeIDsDuringDrag = stationaryNodeIDs
             .intersection(Set(nodesByID.keys))
-            .subtracting([nodeID])
+            .subtracting(validNodeIDs)
+        dragOriginPositions = positionsByID()
+        lastDragReactiveNodeIDs = []
+        lastDragReactiveNodeOrigins = [:]
+        lastDragCollisionCheckCount = 0
         for stationaryNodeID in stationaryNodeIDsDuringDrag {
             nodesByID[stationaryNodeID]?.isPinned = true
             nodesByID[stationaryNodeID]?.velocity = .zero
         }
-        nodesByID[nodeID]?.isPinned = true
-        nodesByID[nodeID]?.velocity = .zero
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = true
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
     }
 
     internal mutating func drag(nodeID: String, to position: CGPoint) {
-        guard draggedNodeID == nodeID else { return }
-        nodesByID[nodeID]?.position = position
-        nodesByID[nodeID]?.velocity = .zero
+        drag(nodePositions: [nodeID: position])
+    }
+
+    /// Applies world-space positions only to nodes in the active drag cohort.
+    /// Callers normally calculate these positions from one shared translation
+    /// so the relative layout remains stable.
+    internal mutating func drag(nodePositions: [String: CGPoint]) {
+        guard !draggedNodeIDs.isEmpty else { return }
+        for draggedNodeID in draggedNodeIDs {
+            guard let position = nodePositions[draggedNodeID] else { continue }
+            nodesByID[draggedNodeID]?.position = position
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
+    }
+
+    /// Applies a bounded, drag-only collision pass. The global force solver is
+    /// intentionally not used here: a small spatial grid limits work to nodes
+    /// near the dragged cohort, keeping pointer feedback independent of the
+    /// graph's full pairwise force cost.
+    @discardableResult
+    internal mutating func stepDragging(deltaTime: TimeInterval,
+                                        reduceMotion: Bool = false) -> Set<String> {
+        guard !draggedNodeIDs.isEmpty else {
+            lastDragCollisionCheckCount = 0
+            return []
+        }
+
+        let frameScale = min(max(CGFloat(deltaTime) * 60, 0.2), 2)
+        let motionScale: CGFloat = reduceMotion ? 0.75 : 1
+        let maximumStep = Self.dragObstacleMaximumDisplacementPerStep
+            * frameScale
+            * motionScale
+        let returnStep = 0.7 * frameScale * motionScale
+        let candidateIDs = Set(nodesByID.values.compactMap { node -> String? in
+            guard node.kind != .center,
+                  node.kind != .folderGroup,
+                  !draggedNodeIDs.contains(node.id),
+                  !stationaryNodeIDsDuringDrag.contains(node.id) else {
+                return nil
+            }
+            return node.id
+        })
+
+        var grid: [DragGridCell: [String]] = [:]
+        for candidateID in candidateIDs {
+            guard let node = nodesByID[candidateID] else { continue }
+            grid[Self.dragGridCell(for: node.position), default: []].append(candidateID)
+        }
+
+        var nearbyCandidateIDs = Set<String>()
+        let envelopePadding = Self.dragCollisionInfluence + 16
+        for draggedNodeID in draggedNodeIDs {
+            guard let draggedNode = nodesByID[draggedNodeID] else { continue }
+            let envelope = CGRect(
+                x: draggedNode.position.x - draggedNode.radius - envelopePadding,
+                y: draggedNode.position.y - draggedNode.radius - envelopePadding,
+                width: (draggedNode.radius + envelopePadding) * 2,
+                height: (draggedNode.radius + envelopePadding) * 2
+            )
+            for cell in Self.dragGridCells(intersecting: envelope) {
+                nearbyCandidateIDs.formUnion(grid[cell, default: []])
+            }
+        }
+        nearbyCandidateIDs.formUnion(lastDragReactiveNodeIDs.filter { candidateIDs.contains($0) })
+
+        lastDragCollisionCheckCount = 0
+        var nextReactiveNodeIDs = Set<String>()
+        let sortedDraggedNodeIDs = draggedNodeIDs.sorted()
+        for candidateID in nearbyCandidateIDs.sorted() {
+            guard var obstacle = nodesByID[candidateID],
+                  let origin = dragOriginPositions[candidateID] else { continue }
+            var response = CGVector.zero
+            for draggedNodeID in sortedDraggedNodeIDs {
+                lastDragCollisionCheckCount += 1
+                guard let draggedNode = nodesByID[draggedNodeID],
+                      let correction = Self.dragCollisionCorrection(
+                        from: draggedNode,
+                        to: obstacle,
+                        influence: Self.dragCollisionInfluence
+                      ) else {
+                    continue
+                }
+                response.dx += correction.dx
+                response.dy += correction.dy
+            }
+
+            let displacement: CGVector
+            if hypot(response.dx, response.dy) > 0.001 {
+                displacement = Self.limited(response, maximum: maximumStep)
+                nextReactiveNodeIDs.insert(candidateID)
+            } else {
+                displacement = Self.limited(
+                    CGVector(dx: (origin.x - obstacle.position.x) * Self.dragObstacleReturnRate,
+                             dy: (origin.y - obstacle.position.y) * Self.dragObstacleReturnRate),
+                    maximum: returnStep
+                )
+            }
+
+            var proposed = CGPoint(x: obstacle.position.x + displacement.dx,
+                                   y: obstacle.position.y + displacement.dy)
+            let fromOrigin = CGVector(dx: proposed.x - origin.x,
+                                      dy: proposed.y - origin.y)
+            let boundedFromOrigin = Self.limited(
+                fromOrigin,
+                maximum: Self.dragObstacleMaximumTotalDisplacement
+            )
+            proposed = CGPoint(x: origin.x + boundedFromOrigin.dx,
+                               y: origin.y + boundedFromOrigin.dy)
+            let applied = CGVector(dx: proposed.x - obstacle.position.x,
+                                   dy: proposed.y - obstacle.position.y)
+            obstacle.position = proposed
+            obstacle.velocity = applied
+            nodesByID[candidateID] = obstacle
+            if hypot(applied.dx, applied.dy) > 0.01 {
+                nextReactiveNodeIDs.insert(candidateID)
+            }
+        }
+
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = true
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
+        for stationaryNodeID in stationaryNodeIDsDuringDrag {
+            nodesByID[stationaryNodeID]?.isPinned = true
+            nodesByID[stationaryNodeID]?.velocity = .zero
+        }
+        lastDragReactiveNodeIDs.formUnion(nextReactiveNodeIDs)
+        lastDragReactiveNodeOrigins = lastDragReactiveNodeIDs.reduce(into: [:]) { result, nodeID in
+            if let origin = dragOriginPositions[nodeID] {
+                result[nodeID] = origin
+            }
+        }
+        return nextReactiveNodeIDs
+    }
+
+    /// Returns temporarily displaced nodes to their pre-drag positions using a
+    /// small local settle. The returned IDs let the scene redraw only the
+    /// affected nodes and their incident edges.
+    @discardableResult
+    internal mutating func stepLocalSettling(
+        deltaTime: TimeInterval,
+        returningNodeOrigins: [String: CGPoint],
+        reduceMotion: Bool = false
+    ) -> Set<String> {
+        guard !returningNodeOrigins.isEmpty else { return [] }
+        let frameScale = min(max(CGFloat(deltaTime) * 60, 0.2), 2)
+        let motionScale: CGFloat = reduceMotion ? 0.75 : 1
+        let maximumStep = 0.8 * frameScale * motionScale
+        var movedNodeIDs = Set<String>()
+        for nodeID in returningNodeOrigins.keys.sorted() {
+            guard let origin = returningNodeOrigins[nodeID],
+                  var node = nodesByID[nodeID] else { continue }
+            let displacement = Self.limited(
+                CGVector(dx: (origin.x - node.position.x) * Self.dragObstacleReturnRate,
+                         dy: (origin.y - node.position.y) * Self.dragObstacleReturnRate),
+                maximum: maximumStep
+            )
+            let proposed = CGPoint(x: node.position.x + displacement.dx,
+                                   y: node.position.y + displacement.dy)
+            node.position = proposed
+            node.velocity = displacement
+            nodesByID[nodeID] = node
+            if hypot(displacement.dx, displacement.dy) > 0.01 {
+                movedNodeIDs.insert(nodeID)
+            }
+        }
+        return movedNodeIDs
+    }
+
+    internal func isAtPositions(_ positions: [String: CGPoint],
+                                tolerance: CGFloat = 0.25) -> Bool {
+        positions.allSatisfy { nodeID, origin in
+            guard let position = nodesByID[nodeID]?.position else { return true }
+            return hypot(position.x - origin.x, position.y - origin.y) <= tolerance
+        }
+    }
+
+    /// Snaps temporary reaction nodes back when a new gesture supersedes an
+    /// in-flight local settle. This path is intentionally separate from the
+    /// animated settle used after an ordinary release or cancellation.
+    internal mutating func restorePositions(_ positions: [String: CGPoint]) {
+        for (nodeID, position) in positions {
+            guard position.x.isFinite,
+                  position.y.isFinite,
+                  var node = nodesByID[nodeID] else { continue }
+            node.position = position
+            node.velocity = .zero
+            nodesByID[nodeID] = node
+        }
     }
 
     internal mutating func endDragging(nodeID: String, at position: CGPoint) {
-        guard draggedNodeID == nodeID else { return }
-        nodesByID[nodeID]?.position = position
-        nodesByID[nodeID]?.velocity = .zero
-        nodesByID[nodeID]?.isPinned = false
-        draggedNodeID = nil
+        guard draggedNodeIDs.contains(nodeID) else { return }
+        endDragging(nodePositions: [nodeID: position])
+    }
+
+    /// Commits the final world-space positions and releases every temporary
+    /// drag/stationary pin. Positions omitted from the dictionary keep their
+    /// most recently dragged value.
+    internal mutating func endDragging(nodePositions: [String: CGPoint]) {
+        guard !draggedNodeIDs.isEmpty else { return }
+        drag(nodePositions: nodePositions)
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = draggedNodeID == GraphCenter.you.id
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
+        draggedNodeIDs = []
+        releaseStationaryNodesAfterDrag()
+    }
+
+    /// Releases temporary pins without moving nodes. This is the cancellation
+    /// path used by Escape, teardown, and a replacement drag gesture.
+    internal mutating func cancelDragging() {
+        for draggedNodeID in draggedNodeIDs {
+            nodesByID[draggedNodeID]?.isPinned = draggedNodeID == GraphCenter.you.id
+            nodesByID[draggedNodeID]?.velocity = .zero
+        }
+        draggedNodeIDs = []
         releaseStationaryNodesAfterDrag()
     }
 
     private mutating func releaseStationaryNodesAfterDrag() {
         for stationaryNodeID in stationaryNodeIDsDuringDrag {
-            nodesByID[stationaryNodeID]?.isPinned = false
+            nodesByID[stationaryNodeID]?.isPinned = stationaryNodeID == GraphCenter.you.id
             nodesByID[stationaryNodeID]?.velocity = .zero
         }
         stationaryNodeIDsDuringDrag = []
@@ -287,7 +531,8 @@ internal struct ObsidianGraphForceSimulator {
         if let graphCenter = nodesByID[GraphCenter.you.id] {
             for id in ids {
                 guard let node = nodesByID[id],
-                      node.kind == .thread,
+                      node.kind == .thread
+                        || (node.kind == .message && config.linkStrength > 0),
                       let chronologyRank = node.chronologyRank else { continue }
                 var dx = node.position.x - graphCenter.position.x
                 var dy = node.position.y - graphCenter.position.y
@@ -328,6 +573,55 @@ internal struct ObsidianGraphForceSimulator {
             nodesByID[id] = node
         }
 
+    }
+
+    private static func dragCollisionCorrection(
+        from source: ObsidianGraphPhysicsNode,
+        to target: ObsidianGraphPhysicsNode,
+        influence: CGFloat
+    ) -> CGVector? {
+        var dx = target.position.x - source.position.x
+        var dy = target.position.y - source.position.y
+        var distance = hypot(dx, dy)
+        if distance < 0.01 {
+            let angle = stableAngle(for: "drag|\(source.id)|\(target.id)")
+            dx = cos(angle)
+            dy = sin(angle)
+            distance = 1
+        }
+        let minimumDistance = source.radius + target.radius + 12
+        let gap = max(0, distance - minimumDistance)
+        guard gap <= influence else { return nil }
+        let direction = CGVector(dx: dx / distance, dy: dy / distance)
+        let penetration = max(0, minimumDistance - distance)
+        let magnitude = max(0, influence - gap) * 0.32 + penetration
+        return CGVector(dx: direction.dx * magnitude,
+                        dy: direction.dy * magnitude)
+    }
+
+    private static func dragGridCell(for point: CGPoint) -> DragGridCell {
+        DragGridCell(x: Int(floor(point.x / dragGridCellSize)),
+                     y: Int(floor(point.y / dragGridCellSize)))
+    }
+
+    private static func dragGridCells(intersecting rect: CGRect) -> [DragGridCell] {
+        guard !rect.isNull, !rect.isInfinite else { return [] }
+        let minimumX = Int(floor(rect.minX / dragGridCellSize))
+        let maximumX = Int(floor(rect.maxX / dragGridCellSize))
+        let minimumY = Int(floor(rect.minY / dragGridCellSize))
+        let maximumY = Int(floor(rect.maxY / dragGridCellSize))
+        return (minimumX...maximumX).flatMap { x in
+            (minimumY...maximumY).map { y in
+                DragGridCell(x: x, y: y)
+            }
+        }
+    }
+
+    private static func limited(_ vector: CGVector, maximum: CGFloat) -> CGVector {
+        let magnitude = hypot(vector.dx, vector.dy)
+        guard magnitude > maximum, magnitude > 0 else { return vector }
+        let scale = maximum / magnitude
+        return CGVector(dx: vector.dx * scale, dy: vector.dy * scale)
     }
 
     private mutating func dampMotion(multiplier: CGFloat) {

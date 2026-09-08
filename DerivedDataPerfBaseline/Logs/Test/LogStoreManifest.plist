@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>logFormatVersion</key>
+	<integer>12</integer>
+	<key>logs</key>
+	<dict>
+		<key>94E9DA28-3E0C-4DC3-A1EF-60651A9E83FC</key>
+		<dict>
+			<key>auxiliaryLogUniqueIdentifier</key>
+			<string>2A56AF03-172E-4182-86C1-6FAA1E3477BC</string>
+			<key>auxiliaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>W</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>0</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>340</integer>
+			</dict>
+			<key>className</key>
+			<string>IDESchemeActionsInvocationRecord</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>com.apple.dt.unit.cocoaUnitTest</string>
+			<key>fileName</key>
+			<string>Test-BetterMail-2026.08.30_19-31-12-+0800.xcresult</string>
+			<key>hasAuxiliaryLog</key>
+			<true/>
+			<key>hasCoverageData</key>
+			<true/>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>W</string>
+				<key>totalCodeCoverage</key>
+				<real>0.037335256960149728</real>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>0</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>319</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>BetterMail project</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>BetterMail</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Test BetterMail</string>
+			<key>timeStartedRecording</key>
+			<real>809782272.18986404</real>
+			<key>timeStoppedRecording</key>
+			<real>809782354.29233503</real>
+			<key>title</key>
+			<string>Test BetterMail</string>
+			<key>uniqueIdentifier</key>
+			<string>94E9DA28-3E0C-4DC3-A1EF-60651A9E83FC</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

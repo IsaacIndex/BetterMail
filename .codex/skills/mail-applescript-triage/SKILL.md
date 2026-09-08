@@ -22,20 +22,25 @@ Use this skill when debugging Mail automation or Swift code that generates/runs 
 
 ## Workflow
 
-1. Parse-only gate (no app dependency)
+1. Compile-only gate (does not execute the script; application dictionaries may still be needed)
 2. Mail-availability probe
 3. Terms-context probe (`tell` vs `using terms from`)
 4. Generated script minimization/repro
 5. xcodebuild preflight for testability
-6. Report root cause + next concrete command
+6. For diagnosis-only requests, report root cause and the next concrete check. For an authorized fix, apply the scoped correction and rerun affected compile/runtime checks before reporting completion; distinguish any blocked runtime proof.
 
 ## Canonical commands
 
-### 1) Parse-only check (syntax)
+### 1) Compile-only check (syntax)
 
 ```bash
-osascript -s s /path/to/script.applescript
+mail_compile_dir=$(mktemp -d "${TMPDIR:-/tmp}/mail-compile.XXXXXX")
+osacompile -o "$mail_compile_dir/check.scpt" /path/to/script.applescript
 ```
+
+`osacompile` compiles without executing the script. Resolving application terminology can still require the target app dictionary. `osascript -s s` executes the script; `-s s` changes output formatting only. Never use it as a compile-only gate. Retain the temporary output until diagnosis is complete, then remove only the generated temporary directory.
+
+Execute app-scoped probes only when the user's task authorizes runtime inspection and the active tools permit that method. Compile success is not runtime proof. If an app, dictionary, or permission is unavailable, report the precise blocker without running the full target script.
 
 If this fails with `-2741`, treat it as compile-time script construction issue.
 

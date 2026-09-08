@@ -49,7 +49,10 @@ internal final class AppearanceSettings: ObservableObject {
         mode.preferredColorScheme
     }
 
-    internal init() {
+    internal init(userDefaults: UserDefaults = .standard) {
+        _storedMode = AppStorage(wrappedValue: AppAppearanceMode.defaultMode.rawValue,
+                                 "appAppearanceMode",
+                                 store: userDefaults)
         let resolvedMode = AppAppearanceMode.resolvedMode(from: _storedMode.wrappedValue)
         if resolvedMode.rawValue != _storedMode.wrappedValue {
             storedMode = resolvedMode.rawValue

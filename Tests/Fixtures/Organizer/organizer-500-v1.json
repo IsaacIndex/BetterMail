@@ -1,0 +1,6606 @@
+{
+  "description": "Deterministic synthetic organizer canvas with 500 conversation nodes.",
+  "fixtureId": "organizer-500-v1",
+  "fixtureKind": "synthetic-organizer-canvas",
+  "groups": [
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Confirmed Group 01",
+      "groupKey": "group-flat-00",
+      "longLabel": true,
+      "parentGroupKey": null,
+      "targetShape": "flat"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Confirmed Group 02",
+      "groupKey": "group-flat-01",
+      "longLabel": false,
+      "parentGroupKey": null,
+      "targetShape": "flat"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Confirmed Group 03",
+      "groupKey": "group-flat-02",
+      "longLabel": true,
+      "parentGroupKey": null,
+      "targetShape": "flat"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Confirmed Group 04",
+      "groupKey": "group-flat-03",
+      "longLabel": false,
+      "parentGroupKey": null,
+      "targetShape": "flat"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Nested Group 01",
+      "groupKey": "group-nested-00",
+      "longLabel": false,
+      "parentGroupKey": "group-flat-00",
+      "targetShape": "nested"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Nested Group 02",
+      "groupKey": "group-nested-01",
+      "longLabel": true,
+      "parentGroupKey": "group-flat-01",
+      "targetShape": "nested"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Nested Group 03",
+      "groupKey": "group-nested-02",
+      "longLabel": false,
+      "parentGroupKey": "group-flat-02",
+      "targetShape": "nested"
+    },
+    {
+      "acceptsDrop": true,
+      "displayLabel": "Nested Group 04",
+      "groupKey": "group-nested-03",
+      "longLabel": true,
+      "parentGroupKey": "group-flat-03",
+      "targetShape": "nested"
+    },
+    {
+      "acceptsDrop": false,
+      "displayLabel": "Potential Group 01",
+      "groupKey": "group-suggested-00",
+      "longLabel": false,
+      "parentGroupKey": null,
+      "targetShape": "ghost"
+    },
+    {
+      "acceptsDrop": false,
+      "displayLabel": "More conversations",
+      "groupKey": "group-remainder-00",
+      "longLabel": false,
+      "parentGroupKey": null,
+      "targetShape": "virtual-remainder"
+    }
+  ],
+  "invalidTargets": [
+    "group-suggested-00",
+    "group-remainder-00",
+    "canvas-outside-targets"
+  ],
+  "labelVariants": {
+    "long": "Synthetic conversation 0001 \u2014 deterministic long display label for pointer targeting",
+    "short": "Synthetic conversation 0001"
+  },
+  "nodeCount": 500,
+  "nodes": [
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0001",
+      "effectiveConversationKey": "conversation-500-0000",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0000",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0002",
+      "effectiveConversationKey": "conversation-500-0001",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0001",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0003",
+      "effectiveConversationKey": "conversation-500-0002",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0002",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0004",
+      "effectiveConversationKey": "conversation-500-0003",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0003",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0005",
+      "effectiveConversationKey": "conversation-500-0004",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0004",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0006",
+      "effectiveConversationKey": "conversation-500-0005",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0005",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0007",
+      "effectiveConversationKey": "conversation-500-0006",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0006",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0008",
+      "effectiveConversationKey": "conversation-500-0007",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0007",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0009",
+      "effectiveConversationKey": "conversation-500-0008",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0008",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0010",
+      "effectiveConversationKey": "conversation-500-0009",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0009",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0011",
+      "effectiveConversationKey": "conversation-500-0010",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0010",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0012",
+      "effectiveConversationKey": "conversation-500-0011",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0011",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0013",
+      "effectiveConversationKey": "conversation-500-0012",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0012",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0014",
+      "effectiveConversationKey": "conversation-500-0013",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0013",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0015",
+      "effectiveConversationKey": "conversation-500-0014",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0014",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0016",
+      "effectiveConversationKey": "conversation-500-0015",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0015",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0017",
+      "effectiveConversationKey": "conversation-500-0016",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0016",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0018",
+      "effectiveConversationKey": "conversation-500-0017",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0017",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0019",
+      "effectiveConversationKey": "conversation-500-0018",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0018",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0020",
+      "effectiveConversationKey": "conversation-500-0019",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0019",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0021",
+      "effectiveConversationKey": "conversation-500-0020",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0020",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0022",
+      "effectiveConversationKey": "conversation-500-0021",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0021",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0023",
+      "effectiveConversationKey": "conversation-500-0022",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0022",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0024",
+      "effectiveConversationKey": "conversation-500-0023",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0023",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0025",
+      "effectiveConversationKey": "conversation-500-0024",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0024",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 48
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0026",
+      "effectiveConversationKey": "conversation-500-0025",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0025",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0027",
+      "effectiveConversationKey": "conversation-500-0026",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0026",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0028",
+      "effectiveConversationKey": "conversation-500-0027",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0027",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0029",
+      "effectiveConversationKey": "conversation-500-0028",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0028",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0030",
+      "effectiveConversationKey": "conversation-500-0029",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0029",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0031",
+      "effectiveConversationKey": "conversation-500-0030",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0030",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0032",
+      "effectiveConversationKey": "conversation-500-0031",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0031",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0033",
+      "effectiveConversationKey": "conversation-500-0032",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0032",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0034",
+      "effectiveConversationKey": "conversation-500-0033",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0033",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0035",
+      "effectiveConversationKey": "conversation-500-0034",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0034",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0036",
+      "effectiveConversationKey": "conversation-500-0035",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0035",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0037",
+      "effectiveConversationKey": "conversation-500-0036",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0036",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0038",
+      "effectiveConversationKey": "conversation-500-0037",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0037",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0039",
+      "effectiveConversationKey": "conversation-500-0038",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0038",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0040",
+      "effectiveConversationKey": "conversation-500-0039",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0039",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0041",
+      "effectiveConversationKey": "conversation-500-0040",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0040",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0042",
+      "effectiveConversationKey": "conversation-500-0041",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0041",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0043",
+      "effectiveConversationKey": "conversation-500-0042",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0042",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0044",
+      "effectiveConversationKey": "conversation-500-0043",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0043",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0045",
+      "effectiveConversationKey": "conversation-500-0044",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0044",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0046",
+      "effectiveConversationKey": "conversation-500-0045",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0045",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0047",
+      "effectiveConversationKey": "conversation-500-0046",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0046",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0048",
+      "effectiveConversationKey": "conversation-500-0047",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0047",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0049",
+      "effectiveConversationKey": "conversation-500-0048",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0048",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0050",
+      "effectiveConversationKey": "conversation-500-0049",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0049",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 106
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0051",
+      "effectiveConversationKey": "conversation-500-0050",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0050",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0052",
+      "effectiveConversationKey": "conversation-500-0051",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0051",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0053",
+      "effectiveConversationKey": "conversation-500-0052",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0052",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0054",
+      "effectiveConversationKey": "conversation-500-0053",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0053",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0055",
+      "effectiveConversationKey": "conversation-500-0054",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0054",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0056",
+      "effectiveConversationKey": "conversation-500-0055",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0055",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0057",
+      "effectiveConversationKey": "conversation-500-0056",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0056",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0058",
+      "effectiveConversationKey": "conversation-500-0057",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0057",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0059",
+      "effectiveConversationKey": "conversation-500-0058",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0058",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0060",
+      "effectiveConversationKey": "conversation-500-0059",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0059",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0061",
+      "effectiveConversationKey": "conversation-500-0060",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0060",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0062",
+      "effectiveConversationKey": "conversation-500-0061",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0061",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0063",
+      "effectiveConversationKey": "conversation-500-0062",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0062",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0064",
+      "effectiveConversationKey": "conversation-500-0063",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0063",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0065",
+      "effectiveConversationKey": "conversation-500-0064",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0064",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0066",
+      "effectiveConversationKey": "conversation-500-0065",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0065",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0067",
+      "effectiveConversationKey": "conversation-500-0066",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0066",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0068",
+      "effectiveConversationKey": "conversation-500-0067",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0067",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0069",
+      "effectiveConversationKey": "conversation-500-0068",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0068",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0070",
+      "effectiveConversationKey": "conversation-500-0069",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0069",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0071",
+      "effectiveConversationKey": "conversation-500-0070",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0070",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0072",
+      "effectiveConversationKey": "conversation-500-0071",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0071",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0073",
+      "effectiveConversationKey": "conversation-500-0072",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0072",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0074",
+      "effectiveConversationKey": "conversation-500-0073",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0073",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0075",
+      "effectiveConversationKey": "conversation-500-0074",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0074",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 164
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0076",
+      "effectiveConversationKey": "conversation-500-0075",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0075",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0077",
+      "effectiveConversationKey": "conversation-500-0076",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0076",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0078",
+      "effectiveConversationKey": "conversation-500-0077",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0077",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0079",
+      "effectiveConversationKey": "conversation-500-0078",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0078",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0080",
+      "effectiveConversationKey": "conversation-500-0079",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0079",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0081",
+      "effectiveConversationKey": "conversation-500-0080",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0080",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0082",
+      "effectiveConversationKey": "conversation-500-0081",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0081",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0083",
+      "effectiveConversationKey": "conversation-500-0082",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0082",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0084",
+      "effectiveConversationKey": "conversation-500-0083",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0083",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0085",
+      "effectiveConversationKey": "conversation-500-0084",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0084",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0086",
+      "effectiveConversationKey": "conversation-500-0085",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0085",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0087",
+      "effectiveConversationKey": "conversation-500-0086",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0086",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0088",
+      "effectiveConversationKey": "conversation-500-0087",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0087",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0089",
+      "effectiveConversationKey": "conversation-500-0088",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0088",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0090",
+      "effectiveConversationKey": "conversation-500-0089",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0089",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0091",
+      "effectiveConversationKey": "conversation-500-0090",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0090",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0092",
+      "effectiveConversationKey": "conversation-500-0091",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0091",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0093",
+      "effectiveConversationKey": "conversation-500-0092",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0092",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0094",
+      "effectiveConversationKey": "conversation-500-0093",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0093",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0095",
+      "effectiveConversationKey": "conversation-500-0094",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0094",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0096",
+      "effectiveConversationKey": "conversation-500-0095",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0095",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0097",
+      "effectiveConversationKey": "conversation-500-0096",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0096",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0098",
+      "effectiveConversationKey": "conversation-500-0097",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0097",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0099",
+      "effectiveConversationKey": "conversation-500-0098",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0098",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0100",
+      "effectiveConversationKey": "conversation-500-0099",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0099",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 222
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0101",
+      "effectiveConversationKey": "conversation-500-0100",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0100",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0102",
+      "effectiveConversationKey": "conversation-500-0101",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0101",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0103",
+      "effectiveConversationKey": "conversation-500-0102",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0102",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0104",
+      "effectiveConversationKey": "conversation-500-0103",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0103",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0105",
+      "effectiveConversationKey": "conversation-500-0104",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0104",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0106",
+      "effectiveConversationKey": "conversation-500-0105",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0105",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0107",
+      "effectiveConversationKey": "conversation-500-0106",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0106",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0108",
+      "effectiveConversationKey": "conversation-500-0107",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0107",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0109",
+      "effectiveConversationKey": "conversation-500-0108",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0108",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0110",
+      "effectiveConversationKey": "conversation-500-0109",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0109",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0111",
+      "effectiveConversationKey": "conversation-500-0110",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0110",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0112",
+      "effectiveConversationKey": "conversation-500-0111",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0111",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0113",
+      "effectiveConversationKey": "conversation-500-0112",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0112",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0114",
+      "effectiveConversationKey": "conversation-500-0113",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0113",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0115",
+      "effectiveConversationKey": "conversation-500-0114",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0114",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0116",
+      "effectiveConversationKey": "conversation-500-0115",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0115",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0117",
+      "effectiveConversationKey": "conversation-500-0116",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0116",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0118",
+      "effectiveConversationKey": "conversation-500-0117",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0117",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0119",
+      "effectiveConversationKey": "conversation-500-0118",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0118",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0120",
+      "effectiveConversationKey": "conversation-500-0119",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0119",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0121",
+      "effectiveConversationKey": "conversation-500-0120",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0120",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0122",
+      "effectiveConversationKey": "conversation-500-0121",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0121",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0123",
+      "effectiveConversationKey": "conversation-500-0122",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0122",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0124",
+      "effectiveConversationKey": "conversation-500-0123",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0123",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0125",
+      "effectiveConversationKey": "conversation-500-0124",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0124",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 280
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0126",
+      "effectiveConversationKey": "conversation-500-0125",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0125",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0127",
+      "effectiveConversationKey": "conversation-500-0126",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0126",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0128",
+      "effectiveConversationKey": "conversation-500-0127",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0127",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0129",
+      "effectiveConversationKey": "conversation-500-0128",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0128",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0130",
+      "effectiveConversationKey": "conversation-500-0129",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0129",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0131",
+      "effectiveConversationKey": "conversation-500-0130",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0130",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0132",
+      "effectiveConversationKey": "conversation-500-0131",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0131",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0133",
+      "effectiveConversationKey": "conversation-500-0132",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0132",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0134",
+      "effectiveConversationKey": "conversation-500-0133",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0133",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0135",
+      "effectiveConversationKey": "conversation-500-0134",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0134",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0136",
+      "effectiveConversationKey": "conversation-500-0135",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0135",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0137",
+      "effectiveConversationKey": "conversation-500-0136",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0136",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0138",
+      "effectiveConversationKey": "conversation-500-0137",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0137",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0139",
+      "effectiveConversationKey": "conversation-500-0138",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0138",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0140",
+      "effectiveConversationKey": "conversation-500-0139",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0139",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0141",
+      "effectiveConversationKey": "conversation-500-0140",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0140",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0142",
+      "effectiveConversationKey": "conversation-500-0141",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0141",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0143",
+      "effectiveConversationKey": "conversation-500-0142",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0142",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0144",
+      "effectiveConversationKey": "conversation-500-0143",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0143",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0145",
+      "effectiveConversationKey": "conversation-500-0144",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0144",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0146",
+      "effectiveConversationKey": "conversation-500-0145",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0145",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0147",
+      "effectiveConversationKey": "conversation-500-0146",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0146",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0148",
+      "effectiveConversationKey": "conversation-500-0147",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0147",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0149",
+      "effectiveConversationKey": "conversation-500-0148",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0148",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0150",
+      "effectiveConversationKey": "conversation-500-0149",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0149",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 338
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0151",
+      "effectiveConversationKey": "conversation-500-0150",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0150",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0152",
+      "effectiveConversationKey": "conversation-500-0151",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0151",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0153",
+      "effectiveConversationKey": "conversation-500-0152",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0152",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0154",
+      "effectiveConversationKey": "conversation-500-0153",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0153",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0155",
+      "effectiveConversationKey": "conversation-500-0154",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0154",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0156",
+      "effectiveConversationKey": "conversation-500-0155",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0155",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0157",
+      "effectiveConversationKey": "conversation-500-0156",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0156",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0158",
+      "effectiveConversationKey": "conversation-500-0157",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0157",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0159",
+      "effectiveConversationKey": "conversation-500-0158",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0158",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0160",
+      "effectiveConversationKey": "conversation-500-0159",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0159",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0161",
+      "effectiveConversationKey": "conversation-500-0160",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0160",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0162",
+      "effectiveConversationKey": "conversation-500-0161",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0161",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0163",
+      "effectiveConversationKey": "conversation-500-0162",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0162",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0164",
+      "effectiveConversationKey": "conversation-500-0163",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0163",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0165",
+      "effectiveConversationKey": "conversation-500-0164",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0164",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0166",
+      "effectiveConversationKey": "conversation-500-0165",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0165",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0167",
+      "effectiveConversationKey": "conversation-500-0166",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0166",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0168",
+      "effectiveConversationKey": "conversation-500-0167",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0167",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0169",
+      "effectiveConversationKey": "conversation-500-0168",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0168",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0170",
+      "effectiveConversationKey": "conversation-500-0169",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0169",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0171",
+      "effectiveConversationKey": "conversation-500-0170",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0170",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0172",
+      "effectiveConversationKey": "conversation-500-0171",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0171",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0173",
+      "effectiveConversationKey": "conversation-500-0172",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0172",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0174",
+      "effectiveConversationKey": "conversation-500-0173",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0173",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0175",
+      "effectiveConversationKey": "conversation-500-0174",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0174",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 396
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0176",
+      "effectiveConversationKey": "conversation-500-0175",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0175",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0177",
+      "effectiveConversationKey": "conversation-500-0176",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0176",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0178",
+      "effectiveConversationKey": "conversation-500-0177",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0177",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0179",
+      "effectiveConversationKey": "conversation-500-0178",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0178",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0180",
+      "effectiveConversationKey": "conversation-500-0179",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0179",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0181",
+      "effectiveConversationKey": "conversation-500-0180",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0180",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0182",
+      "effectiveConversationKey": "conversation-500-0181",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0181",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0183",
+      "effectiveConversationKey": "conversation-500-0182",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0182",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0184",
+      "effectiveConversationKey": "conversation-500-0183",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0183",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0185",
+      "effectiveConversationKey": "conversation-500-0184",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0184",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0186",
+      "effectiveConversationKey": "conversation-500-0185",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0185",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0187",
+      "effectiveConversationKey": "conversation-500-0186",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0186",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0188",
+      "effectiveConversationKey": "conversation-500-0187",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0187",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0189",
+      "effectiveConversationKey": "conversation-500-0188",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0188",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0190",
+      "effectiveConversationKey": "conversation-500-0189",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0189",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0191",
+      "effectiveConversationKey": "conversation-500-0190",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0190",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0192",
+      "effectiveConversationKey": "conversation-500-0191",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0191",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0193",
+      "effectiveConversationKey": "conversation-500-0192",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0192",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0194",
+      "effectiveConversationKey": "conversation-500-0193",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0193",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0195",
+      "effectiveConversationKey": "conversation-500-0194",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0194",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0196",
+      "effectiveConversationKey": "conversation-500-0195",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0195",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0197",
+      "effectiveConversationKey": "conversation-500-0196",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0196",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0198",
+      "effectiveConversationKey": "conversation-500-0197",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0197",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0199",
+      "effectiveConversationKey": "conversation-500-0198",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0198",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0200",
+      "effectiveConversationKey": "conversation-500-0199",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0199",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 454
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0201",
+      "effectiveConversationKey": "conversation-500-0200",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0200",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0202",
+      "effectiveConversationKey": "conversation-500-0201",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0201",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0203",
+      "effectiveConversationKey": "conversation-500-0202",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0202",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0204",
+      "effectiveConversationKey": "conversation-500-0203",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0203",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0205",
+      "effectiveConversationKey": "conversation-500-0204",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0204",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0206",
+      "effectiveConversationKey": "conversation-500-0205",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0205",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0207",
+      "effectiveConversationKey": "conversation-500-0206",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0206",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0208",
+      "effectiveConversationKey": "conversation-500-0207",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0207",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0209",
+      "effectiveConversationKey": "conversation-500-0208",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0208",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0210",
+      "effectiveConversationKey": "conversation-500-0209",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0209",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0211",
+      "effectiveConversationKey": "conversation-500-0210",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0210",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0212",
+      "effectiveConversationKey": "conversation-500-0211",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0211",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0213",
+      "effectiveConversationKey": "conversation-500-0212",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0212",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0214",
+      "effectiveConversationKey": "conversation-500-0213",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0213",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0215",
+      "effectiveConversationKey": "conversation-500-0214",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0214",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0216",
+      "effectiveConversationKey": "conversation-500-0215",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0215",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0217",
+      "effectiveConversationKey": "conversation-500-0216",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0216",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0218",
+      "effectiveConversationKey": "conversation-500-0217",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0217",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0219",
+      "effectiveConversationKey": "conversation-500-0218",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0218",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0220",
+      "effectiveConversationKey": "conversation-500-0219",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0219",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0221",
+      "effectiveConversationKey": "conversation-500-0220",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0220",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0222",
+      "effectiveConversationKey": "conversation-500-0221",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0221",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0223",
+      "effectiveConversationKey": "conversation-500-0222",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0222",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0224",
+      "effectiveConversationKey": "conversation-500-0223",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0223",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0225",
+      "effectiveConversationKey": "conversation-500-0224",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0224",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 512
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0226",
+      "effectiveConversationKey": "conversation-500-0225",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0225",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0227",
+      "effectiveConversationKey": "conversation-500-0226",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0226",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0228",
+      "effectiveConversationKey": "conversation-500-0227",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0227",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0229",
+      "effectiveConversationKey": "conversation-500-0228",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0228",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0230",
+      "effectiveConversationKey": "conversation-500-0229",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0229",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0231",
+      "effectiveConversationKey": "conversation-500-0230",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0230",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0232",
+      "effectiveConversationKey": "conversation-500-0231",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0231",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0233",
+      "effectiveConversationKey": "conversation-500-0232",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0232",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0234",
+      "effectiveConversationKey": "conversation-500-0233",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0233",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0235",
+      "effectiveConversationKey": "conversation-500-0234",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0234",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0236",
+      "effectiveConversationKey": "conversation-500-0235",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0235",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0237",
+      "effectiveConversationKey": "conversation-500-0236",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0236",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0238",
+      "effectiveConversationKey": "conversation-500-0237",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0237",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0239",
+      "effectiveConversationKey": "conversation-500-0238",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0238",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0240",
+      "effectiveConversationKey": "conversation-500-0239",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0239",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0241",
+      "effectiveConversationKey": "conversation-500-0240",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0240",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0242",
+      "effectiveConversationKey": "conversation-500-0241",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0241",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0243",
+      "effectiveConversationKey": "conversation-500-0242",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0242",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0244",
+      "effectiveConversationKey": "conversation-500-0243",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0243",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0245",
+      "effectiveConversationKey": "conversation-500-0244",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0244",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0246",
+      "effectiveConversationKey": "conversation-500-0245",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0245",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0247",
+      "effectiveConversationKey": "conversation-500-0246",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0246",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0248",
+      "effectiveConversationKey": "conversation-500-0247",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0247",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0249",
+      "effectiveConversationKey": "conversation-500-0248",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0248",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0250",
+      "effectiveConversationKey": "conversation-500-0249",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0249",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 570
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0251",
+      "effectiveConversationKey": "conversation-500-0250",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0250",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0252",
+      "effectiveConversationKey": "conversation-500-0251",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0251",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0253",
+      "effectiveConversationKey": "conversation-500-0252",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0252",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0254",
+      "effectiveConversationKey": "conversation-500-0253",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0253",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0255",
+      "effectiveConversationKey": "conversation-500-0254",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0254",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0256",
+      "effectiveConversationKey": "conversation-500-0255",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0255",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0257",
+      "effectiveConversationKey": "conversation-500-0256",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0256",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0258",
+      "effectiveConversationKey": "conversation-500-0257",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0257",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0259",
+      "effectiveConversationKey": "conversation-500-0258",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0258",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0260",
+      "effectiveConversationKey": "conversation-500-0259",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0259",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0261",
+      "effectiveConversationKey": "conversation-500-0260",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0260",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0262",
+      "effectiveConversationKey": "conversation-500-0261",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0261",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0263",
+      "effectiveConversationKey": "conversation-500-0262",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0262",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0264",
+      "effectiveConversationKey": "conversation-500-0263",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0263",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0265",
+      "effectiveConversationKey": "conversation-500-0264",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0264",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0266",
+      "effectiveConversationKey": "conversation-500-0265",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0265",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0267",
+      "effectiveConversationKey": "conversation-500-0266",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0266",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0268",
+      "effectiveConversationKey": "conversation-500-0267",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0267",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0269",
+      "effectiveConversationKey": "conversation-500-0268",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0268",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0270",
+      "effectiveConversationKey": "conversation-500-0269",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0269",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0271",
+      "effectiveConversationKey": "conversation-500-0270",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0270",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0272",
+      "effectiveConversationKey": "conversation-500-0271",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0271",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0273",
+      "effectiveConversationKey": "conversation-500-0272",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0272",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0274",
+      "effectiveConversationKey": "conversation-500-0273",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0273",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0275",
+      "effectiveConversationKey": "conversation-500-0274",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0274",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 628
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0276",
+      "effectiveConversationKey": "conversation-500-0275",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0275",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0277",
+      "effectiveConversationKey": "conversation-500-0276",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0276",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0278",
+      "effectiveConversationKey": "conversation-500-0277",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0277",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0279",
+      "effectiveConversationKey": "conversation-500-0278",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0278",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0280",
+      "effectiveConversationKey": "conversation-500-0279",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0279",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0281",
+      "effectiveConversationKey": "conversation-500-0280",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0280",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0282",
+      "effectiveConversationKey": "conversation-500-0281",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0281",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0283",
+      "effectiveConversationKey": "conversation-500-0282",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0282",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0284",
+      "effectiveConversationKey": "conversation-500-0283",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0283",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0285",
+      "effectiveConversationKey": "conversation-500-0284",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0284",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0286",
+      "effectiveConversationKey": "conversation-500-0285",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0285",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0287",
+      "effectiveConversationKey": "conversation-500-0286",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0286",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0288",
+      "effectiveConversationKey": "conversation-500-0287",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0287",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0289",
+      "effectiveConversationKey": "conversation-500-0288",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0288",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0290",
+      "effectiveConversationKey": "conversation-500-0289",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0289",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0291",
+      "effectiveConversationKey": "conversation-500-0290",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0290",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0292",
+      "effectiveConversationKey": "conversation-500-0291",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0291",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0293",
+      "effectiveConversationKey": "conversation-500-0292",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0292",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0294",
+      "effectiveConversationKey": "conversation-500-0293",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0293",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0295",
+      "effectiveConversationKey": "conversation-500-0294",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0294",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0296",
+      "effectiveConversationKey": "conversation-500-0295",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0295",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0297",
+      "effectiveConversationKey": "conversation-500-0296",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0296",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0298",
+      "effectiveConversationKey": "conversation-500-0297",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0297",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0299",
+      "effectiveConversationKey": "conversation-500-0298",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0298",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0300",
+      "effectiveConversationKey": "conversation-500-0299",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0299",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 686
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0301",
+      "effectiveConversationKey": "conversation-500-0300",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0300",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0302",
+      "effectiveConversationKey": "conversation-500-0301",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0301",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0303",
+      "effectiveConversationKey": "conversation-500-0302",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0302",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0304",
+      "effectiveConversationKey": "conversation-500-0303",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0303",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0305",
+      "effectiveConversationKey": "conversation-500-0304",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0304",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0306",
+      "effectiveConversationKey": "conversation-500-0305",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0305",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0307",
+      "effectiveConversationKey": "conversation-500-0306",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0306",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0308",
+      "effectiveConversationKey": "conversation-500-0307",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0307",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0309",
+      "effectiveConversationKey": "conversation-500-0308",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0308",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0310",
+      "effectiveConversationKey": "conversation-500-0309",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0309",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0311",
+      "effectiveConversationKey": "conversation-500-0310",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0310",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0312",
+      "effectiveConversationKey": "conversation-500-0311",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0311",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0313",
+      "effectiveConversationKey": "conversation-500-0312",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0312",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0314",
+      "effectiveConversationKey": "conversation-500-0313",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0313",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0315",
+      "effectiveConversationKey": "conversation-500-0314",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0314",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0316",
+      "effectiveConversationKey": "conversation-500-0315",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0315",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0317",
+      "effectiveConversationKey": "conversation-500-0316",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0316",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0318",
+      "effectiveConversationKey": "conversation-500-0317",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0317",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0319",
+      "effectiveConversationKey": "conversation-500-0318",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0318",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0320",
+      "effectiveConversationKey": "conversation-500-0319",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0319",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0321",
+      "effectiveConversationKey": "conversation-500-0320",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0320",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0322",
+      "effectiveConversationKey": "conversation-500-0321",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0321",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0323",
+      "effectiveConversationKey": "conversation-500-0322",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0322",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0324",
+      "effectiveConversationKey": "conversation-500-0323",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0323",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0325",
+      "effectiveConversationKey": "conversation-500-0324",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0324",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 744
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0326",
+      "effectiveConversationKey": "conversation-500-0325",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0325",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0327",
+      "effectiveConversationKey": "conversation-500-0326",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0326",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0328",
+      "effectiveConversationKey": "conversation-500-0327",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0327",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0329",
+      "effectiveConversationKey": "conversation-500-0328",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0328",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0330",
+      "effectiveConversationKey": "conversation-500-0329",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0329",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0331",
+      "effectiveConversationKey": "conversation-500-0330",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0330",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0332",
+      "effectiveConversationKey": "conversation-500-0331",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0331",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0333",
+      "effectiveConversationKey": "conversation-500-0332",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0332",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0334",
+      "effectiveConversationKey": "conversation-500-0333",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0333",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0335",
+      "effectiveConversationKey": "conversation-500-0334",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0334",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0336",
+      "effectiveConversationKey": "conversation-500-0335",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0335",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0337",
+      "effectiveConversationKey": "conversation-500-0336",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0336",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0338",
+      "effectiveConversationKey": "conversation-500-0337",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0337",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0339",
+      "effectiveConversationKey": "conversation-500-0338",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0338",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0340",
+      "effectiveConversationKey": "conversation-500-0339",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0339",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0341",
+      "effectiveConversationKey": "conversation-500-0340",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0340",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0342",
+      "effectiveConversationKey": "conversation-500-0341",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0341",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0343",
+      "effectiveConversationKey": "conversation-500-0342",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0342",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0344",
+      "effectiveConversationKey": "conversation-500-0343",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0343",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0345",
+      "effectiveConversationKey": "conversation-500-0344",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0344",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0346",
+      "effectiveConversationKey": "conversation-500-0345",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0345",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0347",
+      "effectiveConversationKey": "conversation-500-0346",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0346",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0348",
+      "effectiveConversationKey": "conversation-500-0347",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0347",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0349",
+      "effectiveConversationKey": "conversation-500-0348",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0348",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0350",
+      "effectiveConversationKey": "conversation-500-0349",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0349",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 802
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0351",
+      "effectiveConversationKey": "conversation-500-0350",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0350",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0352",
+      "effectiveConversationKey": "conversation-500-0351",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0351",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0353",
+      "effectiveConversationKey": "conversation-500-0352",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0352",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0354",
+      "effectiveConversationKey": "conversation-500-0353",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0353",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0355",
+      "effectiveConversationKey": "conversation-500-0354",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0354",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0356",
+      "effectiveConversationKey": "conversation-500-0355",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0355",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0357",
+      "effectiveConversationKey": "conversation-500-0356",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0356",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0358",
+      "effectiveConversationKey": "conversation-500-0357",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0357",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0359",
+      "effectiveConversationKey": "conversation-500-0358",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0358",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0360",
+      "effectiveConversationKey": "conversation-500-0359",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0359",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0361",
+      "effectiveConversationKey": "conversation-500-0360",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0360",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0362",
+      "effectiveConversationKey": "conversation-500-0361",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0361",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0363",
+      "effectiveConversationKey": "conversation-500-0362",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0362",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0364",
+      "effectiveConversationKey": "conversation-500-0363",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0363",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0365",
+      "effectiveConversationKey": "conversation-500-0364",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0364",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0366",
+      "effectiveConversationKey": "conversation-500-0365",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0365",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0367",
+      "effectiveConversationKey": "conversation-500-0366",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0366",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0368",
+      "effectiveConversationKey": "conversation-500-0367",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0367",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0369",
+      "effectiveConversationKey": "conversation-500-0368",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0368",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0370",
+      "effectiveConversationKey": "conversation-500-0369",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0369",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0371",
+      "effectiveConversationKey": "conversation-500-0370",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0370",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0372",
+      "effectiveConversationKey": "conversation-500-0371",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0371",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0373",
+      "effectiveConversationKey": "conversation-500-0372",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0372",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0374",
+      "effectiveConversationKey": "conversation-500-0373",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0373",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0375",
+      "effectiveConversationKey": "conversation-500-0374",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0374",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 860
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0376",
+      "effectiveConversationKey": "conversation-500-0375",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0375",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0377",
+      "effectiveConversationKey": "conversation-500-0376",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0376",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0378",
+      "effectiveConversationKey": "conversation-500-0377",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0377",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0379",
+      "effectiveConversationKey": "conversation-500-0378",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0378",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0380",
+      "effectiveConversationKey": "conversation-500-0379",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0379",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0381",
+      "effectiveConversationKey": "conversation-500-0380",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0380",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0382",
+      "effectiveConversationKey": "conversation-500-0381",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0381",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0383",
+      "effectiveConversationKey": "conversation-500-0382",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0382",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0384",
+      "effectiveConversationKey": "conversation-500-0383",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0383",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0385",
+      "effectiveConversationKey": "conversation-500-0384",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0384",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0386",
+      "effectiveConversationKey": "conversation-500-0385",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0385",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0387",
+      "effectiveConversationKey": "conversation-500-0386",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0386",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0388",
+      "effectiveConversationKey": "conversation-500-0387",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0387",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0389",
+      "effectiveConversationKey": "conversation-500-0388",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0388",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0390",
+      "effectiveConversationKey": "conversation-500-0389",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0389",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0391",
+      "effectiveConversationKey": "conversation-500-0390",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0390",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0392",
+      "effectiveConversationKey": "conversation-500-0391",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0391",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0393",
+      "effectiveConversationKey": "conversation-500-0392",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0392",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0394",
+      "effectiveConversationKey": "conversation-500-0393",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0393",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0395",
+      "effectiveConversationKey": "conversation-500-0394",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0394",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0396",
+      "effectiveConversationKey": "conversation-500-0395",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0395",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0397",
+      "effectiveConversationKey": "conversation-500-0396",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0396",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0398",
+      "effectiveConversationKey": "conversation-500-0397",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0397",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0399",
+      "effectiveConversationKey": "conversation-500-0398",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0398",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0400",
+      "effectiveConversationKey": "conversation-500-0399",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0399",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 918
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0401",
+      "effectiveConversationKey": "conversation-500-0400",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0400",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0402",
+      "effectiveConversationKey": "conversation-500-0401",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0401",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0403",
+      "effectiveConversationKey": "conversation-500-0402",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0402",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0404",
+      "effectiveConversationKey": "conversation-500-0403",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0403",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0405",
+      "effectiveConversationKey": "conversation-500-0404",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0404",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0406",
+      "effectiveConversationKey": "conversation-500-0405",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0405",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0407",
+      "effectiveConversationKey": "conversation-500-0406",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0406",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0408",
+      "effectiveConversationKey": "conversation-500-0407",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0407",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0409",
+      "effectiveConversationKey": "conversation-500-0408",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0408",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0410",
+      "effectiveConversationKey": "conversation-500-0409",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0409",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0411",
+      "effectiveConversationKey": "conversation-500-0410",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0410",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0412",
+      "effectiveConversationKey": "conversation-500-0411",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0411",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0413",
+      "effectiveConversationKey": "conversation-500-0412",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0412",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0414",
+      "effectiveConversationKey": "conversation-500-0413",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0413",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0415",
+      "effectiveConversationKey": "conversation-500-0414",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0414",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0416",
+      "effectiveConversationKey": "conversation-500-0415",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0415",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0417",
+      "effectiveConversationKey": "conversation-500-0416",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0416",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0418",
+      "effectiveConversationKey": "conversation-500-0417",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0417",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0419",
+      "effectiveConversationKey": "conversation-500-0418",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0418",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0420",
+      "effectiveConversationKey": "conversation-500-0419",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0419",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0421",
+      "effectiveConversationKey": "conversation-500-0420",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0420",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0422",
+      "effectiveConversationKey": "conversation-500-0421",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0421",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0423",
+      "effectiveConversationKey": "conversation-500-0422",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0422",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0424",
+      "effectiveConversationKey": "conversation-500-0423",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0423",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0425",
+      "effectiveConversationKey": "conversation-500-0424",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0424",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 976
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0426",
+      "effectiveConversationKey": "conversation-500-0425",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0425",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0427",
+      "effectiveConversationKey": "conversation-500-0426",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0426",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0428",
+      "effectiveConversationKey": "conversation-500-0427",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0427",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0429",
+      "effectiveConversationKey": "conversation-500-0428",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0428",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0430",
+      "effectiveConversationKey": "conversation-500-0429",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0429",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0431",
+      "effectiveConversationKey": "conversation-500-0430",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0430",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0432",
+      "effectiveConversationKey": "conversation-500-0431",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0431",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0433",
+      "effectiveConversationKey": "conversation-500-0432",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0432",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0434",
+      "effectiveConversationKey": "conversation-500-0433",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0433",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0435",
+      "effectiveConversationKey": "conversation-500-0434",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0434",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0436",
+      "effectiveConversationKey": "conversation-500-0435",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0435",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0437",
+      "effectiveConversationKey": "conversation-500-0436",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0436",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0438",
+      "effectiveConversationKey": "conversation-500-0437",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0437",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0439",
+      "effectiveConversationKey": "conversation-500-0438",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0438",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0440",
+      "effectiveConversationKey": "conversation-500-0439",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0439",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0441",
+      "effectiveConversationKey": "conversation-500-0440",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0440",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0442",
+      "effectiveConversationKey": "conversation-500-0441",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0441",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0443",
+      "effectiveConversationKey": "conversation-500-0442",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0442",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0444",
+      "effectiveConversationKey": "conversation-500-0443",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0443",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0445",
+      "effectiveConversationKey": "conversation-500-0444",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0444",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0446",
+      "effectiveConversationKey": "conversation-500-0445",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0445",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0447",
+      "effectiveConversationKey": "conversation-500-0446",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0446",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0448",
+      "effectiveConversationKey": "conversation-500-0447",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0447",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0449",
+      "effectiveConversationKey": "conversation-500-0448",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0448",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0450",
+      "effectiveConversationKey": "conversation-500-0449",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0449",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 1034
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0451",
+      "effectiveConversationKey": "conversation-500-0450",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0450",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0452",
+      "effectiveConversationKey": "conversation-500-0451",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0451",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0453",
+      "effectiveConversationKey": "conversation-500-0452",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0452",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0454",
+      "effectiveConversationKey": "conversation-500-0453",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0453",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0455",
+      "effectiveConversationKey": "conversation-500-0454",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0454",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0456",
+      "effectiveConversationKey": "conversation-500-0455",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0455",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0457",
+      "effectiveConversationKey": "conversation-500-0456",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0456",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0458",
+      "effectiveConversationKey": "conversation-500-0457",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0457",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0459",
+      "effectiveConversationKey": "conversation-500-0458",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0458",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0460",
+      "effectiveConversationKey": "conversation-500-0459",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0459",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0461",
+      "effectiveConversationKey": "conversation-500-0460",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0460",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0462",
+      "effectiveConversationKey": "conversation-500-0461",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0461",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0463",
+      "effectiveConversationKey": "conversation-500-0462",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0462",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0464",
+      "effectiveConversationKey": "conversation-500-0463",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0463",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0465",
+      "effectiveConversationKey": "conversation-500-0464",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0464",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0466",
+      "effectiveConversationKey": "conversation-500-0465",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0465",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0467",
+      "effectiveConversationKey": "conversation-500-0466",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0466",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0468",
+      "effectiveConversationKey": "conversation-500-0467",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0467",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0469",
+      "effectiveConversationKey": "conversation-500-0468",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0468",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0470",
+      "effectiveConversationKey": "conversation-500-0469",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0469",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0471",
+      "effectiveConversationKey": "conversation-500-0470",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0470",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0472",
+      "effectiveConversationKey": "conversation-500-0471",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0471",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0473",
+      "effectiveConversationKey": "conversation-500-0472",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0472",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0474",
+      "effectiveConversationKey": "conversation-500-0473",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0473",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0475",
+      "effectiveConversationKey": "conversation-500-0474",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0474",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 1092
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0476",
+      "effectiveConversationKey": "conversation-500-0475",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0475",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 48,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0477",
+      "effectiveConversationKey": "conversation-500-0476",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0476",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 140,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0478",
+      "effectiveConversationKey": "conversation-500-0477",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0477",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 232,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0479",
+      "effectiveConversationKey": "conversation-500-0478",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0478",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 324,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0480",
+      "effectiveConversationKey": "conversation-500-0479",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0479",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 416,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0481",
+      "effectiveConversationKey": "conversation-500-0480",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0480",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 508,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0482",
+      "effectiveConversationKey": "conversation-500-0481",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0481",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 600,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0483",
+      "effectiveConversationKey": "conversation-500-0482",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0482",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 692,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0484",
+      "effectiveConversationKey": "conversation-500-0483",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0483",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 784,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0485",
+      "effectiveConversationKey": "conversation-500-0484",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0484",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 876,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0486",
+      "effectiveConversationKey": "conversation-500-0485",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0485",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 968,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0487",
+      "effectiveConversationKey": "conversation-500-0486",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0486",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1060,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0488",
+      "effectiveConversationKey": "conversation-500-0487",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0487",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 1152,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0489",
+      "effectiveConversationKey": "conversation-500-0488",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0488",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 1244,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0490",
+      "effectiveConversationKey": "conversation-500-0489",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0489",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 1336,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0491",
+      "effectiveConversationKey": "conversation-500-0490",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0490",
+      "longLabel": true,
+      "messageCount": 1,
+      "position": {
+        "x": 1428,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0492",
+      "effectiveConversationKey": "conversation-500-0491",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0491",
+      "longLabel": false,
+      "messageCount": 2,
+      "position": {
+        "x": 1520,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0493",
+      "effectiveConversationKey": "conversation-500-0492",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0492",
+      "longLabel": true,
+      "messageCount": 3,
+      "position": {
+        "x": 1612,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0494",
+      "effectiveConversationKey": "conversation-500-0493",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0493",
+      "longLabel": false,
+      "messageCount": 4,
+      "position": {
+        "x": 1704,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0495",
+      "effectiveConversationKey": "conversation-500-0494",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0494",
+      "longLabel": true,
+      "messageCount": 5,
+      "position": {
+        "x": 1796,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0496",
+      "effectiveConversationKey": "conversation-500-0495",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0495",
+      "longLabel": false,
+      "messageCount": 1,
+      "position": {
+        "x": 1888,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0497",
+      "effectiveConversationKey": "conversation-500-0496",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0496",
+      "longLabel": true,
+      "messageCount": 2,
+      "position": {
+        "x": 1980,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0498",
+      "effectiveConversationKey": "conversation-500-0497",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0497",
+      "longLabel": false,
+      "messageCount": 3,
+      "position": {
+        "x": 2072,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0499",
+      "effectiveConversationKey": "conversation-500-0498",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0498",
+      "longLabel": true,
+      "messageCount": 4,
+      "position": {
+        "x": 2164,
+        "y": 1150
+      }
+    },
+    {
+      "currentGroupKey": null,
+      "displayLabel": "Synthetic conversation 0500",
+      "effectiveConversationKey": "conversation-500-0499",
+      "eligibleForPlacement": true,
+      "fixtureNodeKey": "node-500-0499",
+      "longLabel": false,
+      "messageCount": 5,
+      "position": {
+        "x": 2256,
+        "y": 1150
+      }
+    }
+  ],
+  "schemaVersion": "organizer-fixture-v1",
+  "scopeKey": "scope-500-v1",
+  "zoomBands": {
+    "high": 1.75,
+    "low": 0.75,
+    "medium": 1.0
+  }
+}

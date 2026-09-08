@@ -17,11 +17,33 @@
 		9F11A2B3C4D5E6F708192A3C /* Tests/GraphAutomationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F11A2B3C4D5E6F708192A3B /* Tests/GraphAutomationTests.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* Tests/ActionItemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */; };
 		A64EDBDE1DB046A6BF5FCE02 /* Tests/ThreadInspectorViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A64EDBDE1DB046A6BF5FCE01 /* Tests/ThreadInspectorViewTests.swift */; };
+		A80F10012F51000100000001 /* Tests/OrganizerProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00012F51000100000001 /* Tests/OrganizerProjectionTests.swift */; };
+		A80F10022F51000100000002 /* Tests/GraphSpatialStateStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00022F51000100000002 /* Tests/GraphSpatialStateStoreTests.swift */; };
+		A80F10032F51000100000003 /* Tests/OrganizationSafetyContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00032F51000100000003 /* Tests/OrganizationSafetyContractTests.swift */; };
+		A80F10042F51000100000004 /* Tests/OrganizationOperationStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00042F51000100000004 /* Tests/OrganizationOperationStoreTests.swift */; };
+		A80F10052F51000100000005 /* Tests/OrganizerDirectManipulationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00052F51000100000005 /* Tests/OrganizerDirectManipulationTests.swift */; };
+		A80F10062F51000100000006 /* Tests/OrganizationHistoryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00062F51000100000006 /* Tests/OrganizationHistoryCoordinatorTests.swift */; };
+		A80F10072F51000100000007 /* Tests/OrganizerMetricsRecorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00072F51000100000007 /* Tests/OrganizerMetricsRecorderTests.swift */; };
+		A80F10082F51000100000008 /* Tests/OrganizerDropAcceptanceMatrixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00082F51000100000008 /* Tests/OrganizerDropAcceptanceMatrixTests.swift */; };
+		A80F10092F51000100000009 /* Tests/OrganizerSuggestionPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00092F51000100000009 /* Tests/OrganizerSuggestionPresentationTests.swift */; };
+		A80F100A2F5100010000000A /* Tests/OrganizationMailGatewayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F000A2F5100010000000A /* Tests/OrganizationMailGatewayTests.swift */; };
+		A80F100B2F5100010000000B /* Tests/OrganizationCommandServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F000B2F5100010000000B /* Tests/OrganizationCommandServiceTests.swift */; };
+		A80F100C2F5100010000000C /* Tests/GraphSpatialIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F000C2F5100010000000C /* Tests/GraphSpatialIntegrationTests.swift */; };
+		A80F100D2F5100010000000D /* Tests/ObsidianGraphMultiDragTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F000D2F5100010000000D /* Tests/ObsidianGraphMultiDragTests.swift */; };
+		A80F100E2F5100010000000E /* Tests/OrganizationMailTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F000E2F5100010000000E /* Tests/OrganizationMailTestSupport.swift */; };
+		A80F100F2F5100010000000F /* Tests/OrganizerBenchmarkRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F000F2F5100010000000F /* Tests/OrganizerBenchmarkRuntimeTests.swift */; };
+		A80F10102F51000100000010 /* Tests/MailboxNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00102F51000100000010 /* Tests/MailboxNavigationTests.swift */; };
+		A80F10112F51000100000011 /* Tests/MailboxThreadAutoMoveSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00112F51000100000011 /* Tests/MailboxThreadAutoMoveSettingsTests.swift */; };
+		A80F10122F51000100000012 /* Tests/ManualThreadOverrideTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00122F51000100000012 /* Tests/ManualThreadOverrideTests.swift */; };
+		A80F10132F51000100000013 /* Tests/MessageStoreBoundaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00132F51000100000013 /* Tests/MessageStoreBoundaryTests.swift */; };
+		A80F10142F51000100000014 /* Tests/ThreadCanvasBackfillTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00142F51000100000014 /* Tests/ThreadCanvasBackfillTests.swift */; };
+		A80F10152F51000100000015 /* Tests/ThreadCanvasDisplaySettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00152F51000100000015 /* Tests/ThreadCanvasDisplaySettingsTests.swift */; };
+		A80F10162F51000100000016 /* Tests/ThreadCanvasNodeTextVisibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80F00162F51000100000016 /* Tests/ThreadCanvasNodeTextVisibilityTests.swift */; };
 		B713C9A82F7D4E6B91A503D2 /* Tests/MailControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B713C9A72F7D4E6B91A503D2 /* Tests/MailControlTests.swift */; };
 		C4A1E2D3F40516273849A5B7 /* Tests/CalendarThreadRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A1E2D3F40516273849A5B6 /* Tests/CalendarThreadRecoveryTests.swift */; };
 		CA32DC8C96F34952A33D8F16 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08CE01DE8A1C40779BF22717 /* XCTest.framework */; };
-		D3E4F5061728394A5B6C7D8E /* Tests/NeedsAttentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */; };
 		D0A1B2C3D4E5F60718293A4C /* Tests/ThreadSummaryCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A1B2C3D4E5F60718293A4B /* Tests/ThreadSummaryCacheTests.swift */; };
+		D3E4F5061728394A5B6C7D8E /* Tests/NeedsAttentionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */; };
 		E0A1B2C3D4E5F60718293A4C /* Tests/SummaryRegenerationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0A1B2C3D4E5F60718293A4B /* Tests/SummaryRegenerationServiceTests.swift */; };
 		E9F8A7B6C5D4E3F2A1B0C9D8 /* Tests/MIMESnippetExtractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F7089A1B2C3D /* Tests/MIMESnippetExtractionTests.swift */; };
 		F0A1B2C3D4E5F60718293A4C /* Tests/ThreadFolderMailboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293A4B /* Tests/ThreadFolderMailboxTests.swift */; };
@@ -74,15 +96,37 @@
 		8C7D6E5F4A3B2C1D0E9F8A7B /* Tests/BatchBackfillServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/BatchBackfillServiceTests.swift; sourceTree = SOURCE_ROOT; };
 		9F11A2B3C4D5E6F708192A3B /* Tests/GraphAutomationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/GraphAutomationTests.swift; sourceTree = SOURCE_ROOT; };
 		A64EDBDE1DB046A6BF5FCE01 /* Tests/ThreadInspectorViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadInspectorViewTests.swift; sourceTree = SOURCE_ROOT; };
-		B713C9A72F7D4E6B91A503D2 /* Tests/MailControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MailControlTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00012F51000100000001 /* Tests/OrganizerProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizerProjectionTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00022F51000100000002 /* Tests/GraphSpatialStateStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/GraphSpatialStateStoreTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00032F51000100000003 /* Tests/OrganizationSafetyContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizationSafetyContractTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00042F51000100000004 /* Tests/OrganizationOperationStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizationOperationStoreTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00052F51000100000005 /* Tests/OrganizerDirectManipulationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizerDirectManipulationTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00062F51000100000006 /* Tests/OrganizationHistoryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizationHistoryCoordinatorTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00072F51000100000007 /* Tests/OrganizerMetricsRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizerMetricsRecorderTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00082F51000100000008 /* Tests/OrganizerDropAcceptanceMatrixTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizerDropAcceptanceMatrixTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00092F51000100000009 /* Tests/OrganizerSuggestionPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizerSuggestionPresentationTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F000A2F5100010000000A /* Tests/OrganizationMailGatewayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizationMailGatewayTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F000B2F5100010000000B /* Tests/OrganizationCommandServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizationCommandServiceTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F000C2F5100010000000C /* Tests/GraphSpatialIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/GraphSpatialIntegrationTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F000D2F5100010000000D /* Tests/ObsidianGraphMultiDragTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ObsidianGraphMultiDragTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F000E2F5100010000000E /* Tests/OrganizationMailTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizationMailTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		A80F000F2F5100010000000F /* Tests/OrganizerBenchmarkRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/OrganizerBenchmarkRuntimeTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00102F51000100000010 /* Tests/MailboxNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MailboxNavigationTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00112F51000100000011 /* Tests/MailboxThreadAutoMoveSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MailboxThreadAutoMoveSettingsTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00122F51000100000012 /* Tests/ManualThreadOverrideTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ManualThreadOverrideTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00132F51000100000013 /* Tests/MessageStoreBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MessageStoreBoundaryTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00142F51000100000014 /* Tests/ThreadCanvasBackfillTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasBackfillTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00152F51000100000015 /* Tests/ThreadCanvasDisplaySettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasDisplaySettingsTests.swift; sourceTree = SOURCE_ROOT; };
+		A80F00162F51000100000016 /* Tests/ThreadCanvasNodeTextVisibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasNodeTextVisibilityTests.swift; sourceTree = SOURCE_ROOT; };
 		B2C3D4E5F6A7B8C9D0E1F2A3 /* Tests/ActionItemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ActionItemTests.swift; sourceTree = SOURCE_ROOT; };
+		B713C9A72F7D4E6B91A503D2 /* Tests/MailControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MailControlTests.swift; sourceTree = SOURCE_ROOT; };
 		C4A1E2D3F40516273849A5B6 /* Tests/CalendarThreadRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CalendarThreadRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
 		C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadCanvasLayoutTests.swift; sourceTree = SOURCE_ROOT; };
 		D0A1B2C3D4E5F60718293A4B /* Tests/ThreadSummaryCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadSummaryCacheTests.swift; sourceTree = SOURCE_ROOT; };
 		E0A1B2C3D4E5F60718293A4B /* Tests/SummaryRegenerationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SummaryRegenerationServiceTests.swift; sourceTree = SOURCE_ROOT; };
 		E4F5061728394A5B6C7D8E9F /* Tests/NeedsAttentionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/NeedsAttentionTests.swift; sourceTree = SOURCE_ROOT; };
-		F1A2B3C4D5E6F7089A1B2C3D /* Tests/MIMESnippetExtractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MIMESnippetExtractionTests.swift; sourceTree = SOURCE_ROOT; };
 		F0A1B2C3D4E5F60718293A4B /* Tests/ThreadFolderMailboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ThreadFolderMailboxTests.swift; sourceTree = SOURCE_ROOT; };
+		F1A2B3C4D5E6F7089A1B2C3D /* Tests/MIMESnippetExtractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/MIMESnippetExtractionTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -153,8 +197,30 @@
 			children = (
 				1E2D3C4B5A69788796A5B4C3 /* Tests/AppearanceSettingsTests.swift */,
 				8C7D6E5F4A3B2C1D0E9F8A7B /* Tests/BatchBackfillServiceTests.swift */,
+				A80F00102F51000100000010 /* Tests/MailboxNavigationTests.swift */,
+				A80F00112F51000100000011 /* Tests/MailboxThreadAutoMoveSettingsTests.swift */,
+				A80F00122F51000100000012 /* Tests/ManualThreadOverrideTests.swift */,
+				A80F00132F51000100000013 /* Tests/MessageStoreBoundaryTests.swift */,
+				A80F00022F51000100000002 /* Tests/GraphSpatialStateStoreTests.swift */,
 				6A0C9D4E7F8A4B1C92D3E404 /* Tests/GraphTests.swift */,
 				9F11A2B3C4D5E6F708192A3B /* Tests/GraphAutomationTests.swift */,
+				A80F00042F51000100000004 /* Tests/OrganizationOperationStoreTests.swift */,
+				A80F00032F51000100000003 /* Tests/OrganizationSafetyContractTests.swift */,
+				A80F00062F51000100000006 /* Tests/OrganizationHistoryCoordinatorTests.swift */,
+				A80F00052F51000100000005 /* Tests/OrganizerDirectManipulationTests.swift */,
+				A80F00072F51000100000007 /* Tests/OrganizerMetricsRecorderTests.swift */,
+				A80F00082F51000100000008 /* Tests/OrganizerDropAcceptanceMatrixTests.swift */,
+				A80F00092F51000100000009 /* Tests/OrganizerSuggestionPresentationTests.swift */,
+				A80F000A2F5100010000000A /* Tests/OrganizationMailGatewayTests.swift */,
+				A80F000B2F5100010000000B /* Tests/OrganizationCommandServiceTests.swift */,
+				A80F000C2F5100010000000C /* Tests/GraphSpatialIntegrationTests.swift */,
+				A80F000D2F5100010000000D /* Tests/ObsidianGraphMultiDragTests.swift */,
+				A80F000E2F5100010000000E /* Tests/OrganizationMailTestSupport.swift */,
+				A80F000F2F5100010000000F /* Tests/OrganizerBenchmarkRuntimeTests.swift */,
+				A80F00012F51000100000001 /* Tests/OrganizerProjectionTests.swift */,
+				A80F00142F51000100000014 /* Tests/ThreadCanvasBackfillTests.swift */,
+				A80F00152F51000100000015 /* Tests/ThreadCanvasDisplaySettingsTests.swift */,
+				A80F00162F51000100000016 /* Tests/ThreadCanvasNodeTextVisibilityTests.swift */,
 				6F5E4D3C2B1A098765432110 /* Tests/ThreadFolderColorTests.swift */,
 				C6A460031A694DB9BB57CE72 /* Tests/ThreadCanvasLayoutTests.swift */,
 				A64EDBDE1DB046A6BF5FCE01 /* Tests/ThreadInspectorViewTests.swift */,
@@ -376,8 +442,30 @@
 			files = (
 				2F1C5C8C1B3D4E5F6A7B8C9D /* Tests/AppearanceSettingsTests.swift in Sources */,
 				4B7C2D1E9F8A76543210FEDC /* Tests/BatchBackfillServiceTests.swift in Sources */,
+				A80F10102F51000100000010 /* Tests/MailboxNavigationTests.swift in Sources */,
+				A80F10112F51000100000011 /* Tests/MailboxThreadAutoMoveSettingsTests.swift in Sources */,
+				A80F10122F51000100000012 /* Tests/ManualThreadOverrideTests.swift in Sources */,
+				A80F10132F51000100000013 /* Tests/MessageStoreBoundaryTests.swift in Sources */,
+				A80F10022F51000100000002 /* Tests/GraphSpatialStateStoreTests.swift in Sources */,
 				6A0C9D4E7F8A4B1C92D3E405 /* Tests/GraphTests.swift in Sources */,
 				9F11A2B3C4D5E6F708192A3C /* Tests/GraphAutomationTests.swift in Sources */,
+				A80F10042F51000100000004 /* Tests/OrganizationOperationStoreTests.swift in Sources */,
+				A80F10032F51000100000003 /* Tests/OrganizationSafetyContractTests.swift in Sources */,
+				A80F10062F51000100000006 /* Tests/OrganizationHistoryCoordinatorTests.swift in Sources */,
+				A80F10052F51000100000005 /* Tests/OrganizerDirectManipulationTests.swift in Sources */,
+				A80F10072F51000100000007 /* Tests/OrganizerMetricsRecorderTests.swift in Sources */,
+				A80F10082F51000100000008 /* Tests/OrganizerDropAcceptanceMatrixTests.swift in Sources */,
+				A80F10092F51000100000009 /* Tests/OrganizerSuggestionPresentationTests.swift in Sources */,
+				A80F100A2F5100010000000A /* Tests/OrganizationMailGatewayTests.swift in Sources */,
+				A80F100B2F5100010000000B /* Tests/OrganizationCommandServiceTests.swift in Sources */,
+				A80F100C2F5100010000000C /* Tests/GraphSpatialIntegrationTests.swift in Sources */,
+				A80F100D2F5100010000000D /* Tests/ObsidianGraphMultiDragTests.swift in Sources */,
+				A80F100E2F5100010000000E /* Tests/OrganizationMailTestSupport.swift in Sources */,
+				A80F100F2F5100010000000F /* Tests/OrganizerBenchmarkRuntimeTests.swift in Sources */,
+				A80F10012F51000100000001 /* Tests/OrganizerProjectionTests.swift in Sources */,
+				A80F10142F51000100000014 /* Tests/ThreadCanvasBackfillTests.swift in Sources */,
+				A80F10152F51000100000015 /* Tests/ThreadCanvasDisplaySettingsTests.swift in Sources */,
+				A80F10162F51000100000016 /* Tests/ThreadCanvasNodeTextVisibilityTests.swift in Sources */,
 				7A8B9C0D1E2F3A4B5C6D7E8F /* Tests/ThreadFolderColorTests.swift in Sources */,
 				22F837F5A55C486AB0F0F200 /* Tests/ThreadCanvasLayoutTests.swift in Sources */,
 				A64EDBDE1DB046A6BF5FCE02 /* Tests/ThreadInspectorViewTests.swift in Sources */,

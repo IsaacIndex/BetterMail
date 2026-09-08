@@ -241,6 +241,14 @@ internal nonisolated struct GraphAutomationProposal: Identifiable, Codable, Hash
     internal var destinationFolderID: String? { target.folderID }
     internal var destinationThreadID: String? { target.threadID }
     internal var needsAttention: Bool { status.needsAttention }
+    /// Unknown external outcomes intentionally have no Retry action. Only a
+    /// known failed operation or an exact residual compensation/undo can be
+    /// repeated safely.
+    internal var canRetryOrganizationWork: Bool {
+        if status == .failed { return true }
+        guard status == .recoveryNeeded else { return false }
+        return mailStatus == .compensating || mailStatus == .restoring
+    }
 
     internal var confidenceBand: String {
         if score >= 0.90 {

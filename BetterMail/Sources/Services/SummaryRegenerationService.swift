@@ -75,14 +75,14 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         let now = Date()
         if range.start > now {
             let mailboxLabel = mailbox ?? "all-mailboxes"
-            logger.info("RegenAI count: rangeStart in future; mailbox=\(mailboxLabel, privacy: .public) rangeStart=\(range.start, privacy: .private) now=\(now, privacy: .private)")
+            logger.info("RegenAI count: rangeStart in future; mailbox=\(mailboxLabel, privacy: .private) rangeStart=\(range.start, privacy: .private) now=\(now, privacy: .private)")
             return 0
         }
         let clampedStart = min(range.start, now)
         let clampedEnd = min(range.end, now)
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
         let mailboxLabel = mailbox ?? "all-mailboxes"
-        logger.info("RegenAI count: mailbox=\(mailboxLabel, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
+        logger.info("RegenAI count: mailbox=\(mailboxLabel, privacy: .private) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
         return try await store.countMessages(in: clampedRange, mailbox: mailbox)
     }
 
@@ -116,7 +116,7 @@ internal actor SummaryRegenerationService: SummaryRegenerationServicing {
         let clampedEnd = min(range.end, now)
         let clampedRange = DateInterval(start: clampedStart, end: clampedEnd)
         let mailboxLabel = mailbox ?? "all-mailboxes"
-        logger.info("RegenAI run: mailbox=\(mailboxLabel, privacy: .public) totalExpected=\(totalExpected, privacy: .public) preferredBatchSize=\(preferredBatchSize, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
+        logger.info("RegenAI run: mailbox=\(mailboxLabel, privacy: .private) totalExpected=\(totalExpected, privacy: .public) preferredBatchSize=\(preferredBatchSize, privacy: .public) rangeStart=\(range.start, privacy: .private) rangeEnd=\(range.end, privacy: .private) clampedStart=\(clampedStart, privacy: .private) clampedEnd=\(clampedEnd, privacy: .private)")
 
         let targetMessages = try await store.fetchMessages(in: clampedRange, mailbox: mailbox)
         guard !targetMessages.isEmpty else {

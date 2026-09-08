@@ -361,7 +361,7 @@ internal struct AutoRefreshSettingsView: View {
             do {
                 try await MessageStore.shared.resetManualThreadGroups()
             } catch {
-                Log.app.error("Failed to reset manual thread groups: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Failed to reset manual thread groups: \(error.localizedDescription, privacy: .private)")
             }
         }
     }

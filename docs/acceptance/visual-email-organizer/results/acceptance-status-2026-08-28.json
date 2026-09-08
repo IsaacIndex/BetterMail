@@ -1,0 +1,418 @@
+{
+  "schemaVersion": "visual-email-organizer-acceptance-status-v1",
+  "artifactKind": "acceptance-status",
+  "protocolId": "visual-email-organizer-v1",
+  "runId": "synthetic-installed-audit-20260829",
+  "fixtureId": "organizer-100-v1",
+  "appBuild": "build-1.0-1",
+  "status": "insufficient-evidence",
+  "generatedAt": "2026-08-30T15:06:45Z",
+  "records": [
+    {
+      "trialId": "synthetic-runtime-boundary-003",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "accessibility-audit",
+      "taskId": "diagnostic",
+      "sourceNodeKeys": [],
+      "destinationGroupKeys": [],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "accessibility",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 1,
+      "eventSummary": [
+        { "sequence": 1, "event": "workspace-ready", "count": 1, "status": "success" },
+        { "sequence": 2, "event": "task-visible", "count": 1, "status": "success" },
+        { "sequence": 3, "event": "task-ready", "count": 1 },
+        { "sequence": 4, "event": "selection", "count": 1, "status": "success" },
+        { "sequence": 5, "event": "selection", "count": 2, "status": "success" },
+        { "sequence": 6, "event": "action-start", "count": 1 },
+        { "sequence": 7, "event": "group-committed", "count": 2, "status": "success" },
+        { "sequence": 8, "event": "bettermail-commit", "count": 1, "status": "success" },
+        { "sequence": 9, "event": "group-rethreaded", "count": 1, "status": "success" },
+        { "sequence": 10, "event": "rethread-complete", "count": 1, "status": "success" },
+        { "sequence": 11, "event": "group-visible", "count": 2, "status": "success" },
+        { "sequence": 12, "event": "visible-result", "count": 2, "status": "success" },
+        { "sequence": 13, "event": "search-start", "count": 1 },
+        { "sequence": 14, "event": "retrieval-visible", "count": 5, "status": "success" }
+      ],
+      "diagnosticOnly": {
+        "agentAssisted": true,
+        "humanTimingEligible": false,
+        "retrievalDurationMilliseconds": 238
+      }
+    },
+    {
+      "trialId": "synthetic-runtime-boundary-003-relaunch",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "accessibility-audit",
+      "taskId": "diagnostic",
+      "sourceNodeKeys": [],
+      "destinationGroupKeys": [],
+      "queryKey": null,
+      "stratum": "cold-relaunch",
+      "status": "pass",
+      "targetOutcome": "accessibility",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 0,
+      "observed": [
+        "ready-banner",
+        "persisted-group",
+        "stable-opaque-group-identifier",
+        "history-count",
+        "expanded-rail",
+        "collapsed-rail",
+        "graph-controls-unobstructed"
+      ]
+    },
+    {
+      "trialId": "synthetic-approved-audit-20260830a",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "accessibility-audit",
+      "taskId": "diagnostic",
+      "sourceNodeKeys": [],
+      "destinationGroupKeys": [],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "accessibility",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 0,
+      "observed": [
+        "benchmark-mail-lock",
+        "live-undo-and-recovery"
+      ]
+    },
+    {
+      "trialId": "synthetic-lasso-control-audit-20260830b",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "accessibility-audit",
+      "taskId": "diagnostic",
+      "sourceNodeKeys": [],
+      "destinationGroupKeys": [],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "accessibility",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 0,
+      "eventSummary": [
+        { "sequence": 1, "event": "workspace-ready", "count": 1, "status": "success" },
+        { "sequence": 2, "event": "task-visible", "count": 1, "status": "success" },
+        { "sequence": 3, "event": "task-ready", "count": 1 },
+        { "sequence": 4, "event": "selection", "count": 10, "status": "success" }
+      ],
+      "observed": [
+        "live-lasso",
+        "multi-selection",
+        "rail-canvas-selection-synchronization",
+        "benchmark-mail-lock"
+      ]
+    },
+    {
+      "trialId": "synthetic-key-live-mail-roundtrip-20260830a",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "accessibility-audit",
+      "taskId": "diagnostic",
+      "sourceNodeKeys": [],
+      "destinationGroupKeys": [],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "accessibility",
+      "mailCallCount": 2,
+      "normalizedCommandCount": 0,
+      "observed": [
+        "authorized-mail-mutation",
+        "live-undo-and-recovery"
+      ]
+    },
+    {
+      "trialId": "synthetic-placement-proof-01",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "live-pointer",
+      "taskId": "placement-set",
+      "sourceNodeKeys": [
+        "node-500-0000", "node-500-0001", "node-500-0002", "node-500-0003", "node-500-0004",
+        "node-500-0005", "node-500-0006", "node-500-0007", "node-500-0008", "node-500-0009",
+        "node-500-0010", "node-500-0011", "node-500-0012", "node-500-0013", "node-500-0014",
+        "node-500-0015", "node-500-0016", "node-500-0017", "node-500-0018", "node-500-0019"
+      ],
+      "destinationGroupKeys": ["group-flat-00"],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "placement",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 1,
+      "observed": ["native-pointer-drag-and-drop"]
+    },
+    {
+      "trialId": "synthetic-placement-proof-02",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "live-pointer",
+      "taskId": "placement-set",
+      "sourceNodeKeys": [
+        "node-500-0020", "node-500-0021", "node-500-0022", "node-500-0023", "node-500-0024",
+        "node-500-0025", "node-500-0026", "node-500-0027", "node-500-0028", "node-500-0029",
+        "node-500-0030", "node-500-0031", "node-500-0032", "node-500-0033", "node-500-0034",
+        "node-500-0035", "node-500-0036", "node-500-0037", "node-500-0038", "node-500-0039"
+      ],
+      "destinationGroupKeys": ["group-flat-01"],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "placement",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 1,
+      "observed": ["native-pointer-drag-and-drop"]
+    },
+    {
+      "trialId": "synthetic-placement-proof-03",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "live-pointer",
+      "taskId": "placement-set",
+      "sourceNodeKeys": [
+        "node-500-0040", "node-500-0041", "node-500-0042", "node-500-0043", "node-500-0044",
+        "node-500-0045", "node-500-0046", "node-500-0047", "node-500-0048", "node-500-0049",
+        "node-500-0050", "node-500-0051", "node-500-0052", "node-500-0053", "node-500-0054",
+        "node-500-0055", "node-500-0056", "node-500-0057", "node-500-0058", "node-500-0059"
+      ],
+      "destinationGroupKeys": ["group-nested-00"],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "placement",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 1,
+      "observed": ["native-pointer-drag-and-drop"]
+    },
+    {
+      "trialId": "synthetic-placement-proof-04",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "live-pointer",
+      "taskId": "placement-set",
+      "sourceNodeKeys": [
+        "node-500-0060", "node-500-0061", "node-500-0062", "node-500-0063", "node-500-0064",
+        "node-500-0065", "node-500-0066", "node-500-0067", "node-500-0068", "node-500-0069",
+        "node-500-0070", "node-500-0071", "node-500-0072", "node-500-0073", "node-500-0074",
+        "node-500-0075", "node-500-0076", "node-500-0077", "node-500-0078", "node-500-0079"
+      ],
+      "destinationGroupKeys": ["group-nested-01"],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "placement",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 1,
+      "observed": ["native-pointer-drag-and-drop"]
+    },
+    {
+      "trialId": "synthetic-placement-proof-05b",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "live-pointer",
+      "taskId": "placement-set",
+      "sourceNodeKeys": [
+        "node-500-0080", "node-500-0081", "node-500-0082", "node-500-0083", "node-500-0084",
+        "node-500-0085", "node-500-0086", "node-500-0087", "node-500-0088", "node-500-0089",
+        "node-500-0090", "node-500-0091", "node-500-0092", "node-500-0093", "node-500-0094",
+        "node-500-0095", "node-500-0096", "node-500-0097", "node-500-0098", "node-500-0099"
+      ],
+      "destinationGroupKeys": ["group-flat-02"],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "pass",
+      "targetOutcome": "placement",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 1,
+      "observed": ["native-pointer-drag-and-drop"]
+    },
+    {
+      "trialId": "synthetic-placement-proof-05",
+      "appBuild": "build-1.0-1",
+      "evidenceType": "live-pointer",
+      "taskId": "placement-set",
+      "sourceNodeKeys": [
+        "node-500-0080", "node-500-0081", "node-500-0082", "node-500-0083", "node-500-0084",
+        "node-500-0085", "node-500-0086", "node-500-0087", "node-500-0088", "node-500-0089",
+        "node-500-0090", "node-500-0091", "node-500-0092", "node-500-0093", "node-500-0094",
+        "node-500-0095", "node-500-0096", "node-500-0097", "node-500-0098", "node-500-0099"
+      ],
+      "destinationGroupKeys": ["group-flat-02"],
+      "queryKey": null,
+      "stratum": "warm",
+      "status": "fail",
+      "coarseFailureReason": "cancelled",
+      "targetOutcome": "placement",
+      "mailCallCount": 0,
+      "normalizedCommandCount": 0,
+      "eventSummary": [
+        { "sequence": 1, "event": "workspace-ready", "count": 1, "status": "success" },
+        { "sequence": 2, "event": "task-visible", "count": 1, "status": "success" },
+        { "sequence": 3, "event": "task-ready", "count": 1 }
+      ]
+    }
+  ],
+  "gateStatus": {
+    "signingAndInstall": {
+      "status": "pass",
+      "certificateSHA1": "59D9099E689B4FCF247C0E2C021C3B62E80AE4B2",
+      "certificateDisplayUID": "MSTX4LWLXN",
+      "expectedTeamIdentifier": "TN3L2WBKR5",
+      "appTeamIdentifier": "TN3L2WBKR5",
+      "extensionTeamIdentifier": "TN3L2WBKR5",
+      "appSignature": "cms",
+      "extensionSignature": "cms",
+      "appLeafCertificateSHA1": "59D9099E689B4FCF247C0E2C021C3B62E80AE4B2",
+      "extensionLeafCertificateSHA1": "59D9099E689B4FCF247C0E2C021C3B62E80AE4B2",
+      "appCertificateChainTrust": "pass",
+      "extensionCertificateChainTrust": "pass",
+      "appDeepStrictVerification": "pass",
+      "extensionDeepStrictVerification": "pass",
+      "appBundleIdentifier": "isaacwongnh.BetterMail",
+      "extensionBundleIdentifier": "isaacwongnh.BetterMail.MailHelperExtension",
+      "bundleIdentifiersPreserved": true,
+      "entitlementsPreserved": true,
+      "installedEntitlementsMatchBuildProduct": true,
+      "projectSigningFilesPreserved": true,
+      "adHocFallbackUsed": false
+    },
+    "keychainPromptRecurrence": {
+      "status": "pass",
+      "normalInstalledLaunchCount": 2,
+      "graphSpatialPromptObservedCount": 0,
+      "securityAgentObservedCount": 0,
+      "verificationMethods": [
+        "unlocked-window-audit",
+        "installed-process-survival",
+        "securityagent-process-check",
+        "unified-log-check"
+      ]
+    },
+    "productionEventBoundaries": {
+      "status": "pass",
+      "installedRun": "synthetic-runtime-boundary-003",
+      "groupVisibleCount": 2,
+      "visibleResultCount": 2
+    },
+    "deterministicDropMatrix": {
+      "status": "pass",
+      "attemptCount": 120,
+      "failedAttemptCount": 0,
+      "strata": [
+        { "nodeCount": 100, "zoomBand": "low", "targetShape": "flat", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 100, "zoomBand": "low", "targetShape": "nested", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 100, "zoomBand": "medium", "targetShape": "flat", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 100, "zoomBand": "medium", "targetShape": "nested", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 100, "zoomBand": "high", "targetShape": "flat", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 100, "zoomBand": "high", "targetShape": "nested", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 500, "zoomBand": "low", "targetShape": "flat", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 500, "zoomBand": "low", "targetShape": "nested", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 500, "zoomBand": "medium", "targetShape": "flat", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 500, "zoomBand": "medium", "targetShape": "nested", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 500, "zoomBand": "high", "targetShape": "flat", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 },
+        { "nodeCount": 500, "zoomBand": "high", "targetShape": "nested", "attemptCount": 10, "failedAttemptCount": 0, "longLabelAttemptCount": 5, "shortLabelAttemptCount": 5, "invalidTargetMutationCount": 0 }
+      ]
+    },
+    "installedPointerDrops": {
+      "status": "pass",
+      "attemptCount": 40,
+      "failedAttemptCount": 2,
+      "coverage": {
+        "selectionMode": ["single", "multi"],
+        "zoomBand": ["low", "medium", "high"],
+        "targetShape": ["flat", "nested"],
+        "labelVariant": ["short", "long"]
+      },
+      "reasonCode": null
+    },
+    "installedPlacementSets": {
+      "status": "pass",
+      "setCount": 5,
+      "adjudicatedPlacementCount": 100,
+      "wrongBetterMailPlacementCount": 0,
+      "wrongAppleMailRouteCount": 0,
+      "maximumWrongPlacementCountPerSet": 0,
+      "sets": [
+        { "setId": "placement-set-01", "placementCount": 20, "wrongPlacementCount": 0 },
+        { "setId": "placement-set-02", "placementCount": 20, "wrongPlacementCount": 0 },
+        { "setId": "placement-set-03", "placementCount": 20, "wrongPlacementCount": 0 },
+        { "setId": "placement-set-04", "placementCount": 20, "wrongPlacementCount": 0 },
+        { "setId": "placement-set-05", "placementCount": 20, "wrongPlacementCount": 0 }
+      ]
+    },
+    "suggestionQuality": {
+      "status": "pass",
+      "candidateCount": 216,
+      "acceptedCount": 140,
+      "correctAcceptedCount": 140,
+      "falsePositiveCount": 0,
+      "falseNegativeCount": 4,
+      "precision": 1.0,
+      "coverage": 1.0,
+      "sourceArtifact": "suggestion-evaluation-v2.json"
+    },
+    "unauthorizedMailInvariant": {
+      "status": "pass",
+      "externalMailCallCount": 0
+    },
+    "timedHumanTasks": {
+      "status": "pending",
+      "validFirstOrganizationTrials": 0,
+      "validFiveConversationTrials": 0,
+      "validPostCommitRetrievalTrials": 0,
+      "validPostRelaunchRetrievalTrials": 0,
+      "strata": []
+    },
+    "installedAccessibilityAudit": {
+      "status": "insufficient-evidence",
+      "covered": [
+        "mode-migration",
+        "rail-canvas-selection-synchronization",
+        "frozen-query-search",
+        "single-selection",
+        "multi-selection",
+        "accessible-group-action",
+        "group-creation",
+        "cold-relaunch-persistence",
+        "suggestion-surface-and-effect-labels-read-only",
+        "benchmark-mail-lock",
+        "history-surface",
+        "live-undo-and-recovery",
+        "rail-collapse-and-restore",
+        "opaque-stable-identifiers",
+        "labels-hints-stable-identifiers-and-secondary-actions",
+        "native-pointer-drag-and-drop",
+        "empty-canvas-pointer-group-creation",
+        "suggestion-review-mutation",
+        "focused-keyboard-navigation",
+        "narrow-width-layout",
+        "live-lasso",
+        "installed-spritekit-button-role-and-screen-frame",
+        "authorized-mail-mutation",
+        "no-bottom-overlay-obstruction"
+      ],
+      "pending": [
+        "VoiceOver-session-operation"
+      ]
+    }
+  },
+  "invalidTrials": [],
+  "invalidTrialReasonCode": "no-human-benchmark-trial-started",
+  "unmetTargets": [
+    "timed-human-first-organization-warm-and-cold",
+    "timed-human-five-conversation-warm-and-cold",
+    "timed-human-retrieval-post-commit-and-post-relaunch",
+    "complete-installed-interaction-and-VoiceOver-audit",
+    "all-hard-gates-complete"
+  ],
+  "privacy": {
+    "aggregateOnly": true,
+    "rawMailDataIncluded": false,
+    "exactRoutesIncluded": false,
+    "rawIdentifiersIncluded": false,
+    "credentialsIncluded": false,
+    "providerPromptsIncluded": false
+  }
+}

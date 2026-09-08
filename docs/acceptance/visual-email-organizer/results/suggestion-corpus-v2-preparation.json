@@ -1,0 +1,20 @@
+{
+  "candidateCount": 216,
+  "corpusID": "organizer-suggestion-v2",
+  "createdAt": "2026-08-24T09:36:32.802850Z",
+  "generatorPath": "Tests/Fixtures/Organizer/generate_suggestion_v2.py",
+  "goldArtifactSHA256": "3fcdb90ee18c6214eb3605c0a13e0084582cc4ccfb4e904778200e76efb83d4c",
+  "inputArtifactSHA256": "f64fc47227cf8771eff62955fa450187c40c4bf20e04dc1d276d68029c117f43",
+  "keyBits": 256,
+  "keyGenerator": "python-secrets-system-csprng",
+  "keysAssignedBeforeAdjudication": true,
+  "rawKeyMaterialRetained": false,
+  "schemaVersion": "organizer-suggestion-corpus-preparation-v1",
+  "workflow": [
+    "Construct synthetic source and target scenarios without gold fields.",
+    "Assign unique candidate, source, and destination keys from the system CSPRNG.",
+    "Freeze the provider-facing input records.",
+    "Adjudicate relation, confidence, provenance, expected decision, and destination separately.",
+    "Bind this record to the exact input and gold artifact SHA-256 digests."
+  ]
+}

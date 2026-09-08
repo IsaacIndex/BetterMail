@@ -80,6 +80,30 @@ final class ThreadSummaryCacheTests: XCTestCase {
         XCTAssertTrue(afterDelete.isEmpty)
     }
 
+    func testScopedSummaryCacheWritesUseOwningModelWhenMultipleStoresAreAlive() async throws {
+        let stores = (0..<4).map { index in
+            let defaults = UserDefaults(
+                suiteName: "ThreadSummaryCacheTests-MultipleStores-\(index)-\(UUID().uuidString)"
+            )!
+            return MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        }
+
+        for (index, store) in stores.enumerated() {
+            let entry = SummaryCacheEntry(
+                scope: .emailNode,
+                scopeID: "node-\(index)",
+                summaryText: "Store \(index)",
+                generatedAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index)),
+                fingerprint: "fingerprint-\(index)",
+                provider: "test"
+            )
+            try await store.upsertSummaries([entry])
+            let fetched = try await store.fetchSummaries(scope: .emailNode, ids: [entry.scopeID])
+
+            XCTAssertEqual(fetched, [entry])
+        }
+    }
+
     func testScopedSummaryCacheDeduplicatesByNewestGeneratedAt() async throws {
         let defaults = UserDefaults(suiteName: "ThreadSummaryCacheTests-\(UUID().uuidString)")!
         let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
@@ -741,7 +765,13 @@ final class ThreadSummaryCacheTests: XCTestCase {
         viewModel.applyRethreadResultForTesting(roots: [root],
                                                 folders: [folderB])
 
-        for _ in 0..<100 where provider.folderRequests.last?.title != "Second" {
+        for _ in 0..<100 {
+            let didRequestLatestFolder = provider.folderRequests.last?.title == "Second"
+            let didPublishLatestSummary = viewModel.folderSummaryState(for: folderID)?.text
+                == "Folder summary"
+            if didRequestLatestFolder && didPublishLatestSummary {
+                break
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
 
