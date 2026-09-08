@@ -60,6 +60,9 @@
 "graph.toolbar.snip.help.selected" = "Snip the selected thread";
 "graph.toolbar.archive.help.mode" = "Choose a branch or node to archive";
 "graph.toolbar.archive.help.selected" = "Archive the selected thread";
+"accessibility.graph.toolbar.mode.active" = "Active";
+"accessibility.graph.toolbar.mode.inactive" = "Inactive";
+"accessibility.graph.toolbar.mode.state_with_detail" = "%1$@, %2$@";
 "graph.toolbar.snip.instruction" = "Choose a branch or node to snip · Esc cancels";
 "graph.toolbar.archive.instruction" = "Choose a branch or node to archive · Esc cancels";
 "graph.toolbar.zoom_out" = "Zoom out";
@@ -412,7 +415,15 @@
 "accessibility.action_items.status.done" = "Done";
 "accessibility.action_items.row.label" = "%@, from %@, %@, %@";
 "accessibility.action_items.row.hint" = "Selects this action item and opens its inspector.";
+"action_items.show_done" = "Show done";
+"action_items.hide_done" = "Hide done";
+"action_items.subtitle.all_done" = "All done";
+"action_items.subtitle.counts" = "Open: %1$d · Folders: %2$d";
+"action_items.empty.title" = "No action items yet";
+"action_items.empty.description" = "Right-click any thread on the canvas to mark it as an action item.";
 "action_items.empty.view_all_emails" = "View All Emails";
+"action_items.no_subject" = "(no subject)";
+"action_items.unfiled" = "Unfiled";
 "mailbox.hierarchy.error" = "Mailbox hierarchy unavailable: %@";
 "mailbox.hierarchy.selected_scope_missing" = "Selected mailbox scope is no longer available: %@ / %@. Reopen the mailbox sidebar and select a folder again.";
 "mailbox.hierarchy.selected_scope_remapped" = "Selected mailbox scope moved from %@ / %@ to %@.";

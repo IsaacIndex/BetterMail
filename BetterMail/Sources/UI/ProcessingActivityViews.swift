@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 internal struct ProcessingActivityMenuContent: View {
@@ -16,15 +17,17 @@ internal struct ProcessingActivityMenuContent: View {
             }
 
             if activityCenter.visibleActivities.isEmpty {
-                Text(NSLocalizedString("activity.center.idle", comment: "Idle activity center status"))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView(
+                    NSLocalizedString("activity.center.idle", comment: "Idle activity center status"),
+                    systemImage: "checkmark.circle"
+                )
+                .frame(height: 112)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(activityCenter.visibleActivities) { activity in
-                        ProcessingActivityRow(activity: activity)
-                    }
+                List(activityCenter.visibleActivities) { activity in
+                    ProcessingActivityRow(activity: activity)
                 }
+                .listStyle(.plain)
+                .frame(height: activityListHeight)
             }
         }
         .padding(14)
@@ -40,11 +43,16 @@ internal struct ProcessingActivityMenuContent: View {
             activityCenter.activeCount
         )
     }
+
+    private var activityListHeight: CGFloat {
+        min(max(CGFloat(activityCenter.visibleActivities.count) * 64, 96), 320)
+    }
 }
 
 @MainActor
 internal struct ProcessingActivityShelf: View {
     @ObservedObject internal var activityCenter: ProcessingActivityCenter
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var referenceDate = Date()
 
     private var activity: ProcessingActivity? {
@@ -54,31 +62,14 @@ internal struct ProcessingActivityShelf: View {
     internal var body: some View {
         Group {
             if let activity {
-                HStack(spacing: 7) {
-                    activityIcon(for: activity)
-
-                    Text(activity.title)
-                        .font(.caption.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .frame(width: 224, alignment: .leading)
-                .background(.thinMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier(AccessibilityID.processingActivityShelf)
-                .accessibilityLabel(NSLocalizedString("accessibility.activity.shelf.label",
-                                                      comment: "Accessibility label for processing activity shelf"))
-                .accessibilityValue(activity.detail ?? activity.state.localizedTitle)
-                .allowsHitTesting(false)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                activityShelf(for: activity)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(AccessibilityID.processingActivityShelf)
+                    .accessibilityLabel(NSLocalizedString("accessibility.activity.shelf.label",
+                                                          comment: "Accessibility label for processing activity shelf"))
+                    .accessibilityValue(activity.detail ?? activity.state.localizedTitle)
+                    .allowsHitTesting(false)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .task(id: activityCenter.shelfPresentationVersion) {
@@ -97,6 +88,34 @@ internal struct ProcessingActivityShelf: View {
             referenceDate = Date()
         }
         .animation(.easeInOut(duration: 0.18), value: activity?.id)
+    }
+
+    @ViewBuilder
+    private func activityShelf(for activity: ProcessingActivity) -> some View {
+        let content = HStack(spacing: 7) {
+            activityIcon(for: activity)
+
+            Text(activity.title)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(width: 224, alignment: .leading)
+
+        if reduceTransparency {
+            content
+                .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+        } else {
+            content
+                .glassEffect(.regular, in: Capsule())
+        }
     }
 
     @ViewBuilder

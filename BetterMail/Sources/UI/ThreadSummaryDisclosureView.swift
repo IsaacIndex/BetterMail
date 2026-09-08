@@ -11,61 +11,8 @@ internal struct ThreadSummaryDisclosureView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     internal var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .trailing) {
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    HStack() {
-                        Image(systemName: "sparkles")
-                            .font(DesignTokens.font(size: 12, textScale: textScale))
-                        Text(title)
-                            .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
-                        if state.isSummarizing {
-                            ProgressView().controlSize(.mini)
-                        }
-                        Spacer()
-                        if !state.text.isEmpty {
-                            Text(state.text)
-                                .font(DesignTokens.font(size: 11, textScale: textScale))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .opacity(isExpanded ? 0 : 1)
-                        } else if !state.statusMessage.isEmpty {
-                            Text(state.statusMessage)
-                                .font(DesignTokens.font(size: 11, textScale: textScale))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Image(systemName: "chevron.down")
-                            .font(DesignTokens.font(size: 11, weight: .semibold, textScale: textScale))
-                            .rotationEffect(isExpanded ? .degrees(180) : .degrees(0))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.trailing, onRegenerate == nil ? 0 : 24)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier(AccessibilityID.threadSummaryToggle)
-                .accessibilityLabel(title)
-
-                if let onRegenerate {
-                    Button(action: onRegenerate) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(DesignTokens.font(size: 12, textScale: textScale))
-                    }
-                    .buttonStyle(.plain)
-                    .controlSize(.mini)
-                    .disabled(!isRegenerateEnabled || state.isSummarizing)
-                    .accessibilityLabel(NSLocalizedString("threadcanvas.inspector.summary.regenerate",
-                                                          comment: "Accessibility label for regenerating a summary"))
-                    .help(NSLocalizedString("threadcanvas.inspector.summary.regenerate",
-                                            comment: "Help text for regenerating a summary"))
-                    .accessibilityIdentifier(AccessibilityID.threadSummaryRegenerateButton)
-                }
-            }
-
-            if isExpanded {
+        HStack(alignment: .top, spacing: 6) {
+            DisclosureGroup(isExpanded: $isExpanded) {
                 VStack(alignment: .leading, spacing: 4) {
                     if !state.text.isEmpty {
                         Text(state.text)
@@ -78,12 +25,57 @@ internal struct ThreadSummaryDisclosureView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            } label: {
+                summaryLabel
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier(AccessibilityID.threadSummaryToggle)
+            .accessibilityLabel(title)
+
+            if let onRegenerate {
+                Button(action: onRegenerate) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(DesignTokens.font(size: 12, textScale: textScale))
+                }
+                .buttonStyle(.plain)
+                .controlSize(.mini)
+                .disabled(!isRegenerateEnabled || state.isSummarizing)
+                .accessibilityLabel(NSLocalizedString("threadcanvas.inspector.summary.regenerate",
+                                                      comment: "Accessibility label for regenerating a summary"))
+                .help(NSLocalizedString("threadcanvas.inspector.summary.regenerate",
+                                        comment: "Help text for regenerating a summary"))
+                .accessibilityIdentifier(AccessibilityID.threadSummaryRegenerateButton)
             }
         }
         .padding(8)
         .background(summaryBackground)
         .accessibilityIdentifier(AccessibilityID.threadSummaryDisclosure)
+    }
+
+    private var summaryLabel: some View {
+        HStack {
+            Image(systemName: "sparkles")
+                .font(DesignTokens.font(size: 12, textScale: textScale))
+            Text(title)
+                .font(DesignTokens.font(size: 12, weight: .semibold, textScale: textScale))
+            if state.isSummarizing {
+                ProgressView().controlSize(.mini)
+            }
+            Spacer()
+            if !state.text.isEmpty {
+                Text(state.text)
+                    .font(DesignTokens.font(size: 11, textScale: textScale))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .opacity(isExpanded ? 0 : 1)
+            } else if !state.statusMessage.isEmpty {
+                Text(state.statusMessage)
+                    .font(DesignTokens.font(size: 11, textScale: textScale))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder

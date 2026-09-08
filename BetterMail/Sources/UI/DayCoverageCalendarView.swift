@@ -241,57 +241,60 @@ internal struct DayFetchConfirmationSheet: View {
     internal let onCancel: () -> Void
 
     internal var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(NSLocalizedString("dayfetch.confirm.title",
-                                   comment: "Confirm a calendar day fetch title"))
-                .font(.title3.bold())
-            LabeledContent(NSLocalizedString("dayfetch.confirm.date",
-                                             comment: "Day fetch confirmation date label")) {
-                Text(selection.date.formatted(date: .long, time: .omitted))
-            }
-            LabeledContent(NSLocalizedString("dayfetch.confirm.scope",
-                                             comment: "Day fetch confirmation scope label")) {
-                Text(selection.scope.displayName)
-                    .multilineTextAlignment(.trailing)
-            }
-            LabeledContent(NSLocalizedString("dayfetch.confirm.status",
-                                             comment: "Day fetch confirmation status label")) {
-                Text(localizedState(selection.coverage?.state ?? .unknown))
-            }
-            if let coverage = selection.coverage {
-                LabeledContent(NSLocalizedString("dayfetch.confirm.prior_counts",
-                                                 comment: "Day fetch confirmation prior counts label")) {
-                    Text(String.localizedStringWithFormat(
-                        NSLocalizedString("dayfetch.confirm.prior_counts.value",
-                                          comment: "Day fetch confirmation prior counts value"),
-                        coverage.expectedCount,
-                        coverage.fetchedCount,
-                        coverage.absentCount
-                    ))
+        Form {
+            Section {
+                LabeledContent(NSLocalizedString("dayfetch.confirm.date",
+                                                 comment: "Day fetch confirmation date label")) {
+                    Text(selection.date.formatted(date: .long, time: .omitted))
                 }
-                if let lastSuccessAt = coverage.lastSuccessAt {
-                    LabeledContent(NSLocalizedString("dayfetch.confirm.as_of",
-                                                     comment: "Day fetch confirmation success time label")) {
-                        Text(lastSuccessAt.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent(NSLocalizedString("dayfetch.confirm.scope",
+                                                 comment: "Day fetch confirmation scope label")) {
+                    Text(selection.scope.displayName)
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent(NSLocalizedString("dayfetch.confirm.status",
+                                                 comment: "Day fetch confirmation status label")) {
+                    Text(localizedState(selection.coverage?.state ?? .unknown))
+                }
+                if let coverage = selection.coverage {
+                    LabeledContent(NSLocalizedString("dayfetch.confirm.prior_counts",
+                                                     comment: "Day fetch confirmation prior counts label")) {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("dayfetch.confirm.prior_counts.value",
+                                              comment: "Day fetch confirmation prior counts value"),
+                            coverage.expectedCount,
+                            coverage.fetchedCount,
+                            coverage.absentCount
+                        ))
+                    }
+                    if let lastSuccessAt = coverage.lastSuccessAt {
+                        LabeledContent(NSLocalizedString("dayfetch.confirm.as_of",
+                                                         comment: "Day fetch confirmation success time label")) {
+                            Text(lastSuccessAt.formatted(date: .abbreviated, time: .shortened))
+                        }
                     }
                 }
+            } header: {
+                Text(NSLocalizedString("dayfetch.confirm.title",
+                                       comment: "Confirm a calendar day fetch title"))
+            } footer: {
+                Text(NSLocalizedString("dayfetch.confirm.description",
+                                       comment: "Day fetch confirmation explanatory copy"))
             }
-            Text(NSLocalizedString("dayfetch.confirm.description",
-                                   comment: "Day fetch confirmation explanatory copy"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Spacer()
+        }
+        .formStyle(.grouped)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
                 Button(NSLocalizedString("dayfetch.confirm.cancel",
                                          comment: "Cancel day fetch"), action: onCancel)
+            }
+            ToolbarItem(placement: .confirmationAction) {
                 Button(NSLocalizedString("dayfetch.confirm.action",
                                          comment: "Confirm day fetch"), action: onConfirm)
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
-        .frame(width: 430)
+        .presentationSizing(.form)
     }
 
     private func localizedState(_ state: DayCoverageState) -> String {

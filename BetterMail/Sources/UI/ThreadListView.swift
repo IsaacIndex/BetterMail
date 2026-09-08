@@ -581,51 +581,43 @@ internal struct ThreadListView: View {
     }
 
     private var zoomControls: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 6) {
             Text(zoomPercentText)
                 .font(DesignTokens.font(size: 11, weight: .medium, textScale: displaySettings.textScale))
                 .foregroundStyle(navSecondaryForegroundStyle)
                 .monospacedDigit()
-                .frame(width: 42, alignment: .trailing)
-                .padding(.leading, 2)
+                .frame(width: 44, alignment: .trailing)
 
-            Button {
-                displaySettings.requestFitVisibleContent()
-            } label: {
-                Image(systemName: "viewfinder")
-                    .font(DesignTokens.font(size: 12, weight: .semibold, textScale: displaySettings.textScale))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .help(NSLocalizedString("threadlist.zoom.fit.help", comment: "Tooltip for fitting visible thread canvas content"))
-            .accessibilityIdentifier(AccessibilityID.zoomFitButton)
-            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.zoom.fit",
-                                                  comment: "Accessibility label for the fit zoom button"))
-            .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.fit.hint",
-                                                comment: "Accessibility hint for the fit zoom button"))
+            ControlGroup {
+                Button {
+                    displaySettings.requestFitVisibleContent()
+                } label: {
+                    Label(NSLocalizedString("accessibility.threadlist.zoom.fit",
+                                            comment: "Accessibility label for the fit zoom button"),
+                          systemImage: "viewfinder")
+                        .labelStyle(.iconOnly)
+                }
+                .help(NSLocalizedString("threadlist.zoom.fit.help", comment: "Tooltip for fitting visible thread canvas content"))
+                .accessibilityIdentifier(AccessibilityID.zoomFitButton)
+                .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.fit.hint",
+                                                    comment: "Accessibility hint for the fit zoom button"))
 
-            Button {
-                displaySettings.updateCurrentZoom(ThreadCanvasDisplaySettings.defaultCurrentZoom)
-            } label: {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(DesignTokens.font(size: 12, weight: .semibold, textScale: displaySettings.textScale))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
+                Button {
+                    displaySettings.updateCurrentZoom(ThreadCanvasDisplaySettings.defaultCurrentZoom)
+                } label: {
+                    Label(NSLocalizedString("accessibility.threadlist.zoom.reset",
+                                            comment: "Accessibility label for the reset zoom button"),
+                          systemImage: "arrow.counterclockwise")
+                        .labelStyle(.iconOnly)
+                }
+                .help(NSLocalizedString("threadlist.zoom.reset.help", comment: "Tooltip for resetting thread canvas zoom"))
+                .accessibilityIdentifier(AccessibilityID.zoomResetButton)
+                .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.reset.hint",
+                                                    comment: "Accessibility hint for the reset zoom button"))
             }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .help(NSLocalizedString("threadlist.zoom.reset.help", comment: "Tooltip for resetting thread canvas zoom"))
-            .accessibilityIdentifier(AccessibilityID.zoomResetButton)
-            .accessibilityLabel(NSLocalizedString("accessibility.threadlist.zoom.reset",
-                                                  comment: "Accessibility label for the reset zoom button"))
-            .accessibilityHint(NSLocalizedString("accessibility.threadlist.zoom.reset.hint",
-                                                comment: "Accessibility hint for the reset zoom button"))
+            .controlSize(.small)
         }
-        .padding(2)
         .frame(height: 30)
-        .background(topBarControlSurface())
     }
 
     private var zoomPercentText: String {
@@ -637,43 +629,34 @@ internal struct ThreadListView: View {
     }
 
     private var canvasViewModeSegmentedControl: some View {
-        HStack(spacing: 2) {
+        Picker(NSLocalizedString("accessibility.threadlist.canvasviewmode.control",
+                                 comment: "Accessibility label for canvas view mode picker"),
+               selection: canvasViewModeSelection) {
             ForEach(ThreadListCanvasViewMode.allCases) { mode in
-                let isSelected = selectedCanvasViewMode == mode
-                Button {
-                    transitionCanvasViewMode(to: mode)
-                } label: {
-                    Text(mode.localizedTitle)
-                        .font(DesignTokens.font(size: 12,
-                                                weight: isSelected ? .semibold : .medium,
-                                                textScale: displaySettings.textScale))
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 26)
-                        .foregroundStyle(isSelected ? Color.accentColor : navSecondaryForegroundStyle)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(isSelected
-                                      ? Color.accentColor.opacity(colorScheme == .dark ? 0.2 : 0.11)
-                                      : Color.clear)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .accessibilityIdentifier(AccessibilityID.canvasViewModeSegment(mode.rawValue))
-                .accessibilityLabel(mode.localizedTitle)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                Text(mode.localizedTitle)
+                    .tag(mode)
+                    .font(DesignTokens.font(size: 12,
+                                            weight: .medium,
+                                            textScale: displaySettings.textScale))
+                    .accessibilityIdentifier(AccessibilityID.canvasViewModeSegment(mode.rawValue))
             }
         }
-        .padding(2)
-        .frame(height: 30)
-        .background(topBarControlSurface())
-        .accessibilityElement(children: .contain)
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .controlSize(.small)
+        .frame(width: 250, height: 30)
         .accessibilityIdentifier(AccessibilityID.canvasViewModeControl)
         .accessibilityLabel(NSLocalizedString("accessibility.threadlist.canvasviewmode.control",
                                               comment: "Accessibility label for canvas view mode picker"))
         .accessibilityHint(NSLocalizedString("accessibility.threadlist.canvasviewmode.hint",
                                             comment: "Accessibility hint for canvas view mode picker"))
+    }
+
+    private var canvasViewModeSelection: Binding<ThreadListCanvasViewMode> {
+        Binding(
+            get: { selectedCanvasViewMode },
+            set: { transitionCanvasViewMode(to: $0) }
+        )
     }
 
     private var selectedCanvasViewMode: ThreadListCanvasViewMode {
@@ -1176,6 +1159,11 @@ private struct MailboxFolderMoveSheet: View {
         var id: String { path }
     }
 
+    private enum FolderListSelection: Hashable {
+        case root
+        case folder(String)
+    }
+
     @ObservedObject var viewModel: ThreadCanvasViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1223,6 +1211,31 @@ private struct MailboxFolderMoveSheet: View {
 
     private var trimmedNewFolderName: String {
         newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var folderListSelection: Binding<FolderListSelection?> {
+        Binding(
+            get: {
+                switch mode {
+                case .existing:
+                    return selectedExistingPath.map(FolderListSelection.folder)
+                case .create:
+                    return selectedParentPath.map(FolderListSelection.folder) ?? .root
+                }
+            },
+            set: { selection in
+                switch (mode, selection) {
+                case (.existing, .some(.folder(let path))):
+                    selectedExistingPath = path
+                case (.create, .some(.folder(let path))):
+                    selectedParentPath = path
+                case (.create, .some(.root)):
+                    selectedParentPath = nil
+                case (_, .none), (.existing, .some(.root)):
+                    break
+                }
+            }
+        )
     }
 
     private var canSubmit: Bool {
@@ -1416,54 +1429,56 @@ private struct MailboxFolderMoveSheet: View {
 
                 Group {
                     if viewModel.isMailboxHierarchyLoading && folderChoices.isEmpty {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(NSLocalizedString("mailbox.sheet.loading", comment: "Loading mailbox folders indicator"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        ContentUnavailableView {
+                            Label(NSLocalizedString("mailbox.sheet.loading",
+                                                    comment: "Loading mailbox folders indicator"),
+                                  systemImage: "folder")
+                        } description: {
+                            ProgressView()
+                                .controlSize(.small)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     } else if folderChoices.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(NSLocalizedString("mailbox.sheet.empty.destinations",
-                                                   comment: "Empty state when no mailbox folders are available for selection"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        ContentUnavailableView {
+                            Label(NSLocalizedString("mailbox.sheet.empty.destinations",
+                                                    comment: "Empty state when no mailbox folders are available for selection"),
+                                  systemImage: "folder.badge.questionmark")
+                        } actions: {
                             Button(NSLocalizedString("mailbox.sheet.refresh", comment: "Refresh mailbox hierarchy button")) {
                                 viewModel.refreshMailboxHierarchy(force: true)
                             }
                             .controlSize(.small)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     } else if filteredFolderRows.isEmpty {
-                        Text(NSLocalizedString("mailbox.sheet.empty.filtered",
-                                               comment: "Empty state when no mailbox folders match the search query"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        ContentUnavailableView(
+                            NSLocalizedString("mailbox.sheet.empty.filtered",
+                                              comment: "Empty state when no mailbox folders match the search query"),
+                            systemImage: "magnifyingglass"
+                        )
                     } else {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 4) {
-                                if isCreateAndMoveEnabled && mode == .create {
-                                    rootFolderRow
+                        List(selection: folderListSelection) {
+                            if isCreateAndMoveEnabled && mode == .create {
+                                Label(NSLocalizedString("mailbox.sheet.parent_root",
+                                                        comment: "Account root parent option"),
+                                      systemImage: "tray")
+                                    .tag(FolderListSelection.root)
+                            }
+                            ForEach(filteredFolderRows) { row in
+                                Label {
+                                    Text(row.name)
+                                        .lineLimit(1)
+                                } icon: {
+                                    Image(systemName: "folder")
+                                        .foregroundStyle(.secondary)
                                 }
-                                ForEach(filteredFolderRows) { row in
-                                    folderRow(path: row.path, name: row.name, depth: row.depth)
-                                }
+                                .padding(.leading, CGFloat(row.depth) * 12)
+                                .tag(FolderListSelection.folder(row.path))
+                                .help(row.path)
                             }
                         }
+                        .listStyle(.inset)
                     }
                 }
                 .frame(minHeight: 160, maxHeight: 210)
-                .padding(6)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(cardFillColor)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(cardStrokeColor)
-                )
 
                 Text(mode == .existing || !isCreateAndMoveEnabled
                      ? NSLocalizedString("mailbox.sheet.helper.existing", comment: "Helper text for existing folder move mode")
@@ -1608,73 +1623,6 @@ private struct MailboxFolderMoveSheet: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var rootFolderRow: some View {
-        let isSelected = selectedParentPath == nil
-        return Button {
-            selectedParentPath = nil
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "tray")
-                    .foregroundStyle(.secondary)
-                Text(NSLocalizedString("mailbox.sheet.parent_root", comment: "Account root parent option"))
-                    .font(.caption)
-                    .lineLimit(1)
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.tint)
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func folderRow(path: String, name: String, depth: Int) -> some View {
-        let isSelected: Bool = {
-            switch mode {
-            case .existing:
-                return selectedExistingPath == path
-            case .create:
-                return selectedParentPath == path
-            }
-        }()
-        return Button {
-            switch mode {
-            case .existing:
-                selectedExistingPath = path
-            case .create:
-                selectedParentPath = path
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "folder")
-                    .foregroundStyle(.secondary)
-                Text(name)
-                    .font(.caption)
-                    .lineLimit(1)
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.tint)
-                }
-            }
-            .padding(.leading, CGFloat(depth) * 12 + 6)
-            .padding(.trailing, 6)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
-            )
-        }
-        .help(path)
-        .buttonStyle(.plain)
-    }
 }
 
 private extension ThreadListView {

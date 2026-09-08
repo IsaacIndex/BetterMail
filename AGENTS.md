@@ -134,6 +134,36 @@ If requirements are unclear, ask for clarification **before** making structural 
 
 ---
 
+## Codex Session CR/FIX Recording
+
+For every completed Codex session with a material BetterMail outcome, record the
+work in the Obsidian Knowledge Vault at:
+
+```text
+/Users/isaac/Library/Mobile Documents/iCloud~md~obsidian/Documents/Knowledge Vault/CR/
+```
+
+- Create a separate note for every material change request and every material
+  corrective fix. A session containing both must produce both a CR note and a
+  FIX note.
+- Start CR notes from `Templates/↯ CR.md` and FIX notes from
+  `Templates/↯ FIX.md` in that vault. Do not record exploration-only sessions
+  with no concrete outcome.
+- Name notes `YYYY-MM-DD BetterMail CR <short title>.md` or
+  `YYYY-MM-DD BetterMail FIX <short title>.md`.
+- Retain the selected template's frontmatter and add `project: BetterMail`,
+  `workflow_state: done`, `source_thread_id`, `source_session_title`, and
+  `source_session_date`.
+- Use `# TLDR`, `# Links`, `# As-is`, `# To-be`, `# Change Applied` or
+  `# Fix Applied`, `# Verification`, and `# Decision`. Record only
+  verification supported by session evidence, and add a remaining-caveat
+  callout whenever validation is incomplete.
+- Before writing, search `CR/` for the same `source_thread_id` and item title.
+  Never create a duplicate. If a session cannot be read, do not infer a record
+  from Git history, diffs, or timestamps; report it as unavailable instead.
+
+---
+
 ## 10. Out of Scope
 
 AI agents should explicitly refuse to:

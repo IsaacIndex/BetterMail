@@ -118,6 +118,16 @@ Focused graph coverage lives in `Tests/GraphTests.swift`. The current runtime te
 
 `ThreadInspectorView` renders From and To as parsed contact rows with distinct name/address typography. Quoted commas, folded headers, angle-bracket addresses, semicolon-separated lists, and RFC group prefixes stay grouped correctly. Recipient lists show four entries initially, expose the remaining count through an explicit disclosure, retain selectable text, and publish stable accessibility identifiers for From, To, and Email content.
 
+## Native SwiftUI Component Boundary
+
+BetterMail uses stock SwiftUI scene and control semantics wherever they preserve the desktop interaction contract. The main shell remains a `NavigationSplitView`; its mailbox source list delegates selection, keyboard navigation, and highlight state to `List(selection:)`. Mutually exclusive canvas modes use a segmented `Picker`, zoom actions use `ControlGroup`, Action Items uses native list selection and checkbox toggles, thread summaries use `DisclosureGroup`, mailbox destinations use a native selectable list, and Graph settings use `Form`/`Section`.
+
+The right-side thread/folder inspector deliberately remains a fixed-width overlay in this revision. SwiftUI `.inspector` reserves width and would reflow the timeline and SpriteKit graph whenever selection changes, which conflicts with the current non-reflowing canvas contract. Adopting it requires an explicit layout decision and live Timeline/Graph acceptance rather than a mechanical component substitution.
+
+Custom SwiftUI `Canvas` surfaces remain for the thread timeline, folder/global minimaps, and coverage-state calendar because they visualize domain geometry or per-day state that no stock control represents. `ScrollViewResolver` remains a narrow AppKit bridge for exact two-axis bounds observation, elasticity configuration, horizontal-position-preserving vertical jumps, and clamped programmatic scrolling. The active graph keeps `GraphRepresentable`/`GraphSKView` because SpriteKit needs point-specific context menus, mouse movement, wheel and magnification events, retained-node physics, frame-rate control, and explicit teardown; replacing that small boundary with `SpriteView` would not replace those capabilities.
+
+The exhaustive type inventory, substitution decisions, deferred candidates, and static/automated/live/MailKit validation lanes are recorded in `docs/NativeSwiftUIComponentAudit.md`.
+
 ## Exhaustive Day Fetch and Coverage
 
 `DayFetchCoordinator` is the single actor-isolated ingestion path for app-start refresh, toolbar refresh, auto-refresh, calendar recovery, visible-range backfill, and Settings backfill. Each operation uses the current calendar and timezone to resolve `[dayStart, nextDayStart)`; open days stop at the current second. A lightweight, uncapped manifest identifies every Apple Mail message in the source interval, while payloads are fetched by `internalMailID` in configurable requests of 1–4 messages. Four is a request batch size, never a total fetch limit.
