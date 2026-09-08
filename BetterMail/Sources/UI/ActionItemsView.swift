@@ -6,30 +6,65 @@ internal struct ActionItemsView: View {
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     internal var textScale: CGFloat
     @State private var showDone = false
-    @State private var isInspectorVisible = false
+    @State private var searchQuery = ""
+    @FocusState private var isSearchFocused: Bool
 
     private let inspectorWidth: CGFloat = 320
 
     internal var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { viewModel.selectNode(id: nil) }
-            VStack(spacing: 0) {
-                topBar
-                Divider()
-                if viewModel.actionItems.isEmpty {
-                    emptyState
+        let projection = listProjection
+        let summaryLookup = ActionItemSummaryLookup(roots: viewModel.roots)
+        let summaryNode = viewModel.actionItems.first { $0.id == viewModel.selectedActionItemID }
+            .flatMap { summaryLookup.node(for: $0) }
+        VStack(spacing: 0) {
+            topBar(projection: projection)
+            Divider()
+            ZStack(alignment: .topTrailing) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { viewModel.selectActionItem(id: nil) }
+                if let state = projection.emptyState {
+                    emptyState(state)
                 } else {
-                    itemList
+                    itemList(groups: projection.groups, summaryLookup: summaryLookup)
+                }
+                if let id = viewModel.selectedActionItemID {
+                    inspectorPanel(summaryNode: summaryNode)
+                        .id(id)
+                        .frame(width: inspectorWidth)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .zIndex(1)
+                        .transition(.opacity)
                 }
             }
-            if isInspectorVisible, let selectedNode = viewModel.selectedNode {
+        }
+        .accessibilityIdentifier(AccessibilityID.actionItemsView)
+        .task { await viewModel.refreshActionItemIDs() }
+        .task(id: viewModel.actionItemSelectionRevision) {
+            await viewModel.loadSelectedActionItem()
+        }
+        .onChange(of: projection.visibleItems.map(\.id)) { _, visibleIDs in
+            if let id = viewModel.selectedActionItemID, !visibleIDs.contains(id) {
+                viewModel.selectActionItem(id: nil)
+            }
+        }
+    }
+
+    private var listProjection: ActionItemListProjection {
+        ActionItemListProjection(items: viewModel.actionItems,
+                                 folders: viewModel.threadFolders,
+                                 showDone: showDone,
+                                 query: searchQuery)
+    }
+
+    private func inspectorPanel(summaryNode: ThreadNode?) -> some View {
+        Group {
+            if let selectedNode = viewModel.selectedActionItemNode {
                 ThreadInspectorView(
                     node: selectedNode,
                     generatedGraphTitle: nil,
                     isGraphTitleRegenerating: false,
-                    summaryState: viewModel.summaryState(for: selectedNode.id),
+                    summaryState: summaryNode.flatMap { viewModel.summaryState(for: $0.id) },
                     summaryExpansion: Binding(
                         get: { viewModel.isSummaryExpanded(for: selectedNode.id) },
                         set: { viewModel.setSummaryExpanded($0, for: selectedNode.id) }
@@ -37,67 +72,101 @@ internal struct ActionItemsView: View {
                     inspectorSettings: inspectorSettings,
                     textScale: textScale,
                     openInMailState: viewModel.openInMailState,
-                    canRegenerateSummary: viewModel.isSummaryProviderAvailable,
+                    canRegenerateSummary: viewModel.isSummaryProviderAvailable && summaryNode != nil,
                     onRegenerateSummary: { viewModel.regenerateNodeSummary(for: selectedNode.id) },
                     canRegenerateGraphTitle: false,
                     onRegenerateGraphTitle: nil,
                     onOpenInMail: viewModel.openMessageInMail,
                     onCopyOpenInMailText: viewModel.copyToPasteboard
                 )
-                .id(selectedNode.id)
-                .frame(width: inspectorWidth)
-                .padding(.top, 50)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .zIndex(1)
-                .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
-                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: viewModel.selectedNodeID)
+            } else if let error = viewModel.actionItemSelectionError {
+                ContentUnavailableView {
+                    Label("action_items.source.title", systemImage: "envelope.badge")
+                } description: {
+                    Text(error)
+                }
+                .background(.regularMaterial)
+            } else {
+                ProgressView("action_items.source.loading")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.regularMaterial)
             }
         }
-        .accessibilityIdentifier(AccessibilityID.actionItemsView)
-        .onAppear {
-            isInspectorVisible = viewModel.selectedNodeID != nil
-        }
-        .onChange(of: viewModel.selectedNodeID) { _, newValue in
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
-                isInspectorVisible = newValue != nil
+        .overlay(alignment: .topTrailing) {
+            Button {
+                viewModel.selectActionItem(id: nil)
+            } label: {
+                Image(systemName: "xmark")
             }
+            .buttonStyle(.borderless)
+            .padding(12)
+            .accessibilityLabel(Text("action_items.inspector.close"))
         }
     }
 
     // MARK: - Subviews
 
-    private var topBar: some View {
-        HStack(spacing: 8) {
-            Text(NSLocalizedString("mailbox.sidebar.action_items",
-                                   comment: "Action Items view title"))
-                .font(.headline)
-            Text(subtitleText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button(showDone
-                   ? NSLocalizedString("action_items.hide_done",
-                                       comment: "Button title for hiding completed action items")
-                   : NSLocalizedString("action_items.show_done",
-                                       comment: "Button title for showing completed action items")) {
-                showDone.toggle()
+    private func topBar(projection: ActionItemListProjection) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Text(NSLocalizedString("mailbox.sidebar.action_items",
+                                       comment: "Action Items view title"))
+                    .font(.headline)
+                Text(subtitleText(projection: projection))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(showDone
+                       ? NSLocalizedString("action_items.hide_done",
+                                           comment: "Button title for hiding completed action items")
+                       : NSLocalizedString("action_items.show_done",
+                                           comment: "Button title for showing completed action items")) {
+                    showDone.toggle()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .accessibilityIdentifier(AccessibilityID.actionItemsShowDoneButton)
+                .accessibilityLabel(showDone
+                                    ? NSLocalizedString("accessibility.action_items.hide_done",
+                                                        comment: "Accessibility label for hiding completed action items")
+                                    : NSLocalizedString("accessibility.action_items.show_done",
+                                                        comment: "Accessibility label for showing completed action items"))
             }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .accessibilityIdentifier(AccessibilityID.actionItemsShowDoneButton)
-            .accessibilityLabel(showDone
-                                ? NSLocalizedString("accessibility.action_items.hide_done",
-                                                    comment: "Accessibility label for hiding completed action items")
-                                : NSLocalizedString("accessibility.action_items.show_done",
-                                                    comment: "Accessibility label for showing completed action items"))
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                TextField("action_items.search.placeholder", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .focused($isSearchFocused)
+                    .accessibilityIdentifier(AccessibilityID.actionItemsSearchField)
+                    .accessibilityLabel(Text("action_items.search.placeholder"))
+                    .onKeyPress(.escape) {
+                        guard !searchQuery.isEmpty else { return .ignored }
+                        searchQuery = ""
+                        return .handled
+                    }
+                if !searchQuery.isEmpty {
+                    Button {
+                        searchQuery = ""
+                        isSearchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("action_items.search.clear"))
+                }
+            }
+            .padding(7)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
-    private var subtitleText: String {
-        let open = viewModel.actionItems.filter { !$0.isDone }.count
-        let folderCount = Set(viewModel.actionItems.filter { !$0.isDone }.compactMap(\.folderID)).count
+    private func subtitleText(projection: ActionItemListProjection) -> String {
+        let open = projection.openCount
+        let folderCount = projection.openGroupCount
         if open == 0 {
             return NSLocalizedString("action_items.subtitle.all_done",
                                      comment: "Action Items subtitle when everything is complete")
@@ -110,42 +179,54 @@ internal struct ActionItemsView: View {
         )
     }
 
-    private var emptyState: some View {
+    private func emptyState(_ state: ActionItemListProjection.EmptyState) -> some View {
         ContentUnavailableView {
-            Label(NSLocalizedString("action_items.empty.title",
+            Label(NSLocalizedString(emptyStateTitleKey(state),
                                     comment: "Action Items empty-state title"),
                   systemImage: "checklist")
         } description: {
-            Text(NSLocalizedString("action_items.empty.description",
+            Text(NSLocalizedString(emptyStateDescriptionKey(state),
                                    comment: "Action Items empty-state explanation"))
         } actions: {
-            Button(NSLocalizedString(
-                "action_items.empty.view_all_emails",
-                comment: "Button title for leaving an empty action items list and viewing all email threads"
-            )) {
-                viewModel.selectMailboxScope(.allEmails)
+            if state == .noMatches {
+                Button("action_items.search.clear") { searchQuery = "" }
+                    .buttonStyle(.bordered)
+                if !showDone, viewModel.actionItems.contains(where: \.isDone) {
+                    Button("action_items.show_done") { showDone = true }
+                        .buttonStyle(.bordered)
+                }
+            } else if state == .allDone {
+                Button("action_items.show_done") { showDone = true }
+                    .buttonStyle(.bordered)
+            } else {
+                Button(NSLocalizedString(
+                    "action_items.empty.view_all_emails",
+                    comment: "Button title for leaving an empty action items list and viewing all email threads"
+                )) {
+                    viewModel.selectMailboxScope(.allEmails)
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier(AccessibilityID.actionItemsEmptyViewCanvasButton)
             }
-            .controlSize(.small)
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier(AccessibilityID.actionItemsEmptyViewCanvasButton)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var itemList: some View {
-        let grouped = groupedItems
-        return List(selection: selectedActionItemID) {
-            ForEach(grouped) { group in
+    private func itemList(groups: [ActionItemListProjection.Group],
+                          summaryLookup: ActionItemSummaryLookup) -> some View {
+        List(selection: selectedActionItemID) {
+            ForEach(groups) { group in
                 Section {
                     ForEach(group.items) { item in
                         ActionItemRow(item: item,
-                                      displayTitle: displayTitle(for: item),
+                                      displayTitle: displayTitle(for: item, summaryNode: summaryLookup.node(for: item)),
                                       onToggleDone: { viewModel.toggleActionItemDone(item) })
-                            .tag(item.messageID)
+                            .tag(item.id)
                     }
                 } header: {
                     HStack {
-                        Text(group.folderTitle)
+                        Text(group.title ?? NSLocalizedString("action_items.unfiled", comment: "Unfiled action items"))
                             .font(.caption)
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
@@ -167,15 +248,15 @@ internal struct ActionItemsView: View {
 
     private var selectedActionItemID: Binding<String?> {
         Binding(
-            get: { viewModel.selectedNodeID },
-            set: { viewModel.selectNode(id: $0) }
+            get: { viewModel.selectedActionItemID },
+            set: { viewModel.selectActionItem(id: $0) }
         )
     }
 
     // MARK: - Helpers
 
-    private func displayTitle(for item: ActionItem) -> String {
-        let summary = viewModel.summaryState(for: item.messageID)?.text
+    private func displayTitle(for item: ActionItem, summaryNode: ThreadNode?) -> String {
+        let summary = summaryNode.flatMap { viewModel.summaryState(for: $0.id) }?.text
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !summary.isEmpty { return summary }
         return item.subject.isEmpty
@@ -184,38 +265,20 @@ internal struct ActionItemsView: View {
             : item.subject
     }
 
-    // MARK: - Grouping
-
-    private struct ItemGroup: Identifiable {
-        var id: String { folderID ?? "__unfiled__" }
-        let folderID: String?
-        let folderTitle: String
-        let items: [ActionItem]
+    private func emptyStateTitleKey(_ state: ActionItemListProjection.EmptyState) -> String {
+        switch state {
+        case .noItems: return "action_items.empty.title"
+        case .allDone: return "action_items.completed.title"
+        case .noMatches: return "action_items.search.empty.title"
+        }
     }
 
-    private var groupedItems: [ItemGroup] {
-        let visible = showDone ? viewModel.actionItems : viewModel.actionItems.filter { !$0.isDone }
-        let folderMap = Dictionary(grouping: visible, by: \.folderID)
-        let folders = viewModel.threadFolders
-
-        var groups: [ItemGroup] = folderMap.compactMap { folderID, groupItems in
-            guard let fid = folderID else { return nil }
-            let title = folders.first(where: { $0.id == fid })?.title ?? fid
-            return ItemGroup(folderID: fid,
-                             folderTitle: title,
-                             items: groupItems.sorted { $0.addedAt > $1.addedAt })
+    private func emptyStateDescriptionKey(_ state: ActionItemListProjection.EmptyState) -> String {
+        switch state {
+        case .noItems: return "action_items.empty.description"
+        case .allDone: return "action_items.completed.description"
+        case .noMatches: return "action_items.search.empty.description"
         }
-        .sorted { $0.folderTitle < $1.folderTitle }
-
-        if let unfiled = folderMap[nil], !unfiled.isEmpty {
-            groups.append(ItemGroup(folderID: nil,
-                                    folderTitle: NSLocalizedString(
-                                        "action_items.unfiled",
-                                        comment: "Action-item section for messages without a BetterMail group"
-                                    ),
-                                    items: unfiled.sorted { $0.addedAt > $1.addedAt }))
-        }
-        return groups
     }
 
 }
@@ -252,6 +315,11 @@ private struct ActionItemRow: View {
                 Text("\(item.from) · \(item.date.formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                if !item.accountName.isEmpty {
+                    Text(item.accountName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()

@@ -30,4 +30,14 @@ internal struct ActionItem: Identifiable, Hashable {
         scopedID(messageID: message.physicalSource.messageID,
                  accountName: message.physicalSource.accountName)
     }
+
+}
+
+internal enum ActionItemSourceError: LocalizedError {
+    case ambiguousAccount
+
+    internal var errorDescription: String? {
+        NSLocalizedString("action_items.source.ambiguous",
+                          comment: "An older action item matches messages in multiple accounts")
+    }
 }

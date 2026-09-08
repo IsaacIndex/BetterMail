@@ -92,7 +92,7 @@ final class ObsidianGraphMultiDragTests: XCTestCase {
         ))
     }
 
-    func test_sceneDrag_whenPointerStartsOnYou_keepsRootAtMidpoint() throws {
+    func test_sceneDrag_whenPointerStartsOnYou_preservesPlacementAfterRelease() throws {
         let graph = makeGraph(threadIDs: ["first"])
         let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
         let scene = ObsidianGraphScene(size: view.bounds.size)
@@ -120,8 +120,8 @@ final class ObsidianGraphMultiDragTests: XCTestCase {
                                              timestamp: 2.0 / 60.0))
         scene.update(1)
 
-        assertPoint(youNode.position, center)
-        XCTAssertEqual(scene.workMetrics.dragRenderPassCount, 0)
+        assertPoint(youNode.position, CGPoint(x: 160, y: 120))
+        XCTAssertEqual(scene.workMetrics.dragRenderPassCount, 1)
         XCTAssertEqual(scene.workMetrics.forceStepCount, 0)
         scene.teardownForRemoval()
     }
@@ -439,12 +439,231 @@ final class ObsidianGraphMultiDragTests: XCTestCase {
         XCTAssertFalse(simulator.nodesByID[groupID]?.isPinned ?? true)
     }
 
+    func test_dragReaction_heldNearNode_createsVisibleStableClearanceAtEveryZoom() throws {
+        let graph = makeGraph(threadIDs: ["dragged", "nearby", "far"])
+        let draggedID = GraphData.threadNodeID(for: "dragged")
+        let nearbyID = GraphData.threadNodeID(for: "nearby")
+        let farID = GraphData.threadNodeID(for: "far")
+        for zoom: CGFloat in [0.2, 1, 5] {
+            var simulator = ObsidianGraphForceSimulator()
+            let origin = CGPoint(x: 110, y: 100)
+            simulator.reset(data: graph, size: CGSize(width: 1_000, height: 800),
+                            preserving: [draggedID: CGPoint(x: 100, y: 100),
+                                         nearbyID: origin,
+                                         farID: CGPoint(x: 2_000, y: 2_000)])
+            simulator.beginDragging(nodeID: draggedID)
+            for _ in 0..<60 {
+                simulator.stepDragging(deltaTime: 1.0 / 60.0, zoomScale: zoom, nodeScale: 2.2)
+            }
+            let source = try XCTUnwrap(simulator.nodesByID[draggedID])
+            let neighbor = try XCTUnwrap(simulator.nodesByID[nearbyID])
+            let screenGap = (hypot(neighbor.position.x - source.position.x,
+                                   neighbor.position.y - source.position.y)
+                             - (source.radius + neighbor.radius) * 2.2) * zoom
+            XCTAssertGreaterThan(screenGap, 60)
+            XCTAssertGreaterThan((neighbor.position.x - origin.x) * zoom, 20)
+            for _ in 0..<30 {
+                simulator.stepDragging(deltaTime: 1.0 / 60.0, zoomScale: zoom, nodeScale: 2.2)
+            }
+            assertPoint(simulator.nodesByID[nearbyID]?.position, neighbor.position)
+            assertPoint(simulator.nodesByID[farID]?.position, CGPoint(x: 2_000, y: 2_000))
+        }
+    }
+
+    func test_dragReaction_reduceMotion_andCoincidentNodes_resolveWithoutOscillation() throws {
+        let graph = makeGraph(threadIDs: ["dragged", "nearby"])
+        let draggedID = GraphData.threadNodeID(for: "dragged")
+        let nearbyID = GraphData.threadNodeID(for: "nearby")
+        var simulator = ObsidianGraphForceSimulator()
+        let origin = CGPoint(x: 100, y: 100)
+        simulator.reset(data: graph, size: CGSize(width: 800, height: 600),
+                        preserving: [draggedID: origin, nearbyID: origin])
+        simulator.beginDragging(nodeID: draggedID)
+        simulator.stepDragging(deltaTime: 1.0 / 60.0, reduceMotion: true)
+        let target = try XCTUnwrap(simulator.nodesByID[nearbyID]?.position)
+        XCTAssertGreaterThan(hypot(target.x - origin.x, target.y - origin.y), 64)
+        simulator.stepDragging(deltaTime: 1.0 / 60.0, reduceMotion: true)
+        assertPoint(simulator.nodesByID[nearbyID]?.position, target)
+        simulator.cancelDragging()
+        simulator.stepLocalSettling(deltaTime: 1.0 / 60.0,
+                                    returningNodeOrigins: simulator.lastDragReactiveNodeOrigins,
+                                    reduceMotion: true)
+        assertPoint(simulator.nodesByID[nearbyID]?.position, origin)
+    }
+
+    func test_sceneDrag_cancellation_restoresGrabbedAndReactiveNodesWithoutMutation() throws {
+        let graph = makeGraph(threadIDs: ["first", "second"])
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        configureBenchmarkScene(scene, data: graph)
+        let nodes = scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+        let source = try XCTUnwrap(nodes.first { $0.kind == .thread })
+        let neighbor = try XCTUnwrap(nodes.first { $0.kind == .thread && $0 !== source })
+        let initialPositions = Dictionary(uniqueKeysWithValues: nodes.map { ($0.graphID, $0.position) })
+        var mutationCount = 0
+        scene.onMoveThreadsToFolder = { _, _ in mutationCount += 1 }
+        scene.onCreateGroupAtCanvasPoint = { _, _, _ in mutationCount += 1 }
+        scene.mouseDown(with: try pointerEvent(type: .leftMouseDown, location: source.position, timestamp: 0))
+        scene.mouseDragged(with: try pointerEvent(type: .leftMouseDragged, location: neighbor.position, timestamp: 0.1))
+        for frame in 1...30 { scene.update(Double(frame) / 60) }
+        XCTAssertNotEqual(source.position, initialPositions[source.graphID])
+        scene.cancelDirectManipulation()
+        for frame in 31...150 { scene.update(Double(frame) / 60) }
+        for node in nodes { assertPoint(node.position, initialPositions[node.graphID]) }
+        XCTAssertEqual(mutationCount, 0)
+        scene.teardownForRemoval()
+    }
+
+    func test_sceneDrag_pagingNode_movesWithoutExpandingAndClickStillExpands() throws {
+        let graph = GraphData.make(roots: ["first", "second", "third"].map { makeThread(rootID: $0) },
+                                   branchLimit: 1,
+                                   now: Date(timeIntervalSince1970: 10_000))
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        configureBenchmarkScene(scene, data: graph)
+        let node = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.kind == .remaining })
+        var expansions = 0
+        scene.onExpandRemainingBranches = { _ in expansions += 1 }
+        let target = CGPoint(x: node.position.x + 100, y: node.position.y + 60)
+        scene.mouseDown(with: try pointerEvent(type: .leftMouseDown, location: node.position, timestamp: 0))
+        scene.mouseDragged(with: try pointerEvent(type: .leftMouseDragged, location: target, timestamp: 0.1))
+        scene.update(0.1)
+        scene.mouseUp(with: try pointerEvent(type: .leftMouseUp, location: target, timestamp: 0.2))
+        XCTAssertEqual(expansions, 0)
+        assertPoint(node.position, target)
+        scene.mouseDown(with: try pointerEvent(type: .leftMouseDown, location: node.position, timestamp: 0.3))
+        XCTAssertEqual(expansions, 0)
+        scene.mouseUp(with: try pointerEvent(type: .leftMouseUp, location: node.position, timestamp: 0.4))
+        XCTAssertEqual(expansions, 1)
+        scene.teardownForRemoval()
+    }
+
+    func test_sceneDrag_suggestedGroup_repositionsWithoutConfirmingOrMovingConversations() throws {
+        let signal = GraphTopicSignal(topic: "CR60 booking rollout", displayTitle: "CR60 booking rollout",
+                                      confidence: 0.95, supportingReason: "Shared synthetic topic")
+        let graph = GraphData.make(roots: [makeThread(rootID: "first"), makeThread(rootID: "second")],
+                                   topicSignalsByRawThreadID: ["first": signal, "second": signal],
+                                   now: Date(timeIntervalSince1970: 10_000))
+        XCTAssertEqual(GraphSceneLookupIndex(data: graph).visualDragNodeIDs(from: graph.allNodeIDs), graph.allNodeIDs)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        configureBenchmarkScene(scene, data: graph)
+        let node = try XCTUnwrap(scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.kind == .ghostGroup })
+        let target = CGPoint(x: node.position.x + 130, y: node.position.y + 75)
+        var mutations = 0
+        scene.onMoveThreadsToFolder = { _, _ in mutations += 1 }
+        scene.onCreateGroupAtCanvasPoint = { _, _, _ in mutations += 1 }
+        scene.mouseDown(with: try pointerEvent(type: .leftMouseDown, location: node.position, timestamp: 0))
+        scene.mouseDragged(with: try pointerEvent(type: .leftMouseDragged, location: target, timestamp: 0.1))
+        scene.update(0.1)
+        scene.mouseUp(with: try pointerEvent(type: .leftMouseUp, location: target, timestamp: 0.2))
+        for frame in 1...120 { scene.update(0.2 + Double(frame) / 60) }
+        assertPoint(node.position, target)
+        XCTAssertEqual(mutations, 0)
+        XCTAssertEqual(scene.workMetrics.forceStepCount, 0)
+        scene.teardownForRemoval()
+    }
+
+    func test_dragReaction_largeSelection_checksOnlyLocalPairs() throws {
+        let graph = makeGraph(threadIDs: (0..<500).map { "node-\($0)" })
+        XCTAssertEqual(graph.threads.count, 500)
+        let ids = graph.threads.map(\.id).sorted()
+        let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map {
+            ($0.element, CGPoint(x: CGFloat($0.offset % 25) * 180, y: CGFloat($0.offset / 25) * 180))
+        })
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: graph, size: CGSize(width: 5_000, height: 4_000), preserving: positions)
+        let sources = Set(ids.enumerated().filter { $0.offset.isMultiple(of: 3) }.map(\.element))
+        simulator.beginDragging(nodeIDs: sources)
+        simulator.stepDragging(deltaTime: 1.0 / 60.0)
+        XCTAssertLessThan(simulator.lastDragCollisionCheckCount, ids.count * 8)
+        XCTAssertTrue(simulator.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
+    }
+
+    /// Opt-in because this measures real display scheduling, which is not a
+    /// deterministic headless CI assertion. Uses synthetic data and no Mail.
+    func test_dragDisplayBenchmark_500VisibleNodes_staysAbove30FPS() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["BETTERMAIL_DRAG_DISPLAY_BENCHMARK"] == "1",
+                          "Requires an active macOS display; opt in to run the rendered FPS check.")
+        let graph = makeGraph(threadIDs: (0..<500).map { "node-\($0)" })
+        XCTAssertEqual(graph.threads.count, 500)
+        let view = GraphSKView(frame: CGRect(x: 0, y: 0, width: 1_200, height: 760))
+        view.preferredFramesPerSecond = 60
+        view.ignoresSiblingOrder = true
+        view.shouldCullNonVisibleNodes = true
+        view.showsFPS = true
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "BetterMail synthetic drag performance"
+        window.contentView = view
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        let scene = ObsidianGraphScene(size: view.bounds.size)
+        view.presentScene(scene)
+        let positions = Dictionary(uniqueKeysWithValues: graph.threads.enumerated().map {
+            ($0.element.id, CGPoint(x: 70 + CGFloat($0.offset % 25) * 43,
+                                   y: 60 + CGFloat($0.offset / 25) * 33))
+        })
+        configureBenchmarkScene(scene, data: graph, positions: positions)
+        defer {
+            scene.cancelDirectManipulation()
+            scene.teardownForRemoval()
+            view.presentScene(nil)
+            window.close()
+        }
+        // Freeze the initial fixture layout while SpriteKit warms its renderer.
+        let sourceID = try XCTUnwrap(graph.threads.first?.id)
+        let sourcePosition = try XCTUnwrap(positions[sourceID])
+        scene.mouseDown(with: try pointerEvent(type: .leftMouseDown, location: sourcePosition, timestamp: 0))
+        try await Task.sleep(for: .milliseconds(750))
+        scene.resetWorkMetricsForTesting()
+        for sample in 0..<240 {
+            let angle = CGFloat(sample) * .pi / 90
+            let target = CGPoint(x: 600 + cos(angle) * 380, y: 380 + sin(angle) * 240)
+            scene.mouseDragged(with: try pointerEvent(type: .leftMouseDragged,
+                                                      location: target,
+                                                      timestamp: Double(sample) / 120))
+            try await Task.sleep(for: .milliseconds(8))
+        }
+        let intervals = Array(scene.workMetrics.dragFrameIntervals.dropFirst(5)).sorted()
+        XCTAssertGreaterThan(intervals.count, 30, "SpriteKit must actually render frames on the display")
+        guard !intervals.isEmpty else { return }
+        let mean = intervals.reduce(0, +) / Double(intervals.count)
+        let p95 = intervals[min(intervals.count - 1, Int(Double(intervals.count) * 0.95))]
+        let maximum = intervals.last ?? .infinity
+        print(String(format: "BETTERMAIL_DRAG_DISPLAY nodes=%d frames=%d mean_fps=%.2f p95_frame_ms=%.3f max_frame_ms=%.3f",
+                     graph.allNodeIDs.count, intervals.count, 1 / mean, p95 * 1_000, maximum * 1_000))
+        XCTAssertGreaterThan(1 / mean, 30)
+        XCTAssertLessThan(p95, 1.0 / 30.0)
+        XCTAssertLessThan(maximum, 1.0 / 30.0)
+        XCTAssertEqual(scene.workMetrics.forceStepCount, 0)
+    }
+
+    func test_reset_invalidPreservedRootPosition_usesFiniteMidpoint() throws {
+        var simulator = ObsidianGraphForceSimulator()
+        simulator.reset(data: makeGraph(threadIDs: ["first"]),
+                        size: CGSize(width: 800, height: 600),
+                        preserving: [GraphCenter.you.id: CGPoint(x: CGFloat.nan, y: 20)])
+        assertPoint(simulator.nodesByID[GraphCenter.you.id]?.position, CGPoint(x: 400, y: 300))
+        simulator.beginDragging(nodeID: GraphData.threadNodeID(for: "first"))
+        simulator.stepDragging(deltaTime: 1.0 / 60.0)
+        XCTAssertTrue(simulator.nodes.allSatisfy { $0.position.x.isFinite && $0.position.y.isFinite })
+    }
+
     private func makeGraph(threadIDs: [String]) -> GraphData {
         GraphData.make(roots: threadIDs.map { makeThread(rootID: $0) },
                        now: Date(timeIntervalSince1970: 10_000))
     }
 
-    private func configureBenchmarkScene(_ scene: ObsidianGraphScene, data: GraphData) {
+    private func configureBenchmarkScene(_ scene: ObsidianGraphScene,
+                                         data: GraphData,
+                                         positions: [String: CGPoint]? = nil) {
         scene.configure(data: data,
                         selectedGraphNodeID: nil,
                         selectedGraphNodeIDs: [],
@@ -457,7 +676,9 @@ final class ObsidianGraphMultiDragTests: XCTestCase {
                         displayConfig: .defaults,
                         theme: DesignTokens.Graph.AppTheme.Palette(isDark: false),
                         zoomScale: 1,
-                        panOffset: .zero)
+                        panOffset: .zero,
+                        restoredNodePositions: positions,
+                        restoredGroupAnchors: positions == nil ? nil : [:])
     }
 
     private func pointerEvent(type: NSEvent.EventType,

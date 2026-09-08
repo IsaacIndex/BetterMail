@@ -706,6 +706,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
     @Published internal private(set) var actionItemIDs: Set<String> = []
     @Published internal private(set) var actionItems: [ActionItem] = []
+    @Published internal private(set) var selectedActionItemID: String?
+    @Published internal private(set) var actionItemSelectionRevision: Int = 0
+    @Published internal private(set) var selectedActionItemNode: ThreadNode?
+    @Published internal private(set) var actionItemSelectionError: String?
     @Published internal private(set) var manualGroupByMessageKey: [String: String] = [:]
     @Published internal private(set) var manualAttachmentMessageIDs: Set<String> = [] {
         didSet { invalidateLayoutCache(reason: .manualAttachmentMessageIDs) }
@@ -2883,6 +2887,12 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func selectNode(id: String?, additive: Bool) {
+        if selectedActionItemID != nil {
+            actionItemSelectionRevision &+= 1
+            selectedActionItemID = nil
+            selectedActionItemNode = nil
+            actionItemSelectionError = nil
+        }
         guard let id else {
             selectedNodeID = nil
             selectedNodeIDs = []
@@ -2919,6 +2929,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
 
     internal func selectMailboxScope(_ scope: MailboxScope) {
         guard activeMailboxScope != scope else { return }
+        if selectedActionItemID != nil || scope == .actionItems {
+            selectNode(id: nil)
+        }
         calendarAncestorRecoveryTask?.cancel()
         calendarAncestorRecoveryTask = nil
         inFlightCalendarRecoveryFingerprint = nil
@@ -2985,10 +2998,50 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         }
     }
 
-    private func refreshActionItemIDs() async {
+    internal func selectActionItem(id: String?) {
+        selectNode(id: nil)
+        guard let id, actionItems.contains(where: { $0.id == id }) else { return }
+        selectedActionItemID = id
+        actionItemSelectionRevision &+= 1
+    }
+
+    /// Called by the selection-keyed view task. Cancellation and identity checks
+    /// prevent an earlier row's fetch from replacing a newer selection.
+    internal func loadSelectedActionItem() async {
+        guard !Task.isCancelled, let id = selectedActionItemID,
+              let item = actionItems.first(where: { $0.id == id }) else { return }
+        let revision = actionItemSelectionRevision
+        do {
+            let message = try await store.fetchMessage(forActionItem: item)
+            guard !Task.isCancelled, selectedActionItemID == id,
+                  actionItemSelectionRevision == revision else { return }
+            guard let message else {
+                actionItemSelectionError = NSLocalizedString(
+                    "action_items.source.unavailable",
+                    comment: "The selected action item's email is not available in the local cache"
+                )
+                return
+            }
+            selectedActionItemNode = ThreadNode(message: message)
+            selectedNodeID = message.messageID
+            selectedNodeIDs = [message.messageID]
+        } catch {
+            guard !Task.isCancelled, selectedActionItemID == id,
+                  actionItemSelectionRevision == revision else { return }
+            Log.app.error("Failed to load action-item source: \(error.localizedDescription, privacy: .private)")
+            actionItemSelectionError = (error as? ActionItemSourceError)?.errorDescription
+                ?? NSLocalizedString("action_items.source.load_failed",
+                                     comment: "The selected action item's cached email could not be loaded")
+        }
+    }
+
+    internal func refreshActionItemIDs() async {
         let fetched = await store.fetchActionItems()
         actionItems = fetched
         actionItemIDs = Set(fetched.map(\.id))
+        if let selectedActionItemID, !actionItemIDs.contains(selectedActionItemID) {
+            selectNode(id: nil)
+        }
     }
 
     private func setBottomBarMailboxActionStatus(_ message: String?,
@@ -4071,7 +4124,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal var selectedNode: ThreadNode? {
-        Self.node(matching: selectedNodeID, in: roots)
+        if selectedActionItemID != nil {
+            return selectedActionItemNode
+        }
+        return Self.node(matching: selectedNodeID, in: roots)
     }
 
     internal var selectedFolder: ThreadFolder? {
@@ -5335,6 +5391,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     private func pruneSelection(using roots: [ThreadNode]) {
+        // Action-item details are loaded independently of the canvas window.
+        guard selectedActionItemID == nil else { return }
         let validIDs = Set(Self.flatten(nodes: roots).map(\.id))
         if selectedNodeIDs.isEmpty {
             selectedNodeID = nil

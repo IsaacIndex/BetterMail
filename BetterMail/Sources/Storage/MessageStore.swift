@@ -2846,6 +2846,35 @@ internal final class MessageStore {
         }) ?? []
     }
 
+    /// Loads the saved source independently of the canvas's date window.
+    /// Legacy records without an account must resolve to a single account.
+    internal func fetchMessage(forActionItem item: ActionItem) async throws -> EmailMessage? {
+        try await container.performBackgroundTask { context in
+            let request = MessageEntity.fetchRequest()
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                Self.visibleMessagePredicate,
+                NSPredicate(format: "normalizedMessageID == %@",
+                            JWZThreader.normalizeIdentifier(item.messageID))
+            ])
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "date", ascending: false),
+                NSSortDescriptor(key: "mailboxID", ascending: true)
+            ]
+            let candidates = try context.fetch(request).compactMap { $0.toModel() }
+                .filter { !$0.isCalendarRSVP }
+            let account = item.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !account.isEmpty {
+                return candidates.first {
+                    ActionItem.scopedID(for: $0) == item.id
+                }
+            }
+            guard Set(candidates.map { ActionItem.scopedID(for: $0) }).count <= 1 else {
+                throw ActionItemSourceError.ambiguousAccount
+            }
+            return candidates.first
+        }
+    }
+
     internal func fetchActionItemIDs() async -> Set<String> {
         Set(await fetchActionItems().map(\.id))
     }

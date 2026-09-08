@@ -39,15 +39,12 @@ internal struct GraphSceneLookupIndex {
     }
 
     /// Returns nodes that may participate in direct visual manipulation.
-    /// Confirmed folders are intentionally included here without changing the
-    /// semantic conversation-only eligibility used by organization actions.
+    /// Moving a mark never grants it conversation-mutation eligibility.
     internal func visualDragNodeIDs(from nodeIDs: Set<String>) -> Set<String> {
         nodeIDs.filter { nodeID in
-            if threadByID[nodeID] != nil || messageByID[nodeID] != nil {
-                return true
-            }
-            guard let grouping = groupingByID[nodeID] else { return false }
-            return grouping.kind == .folder && grouping.sourceFolderID != nil
+            nodeID == GraphCenter.you.id || threadByID[nodeID] != nil
+                || messageByID[nodeID] != nil || groupingByID[nodeID] != nil
+                || remainingBranchByID[nodeID] != nil
         }
     }
 }
@@ -75,6 +72,7 @@ internal struct ObsidianGraphSceneWorkMetrics: Equatable {
     internal var dragSimulationStepCount = 0
     internal var dragCollisionCheckCount = 0
     internal var accessibilityRefreshCount = 0
+    internal var dragFrameIntervals: [TimeInterval] = []
 }
 #endif
 
@@ -217,6 +215,7 @@ internal final class ObsidianGraphScene: SKScene {
     private var activeDragReactiveNodeIDs: Set<String> = []
     private var localReturningNodeOrigins: [String: CGPoint] = [:]
     private var dragFrameNeedsRender = false
+    private var lastDragFrameTime: TimeInterval?
     private var activeFolderDropTarget: GraphFolderDropTarget?
     private var activeDropItemCount = 0
     private var activeDropHadVisibleHighlight = false
@@ -391,15 +390,22 @@ internal final class ObsidianGraphScene: SKScene {
         if isDragging {
 #if DEBUG
             workMetrics.dragSimulationStepCount += 1
+            if let lastDragFrameTime, currentTime > lastDragFrameTime,
+               workMetrics.dragFrameIntervals.count < 3_600 {
+                workMetrics.dragFrameIntervals.append(currentTime - lastDragFrameTime)
+            }
 #endif
+            lastDragFrameTime = currentTime
             let changedNodeIDs = simulator.stepDragging(
                 deltaTime: min(max(currentTime - previousTime, 1.0 / 240.0), 1.0 / 20.0),
-                reduceMotion: reduceMotion
+                reduceMotion: reduceMotion,
+                zoomScale: currentZoomScale,
+                nodeScale: displayConfig.nodeSize
             )
 #if DEBUG
             workMetrics.dragCollisionCheckCount += simulator.lastDragCollisionCheckCount
 #endif
-            activeDragReactiveNodeIDs.formUnion(changedNodeIDs)
+            activeDragReactiveNodeIDs = changedNodeIDs
             if dragFrameNeedsRender || !changedNodeIDs.isEmpty {
                 renderDragFrame()
                 dragFrameNeedsRender = false
@@ -410,7 +416,7 @@ internal final class ObsidianGraphScene: SKScene {
                 returningNodeOrigins: localReturningNodeOrigins,
                 reduceMotion: reduceMotion
             )
-            activeDragReactiveNodeIDs.formUnion(changedNodeIDs)
+            activeDragReactiveNodeIDs = changedNodeIDs
             if !changedNodeIDs.isEmpty {
                 renderDragFrame()
             }
@@ -418,7 +424,7 @@ internal final class ObsidianGraphScene: SKScene {
                 simulator.restorePositions(localReturningNodeOrigins)
                 localReturningNodeOrigins = [:]
                 activeDragReactiveNodeIDs = []
-                wakeLayout()
+                finishDragSettling()
                 renderGraph()
             }
         } else if shouldSimulate {
@@ -538,9 +544,6 @@ internal final class ObsidianGraphScene: SKScene {
         }
 
         if let hitNodeID {
-            if expandRemainingBranchIfPresent(nodeID: hitNodeID) {
-                return
-            }
             if event.clickCount >= 2,
                graphLookupIndex.threadByID[hitNodeID] != nil,
                let threadID = threadID(forGraphNodeID: hitNodeID) {
@@ -548,7 +551,7 @@ internal final class ObsidianGraphScene: SKScene {
                 graphNodesByID[hitNodeID]?.runWaterPulse(reduceMotion: reduceMotion)
                 return
             }
-            pointerAnchorNodeID = hitNodeID == GraphCenter.you.id ? nil : hitNodeID
+            pointerAnchorNodeID = hitNodeID
         }
 
         if event.clickCount >= 2 {
@@ -606,6 +609,7 @@ internal final class ObsidianGraphScene: SKScene {
                 activeDraggedNodeIDs = Set(plan.nodeIDs)
                 activeDragRawThreadIDs = rawThreadIDs(forGraphNodeIDs: activeDraggedNodeIDs)
                 activeDragReactiveNodeIDs = []
+                lastDragFrameTime = nil
                 localReturningNodeOrigins = [:]
                 simulator.beginDragging(
                     nodeIDs: activeDraggedNodeIDs,
@@ -613,7 +617,9 @@ internal final class ObsidianGraphScene: SKScene {
                         forDraggedGraphNodeIDs: activeDraggedNodeIDs
                     )
                 )
+                applyVisualState()
             }
+            NSCursor.closedHand.set()
             simulator.drag(nodePositions: plan.positions(byApplying: delta))
             let target = activeDragRawThreadIDs.isEmpty
                 ? nil
@@ -643,7 +649,9 @@ internal final class ObsidianGraphScene: SKScene {
                 simulator.cancelDragging()
             }
         case .select(let nodeID, let intent):
-            publishSelection(nodeID: nodeID, intent: intent)
+            if !expandRemainingBranchIfPresent(nodeID: nodeID) {
+                publishSelection(nodeID: nodeID, intent: intent)
+            }
         case .clearSelection:
             publishSelection(nodeID: nil, intent: .replace)
         case .finishPan:
@@ -660,7 +668,15 @@ internal final class ObsidianGraphScene: SKScene {
                 simulator.cancelDragging()
                 break
             }
-            dragReturningNodeOrigins = simulator.lastDragReactiveNodeOrigins
+            // Resolve the final pointer sample before releasing, including a
+            // mouse-up that arrived between display frames. Keep clearance
+            // around the placed nodes instead of undoing the user's layout.
+            simulator.drag(nodePositions: plan.positions(byApplying: delta))
+            simulator.stepDragging(deltaTime: 1.0 / 60.0,
+                                   reduceMotion: reduceMotion,
+                                   zoomScale: currentZoomScale,
+                                   nodeScale: displayConfig.nodeSize)
+            dragReturningNodeOrigins = simulator.lastDragSettlingPositions
             simulator.endDragging(nodePositions: plan.positions(byApplying: delta))
             let draggedIDs = activeDraggedNodeIDs.isEmpty ? Set(nodeIDs) : activeDraggedNodeIDs
             let rawThreadIDs = activeDragRawThreadIDs.isEmpty
@@ -690,7 +706,7 @@ internal final class ObsidianGraphScene: SKScene {
         if hadActiveDrag {
             if dragReturningNodeOrigins.isEmpty {
                 activeDragReactiveNodeIDs = []
-                wakeLayout()
+                finishDragSettling()
             } else {
                 beginLocalSettling(returningNodeOrigins: dragReturningNodeOrigins)
             }
@@ -705,8 +721,11 @@ internal final class ObsidianGraphScene: SKScene {
         setActiveFolderDropTarget(nil)
         resetDropLifecycle()
         if hadActiveDrag {
+            applyVisualState()
             renderGraph()
+            onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
         }
+        NSCursor.arrow.set()
         publishFrameRatePreferenceIfNeeded()
     }
 
@@ -873,11 +892,18 @@ internal final class ObsidianGraphScene: SKScene {
             return
         }
         let location = event.location(in: self)
-        applyHoverCandidate(hitTestNodeID(at: location), at: location)
+        let hitNodeID = hitTestNodeID(at: location)
+        if hitNodeID != nil, pruneMode == .idle {
+            NSCursor.openHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+        applyHoverCandidate(hitNodeID, at: location)
     }
 
     override func mouseExited(with event: NSEvent) {
         clearHover()
+        if activeDraggedNodeIDs.isEmpty { NSCursor.arrow.set() }
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -1097,7 +1123,8 @@ internal final class ObsidianGraphScene: SKScene {
         let focusedNodeIDs = interactionFocusedNodeIDs
         let neighbors = Set(focusedNodeIDs.flatMap { neighborIDsByNodeID[$0] ?? [] })
         for (id, node) in graphNodesByID {
-            let isSelected = selectedGraphNodeIDs.contains(id)
+            let isSelected = selectedGraphNodeIDs.contains(id) || activeDraggedNodeIDs.contains(id)
+            node.zPosition = activeDraggedNodeIDs.contains(id) ? 20 : 2
             let isHovered = hoveredGraphNodeID == id || activeFolderDropTarget?.graphNodeID == id
             let isNeighbor = neighbors.contains(id)
             let isFiltered = !filteredNodeIDs.isEmpty && !filteredNodeIDs.contains(id)
@@ -1341,6 +1368,7 @@ internal final class ObsidianGraphScene: SKScene {
         if let activeFolderDropTarget {
             return activeDraggedNodeIDs.union([activeFolderDropTarget.graphNodeID])
         }
+        if !activeDraggedNodeIDs.isEmpty { return activeDraggedNodeIDs }
         return hoveredGraphNodeID.map { Set([$0]) } ?? selectedGraphNodeIDs
     }
 
@@ -1523,14 +1551,12 @@ internal final class ObsidianGraphScene: SKScene {
                                    anchoredNodeID: String?) -> Set<String> {
         let candidates = graphLookupIndex.visualDragNodeIDs(from: nodeIDs)
         guard let anchoredNodeID,
-              let grouping = graphLookupIndex.groupingByID[anchoredNodeID],
-              grouping.kind == .folder,
-              grouping.sourceFolderID != nil else {
-            return candidates.filter { graphLookupIndex.groupingByID[$0]?.kind != .folder }
+              graphLookupIndex.eligibleDragNodeIDs(from: [anchoredNodeID]).isEmpty else {
+            return graphLookupIndex.eligibleDragNodeIDs(from: candidates)
         }
-        // A folder drag is visual-only. It takes precedence over any stale
-        // mixed selection so its conversations cannot become a merge payload.
-        return [anchoredNodeID]
+        // Folders, suggestions, You, and paging marks move independently of
+        // any stale conversation selection and never become a merge payload.
+        return graphLookupIndex.visualDragNodeIDs(from: [anchoredNodeID])
     }
 
     private func rawThreadIDs(forGraphNodeIDs nodeIDs: Set<String>) -> [String] {
@@ -1582,6 +1608,9 @@ internal final class ObsidianGraphScene: SKScene {
         let returningNodeOrigins = simulator.lastDragReactiveNodeOrigins
         cancelDropLifecycleIfNeeded()
         pointerStateMachine.cancel()
+        if let activeDragPlan {
+            simulator.restorePositions(activeDragPlan.initialPositions)
+        }
         simulator.cancelDragging()
         pointerAnchorNodeID = nil
         activeDragPlan = nil
@@ -1593,21 +1622,26 @@ internal final class ObsidianGraphScene: SKScene {
         hideLasso()
         setActiveFolderDropTarget(nil)
         resetDropLifecycle()
+        NSCursor.arrow.set()
         if hadActiveDrag {
             if returningNodeOrigins.isEmpty {
                 activeDragReactiveNodeIDs = []
-                wakeLayout()
+                finishDragSettling()
             } else {
                 beginLocalSettling(returningNodeOrigins: returningNodeOrigins)
             }
+            applyVisualState()
             renderGraph()
+            onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
         } else {
             let hadLocalSettle = !localReturningNodeOrigins.isEmpty
             simulator.restorePositions(localReturningNodeOrigins)
             activeDragReactiveNodeIDs = []
             localReturningNodeOrigins = [:]
             if hadLocalSettle {
+                finishDragSettling()
                 renderGraph()
+                onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
             }
         }
     }
@@ -1654,7 +1688,7 @@ internal final class ObsidianGraphScene: SKScene {
         }
         guard !localReturningNodeOrigins.isEmpty else {
             activeDragReactiveNodeIDs = []
-            wakeLayout()
+            finishDragSettling()
             return
         }
         settlingFrames = 0
@@ -1662,6 +1696,15 @@ internal final class ObsidianGraphScene: SKScene {
         layoutIsSettled = false
         positionsReportedAfterSettling = false
         publishFrameRatePreferenceIfNeeded()
+    }
+
+    /// A manual placement is already a layout decision. Resume the global
+    /// solver only for a data/force change, keeping folders and the placement
+    /// steady while the small local response settles and is persisted.
+    private func finishDragSettling() {
+        simulator.stopMotion()
+        layoutIsSettled = true
+        positionsReportedAfterSettling = false
     }
 
     private func updateSettlingState() {

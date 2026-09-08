@@ -10,6 +10,7 @@ internal enum AccessibilityID {
     internal static let actionItemsView = "bettermail.action-items.view"
     internal static let actionItemsShowDoneButton = "bettermail.action-items.show-done"
     internal static let actionItemsList = "bettermail.action-items.list"
+    internal static let actionItemsSearchField = "bettermail.action-items.search"
     internal static let actionItemsEmptyViewCanvasButton = "bettermail.action-items.empty.view-canvas"
 
     internal static let threadList = "bettermail.thread-list"

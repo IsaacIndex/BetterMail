@@ -2423,14 +2423,13 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
         XCTAssertFalse(simulator.nodesByID[draggedNodeID]?.isPinned ?? true)
     }
 
-    func test_drag_youNode_remainsPinnedAtSceneMidpoint() throws {
+    func test_drag_youNode_keepsUserPositionAcrossSettlingAndRebuild() throws {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
                                    now: Date(timeIntervalSince1970: 10_000))
         let youID = GraphCenter.you.id
         let threadID = GraphData.threadNodeID(for: "root")
         var simulator = ObsidianGraphForceSimulator()
         simulator.reset(data: graph, size: CGSize(width: 700, height: 480))
-        let center = CGPoint(x: 350, y: 240)
         let threadStart = try XCTUnwrap(simulator.nodesByID[threadID]?.position)
         let target = CGPoint(x: 190, y: 150)
         let config = ObsidianGraphForceConfig(centerStrength: 0,
@@ -2447,14 +2446,14 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
             simulator.step(deltaTime: 1.0 / 60.0, reduceMotion: false, config: config)
         }
 
-        assertPointsEqual(simulator.nodesByID[youID]?.position, center)
+        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
         XCTAssertGreaterThan(pointDistance(threadStart,
                                            simulator.nodesByID[threadID]?.position),
                              0.001)
 
         simulator.endDragging(nodeID: youID, at: target)
 
-        assertPointsEqual(simulator.nodesByID[youID]?.position, center)
+        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
         XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
 
         simulator.reset(data: graph,
@@ -2464,7 +2463,7 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
                         },
                         config: config)
 
-        assertPointsEqual(simulator.nodesByID[youID]?.position, center)
+        assertPointsEqual(simulator.nodesByID[youID]?.position, target)
         XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
 
         simulator.reset(data: graph,
@@ -2473,7 +2472,7 @@ final class ObsidianGraphForceSimulatorTests: XCTestCase {
                         config: config)
 
         assertPointsEqual(simulator.nodesByID[youID]?.position,
-                          CGPoint(x: 450, y: 300))
+                          CGPoint(x: target.x + 100, y: target.y + 60))
         XCTAssertTrue(simulator.nodesByID[youID]?.isPinned ?? false)
     }
 
