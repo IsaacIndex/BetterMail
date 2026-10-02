@@ -19,6 +19,7 @@ internal struct ObsidianGraphControls: View {
     @State private var showsForces = false
     @State private var showsLayout = false
     @State private var showsResetLayoutConfirmation = false
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -58,7 +59,8 @@ internal struct ObsidianGraphControls: View {
                 .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
         )
         .accessibilityIdentifier(AccessibilityID.graphControls)
-        .animation(.easeOut(duration: 0.16), value: isCollapsed)
+        .animation(settings.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+                   ? nil : .easeOut(duration: 0.16), value: isCollapsed)
         .confirmationDialog(
             NSLocalizedString("organizer.layout.reset.confirm.title",
                               comment: "Confirm active organizer layout reset"),

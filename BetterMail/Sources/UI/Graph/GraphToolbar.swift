@@ -86,7 +86,7 @@ internal struct GraphToolbar: View {
                 plainButton(systemImage: "scope",
                             title: NSLocalizedString("graph.toolbar.recenter", comment: "Graph recenter"),
                             accessibilityID: AccessibilityID.graphToolbarRecenter,
-                            action: viewModel.resetViewport)
+                            action: viewModel.requestRecenter)
                 plainButton(systemImage: "slider.horizontal.3",
                             title: NSLocalizedString("graph.toolbar.settings", comment: "Graph settings"),
                             accessibilityID: AccessibilityID.graphToolbarSettings,

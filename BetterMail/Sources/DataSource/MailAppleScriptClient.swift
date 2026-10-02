@@ -732,7 +732,8 @@ internal actor MailAppleScriptClient: GraphSnipMailMoving {
                   set _actualInternalID to (id of _messageValue as string)
                 end try
                 try
-                  set _actualMessageID to (message id of _messageValue as string)
+                  set _candidateMessageID to (message id of _messageValue as string)
+                  if _candidateMessageID is not "" then set _actualMessageID to _candidateMessageID
                 end try
                 try
                   set _subject to (subject of _messageValue as string)

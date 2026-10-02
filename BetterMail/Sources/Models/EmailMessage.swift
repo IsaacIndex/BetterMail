@@ -157,6 +157,53 @@ internal nonisolated struct EmailMessage: Identifiable, Hashable, Sendable {
                      embeddedSource: embeddedSource)
     }
 
+    internal func assigning(isUnread: Bool) -> EmailMessage {
+        EmailMessage(id: id,
+                     messageID: messageID,
+                     internalMailID: internalMailID,
+                     mailboxID: mailboxID,
+                     accountName: accountName,
+                     subject: subject,
+                     from: from,
+                     to: to,
+                     date: date,
+                     snippet: snippet,
+                     isUnread: isUnread,
+                     isCalendarRSVP: isCalendarRSVP,
+                     calendarMessageKind: calendarMessageKind,
+                     inReplyTo: inReplyTo,
+                     references: references,
+                     threadID: threadID,
+                     rawSourceLocation: rawSourceLocation,
+                     embeddedMessages: embeddedMessages,
+                     embeddedSource: embeddedSource)
+    }
+
+    internal func assigningSourceIdentity(messageID: String,
+                                           internalMailID: String?,
+                                           mailboxID: String,
+                                           accountName: String) -> EmailMessage {
+        EmailMessage(id: id,
+                     messageID: messageID,
+                     internalMailID: internalMailID,
+                     mailboxID: mailboxID,
+                     accountName: accountName,
+                     subject: subject,
+                     from: from,
+                     to: to,
+                     date: date,
+                     snippet: snippet,
+                     isUnread: isUnread,
+                     isCalendarRSVP: isCalendarRSVP,
+                     calendarMessageKind: calendarMessageKind,
+                     inReplyTo: inReplyTo,
+                     references: references,
+                     threadID: threadID,
+                     rawSourceLocation: rawSourceLocation,
+                     embeddedMessages: embeddedMessages,
+                     embeddedSource: embeddedSource)
+    }
+
     internal func assigning(mailboxID: String, accountName: String) -> EmailMessage {
         EmailMessage(id: id,
                      messageID: messageID,

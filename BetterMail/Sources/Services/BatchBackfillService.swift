@@ -1,6 +1,6 @@
 import Foundation
 
-internal protocol MailMessageFetching: Sendable {
+internal nonisolated protocol MailMessageFetching: Sendable {
     func countMessages(in range: DateInterval, mailbox: String, account: String?) async throws -> Int
     func fetchMessages(in range: DateInterval,
                        limit: Int,
@@ -82,7 +82,7 @@ internal extension MailMessageFetching {
 
 extension MailAppleScriptClient: MailMessageFetching {}
 
-internal protocol BatchBackfillServicing {
+internal nonisolated protocol BatchBackfillServicing {
     func countMessages(in range: DateInterval,
                        mailbox: String,
                        account: String?) async throws -> Int

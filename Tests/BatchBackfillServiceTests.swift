@@ -248,6 +248,82 @@ final class BatchBackfillServiceTests: XCTestCase {
         XCTAssertEqual(coverage.state, .failed)
     }
 
+    func test_FetchDay_ReadStatusOnlyManifestChange_CompletesWithoutHidingCachedMessages() async throws {
+        let calendar = Self.utcCalendar
+        let store = makeStore(name: #function)
+        let day = Self.date(year: 2026, month: 2, day: 10)
+        let timestamp = Self.date(year: 2026, month: 2, day: 10, hour: 8)
+        let read = MessageReference(internalMailID: "internal-read-state",
+                                    messageID: "read-state",
+                                    mailbox: "inbox",
+                                    account: "Work",
+                                    subject: "Read state changed",
+                                    date: timestamp,
+                                    isUnread: false)
+        let unread = MessageReference(internalMailID: read.internalMailID,
+                                      messageID: read.messageID,
+                                      mailbox: read.mailbox,
+                                      account: read.account,
+                                      subject: read.subject,
+                                      date: read.date,
+                                      isUnread: true)
+        try await store.upsert(messages: [Self.message(from: read)])
+        let client = ExhaustiveMailClient(references: [],
+                                          manifestSequence: [[read], [unread], [read], [unread]])
+        let coordinator = DayFetchCoordinator(client: client, store: store, calendar: calendar)
+
+        let result = try await coordinator.fetchDay(containing: day,
+                                                    scope: Self.inboxScope,
+                                                    mode: .refresh,
+                                                    requestBatchSize: 4,
+                                                    snippetLineLimit: 8,
+                                                    referenceDate: Self.date(year: 2026, month: 2, day: 11),
+                                                    progressHandler: { _ in })
+
+        let visibleMessages = try await store.fetchMessages()
+        let manifestRanges = await client.manifestRanges()
+        let payloadBatchSizes = await client.payloadBatchSizes()
+        XCTAssertEqual(visibleMessages.map(\.messageID), [read.messageID])
+        XCTAssertTrue(try XCTUnwrap(visibleMessages.first).isUnread)
+        XCTAssertEqual(result.absentCount, 0)
+        XCTAssertEqual(result.downloadedCount, 0)
+        XCTAssertEqual(result.coverage.state, .verified)
+        XCTAssertEqual(manifestRanges.count, 2)
+        XCTAssertEqual(payloadBatchSizes, [])
+    }
+
+    func test_FetchDay_PayloadMailIDChangedWithSameMessageID_CompletesWithoutHiding() async throws {
+        let calendar = Self.utcCalendar
+        let store = makeStore(name: #function)
+        let day = Self.date(year: 2026, month: 2, day: 10)
+        let timestamp = Self.date(year: 2026, month: 2, day: 10, hour: 9)
+        let reference = Self.reference(id: "mail-id-drift", date: timestamp)
+        let client = ExhaustiveMailClient(
+            references: [reference],
+            returnedInternalIDOverrides: [reference.messageID: "replacement-internal-id"],
+            returnedMailboxOverrides: [reference.messageID: "Inbox/Actual"]
+        )
+        let coordinator = DayFetchCoordinator(client: client, store: store, calendar: calendar)
+
+        let result = try await coordinator.fetchDay(containing: day,
+                                                    scope: Self.inboxScope,
+                                                    mode: .refresh,
+                                                    requestBatchSize: 4,
+                                                    snippetLineLimit: 8,
+                                                    referenceDate: Self.date(year: 2026, month: 2, day: 11),
+                                                    progressHandler: { _ in })
+
+        let visibleMessages = try await store.fetchMessages()
+        XCTAssertEqual(visibleMessages.map(\.messageID), [reference.messageID])
+        XCTAssertEqual(try XCTUnwrap(visibleMessages.first).internalMailID, reference.internalMailID)
+        XCTAssertEqual(try XCTUnwrap(visibleMessages.first).mailboxID, reference.mailbox)
+        XCTAssertEqual(result.downloadedCount, 1)
+        XCTAssertEqual(result.absentCount, 0)
+        XCTAssertEqual(result.coverage.state, .verified)
+        let payloadBatchSizes = await client.payloadBatchSizes()
+        XCTAssertEqual(payloadBatchSizes, [1])
+    }
+
     func test_PartialPayloadFailure_DoesNotChangeExistingAbsenceFlags() async throws {
         let calendar = Self.utcCalendar
         let store = makeStore(name: #function)
@@ -564,6 +640,7 @@ final class BatchBackfillServiceTests: XCTestCase {
         XCTAssertTrue(script.contains("set _sourceMailbox to my resolveMailboxByPath(_wantedAccountName, _wantedMailboxPath)"))
         XCTAssertTrue(script.contains("if ((count of _matches) is 0) and (_wantedMessageID is not \"\") then"))
         XCTAssertTrue(script.contains("set _alternateMessageID to \"<\" & _wantedMessageID & \">\""))
+        XCTAssertTrue(script.contains("if _candidateMessageID is not \"\" then set _actualMessageID to _candidateMessageID"))
         XCTAssertFalse(script.contains("set _mbx to my resolveMailboxByPath"))
         XCTAssertFalse(script.contains("error \"Mailbox not found for path:"))
         XCTAssertTrue(compiledScript.compileAndReturnError(&compilationError),
@@ -652,7 +729,7 @@ final class BatchBackfillServiceTests: XCTestCase {
                          isUnread: false)
     }
 
-    fileprivate static func message(from reference: MessageReference) -> EmailMessage {
+    fileprivate nonisolated static func message(from reference: MessageReference) -> EmailMessage {
         EmailMessage(messageID: reference.messageID,
                      internalMailID: reference.internalMailID,
                      mailboxID: reference.mailbox,
@@ -674,6 +751,8 @@ private actor ExhaustiveMailClient: MailMessageFetching {
     private var manifestSequence: [[MessageReference]]
     private var manifestIndex = 0
     private let droppedPayloadIDs: Set<String>
+    private let returnedInternalIDOverrides: [String: String]
+    private let returnedMailboxOverrides: [String: String]
     private let operationDelayNanoseconds: UInt64
     private var recordedBatchSizes: [Int] = []
     private var recordedProfiles: [MailFetchProfile] = []
@@ -684,10 +763,14 @@ private actor ExhaustiveMailClient: MailMessageFetching {
     init(references: [MessageReference],
          manifestSequence: [[MessageReference]] = [],
          droppedPayloadIDs: Set<String> = [],
+         returnedInternalIDOverrides: [String: String] = [:],
+         returnedMailboxOverrides: [String: String] = [:],
          operationDelayNanoseconds: UInt64 = 0) {
         self.references = references
         self.manifestSequence = manifestSequence
         self.droppedPayloadIDs = droppedPayloadIDs
+        self.returnedInternalIDOverrides = returnedInternalIDOverrides
+        self.returnedMailboxOverrides = returnedMailboxOverrides
         self.operationDelayNanoseconds = operationDelayNanoseconds
     }
 
@@ -731,7 +814,18 @@ private actor ExhaustiveMailClient: MailMessageFetching {
         }
         return references
             .filter { !droppedPayloadIDs.contains($0.messageID) }
-            .map(BatchBackfillServiceTests.message(from:))
+            .map { reference in
+                let returnedReference = MessageReference(
+                    internalMailID: returnedInternalIDOverrides[reference.messageID] ?? reference.internalMailID,
+                    messageID: reference.messageID,
+                    mailbox: returnedMailboxOverrides[reference.messageID] ?? reference.mailbox,
+                    account: reference.account,
+                    subject: reference.subject,
+                    date: reference.date,
+                    isUnread: reference.isUnread
+                )
+                return BatchBackfillServiceTests.message(from: returnedReference)
+            }
     }
 
     func resolveDayFetchScopes(mailbox: String,

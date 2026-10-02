@@ -86,6 +86,7 @@ xcodebuild \
   -project "$ROOT_DIR/BetterMail.xcodeproj" \
   -scheme "$APP_NAME" \
   -configuration Debug \
+  -sdk macosx \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   CODE_SIGN_STYLE=Manual \

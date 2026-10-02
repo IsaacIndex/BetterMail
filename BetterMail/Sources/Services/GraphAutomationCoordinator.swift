@@ -367,6 +367,27 @@ internal final class GraphAutomationCoordinator: ObservableObject {
         }
     }
 
+    internal func reloadPersistedState(account: String?) async {
+        refreshID = UUID()
+        evaluationTask?.cancel()
+        evaluationTask = nil
+        isEvaluating = false
+        do {
+            let persisted = try await store.fetchGraphAutomationProposals()
+            if let account {
+                proposals = persisted.filter {
+                    $0.source.accountName.caseInsensitiveCompare(account) == .orderedSame
+                }
+            } else {
+                proposals = persisted
+            }
+            didLoadPersistedState = true
+            sortPublishedProposals()
+        } catch {
+            Log.app.error("Failed to reload account-scoped automation state: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
     private func evaluate(snapshot: GraphAutomationSnapshot,
                           scansCurrentMail: Bool,
                           refreshID requestedRefreshID: UUID) async {

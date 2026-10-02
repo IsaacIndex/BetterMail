@@ -130,7 +130,7 @@ internal struct GraphCanvasView: View {
                                                           comment: "Accessibility label for graph canvas"))
                 VStack {
                     HStack(alignment: .top) {
-                        GraphLegend(isExpanded: $isLegendExpanded)
+                        GraphLegend(isExpanded: $isLegendExpanded, reduceMotion: reduceMotion)
                             .padding(.top, 16)
                             .padding(.leading, 18)
                         Spacer(minLength: 0)
@@ -149,7 +149,7 @@ internal struct GraphCanvasView: View {
                 if let hoverItem = graphViewModel.hoverItem {
                     GraphHoverCard(item: hoverItem, textScale: displaySettings.textScale)
                         .position(hoverPosition(for: hoverItem, in: proxy.size))
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
                         .allowsHitTesting(false)
                         .zIndex(2)
                 }
@@ -371,7 +371,7 @@ internal struct GraphCanvasView: View {
         case .zoomOut:
             graphViewModel.zoomOut()
         case .reset:
-            graphViewModel.resetViewport()
+            graphViewModel.requestRecenter()
         }
         return .handled
     }
@@ -1205,6 +1205,7 @@ private struct GraphGroupingActionBar: View {
 
 private struct GraphLegend: View {
     @Binding fileprivate var isExpanded: Bool
+    fileprivate let reduceMotion: Bool
 
     fileprivate var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
@@ -1346,7 +1347,7 @@ private struct GraphLegend: View {
                 .stroke(DesignTokens.Graph.AppTheme.line, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 8)
-        .animation(.easeInOut(duration: 0.18), value: isExpanded)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isExpanded)
         .accessibilityIdentifier("graph.legend")
     }
 

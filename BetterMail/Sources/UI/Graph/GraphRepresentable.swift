@@ -141,7 +141,7 @@ internal struct GraphRepresentable: NSViewRepresentable {
             graphViewModel.recordSceneNodePositions(positions, isSettled: true)
         }
         scene.onFrameRatePreferenceChanged = { [weak nsView] framesPerSecond in
-            nsView?.preferredFramesPerSecond = framesPerSecond
+            nsView?.applyGraphFrameRatePreference(framesPerSecond)
         }
         let selectedGraphNodeID = graphViewModel.selectedGroupingID
             ?? graphViewModel.selectedGraphNodeID(for: selectedNodeID)
@@ -171,7 +171,16 @@ internal struct GraphRepresentable: NSViewRepresentable {
                         partiallyStagedSnipGroupingIDs: graphViewModel.partiallyStagedSnipGroupingIDs,
                         snipVisualTransition: graphViewModel.snipVisualTransition,
                         pruneAnimationRequest: graphViewModel.pruneAnimationRequest)
-        nsView.preferredFramesPerSecond = scene.preferredFramesPerSecond
+        nsView.applyGraphFrameRatePreference(scene.preferredFramesPerSecond)
+        if let requestID = graphViewModel.recenterRequestID,
+           requestID != context.coordinator.lastRecenterRequestID {
+            context.coordinator.lastRecenterRequestID = requestID
+            // Defer viewport publications out of the SwiftUI update pass.
+            DispatchQueue.main.async { [weak coordinator = context.coordinator] in
+                guard coordinator?.lastRecenterRequestID == requestID else { return }
+                coordinator?.scene?.recenterCamera(animated: true)
+            }
+        }
     }
 
     static func dismantleNSView(_ nsView: GraphSKView, coordinator: Coordinator) {
@@ -187,18 +196,43 @@ internal struct GraphRepresentable: NSViewRepresentable {
     internal final class Coordinator {
         internal var parent: GraphRepresentable
         internal var scene: ObsidianGraphScene?
+        internal var lastRecenterRequestID: UUID?
 
         internal init(parent: GraphRepresentable) {
             self.parent = parent
+            lastRecenterRequestID = parent.graphViewModel.recenterRequestID
         }
     }
 }
 
 internal final class GraphSKView: SKView {
+    internal static let maximumInteractiveFramesPerSecond = 120
+
     override var acceptsFirstResponder: Bool { true }
 
     private var activeRailDragPayload: OrganizerRailDragPayload?
     internal private(set) var graphAccessibilityElements: [ObsidianGraphAccessibilityElement] = []
+
+    internal static func resolvedGraphFramesPerSecond(
+        scenePreference: Int,
+        displayMaximum: Int?
+    ) -> Int {
+        let scenePreference = max(1, scenePreference)
+        guard scenePreference >= ObsidianGraphScene.activeFramesPerSecond else {
+            return scenePreference
+        }
+        let displayMaximum = max(scenePreference, displayMaximum ?? scenePreference)
+        return min(displayMaximum, maximumInteractiveFramesPerSecond)
+    }
+
+    internal func applyGraphFrameRatePreference(_ scenePreference: Int) {
+        let displayMaximum = window?.screen?.maximumFramesPerSecond
+            ?? NSScreen.main?.maximumFramesPerSecond
+        preferredFramesPerSecond = Self.resolvedGraphFramesPerSecond(
+            scenePreference: scenePreference,
+            displayMaximum: displayMaximum
+        )
+    }
 
     internal func updateGraphAccessibilityElements(
         _ elements: [ObsidianGraphAccessibilityElement]
@@ -226,6 +260,9 @@ internal final class GraphSKView: SKView {
         observeWindowGeometryChanges()
         isPaused = window == nil
         window?.acceptsMouseMovedEvents = true
+        if let graphScene = scene as? ObsidianGraphScene {
+            applyGraphFrameRatePreference(graphScene.preferredFramesPerSecond)
+        }
         (scene as? ObsidianGraphScene)?.refreshRenderedOrganizerSnapshotForWindowState()
         let attachedWindow = window
         DispatchQueue.main.async { [weak self, weak attachedWindow] in
@@ -262,6 +299,9 @@ internal final class GraphSKView: SKView {
     }
 
     @objc private func windowGeometryDidChange(_ notification: Notification) {
+        if let graphScene = scene as? ObsidianGraphScene {
+            applyGraphFrameRatePreference(graphScene.preferredFramesPerSecond)
+        }
         (scene as? ObsidianGraphScene)?.refreshRenderedOrganizerSnapshotForWindowState()
     }
 

@@ -29,7 +29,7 @@ internal enum GraphRelationshipError: LocalizedError {
     }
 }
 
-internal protocol GraphRelationshipProviding {
+internal nonisolated protocol GraphRelationshipProviding {
     func relationship(for request: GraphAutomationRelationshipRequest) async throws -> GraphAutomationRelationshipSignal
 }
 

@@ -136,7 +136,7 @@ internal struct ThreadListView: View {
                     selection: selection,
                     onConfirm: {
                         selectedDayFetch = nil
-                        viewModel.fetchDay(selection.date)
+                        viewModel.fetchDays(in: selection.range, scope: selection.scope)
                     },
                     onCancel: { selectedDayFetch = nil }
                 )
@@ -754,7 +754,8 @@ internal struct ThreadListView: View {
         .popover(isPresented: $isShowingCoverageCalendar, arrowEdge: .bottom) {
             DayCoverageCalendarView(scope: viewModel.activeDayFetchScope,
                                     coverages: viewModel.dayFetchCoverages,
-                                    fetchingDate: viewModel.activeDayFetchDate) { selection in
+                                    fetchingDate: viewModel.activeDayFetchDate,
+                                    isFetchInProgress: viewModel.isAnyRefreshRunning) { selection in
                 isShowingCoverageCalendar = false
                 selectedDayFetch = selection
             }

@@ -90,6 +90,7 @@ internal struct ObsidianGraphForceSimulator {
     private var stationaryNodeIDsDuringDrag: Set<String> = []
     private var dragOriginPositions: [String: CGPoint] = [:]
     private var dragOriginGrid: [DragGridCell: [String]] = [:]
+    private var dragLinkedSourcesByNodeID: [String: [String]] = [:]
     private var maximumDragObstacleRadius: CGFloat = 0
     internal private(set) var lastDragReactiveNodeIDs: Set<String> = []
     internal private(set) var lastDragReactiveNodeOrigins: [String: CGPoint] = [:]
@@ -97,8 +98,11 @@ internal struct ObsidianGraphForceSimulator {
     internal private(set) var lastDragCollisionCheckCount = 0
     private static let dragGridCellSize: CGFloat = 128
     private static let dragClearance: CGFloat = 64
-    private static let dragObstacleMaximumDisplacementPerStep: CGFloat = 14
-    private static let dragObstacleReturnRate: CGFloat = 0.28
+    private static let dragApproachRange: CGFloat = 48
+    private static let dragLinkResponse: CGFloat = 0.30
+    private static let dragLinkMaximumOffset: CGFloat = 48
+    private static let dragObstacleMaximumDisplacementPerStep: CGFloat = 18
+    private static let dragObstacleReturnRate: CGFloat = 0.34
     private static let interGroupRepelMultiplier: CGFloat = 3.2
     private static let interGroupRepelRangeMultiplier: CGFloat = 1.45
     private static let chronologyRadiusMultiplier: CGFloat = 1.8
@@ -162,6 +166,7 @@ internal struct ObsidianGraphForceSimulator {
         stationaryNodeIDsDuringDrag = []
         dragOriginPositions = [:]
         dragOriginGrid = [:]
+        dragLinkedSourcesByNodeID = [:]
         maximumDragObstacleRadius = 0
         lastDragReactiveNodeIDs = []
         lastDragReactiveNodeOrigins = [:]
@@ -207,16 +212,32 @@ internal struct ObsidianGraphForceSimulator {
         lastDragSettlingPositions = [:]
         lastDragCollisionCheckCount = 0
         dragOriginGrid = [:]
+        dragLinkedSourcesByNodeID = [:]
         maximumDragObstacleRadius = 0
         // Origins are stable for the whole gesture. Build this index once;
         // each frame visits only cells around the dragged sources.
-        for node in nodesByID.values where node.kind != .folderGroup
-            && node.kind != .ghostGroup
+        for node in nodesByID.values where !node.isPinned
             && !draggedNodeIDs.contains(node.id)
             && !stationaryNodeIDsDuringDrag.contains(node.id) {
             dragOriginGrid[Self.dragGridCell(for: node.position), default: []].append(node.id)
             maximumDragObstacleRadius = max(maximumDragObstacleRadius, node.radius)
         }
+        // Cache only edges crossing the grabbed cohort. This gives connected
+        // neighbors some elastic give without walking the graph every frame
+        // or translating an entire branch rigidly with the pointer.
+        var linkedSources: [String: Set<String>] = [:]
+        for edge in edges {
+            let sourceIsDragged = draggedNodeIDs.contains(edge.sourceID)
+            let targetIsDragged = draggedNodeIDs.contains(edge.targetID)
+            guard sourceIsDragged != targetIsDragged else { continue }
+            let neighborID = sourceIsDragged ? edge.targetID : edge.sourceID
+            let sourceID = sourceIsDragged ? edge.sourceID : edge.targetID
+            guard let neighbor = nodesByID[neighborID],
+                  !neighbor.isPinned,
+                  !stationaryNodeIDsDuringDrag.contains(neighborID) else { continue }
+            linkedSources[neighborID, default: []].insert(sourceID)
+        }
+        dragLinkedSourcesByNodeID = linkedSources.mapValues { $0.sorted() }
         for stationaryNodeID in stationaryNodeIDsDuringDrag {
             nodesByID[stationaryNodeID]?.isPinned = true
             nodesByID[stationaryNodeID]?.velocity = .zero
@@ -271,7 +292,10 @@ internal struct ObsidianGraphForceSimulator {
         var sourcesByCandidateID: [String: [String]] = [:]
         for sourceID in draggedNodeIDs.sorted() {
             guard let source = nodesByID[sourceID] else { continue }
-            let reach = (source.radius + maximumDragObstacleRadius) * radiusScale + clearance
+            // Linked targets can shift toward a source from outside its
+            // original clearance envelope. Include that bounded offset.
+            let reach = (source.radius + maximumDragObstacleRadius) * radiusScale
+                + clearance + (Self.dragLinkMaximumOffset + Self.dragApproachRange) * worldPerScreenPoint
             let envelope = CGRect(x: source.position.x - reach,
                                   y: source.position.y - reach,
                                   width: reach * 2,
@@ -283,13 +307,36 @@ internal struct ObsidianGraphForceSimulator {
             }
         }
 
-        let candidateIDs = Set(sourcesByCandidateID.keys).union(lastDragReactiveNodeIDs)
+        let candidateIDs = Set(sourcesByCandidateID.keys)
+            .union(dragLinkedSourcesByNodeID.keys)
+            .union(lastDragReactiveNodeIDs)
         lastDragCollisionCheckCount = 0
         var movedNodeIDs = Set<String>()
         for candidateID in candidateIDs.sorted() {
             guard var obstacle = nodesByID[candidateID],
+                  !obstacle.isPinned,
                   let origin = dragOriginPositions[candidateID] else { continue }
             var target = origin
+            // Average bounded offsets so selecting several linked nodes does
+            // not multiply the pull. Origins make a held pointer converge to
+            // one stable target, with the same visible reach at every zoom.
+            let linkedSourceIDs = dragLinkedSourcesByNodeID[candidateID, default: []]
+            if !linkedSourceIDs.isEmpty {
+                var offset = CGVector.zero
+                for sourceID in linkedSourceIDs {
+                    guard let source = nodesByID[sourceID],
+                          let sourceOrigin = dragOriginPositions[sourceID] else { continue }
+                    let contribution = Self.limited(
+                        CGVector(dx: (source.position.x - sourceOrigin.x) * Self.dragLinkResponse,
+                                 dy: (source.position.y - sourceOrigin.y) * Self.dragLinkResponse),
+                        maximum: Self.dragLinkMaximumOffset * worldPerScreenPoint
+                    )
+                    offset.dx += contribution.dx / CGFloat(linkedSourceIDs.count)
+                    offset.dy += contribution.dy / CGFloat(linkedSourceIDs.count)
+                }
+                target.x += offset.dx
+                target.y += offset.dy
+            }
             // Project the resting position out of the grabbed nodes' personal
             // space. Using the origin avoids jitter from repeated push/return
             // forces at the boundary when the pointer is held still.
@@ -297,12 +344,36 @@ internal struct ObsidianGraphForceSimulator {
                 lastDragCollisionCheckCount += 1
                 guard let source = nodesByID[sourceID] else { continue }
                 let minimumDistance = (source.radius + obstacle.radius) * radiusScale + clearance
+                // Give nearby marks a little room before contact. Smoothstep
+                // starts with zero slope at the edge of the approach zone,
+                // so crossing it does not suddenly kick a stationary node.
+                let distance = hypot(target.x - source.position.x, target.y - source.position.y)
+                let approachRange = Self.dragApproachRange * worldPerScreenPoint
+                let progress = min(1, max(0, 1 - (distance - minimumDistance) / approachRange))
+                let give = 12 * worldPerScreenPoint * progress * progress * (3 - 2 * progress)
+                // Once a mark has yielded, use its visible side of the grabbed
+                // node while overlapping. Projecting only from the old origin
+                // flips the response when the pointer crosses that origin.
+                let visibleDX = obstacle.position.x - source.position.x
+                let visibleDY = obstacle.position.y - source.position.y
+                let visibleDistance = hypot(visibleDX, visibleDY)
+                if distance < minimumDistance,
+                   lastDragReactiveNodeIDs.contains(candidateID),
+                   visibleDistance > 0.1 * worldPerScreenPoint {
+                    target = CGPoint(x: source.position.x + visibleDX / visibleDistance * minimumDistance,
+                                     y: source.position.y + visibleDY / visibleDistance * minimumDistance)
+                }
                 let correction = Self.dragCollisionCorrection(from: source,
                                                                targetID: candidateID,
                                                                targetPosition: target,
                                                                minimumDistance: minimumDistance)
                 target.x += correction.dx
                 target.y += correction.dy
+                let correctedDX = target.x - source.position.x
+                let correctedDY = target.y - source.position.y
+                let correctedDistance = max(hypot(correctedDX, correctedDY), 0.001)
+                target.x += correctedDX / correctedDistance * give
+                target.y += correctedDY / correctedDistance * give
             }
 
             let offset = CGVector(dx: target.x - origin.x, dy: target.y - origin.y)
@@ -339,11 +410,13 @@ internal struct ObsidianGraphForceSimulator {
     internal mutating func stepLocalSettling(
         deltaTime: TimeInterval,
         returningNodeOrigins: [String: CGPoint],
-        reduceMotion: Bool = false
+        reduceMotion: Bool = false,
+        zoomScale: CGFloat = 1
     ) -> Set<String> {
         guard !returningNodeOrigins.isEmpty else { return [] }
         let frameScale = min(max(CGFloat(deltaTime) * 60, 0.2), 2)
-        let maximumStep: CGFloat = reduceMotion ? .greatestFiniteMagnitude : 12 * frameScale
+        let worldPerScreenPoint = 1 / max(0.2, min(zoomScale, 5))
+        let maximumStep: CGFloat = reduceMotion ? .greatestFiniteMagnitude : 16 * frameScale * worldPerScreenPoint
         let responseRate = reduceMotion ? 1 : 1 - pow(1 - Self.dragObstacleReturnRate, frameScale)
         var movedNodeIDs = Set<String>()
         for nodeID in returningNodeOrigins.keys.sorted() {

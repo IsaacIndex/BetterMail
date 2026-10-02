@@ -26,6 +26,18 @@ private actor OrganizerDropTestGate {
 }
 
 final class OrganizerDirectManipulationTests: XCTestCase {
+    func test_pan_afterCameraMoves_rebasesWithoutReverseFeedback() {
+        var pointer = OrganizerPointerStateMachine()
+        pointer.begin(at: .zero, hitNodeID: nil, selectedNodeIDs: [], modifiers: [])
+        XCTAssertEqual(pointer.move(to: CGPoint(x: 20, y: 0), zoomScale: 1),
+                       .pan(delta: CGVector(dx: 20, dy: 0)))
+        // Moving the camera left by 20 puts this same pointer back at world 0.
+        pointer.rebasePan(at: .zero)
+        XCTAssertEqual(pointer.move(to: CGPoint(x: 20, y: 0), zoomScale: 1),
+                       .pan(delta: CGVector(dx: 20, dy: 0)))
+        XCTAssertEqual(pointer.end(at: CGPoint(x: 20, y: 0)), .finishPan)
+    }
+
     @MainActor
     func test_dropMetricsCoordinator_suspendedMutation_preservesProducerOrder() async {
         let prefixGate = OrganizerDropTestGate()
@@ -222,6 +234,18 @@ final class OrganizerDirectManipulationTests: XCTestCase {
         XCTAssertEqual(machine.move(to: CGPoint(x: 8, y: 0), zoomScale: 0.5), .none)
         XCTAssertEqual(machine.end(at: CGPoint(x: 8, y: 0)),
                        .select(nodeID: "a", intent: .toggle))
+    }
+
+    func testPointerDefaultThreshold_startsDragAfterThreeScreenPoints() {
+        var machine = OrganizerPointerStateMachine()
+        machine.begin(at: .zero,
+                      hitNodeID: "a",
+                      selectedNodeIDs: ["a"],
+                      modifiers: [])
+
+        XCTAssertEqual(machine.move(to: CGPoint(x: 2.9, y: 0), zoomScale: 1), .none)
+        XCTAssertEqual(machine.move(to: CGPoint(x: 3, y: 0), zoomScale: 1),
+                       .drag(nodeIDs: ["a"], delta: CGVector(dx: 3, dy: 0)))
     }
 
     func testPointerShiftDrag_createsWorldCoordinateLasso() {

@@ -7,6 +7,51 @@ import XCTest
 
 @MainActor
 final class GraphSpatialIntegrationTests: XCTestCase {
+    func test_update_whenGroupLeavesAndReturnsToScope_preservesMembershipAndAnchor() async throws {
+        GraphSpatialSceneBridge.clear()
+        defer { GraphSpatialSceneBridge.clear() }
+        let fileAccessor = IntegrationGraphSpatialFileAccessor()
+        let spatialStore = GraphSpatialStateStore(fileAccessor: fileAccessor,
+                                                  secretProvider: IntegrationGraphSpatialSecretProvider())
+        let suiteName = "GraphHiddenGroup-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let messageStore = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let folder = ThreadFolder(id: "saved", title: "Saved", color: .defaultNewFolder,
+                                  threadIDs: ["root"], parentID: nil)
+        let root = spatialFixtureThread(rootID: "root", messageCount: 1)
+        let scopeID = "mailbox:work|inbox"
+        let groupID = "folder:\(folder.id)"
+        let anchor = CGPoint(x: 420, y: 260)
+        let viewModel = GraphCanvasViewModel(store: messageStore, graphSpatialStore: spatialStore)
+        func update(_ roots: [ThreadNode]) {
+            viewModel.update(roots: roots, searchQuery: "", tagsByNodeID: [:], summariesByNodeID: [:],
+                             folders: [folder], folderMembershipByThreadID: ["root": folder.id],
+                             mailboxScopeID: scopeID)
+        }
+        update([root])
+        await viewModel.awaitSpatialStateLoadForTesting()
+        viewModel.setNodePositions([groupID: anchor])
+        viewModel.selectGrouping(id: groupID)
+        viewModel.flushSpatialStatePersistence()
+        await viewModel.awaitSpatialStatePersistenceForTesting()
+
+        update([])
+        XCTAssertNil(viewModel.data.groupingByID[groupID])
+        XCTAssertNil(viewModel.selectedGroupingID)
+        viewModel.flushSpatialStatePersistence()
+        await viewModel.awaitSpatialStatePersistenceForTesting()
+        let persisted = await spatialStore.load(scopeID: scopeID, sourceNodeIDs: [],
+                                                confirmedGroupIDs: [folder.id])
+        XCTAssertEqual(persisted.confirmedGroupAnchors[folder.id], GraphSpatialPoint(x: 420, y: 260))
+
+        update([root])
+        let restoredGroup = try XCTUnwrap(viewModel.data.groupingByID[groupID])
+        XCTAssertEqual(restoredGroup.rawThreadIDs, ["root"])
+        XCTAssertEqual(viewModel.confirmedGroupAnchors[folder.id], anchor)
+        XCTAssertEqual(folder.threadIDs, ["root"])
+    }
+
     func testViewModel_scenePositionReportsCoalesceUntilSettled_withoutRepublishing() async throws {
         GraphSpatialSceneBridge.clear()
         defer { GraphSpatialSceneBridge.clear() }

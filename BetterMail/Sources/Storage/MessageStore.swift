@@ -7,6 +7,12 @@ internal extension Notification.Name {
     static let dayFetchCoverageDidChange = Notification.Name("MessageStore.dayFetchCoverageDidChange")
 }
 
+internal nonisolated struct AccountCachePruneResult: Equatable, Sendable {
+    internal let removedMessageCount: Int
+    internal let removedActionItemCount: Int
+    internal let removedCoverageCount: Int
+}
+
 internal final class MessageStore {
     internal enum ThreadMessageBoundary {
         case oldest
@@ -184,6 +190,79 @@ internal final class MessageStore {
         }
     }
 
+    /// Enforces a single-account local retention boundary. This removes only
+    /// BetterMail's cached rows; it never modifies Apple Mail messages or accounts.
+    internal func pruneCachedMail(keepingAccount accountName: String) async throws -> AccountCachePruneResult {
+        await initialMigrationTask?.value
+        let retainedAccount = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !retainedAccount.isEmpty else {
+            return AccountCachePruneResult(removedMessageCount: 0,
+                                           removedActionItemCount: 0,
+                                           removedCoverageCount: 0)
+        }
+
+        let result = try await container.performBackgroundTask { context in
+            let excludedMessagePredicate = NSPredicate(
+                format: "accountName == nil OR NOT (accountName ==[c] %@)",
+                retainedAccount
+            )
+            let messageRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+            messageRequest.predicate = excludedMessagePredicate
+            let messages = try context.fetch(messageRequest)
+            for message in messages {
+                context.delete(message)
+            }
+
+            let actionItemRequest: NSFetchRequest<ActionItemEntity> = ActionItemEntity.fetchRequest()
+            actionItemRequest.predicate = excludedMessagePredicate
+            let actionItems = try context.fetch(actionItemRequest)
+            for actionItem in actionItems {
+                context.delete(actionItem)
+            }
+
+            let coverageRequest: NSFetchRequest<DayFetchCoverageEntity> = DayFetchCoverageEntity.fetchRequest()
+            coverageRequest.predicate = NSPredicate(
+                format: "account == nil OR NOT (account ==[c] %@)",
+                retainedAccount
+            )
+            let coverages = try context.fetch(coverageRequest)
+            for coverage in coverages {
+                context.delete(coverage)
+            }
+
+            let automationRequest: NSFetchRequest<GraphAutomationRecordEntity> =
+                GraphAutomationRecordEntity.fetchRequest()
+            let automationRecords = try context.fetch(automationRequest)
+            let decoder = JSONDecoder()
+            for record in automationRecords {
+                guard let proposal = try? decoder.decode(GraphAutomationProposal.self,
+                                                          from: record.payload),
+                      proposal.source.accountName.caseInsensitiveCompare(retainedAccount)
+                        == .orderedSame else {
+                    context.delete(record)
+                    continue
+                }
+            }
+
+            let observationRequest: NSFetchRequest<GraphAutomationObservationEntity> =
+                GraphAutomationObservationEntity.fetchRequest()
+            for observation in try context.fetch(observationRequest) {
+                context.delete(observation)
+            }
+
+            if context.hasChanges {
+                try context.save()
+            }
+            return AccountCachePruneResult(removedMessageCount: messages.count,
+                                           removedActionItemCount: actionItems.count,
+                                           removedCoverageCount: coverages.count)
+        }
+        if result.removedCoverageCount > 0 {
+            NotificationCenter.default.post(name: .dayFetchCoverageDidChange, object: nil)
+        }
+        return result
+    }
+
     internal func fetchMessages(limit: Int? = nil) async throws -> [EmailMessage] {
         try await fetchMessages(since: nil,
                                 limit: limit,
@@ -265,10 +344,16 @@ internal final class MessageStore {
             var initialMessages = try models(for: scopedRequest)
             if !includeThreadIDs.isEmpty {
                 let includedRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-                includedRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                var includedPredicates: [NSPredicate] = [
                     Self.visibleMessagePredicate,
                     NSPredicate(format: "threadID IN %@", Array(includeThreadIDs))
-                ])
+                ]
+                if !trimmedAccount.isEmpty {
+                    includedPredicates.append(NSPredicate(format: "accountName ==[c] %@", trimmedAccount))
+                }
+                includedRequest.predicate = NSCompoundPredicate(
+                    andPredicateWithSubpredicates: includedPredicates
+                )
                 initialMessages.append(contentsOf: try models(for: includedRequest))
             }
             if !includeMessageKeys.isEmpty {
@@ -287,10 +372,18 @@ internal final class MessageStore {
                 }
                 if !identityPredicates.isEmpty {
                     let includedMessageRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-                    includedMessageRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                    var includedMessagePredicates: [NSPredicate] = [
                         Self.visibleMessagePredicate,
                         NSCompoundPredicate(orPredicateWithSubpredicates: identityPredicates)
-                    ])
+                    ]
+                    if !trimmedAccount.isEmpty {
+                        includedMessagePredicates.append(
+                            NSPredicate(format: "accountName ==[c] %@", trimmedAccount)
+                        )
+                    }
+                    includedMessageRequest.predicate = NSCompoundPredicate(
+                        andPredicateWithSubpredicates: includedMessagePredicates
+                    )
                     initialMessages.append(contentsOf: try models(for: includedMessageRequest))
                 }
             }
@@ -2798,15 +2891,23 @@ internal final class MessageStore {
         }
     }
 
-    internal func fetchActionItems() async -> [ActionItem] {
+    internal func fetchActionItems(account: String? = nil) async -> [ActionItem] {
         (try? await container.performBackgroundTask { context -> [ActionItem] in
+            let trimmedAccount = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let request = ActionItemEntity.fetchRequest()
             request.sortDescriptors = [NSSortDescriptor(key: "addedAt", ascending: false)]
+            if !trimmedAccount.isEmpty {
+                request.predicate = NSPredicate(format: "accountName ==[c] %@", trimmedAccount)
+            }
             let entities = try context.fetch(request)
             let messageIDs = entities.map(\.messageID)
             guard !messageIDs.isEmpty else { return [] }
             let messageRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-            messageRequest.predicate = NSPredicate(format: "messageID IN %@", messageIDs)
+            var messagePredicates = [NSPredicate(format: "messageID IN %@", messageIDs)]
+            if !trimmedAccount.isEmpty {
+                messagePredicates.append(NSPredicate(format: "accountName ==[c] %@", trimmedAccount))
+            }
+            messageRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: messagePredicates)
             let storedMessages = try context.fetch(messageRequest)
             let storedMessageIDs = Set(storedMessages.map {
                 JWZThreader.normalizeIdentifier($0.messageID)

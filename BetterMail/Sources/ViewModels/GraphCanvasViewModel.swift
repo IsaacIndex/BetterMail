@@ -169,6 +169,7 @@ internal final class GraphCanvasViewModel: ObservableObject {
     @Published internal var isSettingsPresented = false
     @Published internal private(set) var zoomScale: CGFloat = 1.0
     @Published internal private(set) var panOffset: CGPoint = .zero
+    @Published internal private(set) var recenterRequestID: UUID?
     @Published internal private(set) var sproutingMessageIDs: Set<String> = []
     @Published internal private(set) var archivedThreadIDs: Set<String> = []
     @Published internal private(set) var nodePositions: [String: CGPoint] = [:]
@@ -1409,6 +1410,10 @@ internal final class GraphCanvasViewModel: ObservableObject {
         zoomScale = 1.0
         panOffset = .zero
         scheduleSpatialPersistence()
+    }
+
+    internal func requestRecenter() {
+        recenterRequestID = UUID()
     }
 
     /// Resets only the currently active mailbox scope. The actor-backed store

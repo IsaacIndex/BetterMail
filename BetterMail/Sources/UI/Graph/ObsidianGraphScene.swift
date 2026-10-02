@@ -178,6 +178,7 @@ internal final class ObsidianGraphScene: SKScene {
     private var simulator = ObsidianGraphForceSimulator()
     private var graphNodesByID: [String: ObsidianGraphSceneNode] = [:]
     private var edgeVisualsByID: [String: EdgeVisual] = [:]
+    private var edgesByNodeID: [String: [GraphEdge]] = [:]
     private var neighborIDsByNodeID: [String: Set<String>] = [:]
     private var forceConfig = ObsidianGraphForceConfig.defaults
     private var displayConfig = ObsidianGraphDisplayConfig.defaults
@@ -186,6 +187,9 @@ internal final class ObsidianGraphScene: SKScene {
     private var eligibleSelectedDragNodeIDs: Set<String> = []
     private var isLassoSelectionActive = false
     private var hoveredGraphNodeID: String?
+    private var hoverRevealTime: TimeInterval?
+    private var isHoverCardVisible = false
+    private var viewportNeedsPublish = false
     private var pruneMode: GraphPruneMode = .idle
     private var filteredNodeIDs: Set<String> = []
     private var wateredCounts: [String: Int] = [:]
@@ -275,6 +279,20 @@ internal final class ObsidianGraphScene: SKScene {
         let forceChanged = forceConfig != self.forceConfig
         let displayChanged = displayConfig != self.displayConfig
         let reduceMotionChanged = reduceMotion != self.reduceMotion
+        var nextSelectedNodeIDs = selectedGraphNodeIDs.intersection(data.allNodeIDs)
+        if let selectedGraphNodeID, data.allNodeIDs.contains(selectedGraphNodeID) {
+            nextSelectedNodeIDs.insert(selectedGraphNodeID)
+        }
+        let visualStateChanged = nextSelectedNodeIDs != self.selectedGraphNodeIDs
+            || filteredNodeIDs != self.filteredNodeIDs
+            || pruneMode != self.pruneMode
+            || stagedSnipThreadIDs != self.stagedSnipThreadIDs
+            || fullyStagedSnipGroupingIDs != self.fullyStagedSnipGroupingIDs
+            || partiallyStagedSnipGroupingIDs != self.partiallyStagedSnipGroupingIDs
+            || reduceMotionChanged
+        let viewportChanged = currentZoomScale != GraphViewport.clampedZoom(zoomScale)
+            || cameraNode.position != CGPoint(x: size.width / 2 + panOffset.x,
+                                               y: size.height / 2 + panOffset.y)
         let requestedSpatialConfiguration: GraphSpatialSceneConfiguration?
         if let restoredNodePositions, let restoredGroupAnchors {
             requestedSpatialConfiguration = GraphSpatialSceneConfiguration(
@@ -298,18 +316,11 @@ internal final class ObsidianGraphScene: SKScene {
         if dataChanged {
             graphLookupIndex = GraphSceneLookupIndex(data: data)
         }
-        if dataChanged, hoveredGraphNodeID != nil {
-            hoveredGraphNodeID = nil
-            onHoverItem?(nil)
-        }
+        if dataChanged { clearHover() }
         if dataChanged {
             activeFolderDropTarget = nil
         }
-        self.selectedGraphNodeIDs = selectedGraphNodeIDs.intersection(data.allNodeIDs)
-        if let selectedGraphNodeID,
-           data.allNodeIDs.contains(selectedGraphNodeID) {
-            self.selectedGraphNodeIDs.insert(selectedGraphNodeID)
-        }
+        self.selectedGraphNodeIDs = nextSelectedNodeIDs
         eligibleSelectedDragNodeIDs = graphLookupIndex.eligibleDragNodeIDs(
             from: self.selectedGraphNodeIDs
         )
@@ -327,8 +338,15 @@ internal final class ObsidianGraphScene: SKScene {
         self.theme = theme
         self.textScale = textScale
 
-        applyViewport(zoomScale: zoomScale, panOffset: panOffset)
-        if dataChanged || themeChanged || textScaleChanged || spatialConfigurationChanged || simulator.size != size {
+        // SwiftUI can reconfigure the scene for an unrelated hover/selection
+        // update while a local camera gesture has not published its frame yet.
+        if viewportChanged && !viewportNeedsPublish
+            && cameraNode.action(forKey: "obsidian-camera-recenter") == nil {
+            applyViewport(zoomScale: zoomScale, panOffset: panOffset)
+        }
+        let needsRebuild = dataChanged || themeChanged || textScaleChanged
+            || spatialConfigurationChanged || simulator.size != size
+        if needsRebuild {
             rebuildGraph(restartLayout: dataChanged || simulator.nodesByID.isEmpty,
                          preservingExistingPositions: requestedSpatialConfiguration?.forceApply != true)
         } else {
@@ -337,10 +355,15 @@ internal final class ObsidianGraphScene: SKScene {
             }
             if displayChanged {
                 applyNodeScale()
+                renderGraph()
+            } else if viewportChanged {
+                updateAccessibilityGeometry()
             }
-            renderGraph()
         }
-        applyVisualState()
+        if needsRebuild || visualStateChanged || displayChanged {
+            applyVisualState()
+            updateAccessibilityGeometry()
+        }
         startSnipVisualTransitionIfNeeded(snipVisualTransition)
         startPruneAnimationIfNeeded(pruneAnimationRequest)
         publishFrameRatePreferenceIfNeeded()
@@ -379,6 +402,10 @@ internal final class ObsidianGraphScene: SKScene {
     override func update(_ currentTime: TimeInterval) {
         let previousTime = lastUpdateTime ?? currentTime
         lastUpdateTime = currentTime
+        if let hoverRevealTime, currentTime >= hoverRevealTime {
+            self.hoverRevealTime = nil
+            publishHoverCard()
+        }
         let wasLayoutSettled = layoutIsSettled
         let isDragging = !activeDraggedNodeIDs.isEmpty
         let isLocallySettling = !localReturningNodeOrigins.isEmpty
@@ -414,7 +441,8 @@ internal final class ObsidianGraphScene: SKScene {
             let changedNodeIDs = simulator.stepLocalSettling(
                 deltaTime: min(max(currentTime - previousTime, 1.0 / 240.0), 1.0 / 20.0),
                 returningNodeOrigins: localReturningNodeOrigins,
-                reduceMotion: reduceMotion
+                reduceMotion: reduceMotion,
+                zoomScale: currentZoomScale
             )
             activeDragReactiveNodeIDs = changedNodeIDs
             if !changedNodeIDs.isEmpty {
@@ -444,6 +472,7 @@ internal final class ObsidianGraphScene: SKScene {
             updateLabels()
             updateAccessibilityGeometry()
         }
+        if viewportNeedsPublish { publishViewport() }
         if shouldReportPositions,
            currentTime - lastPositionReportTime >= 0.2 {
             lastPositionReportTime = currentTime
@@ -475,6 +504,7 @@ internal final class ObsidianGraphScene: SKScene {
         }
         graphNodesByID.removeAll()
         edgeVisualsByID.removeAll()
+        edgesByNodeID.removeAll()
         neighborIDsByNodeID.removeAll()
         activeDragReactiveNodeIDs = []
         localReturningNodeOrigins = [:]
@@ -501,6 +531,9 @@ internal final class ObsidianGraphScene: SKScene {
         selectedGraphNodeIDs = []
         eligibleSelectedDragNodeIDs = []
         hoveredGraphNodeID = nil
+        hoverRevealTime = nil
+        isHoverCardVisible = false
+        viewportNeedsPublish = false
         cancelDirectManipulation()
         activeFolderDropTarget = nil
         graphData = .empty
@@ -524,6 +557,8 @@ internal final class ObsidianGraphScene: SKScene {
 
     override func mouseDown(with event: NSEvent) {
         markInteraction()
+        interruptCameraAnimation()
+        clearHover()
         cancelDirectManipulation()
         setActiveFolderDropTarget(nil)
         let location = event.location(in: self)
@@ -587,7 +622,8 @@ internal final class ObsidianGraphScene: SKScene {
             return
         case .pan(let delta):
             panByWorld(delta: delta)
-            publishViewport()
+            pointerStateMachine.rebasePan(at: event.location(in: self))
+            viewportNeedsPublish = true
         case .lasso(let rect):
             showLasso(rect)
         case .drag(let requestedNodeIDs, let delta):
@@ -613,7 +649,7 @@ internal final class ObsidianGraphScene: SKScene {
                 localReturningNodeOrigins = [:]
                 simulator.beginDragging(
                     nodeIDs: activeDraggedNodeIDs,
-                    keepingStationary: stationaryFolderNodeIDs(
+                    keepingStationary: stationaryFolderDropNodeIDs(
                         forDraggedGraphNodeIDs: activeDraggedNodeIDs
                     )
                 )
@@ -621,6 +657,11 @@ internal final class ObsidianGraphScene: SKScene {
             }
             NSCursor.closedHand.set()
             simulator.drag(nodePositions: plan.positions(byApplying: delta))
+            // Keep the grabbed marks locked to the latest pointer sample. The
+            // bounded collision and linked-node reactions remain coalesced to
+            // SpriteKit display updates, but the primary marks no longer wait
+            // one scene frame before their visible positions advance.
+            renderDraggedNodePositionsImmediately()
             let target = activeDragRawThreadIDs.isEmpty
                 ? nil
                 : batchFolderDropTarget(at: location,
@@ -731,6 +772,7 @@ internal final class ObsidianGraphScene: SKScene {
 
     override func rightMouseDown(with event: NSEvent) {
         markInteraction()
+        interruptCameraAnimation()
         clearHover()
         cancelDirectManipulation()
         isSecondaryPanning = true
@@ -740,12 +782,13 @@ internal final class ObsidianGraphScene: SKScene {
         markInteraction()
         guard isSecondaryPanning else { return }
         panBy(deltaX: event.deltaX, deltaY: event.deltaY)
-        publishViewport()
+        viewportNeedsPublish = true
     }
 
     override func rightMouseUp(with event: NSEvent) {
         markInteraction()
         isSecondaryPanning = false
+        if viewportNeedsPublish { publishViewport() }
     }
 
     internal func contextMenu(at viewPoint: CGPoint) -> NSMenu? {
@@ -907,52 +950,65 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        guard !isPointerGestureActive, !isSecondaryPanning else { return }
         markInteraction()
+        interruptCameraAnimation()
         clearHover()
         let shouldZoom = event.modifierFlags.contains(.command)
             || event.modifierFlags.contains(.control)
         guard shouldZoom else {
             panBy(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
-            publishViewport()
+            viewportNeedsPublish = true
             return
         }
         let delta = event.scrollingDeltaY == 0 ? -event.scrollingDeltaX : event.scrollingDeltaY
         let nextZoom = currentZoomScale * exp(delta * -0.005)
         setZoom(nextZoom, around: event.location(in: self))
-        publishViewport()
+        viewportNeedsPublish = true
     }
 
     internal func magnify(by magnification: CGFloat,
                           at viewPoint: CGPoint,
                           in view: SKView) {
+        guard !isPointerGestureActive, !isSecondaryPanning else { return }
         markInteraction()
+        interruptCameraAnimation()
         clearHover()
         let focus = convertPoint(fromView: viewPoint)
         let nextZoom = currentZoomScale * max(0.2, 1 + magnification)
         setZoom(nextZoom, around: focus)
-        publishViewport()
+        viewportNeedsPublish = true
     }
 
     internal func applyHoverCandidate(_ nextHoveredID: String?, at location: CGPoint) {
-        if hoveredGraphNodeID != nextHoveredID {
-            hoveredGraphNodeID = nextHoveredID
-            applyVisualState()
-        }
-        guard let nextHoveredID else {
-            onHoverItem?(nil)
-            return
-        }
-        let overlayLocation = overlayPoint(for: location)
+        guard hoveredGraphNodeID != nextHoveredID else { return }
+        hoveredGraphNodeID = nextHoveredID
+        if isHoverCardVisible { onHoverItem?(nil) }
+        isHoverCardVisible = false
+        hoverRevealTime = nextHoveredID == nil ? nil : (lastUpdateTime ?? 0) + 0.22
+        applyVisualState()
+        markInteraction()
+    }
+
+    private func publishHoverCard() {
+        guard let nextHoveredID = hoveredGraphNodeID,
+              !isPointerGestureActive, !isSecondaryPanning,
+              let node = graphNodesByID[nextHoveredID] else { return }
+        // Anchor to the mark, not every mouse-moved event. This avoids both a
+        // chasing tooltip and repeated SwiftUI publications/audio on one node.
+        let overlayLocation = overlayPoint(for: node.position)
         if let grouping = graphLookupIndex.groupingByID[nextHoveredID] {
+            isHoverCardVisible = true
             onHoverItem?(.grouping(grouping, overlayLocation))
         } else if let thread = graphLookupIndex.threadByID[nextHoveredID] {
+            isHoverCardVisible = true
             onHoverItem?(.thread(thread, overlayLocation))
         } else if let remaining = graphLookupIndex.remainingBranchByID[nextHoveredID] {
+            isHoverCardVisible = true
             onHoverItem?(.remaining(remaining, overlayLocation))
         } else if let message = graphLookupIndex.messageByID[nextHoveredID] {
+            isHoverCardVisible = true
             onHoverItem?(.message(message, overlayLocation))
-        } else {
-            onHoverItem?(nil)
         }
     }
 
@@ -1028,14 +1084,17 @@ internal final class ObsidianGraphScene: SKScene {
             }
         }
 
+        edgesByNodeID = [:]
+        neighborIDsByNodeID = [:]
         for edge in graphData.edges {
             let visual = EdgeVisual()
             edgeVisualsByID[edge.id] = visual
             addChild(visual.line)
             addChild(visual.arrow)
-        }
-        neighborIDsByNodeID = graphData.allNodeIDs.reduce(into: [:]) { result, id in
-            result[id] = simulator.neighborIDs(of: id)
+            edgesByNodeID[edge.sourceID, default: []].append(edge)
+            edgesByNodeID[edge.targetID, default: []].append(edge)
+            neighborIDsByNodeID[edge.sourceID, default: []].insert(edge.targetID)
+            neighborIDsByNodeID[edge.targetID, default: []].insert(edge.sourceID)
         }
         applyNodeScale()
         backgroundColor = theme.backgroundNS
@@ -1079,9 +1138,18 @@ internal final class ObsidianGraphScene: SKScene {
             guard let physicsNode = simulator.nodesByID[nodeID] else { continue }
             graphNodesByID[nodeID]?.position = physicsNode.position
         }
-        for edge in graphData.edges where renderedNodeIDs.contains(edge.sourceID)
-            || renderedNodeIDs.contains(edge.targetID) {
-            render(edge: edge)
+        var renderedEdgeIDs = Set<String>()
+        for nodeID in renderedNodeIDs {
+            for edge in edgesByNodeID[nodeID, default: []] where renderedEdgeIDs.insert(edge.id).inserted {
+                render(edge: edge, updateStyle: false)
+            }
+        }
+    }
+
+    private func renderDraggedNodePositionsImmediately() {
+        for nodeID in activeDraggedNodeIDs {
+            guard let physicsNode = simulator.nodesByID[nodeID] else { continue }
+            graphNodesByID[nodeID]?.position = physicsNode.position
         }
     }
 
@@ -1101,7 +1169,7 @@ internal final class ObsidianGraphScene: SKScene {
         (view as? GraphSKView)?.updateGraphAccessibilityElements(visibleElements)
     }
 
-    private func render(edge: GraphEdge) {
+    private func render(edge: GraphEdge, updateStyle: Bool = true) {
         guard let visual = edgeVisualsByID[edge.id],
               let source = simulator.nodesByID[edge.sourceID],
               let target = simulator.nodesByID[edge.targetID] else { return }
@@ -1114,9 +1182,14 @@ internal final class ObsidianGraphScene: SKScene {
         } else {
             visual.line.path = Self.linePath(from: geometry.start, to: geometry.end)
         }
-        visual.arrow.path = Self.arrowPath(from: geometry.start, to: geometry.end)
+        if displayConfig.showsArrows {
+            visual.arrow.path = Self.arrowPath(from: geometry.start, to: geometry.end)
+        }
         visual.arrow.isHidden = !displayConfig.showsArrows
-        applyStyle(to: visual, edge: edge)
+        // Movement changes geometry only. Focus/drop/selection transitions
+        // already refresh styles together, so avoid per-frame color creation
+        // and SpriteKit style invalidation on every incident edge.
+        if updateStyle { applyStyle(to: visual, edge: edge) }
     }
 
     private func applyVisualState() {
@@ -1142,7 +1215,9 @@ internal final class ObsidianGraphScene: SKScene {
                             isNeighbor: isNeighbor,
                             isDimmed: isFiltered,
                             hasFocusedNode: !focusedNodeIDs.isEmpty,
-                            snipState: snipState)
+                            snipState: snipState,
+                            preservesContext: !activeDraggedNodeIDs.isEmpty,
+                            reduceMotion: reduceMotion)
             configureOrganizerAccessibility(forGraphNodeID: id, node: node)
         }
         for edge in graphData.edges {
@@ -1187,7 +1262,7 @@ internal final class ObsidianGraphScene: SKScene {
         } else if isPartiallyStaged {
             alpha = 0.38
         } else {
-            alpha = isConnected ? 0.58 : 0.10
+            alpha = isConnected ? 0.58 : (activeDraggedNodeIDs.isEmpty ? 0.10 : 0.30)
         }
         let activeBaseColor: NSColor
         if isStaged || isPartiallyStaged {
@@ -1358,9 +1433,11 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func clearHover() {
+        hoverRevealTime = nil
         guard hoveredGraphNodeID != nil else { return }
         hoveredGraphNodeID = nil
-        onHoverItem?(nil)
+        if isHoverCardVisible { onHoverItem?(nil) }
+        isHoverCardVisible = false
         applyVisualState()
     }
 
@@ -1633,21 +1710,18 @@ internal final class ObsidianGraphScene: SKScene {
             applyVisualState()
             renderGraph()
             onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
-        } else {
-            let hadLocalSettle = !localReturningNodeOrigins.isEmpty
-            simulator.restorePositions(localReturningNodeOrigins)
-            activeDragReactiveNodeIDs = []
-            localReturningNodeOrigins = [:]
-            if hadLocalSettle {
-                finishDragSettling()
-                renderGraph()
-                onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
-            }
         }
+        // A click or pan can interrupt a settle without teleporting its nodes
+        // to their targets. Resume after release; a new drag adopts the current
+        // visible positions as its own origins.
     }
 
     internal func recenterCamera(animated: Bool) {
-        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        guard !isPointerGestureActive, !isSecondaryPanning else { return }
+        markInteraction()
+        clearHover()
+        let center = simulator.nodesByID[GraphCenter.you.id]?.position
+            ?? CGPoint(x: size.width / 2, y: size.height / 2)
         cameraNode.removeAction(forKey: "obsidian-camera-recenter")
         guard animated && !reduceMotion else {
             cameraNode.position = center
@@ -1656,8 +1730,10 @@ internal final class ObsidianGraphScene: SKScene {
             publishViewport()
             return
         }
+        let movement = SKAction.group([.move(to: center, duration: 0.22), .scale(to: 1, duration: 0.22)])
+        movement.timingMode = .easeInEaseOut
         cameraNode.run(.sequence([
-            .group([.move(to: center, duration: 0.22), .scale(to: 1, duration: 0.22)]),
+            movement,
             .run { [weak self] in
                 self?.updateLabels()
                 self?.publishViewport()
@@ -1666,12 +1742,19 @@ internal final class ObsidianGraphScene: SKScene {
     }
 
     private func publishViewport() {
+        viewportNeedsPublish = false
         updateAccessibilityGeometry()
         onRenderedOrganizerSnapshot?(renderedOrganizerSnapshot())
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         onViewportChanged?(currentZoomScale,
                            CGPoint(x: cameraNode.position.x - center.x,
                                    y: cameraNode.position.y - center.y))
+    }
+
+    private func interruptCameraAnimation() {
+        guard cameraNode.action(forKey: "obsidian-camera-recenter") != nil else { return }
+        cameraNode.removeAction(forKey: "obsidian-camera-recenter")
+        publishViewport()
     }
 
     private func wakeLayout() {
@@ -1847,22 +1930,6 @@ internal final class ObsidianGraphScene: SKScene {
             guard grouping.kind == .folder,
                   grouping.sourceFolderID != nil,
                   Set(grouping.rawThreadIDs).isDisjoint(with: rawThreadIDs) else {
-                return nil
-            }
-            return grouping.id
-        })
-    }
-
-    /// Confirmed folders are spatial anchors and remain stationary while any
-    /// other graph node is dragged. This is separate from the drop-target
-    /// helper above, which retains its conversation-membership semantics.
-    private func stationaryFolderNodeIDs(
-        forDraggedGraphNodeIDs graphNodeIDs: Set<String>
-    ) -> Set<String> {
-        Set(graphData.groupings.compactMap { grouping in
-            guard grouping.kind == .folder,
-                  grouping.sourceFolderID != nil,
-                  !graphNodeIDs.contains(grouping.id) else {
                 return nil
             }
             return grouping.id

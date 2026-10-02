@@ -29,7 +29,7 @@ internal enum GraphTopicError: LocalizedError {
     }
 }
 
-internal protocol GraphTopicProviding {
+internal nonisolated protocol GraphTopicProviding {
     /// Returns one specific signal for the whole conversation, or `nil` when
     /// the evidence is too generic to support a folder suggestion.
     func generateTopic(_ request: GraphTopicRequest) async throws -> GraphTopicSignal?

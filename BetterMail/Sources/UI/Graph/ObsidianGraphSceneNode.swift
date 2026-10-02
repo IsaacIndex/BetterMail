@@ -233,9 +233,12 @@ internal final class ObsidianGraphSceneNode: SKNode {
             let font = NSFont.systemFont(ofSize: fontSize,
                                          weight: kind == .center ? .semibold : .regular)
             let label = SKLabelNode(fontNamed: font.fontName)
-            label.text = title
             label.fontSize = fontSize
             label.fontColor = theme.inkSecondaryNS
+            label.numberOfLines = 1
+            label.lineBreakMode = .byTruncatingTail
+            label.preferredMaxLayoutWidth = 240 * max(0.8, textScale)
+            Self.setBoundedLabelText(title, on: label, maximumWidth: label.preferredMaxLayoutWidth)
             label.horizontalAlignmentMode = .left
             label.verticalAlignmentMode = .center
             label.position = CGPoint(x: radius + 7, y: 0)
@@ -286,6 +289,30 @@ internal final class ObsidianGraphSceneNode: SKNode {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    /// SpriteKit does not enforce preferredMaxLayoutWidth for a one-line
+    /// label on macOS. Measure the actual glyphs once at construction time;
+    /// the graph model still supplies the full title to cards and VoiceOver.
+    private static func setBoundedLabelText(_ title: String,
+                                            on label: SKLabelNode,
+                                            maximumWidth: CGFloat) {
+        let singleLine = title.split(whereSeparator: \.isNewline).joined(separator: " ")
+        label.text = singleLine
+        guard label.frame.width > maximumWidth else { return }
+        let characters = Array(singleLine)
+        var lower = 0
+        var upper = characters.count
+        while lower < upper {
+            let count = (lower + upper + 1) / 2
+            label.text = String(characters.prefix(count)) + "…"
+            if label.frame.width <= maximumWidth {
+                lower = count
+            } else {
+                upper = count - 1
+            }
+        }
+        label.text = String(characters.prefix(lower)) + "…"
     }
 
     internal func configureExpansionAccessibility(label spokenLabel: String,
@@ -415,21 +442,38 @@ internal final class ObsidianGraphSceneNode: SKNode {
         label?.fontColor = theme.inkSecondaryNS
     }
 
+    private var focusAlphaTarget: CGFloat?
+
     internal func applyFocus(isSelected: Bool,
                              isHovered: Bool,
                              isNeighbor: Bool,
                              isDimmed: Bool,
                              hasFocusedNode: Bool,
-                             snipState: GraphSnipNodeState = .normal) {
+                             snipState: GraphSnipNodeState = .normal,
+                             preservesContext: Bool = false,
+                             reduceMotion: Bool = true) {
         let shouldDimForFocus = hasFocusedNode && !isSelected && !isHovered && !isNeighbor
-        let focusAlpha: CGFloat = isDimmed ? 0.12 : shouldDimForFocus ? 0.22 : 1
+        let focusAlpha: CGFloat = isDimmed ? 0.12 : shouldDimForFocus ? (preservesContext ? 0.65 : 0.22) : 1
+        let nextAlpha: CGFloat
         switch snipState {
         case .normal:
-            alpha = focusAlpha
+            nextAlpha = focusAlpha
         case .partial:
-            alpha = min(focusAlpha, 0.68)
+            nextAlpha = min(focusAlpha, 0.68)
         case .staged:
-            alpha = min(focusAlpha, 0.34)
+            nextAlpha = min(focusAlpha, 0.34)
+        }
+        if focusAlphaTarget != nextAlpha || reduceMotion {
+            let shouldAnimate = !reduceMotion && focusAlphaTarget != nil
+            focusAlphaTarget = nextAlpha
+            removeAction(forKey: "organizer-focus")
+            if shouldAnimate {
+                let fade = SKAction.fadeAlpha(to: nextAlpha, duration: 0.12)
+                fade.timingMode = .easeOut
+                run(fade, withKey: "organizer-focus")
+            } else {
+                alpha = nextAlpha
+            }
         }
         if isSelected || isHovered {
             let color = theme.accentNS

@@ -21,6 +21,8 @@ internal struct MailboxSidebarView: View {
 
     @ObservedObject internal var viewModel: ThreadCanvasViewModel
     @State private var selectedScope: MailboxScope?
+    @State private var pendingMailAccountSelection: String?
+    @State private var isMailAccountConfirmationPresented = false
     @State private var activeDropIndicator: DropIndicator?
     @State private var activeDraggedFolderID: String?
     @State private var rowFrameByFolderID: [String: CGRect] = [:]
@@ -28,6 +30,16 @@ internal struct MailboxSidebarView: View {
 
     internal var body: some View {
         List(selection: $selectedScope) {
+            Section {
+                mailAccountSelectionMenu
+            } header: {
+                Text(NSLocalizedString("mail.account.selection.title",
+                                       comment: "Mail account selection section title"))
+            } footer: {
+                Text(NSLocalizedString("mail.account.selection.footer",
+                                       comment: "Mail account selection retention explanation"))
+            }
+
             sidebarRow(scope: .actionItems,
                        title: NSLocalizedString("mailbox.sidebar.action_items",
                                                 comment: "Action Items sidebar entry"),
@@ -97,6 +109,86 @@ internal struct MailboxSidebarView: View {
         .onChange(of: viewModel.mailboxAccounts) { _, newAccounts in
             let validIDs = Set(MailboxHierarchyBuilder.folderIDs(in: newAccounts))
             expansionSettings.prune(validIDs: validIDs)
+        }
+        .alert(
+            String.localizedStringWithFormat(
+                NSLocalizedString("mail.account.selection.confirm_title",
+                                  comment: "Confirmation title before selecting one Mail account"),
+                pendingMailAccountSelection ?? ""
+            ),
+            isPresented: $isMailAccountConfirmationPresented
+        ) {
+            Button(NSLocalizedString("mail.account.selection.confirm_action",
+                                     comment: "Destructive confirmation action for account retention"),
+                   role: .destructive) {
+                guard let pendingMailAccountSelection else { return }
+                viewModel.selectMailAccount(pendingMailAccountSelection)
+                self.pendingMailAccountSelection = nil
+            }
+            Button(NSLocalizedString("mail.account.selection.cancel",
+                                     comment: "Cancel account selection"),
+                   role: .cancel) {
+                pendingMailAccountSelection = nil
+            }
+        } message: {
+            Text(NSLocalizedString("mail.account.selection.confirm_message",
+                                   comment: "Account selection local cache cleanup explanation"))
+        }
+    }
+
+    private var mailAccountSelectionMenu: some View {
+        Menu {
+            Button {
+                viewModel.selectMailAccount(nil)
+            } label: {
+                accountSelectionLabel(
+                    NSLocalizedString("mail.account.selection.all",
+                                      comment: "All Mail accounts selection"),
+                    isSelected: viewModel.selectedMailAccountName == nil
+                )
+            }
+
+            if !viewModel.availableMailAccountNames.isEmpty {
+                Divider()
+            }
+            ForEach(viewModel.availableMailAccountNames, id: \.self) { accountName in
+                Button {
+                    pendingMailAccountSelection = accountName
+                    isMailAccountConfirmationPresented = true
+                } label: {
+                    accountSelectionLabel(
+                        accountName,
+                        isSelected: viewModel.selectedMailAccountName?.caseInsensitiveCompare(accountName)
+                            == .orderedSame
+                    )
+                }
+            }
+        } label: {
+            Label(
+                viewModel.selectedMailAccountName
+                    ?? NSLocalizedString("mail.account.selection.all",
+                                         comment: "All Mail accounts selection"),
+                systemImage: "person.crop.circle"
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .disabled(viewModel.isAnyRefreshRunning)
+        .accessibilityIdentifier(AccessibilityID.mailAccountSelectionMenu)
+        .accessibilityLabel(NSLocalizedString("mail.account.selection.accessibility",
+                                              comment: "Mail account selector accessibility label"))
+        .accessibilityValue(
+            viewModel.selectedMailAccountName
+                ?? NSLocalizedString("mail.account.selection.all",
+                                     comment: "All Mail accounts selection")
+        )
+    }
+
+    @ViewBuilder
+    private func accountSelectionLabel(_ title: String, isSelected: Bool) -> some View {
+        if isSelected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
         }
     }
 

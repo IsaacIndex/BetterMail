@@ -53,6 +53,7 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
     private let regenerationService: SummaryRegenerationServicing
     private let snippetLineLimitProvider: () -> Int
     private let stopPhrasesProvider: () -> [String]
+    private let mailAccountProvider: () -> String?
     private let activityCenter: ProcessingActivityCenter?
     private let calendar: Calendar
     private let backfillMailbox: String = "inbox"
@@ -82,12 +83,14 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
                   regenerationService: SummaryRegenerationServicing = SummaryRegenerationService(),
                   snippetLineLimitProvider: @escaping () -> Int = { InspectorViewSettings.defaultSnippetLineLimit },
                   stopPhrasesProvider: @escaping () -> [String] = { [] },
+                  mailAccountProvider: @escaping () -> String? = { nil },
                   activityCenter: ProcessingActivityCenter? = nil,
                   calendar: Calendar = .current) {
         self.service = service
         self.regenerationService = regenerationService
         self.snippetLineLimitProvider = snippetLineLimitProvider
         self.stopPhrasesProvider = stopPhrasesProvider
+        self.mailAccountProvider = mailAccountProvider
         self.activityCenter = activityCenter
         self.calendar = calendar
         let now = Date()
@@ -125,11 +128,11 @@ internal final class BatchBackfillSettingsViewModel: ObservableObject {
         let rangeEnd = calendar.date(byAdding: .day, value: 1, to: endDay) ?? endDay
         let orderedRange = DateInterval(start: rangeStart, end: rangeEnd)
         let snippetLimit = snippetLineLimitProvider()
+        let backfillAccount = mailAccountProvider()
 
         runTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let backfillAccount: String? = nil
                 let total = try await service.countMessages(in: orderedRange,
                                                             mailbox: backfillMailbox,
                                                             account: backfillAccount)

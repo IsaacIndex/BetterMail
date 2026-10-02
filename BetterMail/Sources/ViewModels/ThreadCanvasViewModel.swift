@@ -668,6 +668,9 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     @Published internal private(set) var errorMessage: String?
     private var errorDismissTask: Task<Void, Never>?
     @Published internal private(set) var mailboxAccounts: [MailboxAccount] = []
+    @Published internal private(set) var availableMailAccountNames: [String] = []
+    @Published internal private(set) var selectedMailAccountName: String? = nil
+    @Published internal private(set) var isApplyingMailAccountSelection = false
     @Published internal private(set) var activeMailboxScope: MailboxScope = .allEmails
     @Published internal private(set) var isMailboxHierarchyLoading = false
     @Published internal private(set) var mailboxActionStatusMessage: String?
@@ -825,6 +828,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let tagProviderID: String
     private let tagAvailabilityMessage: String
     private let settings: AutoRefreshSettings
+    private let mailAccountSelectionSettings: MailAccountSelectionSettings
     private let inspectorSettings: InspectorViewSettings
     private let activityCenter: ProcessingActivityCenter?
     private let pinnedFolderSettings: PinnedFolderSettings
@@ -882,6 +886,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var jumpPhaseByFolderID: [String: FolderJumpPhase] = [:]
     private var pendingScrollContextByToken: [UUID: PendingFolderJumpScrollContext] = [:]
     private var pendingScrollTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+    private var allMailboxAccounts: [MailboxAccount] = []
     private var mailboxThreadAutoMoveTask: Task<Void, Never>?
     private var mailboxThreadAutoMovePassPending = false
     private let bottomBarMailboxActionStatusLifetime: TimeInterval = 300
@@ -901,6 +906,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private let allFoldersScrollStateResetInterval: UInt64 = 350_000_000
 
     internal init(settings: AutoRefreshSettings,
+                  mailAccountSelectionSettings: MailAccountSelectionSettings? = nil,
                   inspectorSettings: InspectorViewSettings? = nil,
                   pinnedFolderSettings: PinnedFolderSettings? = nil,
                   mailboxFolderOrderSettings: MailboxFolderOrderSettings? = nil,
@@ -928,6 +934,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                   performsInitialSourceRefresh: Bool = true,
                   includesAllCachedMessagesInRethread: Bool = false) {
         self.store = store
+        let resolvedMailAccountSelectionSettings = mailAccountSelectionSettings
+            ?? MailAccountSelectionSettings()
+        self.mailAccountSelectionSettings = resolvedMailAccountSelectionSettings
+        self.selectedMailAccountName = resolvedMailAccountSelectionSettings.selectedAccountName
         self.organizationOperationStore = organizationOperationStore
         self.organizerMetricsRecorder = organizerMetricsRecorder
         self.organizationCommandService = OrganizationCommandService(
@@ -1306,13 +1316,19 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                 self.scheduleRethread(delay: 0)
             }
         }
-        Task { await loadCachedMessages() }
-        if performsInitialSourceRefresh {
-            refreshMailboxHierarchy()
-            refreshNow()
+        Task { [weak self] in
+            guard let self else { return }
+            if let selectedMailAccountName {
+                await enforceSelectedMailAccountRetention(selectedMailAccountName)
+            }
+            await loadCachedMessages()
+            await refreshActionItemIDs()
+            if performsInitialSourceRefresh {
+                refreshMailboxHierarchy()
+                refreshNow()
+            }
         }
         applyAutoRefreshSettings()
-        Task { await refreshActionItemIDs() }
     }
 
     // MARK: - Error Display
@@ -1488,7 +1504,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal var isAnyRefreshRunning: Bool {
-        isRefreshing || isBackfilling || activeDayFetchDate != nil || !refreshingFolderThreadIDs.isEmpty
+        isRefreshing || isBackfilling || isApplyingMailAccountSelection ||
+            activeDayFetchDate != nil || !refreshingFolderThreadIDs.isEmpty
     }
 
     internal func isRefreshingFolderThreads(for folderID: String) -> Bool {
@@ -1705,7 +1722,8 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             let previousFolderIDs = Set(self.threadFolders.map(\.id))
             let cutoffDate = cachedMessageCutoffDate()
             let storeFilter = activeMailboxStoreFilter
-            let calendarRecoveryScopeID = activeMailboxScope.graphPagingScopeID
+            let accountScopeID = selectedMailAccountName?.lowercased() ?? "all"
+            let calendarRecoveryScopeID = "\(activeMailboxScope.graphPagingScopeID)|account:\(accountScopeID)"
             let archivedGraphThreadIDs = try await archivedGraphThreadIDsForRethread()
             let includePinnedThreadIDs = try await pinnedThreadIDsToIncludeForRethread()
             let includeThreadIDs = includePinnedThreadIDs
@@ -1863,6 +1881,10 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         var shouldForceRefresh = false
 
         for rule in rules {
+            if let selectedMailAccountName,
+               rule.account.caseInsensitiveCompare(selectedMailAccountName) != .orderedSame {
+                continue
+            }
             do {
                 let messages = try await store.fetchMessages(threadIDs: [rule.threadID])
                 guard !messages.isEmpty else { continue }
@@ -2927,6 +2949,73 @@ internal final class ThreadCanvasViewModel: ObservableObject {
         selectedFolderID = id
     }
 
+    internal func selectMailAccount(_ accountName: String?) {
+        guard !isAnyRefreshRunning else { return }
+        let requestedAccount = MailAccountSelectionSettings.normalizedAccountName(accountName)
+        let resolvedAccount = requestedAccount.flatMap { requested in
+            availableMailAccountNames.first {
+                $0.caseInsensitiveCompare(requested) == .orderedSame
+            } ?? requested
+        }
+        guard resolvedAccount != selectedMailAccountName else { return }
+
+        mailAccountSelectionSettings.selectAccount(named: resolvedAccount)
+        selectedMailAccountName = resolvedAccount
+        if case .mailboxFolder(let account, _) = activeMailboxScope,
+           let resolvedAccount,
+           account.caseInsensitiveCompare(resolvedAccount) != .orderedSame {
+            activeMailboxScope = .allEmails
+        }
+        calendarAncestorRecoveryTask?.cancel()
+        calendarAncestorRecoveryTask = nil
+        inFlightCalendarRecoveryFingerprint = nil
+        completedCalendarRecoveryFingerprint = nil
+        applyMailboxHierarchy(allMailboxAccounts)
+        reloadDayFetchCoverages(refreshConcreteScopes: true)
+
+        Task { [weak self] in
+            guard let self else { return }
+            if let resolvedAccount {
+                await enforceSelectedMailAccountRetention(resolvedAccount)
+            } else {
+                await graphAutomationCoordinator.reloadPersistedState(account: nil)
+            }
+            await refreshActionItemIDs()
+            scheduleRethread(delay: 0)
+            refreshMailboxHierarchy(force: true)
+            if performsInitialSourceRefresh, !isAnyRefreshRunning {
+                refreshNow()
+            }
+        }
+    }
+
+    private func enforceSelectedMailAccountRetention(_ accountName: String) async {
+        isApplyingMailAccountSelection = true
+        defer { isApplyingMailAccountSelection = false }
+        do {
+            let result = try await store.pruneCachedMail(keepingAccount: accountName)
+            Log.refresh.info("Mail account retention applied. account=\(accountName, privacy: .private) removedMessages=\(result.removedMessageCount, privacy: .public) removedActionItems=\(result.removedActionItemCount, privacy: .public) removedCoverage=\(result.removedCoverageCount, privacy: .public)")
+            if result.removedMessageCount > 0 || result.removedActionItemCount > 0 {
+                status = String.localizedStringWithFormat(
+                    NSLocalizedString("mail.account.selection.pruned",
+                                      comment: "Status after removing unselected account data from BetterMail"),
+                    result.removedMessageCount,
+                    result.removedActionItemCount
+                )
+            }
+        } catch {
+            Log.refresh.error("Mail account retention failed. account=\(accountName, privacy: .private) error=\(error.localizedDescription, privacy: .private)")
+            let message = String.localizedStringWithFormat(
+                NSLocalizedString("mail.account.selection.prune_failed",
+                                  comment: "Error after failing to remove unselected account data"),
+                error.localizedDescription
+            )
+            status = message
+            showError(message)
+        }
+        await graphAutomationCoordinator.reloadPersistedState(account: accountName)
+    }
+
     internal func selectMailboxScope(_ scope: MailboxScope) {
         guard activeMailboxScope != scope else { return }
         if selectedActionItemID != nil || scope == .actionItems {
@@ -3036,7 +3125,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func refreshActionItemIDs() async {
-        let fetched = await store.fetchActionItems()
+        let fetched = await store.fetchActionItems(account: selectedMailAccountName)
         actionItems = fetched
         actionItemIDs = Set(fetched.map(\.id))
         if let selectedActionItemID, !actionItemIDs.contains(selectedActionItemID) {
@@ -3170,9 +3259,32 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private func applyMailboxHierarchy(_ accounts: [MailboxAccount]) {
         let validFolderIDs = Set(MailboxHierarchyBuilder.folderIDs(in: accounts))
         mailboxFolderOrderSettings.prune(validIDs: validFolderIDs)
-        let orderedAccounts = MailboxHierarchyBuilder.applyFolderOrder(mailboxFolderOrderSettings.orderedFolderIDs,
-                                                                       to: accounts)
+        let orderedAllAccounts = MailboxHierarchyBuilder.applyFolderOrder(
+            mailboxFolderOrderSettings.orderedFolderIDs,
+            to: accounts
+        )
+        allMailboxAccounts = orderedAllAccounts
+        availableMailAccountNames = orderedAllAccounts.map(\.name)
+
+        let orderedAccounts: [MailboxAccount]
+        if let selectedMailAccountName {
+            orderedAccounts = orderedAllAccounts.filter {
+                $0.name.caseInsensitiveCompare(selectedMailAccountName) == .orderedSame
+            }
+        } else {
+            orderedAccounts = orderedAllAccounts
+        }
         mailboxAccounts = orderedAccounts
+
+        if let selectedMailAccountName, orderedAccounts.isEmpty {
+            activeMailboxScope = .allEmails
+            mailboxActionStatusMessage = String.localizedStringWithFormat(
+                NSLocalizedString("mail.account.selection.unavailable",
+                                  comment: "Selected Mail account is unavailable"),
+                selectedMailAccountName
+            )
+            return
+        }
 
         guard case .mailboxFolder(let account, let path) = activeMailboxScope else {
             mailboxActionStatusMessage = nil
@@ -5495,6 +5607,18 @@ internal final class ThreadCanvasViewModel: ObservableObject {
                                  account: account,
                                  displayName: "\(account) / \(path)")
         case .actionItems, .allEmails, .allFolders, .allInboxes, .graphArchive:
+            if let selectedMailAccountName {
+                return DayFetchScope(
+                    mailbox: "inbox",
+                    account: selectedMailAccountName,
+                    displayName: String.localizedStringWithFormat(
+                        NSLocalizedString("dayfetch.scope.account_inbox",
+                                          comment: "Day coverage scope for one selected Mail account"),
+                        selectedMailAccountName
+                    ),
+                    includesAllInboxAliases: true
+                )
+            }
             return DayFetchScope(mailbox: "inbox",
                                  account: nil,
                                  displayName: NSLocalizedString("dayfetch.scope.all_inboxes",
@@ -5509,58 +5633,117 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     }
 
     internal func fetchDay(_ date: Date) {
-        guard activeDayFetchDate == nil,
-              Calendar.current.startOfDay(for: date) <= Calendar.current.startOfDay(for: Date()) else {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return }
+        fetchDays(in: DateInterval(start: dayStart, end: dayEnd), scope: activeDayFetchScope)
+    }
+
+    internal func fetchDays(in requestedRange: DateInterval,
+                            scope: DayFetchScope) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard !isAnyRefreshRunning,
+              requestedRange.start < requestedRange.end,
+              let lastIncludedInstant = calendar.date(byAdding: .second,
+                                                       value: -1,
+                                                       to: requestedRange.end) else {
             return
         }
-        let scope = activeDayFetchScope
-        let dayStart = Calendar.current.startOfDay(for: date)
-        activeDayFetchDate = dayStart
-        status = NSLocalizedString("dayfetch.status.fetching",
-                                   comment: "Status while an explicit calendar day fetch is running")
-        let activityID = beginActivity(titleKey: "activity.dayfetch.title",
-                                       detail: status,
-                                       kind: .importing)
+
+        let rangeStart = calendar.startOfDay(for: requestedRange.start)
+        let rangeLastDay = calendar.startOfDay(for: lastIncludedInstant)
+        guard rangeStart <= rangeLastDay,
+              rangeLastDay <= today,
+              let rangeEnd = calendar.date(byAdding: .day, value: 1, to: rangeLastDay) else {
+            return
+        }
+
+        let range = DateInterval(start: rangeStart, end: rangeEnd)
+        let dayCount = max(1, calendar.dateComponents([.day],
+                                                       from: rangeStart,
+                                                       to: rangeEnd).day ?? 1)
+        activeDayFetchDate = rangeStart
+        status = dayCount == 1
+            ? NSLocalizedString("dayfetch.status.fetching",
+                                comment: "Status while an explicit calendar day fetch is running")
+            : String.localizedStringWithFormat(
+                NSLocalizedString("dayfetch.status.fetching_range",
+                                  comment: "Status while an explicit calendar range fetch is running"),
+                dayCount
+            )
+        let activityID = beginActivity(
+            titleKey: dayCount == 1 ? "activity.dayfetch.title" : "activity.dayfetch.range.title",
+            detail: status,
+            kind: .importing
+        )
         let snippetLineLimit = inspectorSettings.snippetLineLimit
         let requestBatchSize = min(DayFetchCoordinator.maximumRequestBatchSize, max(1, fetchLimit))
+        let referenceDate = Date()
+
         Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await dayFetchCoordinator.fetchDay(containing: dayStart,
-                                                                    scope: scope,
-                                                                    mode: .full,
-                                                                    requestBatchSize: requestBatchSize,
-                                                                    snippetLineLimit: snippetLineLimit,
-                                                                    referenceDate: Date()) { progress in
+                let results = try await dayFetchCoordinator.fetchRange(
+                    range,
+                    scope: scope,
+                    mode: .full,
+                    requestBatchSize: requestBatchSize,
+                    snippetLineLimit: snippetLineLimit,
+                    referenceDate: referenceDate
+                ) { progress in
                     Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.activeDayFetchDate = progress.dayInterval.start
+                        let dayIndex = max(0, calendar.dateComponents([.day],
+                                                                      from: range.start,
+                                                                      to: progress.dayInterval.start).day ?? 0)
                         let detail = String.localizedStringWithFormat(
-                            NSLocalizedString("activity.dayfetch.progress",
-                                              comment: "Day fetch progress detail"),
+                            NSLocalizedString("activity.dayfetch.range.progress",
+                                              comment: "Multi-day fetch progress detail"),
+                            min(dayCount, dayIndex + 1),
+                            dayCount,
                             progress.completed,
                             progress.total
                         )
-                        self?.updateActivity(activityID,
-                                             detail: detail,
-                                             progress: progress.total > 0
-                                                 ? Double(progress.completed) / Double(progress.total)
-                                                 : nil)
+                        let phaseProgress: Double
+                        switch progress.phase {
+                        case .manifest: phaseProgress = 0.1
+                        case .payloads: phaseProgress = 0.55
+                        case .verifying: phaseProgress = 0.8
+                        case .reconciling: phaseProgress = 0.95
+                        }
+                        self.updateActivity(
+                            activityID,
+                            detail: detail,
+                            progress: min(0.99, (Double(dayIndex) + phaseProgress) / Double(dayCount))
+                        )
                     }
                 }
                 await MainActor.run {
+                    let expectedCount = results.reduce(0) { $0 + $1.expectedCount }
+                    let absentCount = results.reduce(0) { $0 + $1.absentCount }
                     self.activeDayFetchDate = nil
                     self.lastRefreshDate = Date()
-                    self.status = String.localizedStringWithFormat(
-                        NSLocalizedString("dayfetch.status.complete",
-                                          comment: "Status after an explicit calendar day fetch completes"),
-                        result.expectedCount
-                    )
+                    self.status = dayCount == 1
+                        ? String.localizedStringWithFormat(
+                            NSLocalizedString("dayfetch.status.complete",
+                                              comment: "Status after an explicit calendar day fetch completes"),
+                            expectedCount
+                        )
+                        : String.localizedStringWithFormat(
+                            NSLocalizedString("dayfetch.status.range_complete",
+                                              comment: "Status after an explicit calendar range fetch completes"),
+                            results.count,
+                            expectedCount
+                        )
                     self.reloadDayFetchCoverages(refreshConcreteScopes: true)
                     self.scheduleRethread(delay: 0)
-                    if result.absentCount > 0 {
+                    if absentCount > 0 {
                         self.showToast(String.localizedStringWithFormat(
                             NSLocalizedString("dayfetch.result.absent_hidden",
                                               comment: "Day fetch result when cached messages were hidden"),
-                            result.absentCount
+                            absentCount
                         ))
                     } else {
                         self.showToast(self.status)
@@ -5570,20 +5753,25 @@ internal final class ThreadCanvasViewModel: ObservableObject {
             } catch is CancellationError {
                 await MainActor.run {
                     self.activeDayFetchDate = nil
+                    self.status = NSLocalizedString("dayfetch.status.cancelled",
+                                                    comment: "Status after a calendar range fetch is cancelled")
+                    self.reloadDayFetchCoverages(refreshConcreteScopes: true)
+                    self.scheduleRethread(delay: 0)
                     self.finishActivity(activityID,
                                         state: .cancelled,
-                                        detail: NSLocalizedString("activity.state.cancelled",
-                                                                  comment: "Cancelled processing activity state"))
+                                        detail: self.status)
                 }
             } catch {
                 await MainActor.run {
                     self.activeDayFetchDate = nil
                     self.status = String.localizedStringWithFormat(
                         NSLocalizedString("dayfetch.status.failed",
-                                          comment: "Status after an explicit calendar day fetch fails"),
+                                          comment: "Status after an explicit calendar day or range fetch fails"),
                         error.localizedDescription
                     )
+                    // Earlier days in a range may already be committed before a later day fails.
                     self.reloadDayFetchCoverages(refreshConcreteScopes: true)
+                    self.scheduleRethread(delay: 0)
                     self.showError(self.status)
                     self.finishActivity(activityID, state: .failed, detail: self.status)
                 }
@@ -5634,7 +5822,7 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var activeMailboxFetchTarget: (mailbox: String, account: String?) {
         switch activeMailboxScope {
         case .actionItems, .allEmails, .allFolders, .allInboxes, .graphArchive:
-            return (mailbox: "inbox", account: nil)
+            return (mailbox: "inbox", account: selectedMailAccountName)
         case .mailboxFolder(let account, let path):
             return (mailbox: path, account: account)
         }
@@ -5643,9 +5831,13 @@ internal final class ThreadCanvasViewModel: ObservableObject {
     private var activeMailboxStoreFilter: (mailbox: String?, account: String?, includeAllInboxesAliases: Bool) {
         switch activeMailboxScope {
         case .actionItems, .allEmails, .allFolders, .graphArchive:
-            return (mailbox: nil, account: nil, includeAllInboxesAliases: false)
+            return (mailbox: nil,
+                    account: selectedMailAccountName,
+                    includeAllInboxesAliases: false)
         case .allInboxes:
-            return (mailbox: "inbox", account: nil, includeAllInboxesAliases: true)
+            return (mailbox: "inbox",
+                    account: selectedMailAccountName,
+                    includeAllInboxesAliases: true)
         case .mailboxFolder(let account, let path):
             return (mailbox: path, account: account, includeAllInboxesAliases: false)
         }

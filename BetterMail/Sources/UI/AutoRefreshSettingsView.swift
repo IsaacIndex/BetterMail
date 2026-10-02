@@ -3,6 +3,7 @@ import SwiftUI
 
 internal struct AutoRefreshSettingsView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
+    @ObservedObject internal var mailAccountSelectionSettings: MailAccountSelectionSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @ObservedObject internal var appearanceSettings: AppearanceSettings
@@ -11,11 +12,13 @@ internal struct AutoRefreshSettingsView: View {
     @State private var isResetConfirmationPresented = false
 
     internal init(settings: AutoRefreshSettings,
+                  mailAccountSelectionSettings: MailAccountSelectionSettings,
                   inspectorSettings: InspectorViewSettings,
                   displaySettings: ThreadCanvasDisplaySettings,
                   appearanceSettings: AppearanceSettings,
                   activityCenter: ProcessingActivityCenter) {
         self.settings = settings
+        self.mailAccountSelectionSettings = mailAccountSelectionSettings
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
         self.appearanceSettings = appearanceSettings
@@ -23,6 +26,7 @@ internal struct AutoRefreshSettingsView: View {
         _backfillViewModel = StateObject(wrappedValue: BatchBackfillSettingsViewModel(
             snippetLineLimitProvider: { inspectorSettings.snippetLineLimit },
             stopPhrasesProvider: { inspectorSettings.stopPhrases },
+            mailAccountProvider: { mailAccountSelectionSettings.selectedAccountName },
             activityCenter: activityCenter
         ))
     }

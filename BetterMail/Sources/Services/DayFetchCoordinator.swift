@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-internal protocol DayFetchCoordinating: Sendable {
+internal nonisolated protocol DayFetchCoordinating: Sendable {
     func fetchDay(containing date: Date,
                   scope: DayFetchScope,
                   mode: DayFetchMode,
@@ -226,17 +226,21 @@ internal actor DayFetchCoordinator: DayFetchCoordinating {
                 guard message.internalMailID == nil else { return nil }
                 return (MessageReference(message: message).normalizedMessageIdentity, message)
             }, uniquingKeysWith: { current, _ in current })
+            func cachedMessage(for reference: MessageReference) -> EmailMessage? {
+                cachedByStableIdentity[reference.stableIdentity]
+                    ?? cachedByMessageIdentity[reference.normalizedMessageIdentity]
+            }
             let referencesToFetch = initialManifest.filter { reference in
                 if mode == .full {
                     return true
                 }
-                let cached = cachedByStableIdentity[reference.stableIdentity]
-                    ?? cachedByMessageIdentity[reference.normalizedMessageIdentity]
-                return Self.needsPayloadRefresh(reference: reference, cached: cached)
+                return Self.needsPayloadRefresh(reference: reference,
+                                                cached: cachedMessage(for: reference))
             }
 
             var returnedIdentitySet = Set<String>()
             var stagedMessages: [EmailMessage] = []
+            var downloadedPayloadCount = 0
             var completedPayloads = 0
             for batch in referencesToFetch.chunked(into: requestBatchSize) {
                 try checkCancellation(generation: generation)
@@ -244,9 +248,14 @@ internal actor DayFetchCoordinator: DayFetchCoordinating {
                                                               profile: mode.profile,
                                                               snippetLineLimit: snippetLineLimit)
                 try checkCancellation(generation: generation)
-                stagedMessages.append(contentsOf: messages)
-                completedPayloads += messages.count
-                returnedIdentitySet.formUnion(messages.map { MessageReference(message: $0).stableIdentity })
+                let alignedPayload = Self.alignPayloadMessages(messages, with: batch)
+                if alignedPayload.fallbackCount > 0 {
+                    logger.info("Matched payloads by RFC Message-ID after Apple Mail ID drift. scope=\(scope.key, privacy: .private) count=\(alignedPayload.fallbackCount, privacy: .public)")
+                }
+                stagedMessages.append(contentsOf: alignedPayload.messages)
+                downloadedPayloadCount += alignedPayload.messages.count
+                completedPayloads += alignedPayload.messages.count
+                returnedIdentitySet.formUnion(alignedPayload.messages.map { MessageReference(message: $0).stableIdentity })
                 progressHandler(DayFetchProgress(dayInterval: dayInterval,
                                                  phase: .payloads,
                                                  completed: completedPayloads,
@@ -265,13 +274,36 @@ internal actor DayFetchCoordinator: DayFetchCoordinating {
             try checkCancellation(generation: generation)
             let verifiedIdentitySet = Set(verifiedManifest.map(\.stableIdentity))
             let verifiedSnapshot = Set(verifiedManifest)
-            guard initialIdentitySet == verifiedIdentitySet,
-                  initialSnapshot == verifiedSnapshot else {
-                logger.info("Day manifest changed during fetch. scope=\(scope.key, privacy: .private) attempt=\(attempt, privacy: .public) initial=\(initialIdentitySet.count, privacy: .public) verified=\(verifiedIdentitySet.count, privacy: .public)")
+            guard initialIdentitySet == verifiedIdentitySet else {
+                let addedCount = verifiedIdentitySet.subtracting(initialIdentitySet).count
+                let removedCount = initialIdentitySet.subtracting(verifiedIdentitySet).count
+                logger.info("Day manifest membership changed during fetch. scope=\(scope.key, privacy: .private) attempt=\(attempt, privacy: .public) initial=\(initialIdentitySet.count, privacy: .public) verified=\(verifiedIdentitySet.count, privacy: .public) added=\(addedCount, privacy: .public) removed=\(removedCount, privacy: .public)")
                 if attempt == 1 {
                     continue
                 }
                 throw DayFetchCoordinatorError.unstableManifest
+            }
+            if initialSnapshot != verifiedSnapshot {
+                logger.info("Day manifest metadata changed during fetch while membership remained stable. scope=\(scope.key, privacy: .private) attempt=\(attempt, privacy: .public) messages=\(verifiedIdentitySet.count, privacy: .public)")
+            }
+
+            var stagedIndexByStableIdentity = Dictionary(
+                stagedMessages.enumerated().map { index, message in
+                    (MessageReference(message: message).stableIdentity, index)
+                },
+                uniquingKeysWith: { current, _ in current }
+            )
+            for reference in verifiedManifest {
+                if let stagedIndex = stagedIndexByStableIdentity[reference.stableIdentity] {
+                    let stagedMessage = stagedMessages[stagedIndex]
+                    if stagedMessage.isUnread != reference.isUnread {
+                        stagedMessages[stagedIndex] = stagedMessage.assigning(isUnread: reference.isUnread)
+                    }
+                } else if let cached = cachedMessage(for: reference),
+                          cached.isUnread != reference.isUnread {
+                    stagedIndexByStableIdentity[reference.stableIdentity] = stagedMessages.count
+                    stagedMessages.append(cached.assigning(isUnread: reference.isUnread))
+                }
             }
 
             let requiredIdentitySet = Set(referencesToFetch.map(\.stableIdentity))
@@ -319,7 +351,7 @@ internal actor DayFetchCoordinator: DayFetchCoordinating {
                                   coveredThrough: coveredThrough,
                                   expectedCount: verifiedManifest.count,
                                   fetchedCount: verifiedManifest.count,
-                                  downloadedCount: stagedMessages.count,
+                                  downloadedCount: downloadedPayloadCount,
                                   absentCount: absentCount,
                                   coverage: coverage)
         }
@@ -357,6 +389,66 @@ internal actor DayFetchCoordinator: DayFetchCoordinating {
         return references.filter { seen.insert($0.stableIdentity).inserted }
     }
 
+    private static func alignPayloadMessages(_ messages: [EmailMessage],
+                                             with references: [MessageReference]) -> (messages: [EmailMessage], fallbackCount: Int) {
+        var aligned = messages
+        var unmatchedMessageIndices = Array(messages.indices)
+        var unmatchedReferences: [MessageReference] = []
+
+        for reference in references {
+            guard let indexPosition = unmatchedMessageIndices.firstIndex(where: {
+                MessageReference(message: messages[$0]).stableIdentity == reference.stableIdentity
+            }) else {
+                unmatchedReferences.append(reference)
+                continue
+            }
+            unmatchedMessageIndices.remove(at: indexPosition)
+        }
+
+        var fallbackCount = 0
+        var accountFallbackReferences: [MessageReference] = []
+        for reference in unmatchedReferences {
+            guard let indexPosition = unmatchedMessageIndices.firstIndex(where: {
+                MessageReference(message: messages[$0]).normalizedMessageIdentity
+                    == reference.normalizedMessageIdentity
+            }) else {
+                accountFallbackReferences.append(reference)
+                continue
+            }
+            let messageIndex = unmatchedMessageIndices.remove(at: indexPosition)
+            aligned[messageIndex] = messages[messageIndex].assigningSourceIdentity(
+                messageID: reference.messageID,
+                internalMailID: reference.internalMailID,
+                mailboxID: reference.mailbox,
+                accountName: reference.account
+            )
+            fallbackCount += 1
+        }
+
+        for reference in accountFallbackReferences {
+            guard let indexPosition = unmatchedMessageIndices.firstIndex(where: {
+                let returned = MessageReference(message: messages[$0])
+                return normalized(returned.account) == normalized(reference.account)
+                    && normalized(returned.messageID) == normalized(reference.messageID)
+            }) else {
+                continue
+            }
+            let messageIndex = unmatchedMessageIndices.remove(at: indexPosition)
+            aligned[messageIndex] = messages[messageIndex].assigningSourceIdentity(
+                messageID: reference.messageID,
+                internalMailID: reference.internalMailID,
+                mailboxID: reference.mailbox,
+                accountName: reference.account
+            )
+            fallbackCount += 1
+        }
+        return (aligned, fallbackCount)
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private static func needsPayloadRefresh(reference: MessageReference,
                                             cached: EmailMessage?) -> Bool {
         guard let cached else { return true }
@@ -365,7 +457,6 @@ internal actor DayFetchCoordinator: DayFetchCoordinating {
             || cached.accountName.caseInsensitiveCompare(reference.account) != .orderedSame
             || cached.subject != reference.subject
             || abs(cached.date.timeIntervalSince(reference.date)) >= 1
-            || cached.isUnread != reference.isUnread
     }
 
     private static func reference(_ reference: MessageReference,

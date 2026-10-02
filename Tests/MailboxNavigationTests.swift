@@ -643,6 +643,76 @@ final class MailboxNavigationTests: XCTestCase {
                         "Projects/Acme"
                        ))
     }
+
+    func test_mailAccountLaunchOverride_readsExactFollowingArgument() {
+        XCTAssertEqual(
+            BetterMailApp.mailAccountLaunchOverride(
+                arguments: ["BetterMail", "--mail-account", "  Isaac IBM  "]
+            ),
+            "Isaac IBM"
+        )
+        XCTAssertNil(BetterMailApp.mailAccountLaunchOverride(arguments: ["BetterMail"]))
+        XCTAssertNil(
+            BetterMailApp.mailAccountLaunchOverride(arguments: ["BetterMail", "--mail-account"])
+        )
+    }
+
+    @MainActor
+    func test_mailAccountSelectionSettings_persistsTrimmedAccountName() {
+        let suiteName = "MailAccountSelectionSettingsTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = MailAccountSelectionSettings(userDefaults: defaults)
+        settings.selectAccount(named: "  Work  ")
+
+        XCTAssertEqual(settings.selectedAccountName, "Work")
+        XCTAssertTrue(settings.matchesSelectedAccount("work"))
+        XCTAssertEqual(
+            MailAccountSelectionSettings(userDefaults: defaults).selectedAccountName,
+            "Work"
+        )
+    }
+
+    @MainActor
+    func test_applyMailboxHierarchy_selectedAccountFiltersAvailableHierarchyAndFetchScope() {
+        let suiteName = "MailboxNavigationTests-AccountScope-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let accountSettings = MailAccountSelectionSettings(userDefaults: defaults)
+        accountSettings.selectAccount(named: "Work")
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let viewModel = ThreadCanvasViewModel(
+            settings: AutoRefreshSettings(userDefaults: defaults),
+            mailAccountSelectionSettings: accountSettings,
+            inspectorSettings: InspectorViewSettings(userDefaults: defaults),
+            store: store,
+            performsInitialSourceRefresh: false
+        )
+        let accounts = [
+            MailboxAccount(name: "Work", folders: [
+                MailboxFolderNode(account: "Work",
+                                  path: "Inbox",
+                                  name: "Inbox",
+                                  parentPath: nil,
+                                  children: [])
+            ]),
+            MailboxAccount(name: "Personal", folders: [
+                MailboxFolderNode(account: "Personal",
+                                  path: "Inbox",
+                                  name: "Inbox",
+                                  parentPath: nil,
+                                  children: [])
+            ])
+        ]
+
+        viewModel.applyMailboxHierarchyForTesting(accounts)
+
+        XCTAssertEqual(viewModel.availableMailAccountNames, ["Work", "Personal"])
+        XCTAssertEqual(viewModel.mailboxAccounts.map(\.name), ["Work"])
+        XCTAssertEqual(viewModel.activeDayFetchScope.account, "Work")
+        XCTAssertEqual(viewModel.activeDayFetchScope.mailbox, "inbox")
+    }
 }
 
 private extension MailboxNavigationTests {

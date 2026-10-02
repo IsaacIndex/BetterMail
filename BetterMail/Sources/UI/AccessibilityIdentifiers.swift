@@ -4,6 +4,7 @@ import Foundation
 internal enum AccessibilityID {
     internal static let contentRoot = "bettermail.content-root"
     internal static let sidebar = "bettermail.sidebar"
+    internal static let mailAccountSelectionMenu = "bettermail.sidebar.mail-account-selection"
     internal static let detailContainer = "bettermail.detail-container"
     internal static let processingActivityShelf = "bettermail.processing-activity.shelf"
 

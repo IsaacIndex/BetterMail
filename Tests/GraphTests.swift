@@ -5,6 +5,71 @@ import XCTest
 @testable import BetterMail
 
 final class GraphMappingTests: XCTestCase {
+    func test_make_withoutVisibleFolderMembers_omitsGroupsAndConnectors() {
+        let folders = [
+            ThreadFolder(id: "empty", title: "Empty", color: .defaultNewFolder,
+                         threadIDs: [], parentID: nil),
+            ThreadFolder(id: "outside", title: "Outside scope", color: .defaultNewFolder,
+                         threadIDs: ["outside-root"], parentID: nil),
+            ThreadFolder(id: "archived", title: "Archived", color: .defaultNewFolder,
+                         threadIDs: ["archived-root"], parentID: nil)
+        ]
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "archived-root", messageCount: 1)],
+            archivedThreadIDs: [GraphData.threadNodeID(for: "archived-root")],
+            folders: folders
+        )
+
+        XCTAssertTrue(graph.groupings.isEmpty)
+        XCTAssertTrue(graph.edges.isEmpty)
+        XCTAssertTrue(graph.remainingBranches.isEmpty)
+        XCTAssertEqual(graph.allNodeIDs, [graph.center.id])
+        XCTAssertEqual(graph.totalPrimaryBranchCount, 0)
+    }
+
+    func test_make_withMixedFolderMembers_keepsSingleEmailAndOnlyVisibleMembership() throws {
+        let folder = ThreadFolder(id: "mixed", title: "Mixed", color: .defaultNewFolder,
+                                  threadIDs: ["visible", "archived", "outside"], parentID: nil)
+        let graph = GraphData.make(
+            roots: [makeThread(rootID: "visible", messageCount: 1),
+                    makeThread(rootID: "archived", messageCount: 1)],
+            archivedThreadIDs: [GraphData.threadNodeID(for: "archived")],
+            folders: [folder]
+        )
+        let group = try XCTUnwrap(graph.groupings.first)
+
+        XCTAssertEqual(group.threadIDs, [GraphData.threadNodeID(for: "visible")])
+        XCTAssertEqual(group.rawThreadIDs, ["visible"])
+        XCTAssertTrue(graph.messages.isEmpty, "The thread node itself represents the single email")
+        XCTAssertEqual(graph.visibleEmailNodeCount, 1)
+        XCTAssertTrue(graph.edges.contains { $0.sourceID == group.id && $0.targetID == group.threadIDs[0] })
+        XCTAssertEqual(folder.threadIDs, ["visible", "archived", "outside"])
+    }
+
+    func test_make_withEmptyFoldersBeforePopulatedBranches_paginatesOnlyPopulatedBranches() {
+        let folders = [
+            ThreadFolder(id: "a-empty", title: "Empty", color: .defaultNewFolder,
+                         threadIDs: [], parentID: nil),
+            ThreadFolder(id: "b-outside", title: "Outside", color: .defaultNewFolder,
+                         threadIDs: ["outside"], parentID: nil),
+            ThreadFolder(id: "c-populated", title: "Populated", color: .defaultNewFolder,
+                         threadIDs: ["visible"], parentID: nil)
+        ]
+        let roots = [makeThread(rootID: "visible", messageCount: 1),
+                     makeThread(rootID: "ungrouped", messageCount: 1)]
+        let firstPage = GraphData.make(roots: roots, folders: folders, branchLimit: 1)
+        XCTAssertEqual(firstPage.groupings.map(\.sourceFolderID), ["c-populated"])
+        XCTAssertEqual(firstPage.threads.map(\.rawThreadID), ["visible"])
+        XCTAssertEqual(firstPage.visiblePrimaryBranchCount, 1)
+        XCTAssertEqual(firstPage.totalPrimaryBranchCount, 2)
+        XCTAssertEqual(firstPage.remainingBranches.count, 1)
+
+        let expanded = GraphData.make(roots: roots, folders: folders, branchLimit: 2)
+        XCTAssertEqual(expanded.threads.count, 2)
+        XCTAssertTrue(expanded.remainingBranches.isEmpty)
+        XCTAssertEqual(expanded.totalPrimaryBranchCount, 2)
+    }
+
     func test_mapping_withFixtureInbox_preservesEdgeAndInboundInvariants() {
         let roots = (0..<9).map { index in
             makeThread(rootID: "root-\(index)", messageCount: 3 + index)
@@ -3965,7 +4030,7 @@ final class ObsidianGraphSceneTests: XCTestCase {
         XCTAssertNil(scene.hitTestNodeID(at: labelPoint))
     }
 
-    func test_labelNode_withLongTitle_preservesFullText() throws {
+    func test_labelNode_withLongTitle_boundsVisibleTextAndPreservesAccessibleTitle() throws {
         let title = Array(repeating: "Confirm the booking flow owner and rollout sequence", count: 5)
             .joined(separator: " ")
         let node = ObsidianGraphSceneNode(
@@ -3981,9 +4046,12 @@ final class ObsidianGraphSceneTests: XCTestCase {
         )
         let label = try XCTUnwrap(node.children.compactMap { $0 as? SKLabelNode }.first)
 
-        XCTAssertEqual(label.text, title)
+        XCTAssertTrue(try XCTUnwrap(label.text).hasSuffix("…"))
+        XCTAssertLessThanOrEqual(label.frame.width, 240)
         XCTAssertGreaterThan(label.frame.width, 214)
         XCTAssertFalse(label.text?.contains("\n") == true)
+        node.configureExpansionAccessibility(label: title, onPress: {})
+        XCTAssertEqual(node.accessibilityLabel, title)
     }
 
     func test_actionItemContextMenu_whenThreadNodeIsActionItem_selectsAndTogglesNode() throws {
@@ -4299,12 +4367,13 @@ final class ObsidianGraphSceneTests: XCTestCase {
 
         scene.applyHoverCandidate(GraphData.threadNodeID(for: "first"),
                                   at: CGPoint(x: 400, y: 300))
+        scene.update(0.25)
         configure(scene, data: secondGraph)
 
         XCTAssertEqual(hoverEvents, [true, false])
     }
 
-    func test_hoverCallback_convertsWorldPointIntoOverlayCoordinates() {
+    func test_hoverCallback_afterDwell_anchorsToNodeInOverlayCoordinates() {
         let graph = GraphData.make(roots: [makeThread(rootID: "root", messageCount: 1)],
                                    now: Date(timeIntervalSince1970: 10_000))
         let scene = ObsidianGraphScene(size: CGSize(width: 800, height: 600))
@@ -4318,8 +4387,13 @@ final class ObsidianGraphSceneTests: XCTestCase {
             overlayPoint = point
         }
 
+        scene.children.compactMap { $0 as? ObsidianGraphSceneNode }
+            .first { $0.graphID == GraphData.threadNodeID(for: "root") }?
+            .position = CGPoint(x: 450, y: 290)
         scene.applyHoverCandidate(GraphData.threadNodeID(for: "root"),
                                   at: CGPoint(x: 450, y: 290))
+        XCTAssertNil(overlayPoint)
+        scene.update(0.25)
 
         assertPointsEqual(overlayPoint, CGPoint(x: 420, y: 320))
     }

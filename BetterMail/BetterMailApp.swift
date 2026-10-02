@@ -11,6 +11,7 @@ import SwiftUI
 @main
 internal struct BetterMailApp: App {
     @StateObject private var settings: AutoRefreshSettings
+    @StateObject private var mailAccountSelectionSettings: MailAccountSelectionSettings
     @StateObject private var inspectorSettings: InspectorViewSettings
     @StateObject private var displaySettings: ThreadCanvasDisplaySettings
     @StateObject private var pinnedFolderSettings: PinnedFolderSettings
@@ -64,6 +65,15 @@ internal struct BetterMailApp: App {
         defaults = .standard
 #endif
         _settings = StateObject(wrappedValue: AutoRefreshSettings(userDefaults: defaults))
+        let mailAccountSelectionSettings = MailAccountSelectionSettings(userDefaults: defaults)
+        if let launchAccount = Self.mailAccountLaunchOverride(
+            arguments: ProcessInfo.processInfo.arguments
+        ) {
+            mailAccountSelectionSettings.selectAccount(named: launchAccount)
+        }
+        _mailAccountSelectionSettings = StateObject(
+            wrappedValue: mailAccountSelectionSettings
+        )
         _inspectorSettings = StateObject(wrappedValue: InspectorViewSettings(userDefaults: defaults))
         _displaySettings = StateObject(wrappedValue: ThreadCanvasDisplaySettings(userDefaults: defaults))
         _pinnedFolderSettings = StateObject(wrappedValue: PinnedFolderSettings(userDefaults: defaults))
@@ -146,6 +156,7 @@ internal struct BetterMailApp: App {
         .menuBarExtraStyle(.window)
         Settings {
             AutoRefreshSettingsView(settings: settings,
+                                    mailAccountSelectionSettings: mailAccountSelectionSettings,
                                     inspectorSettings: inspectorSettings,
                                     displaySettings: displaySettings,
                                     appearanceSettings: appearanceSettings,
@@ -179,6 +190,14 @@ internal struct BetterMailApp: App {
 #endif
     }
 
+    internal nonisolated static func mailAccountLaunchOverride(arguments: [String]) -> String? {
+        guard let optionIndex = arguments.firstIndex(of: "--mail-account"),
+              arguments.indices.contains(optionIndex + 1) else {
+            return nil
+        }
+        return MailAccountSelectionSettings.normalizedAccountName(arguments[optionIndex + 1])
+    }
+
 #if DEBUG
     internal nonisolated static func isXCTestHost(environment: [String: String]) -> Bool {
         environment["XCTestConfigurationFilePath"] != nil
@@ -188,6 +207,7 @@ internal struct BetterMailApp: App {
 
     private var productionContent: some View {
         ContentView(settings: settings,
+                    mailAccountSelectionSettings: mailAccountSelectionSettings,
                     inspectorSettings: inspectorSettings,
                     displaySettings: displaySettings,
                     pinnedFolderSettings: pinnedFolderSettings,

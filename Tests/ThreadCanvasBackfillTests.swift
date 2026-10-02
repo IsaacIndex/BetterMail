@@ -387,6 +387,79 @@ final class ThreadCanvasBackfillTests: XCTestCase {
         XCTAssertTrue(viewModel.status.localizedCaseInsensitiveContains("timed out"))
     }
 
+    func test_DayFetchSelection_InclusiveRangeUsesCalendarDayBoundariesAcrossDST() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 7)))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 9)))
+        let scope = DayFetchScope(mailbox: "Inbox", account: "Work", displayName: "Work / Inbox")
+
+        let selection = try XCTUnwrap(DayFetchSelection(startDate: start,
+                                                        endDate: end,
+                                                        coverages: [:],
+                                                        scope: scope,
+                                                        calendar: calendar))
+
+        XCTAssertEqual(selection.dayCount, 3)
+        XCTAssertEqual(selection.dayStarts, [
+            start,
+            try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: start)),
+            end
+        ])
+        XCTAssertEqual(selection.range.start, start)
+        XCTAssertEqual(selection.range.end, try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: end)))
+        XCTAssertNotEqual(selection.range.duration, 3 * 86_400,
+                          "A DST-spanning selection must use calendar boundaries, not fixed seconds.")
+    }
+
+    func test_FetchDays_UsesOneFullRangeRequestAndClearsActiveState() async throws {
+        let defaults = UserDefaults(suiteName: "ThreadCanvasRangeFetchTests-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let settings = AutoRefreshSettings()
+        let inspectorSettings = InspectorViewSettings()
+        let coordinator = StubDayFetchCoordinator(outcomes: [.success, .success, .success])
+        let viewModel = ThreadCanvasViewModel(settings: settings,
+                                              inspectorSettings: inspectorSettings,
+                                              store: store,
+                                              dayFetchCoordinator: coordinator,
+                                              performsInitialSourceRefresh: false)
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: try XCTUnwrap(calendar.date(byAdding: .day,
+                                                                         value: -3,
+                                                                         to: Date())))
+        let end = calendar.startOfDay(for: Date())
+        let range = DateInterval(start: start, end: end)
+        let scope = DayFetchScope(mailbox: "Projects/Acme",
+                                  account: "Work",
+                                  displayName: "Work / Projects/Acme")
+
+        viewModel.fetchLimit = 9
+        viewModel.fetchDays(in: range, scope: scope)
+        XCTAssertNotNil(viewModel.activeDayFetchDate)
+        try await waitForDayFetchCompletion(viewModel)
+
+        let requests = await coordinator.rangeRequestsSnapshot()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(request.range, range)
+        XCTAssertEqual(request.scope, scope)
+        XCTAssertEqual(request.limit, DayFetchCoordinator.maximumRequestBatchSize)
+        XCTAssertEqual(request.profile, .full)
+        XCTAssertNil(viewModel.activeDayFetchDate)
+        XCTAssertFalse(viewModel.status.localizedCaseInsensitiveContains("failed"))
+    }
+
+    private func waitForDayFetchCompletion(_ viewModel: ThreadCanvasViewModel,
+                                           timeoutNanoseconds: UInt64 = 4_000_000_000) async throws {
+        let stepNanoseconds: UInt64 = 50_000_000
+        var elapsed: UInt64 = 0
+        while viewModel.activeDayFetchDate != nil && elapsed < timeoutNanoseconds {
+            try await Task.sleep(nanoseconds: stepNanoseconds)
+            elapsed += stepNanoseconds
+        }
+        XCTAssertNil(viewModel.activeDayFetchDate)
+    }
+
     private func waitForRefreshCompletion(_ viewModel: ThreadCanvasViewModel,
                                           timeoutNanoseconds: UInt64 = 4_000_000_000) async throws {
         let stepNanoseconds: UInt64 = 100_000_000
@@ -520,9 +593,17 @@ private struct StubRefreshRequest: Equatable {
     let profile: MailFetchProfile
 }
 
+private struct StubRangeFetchRequest: Equatable {
+    let range: DateInterval
+    let scope: DayFetchScope
+    let limit: Int
+    let profile: MailFetchProfile
+}
+
 private actor StubDayFetchCoordinator: DayFetchCoordinating {
     private var refreshOutcomes: [StubRefreshOutcome]
     private(set) var refreshRequests: [StubRefreshRequest] = []
+    private(set) var rangeRequests: [StubRangeFetchRequest] = []
 
     init(outcomes: [StubRefreshOutcome]) {
         self.refreshOutcomes = outcomes
@@ -590,18 +671,34 @@ private actor StubDayFetchCoordinator: DayFetchCoordinating {
                     snippetLineLimit: Int,
                     referenceDate: Date,
                     progressHandler: @Sendable (DayFetchProgress) -> Void) async throws -> [DayFetchResult] {
-        [try await fetchDay(containing: range.start,
-                            scope: scope,
-                            mode: mode,
-                            requestBatchSize: requestBatchSize,
-                            snippetLineLimit: snippetLineLimit,
-                            referenceDate: referenceDate,
-                            progressHandler: progressHandler)]
+        rangeRequests.append(StubRangeFetchRequest(range: range,
+                                                   scope: scope,
+                                                   limit: requestBatchSize,
+                                                   profile: mode.profile))
+        let calendar = Calendar.current
+        var day = calendar.startOfDay(for: range.start)
+        var results: [DayFetchResult] = []
+        while day < range.end {
+            results.append(try await fetchDay(containing: day,
+                                              scope: scope,
+                                              mode: mode,
+                                              requestBatchSize: requestBatchSize,
+                                              snippetLineLimit: snippetLineLimit,
+                                              referenceDate: referenceDate,
+                                              progressHandler: progressHandler))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day), next > day else { break }
+            day = next
+        }
+        return results
     }
 
     func cancelCurrentFetch() async {}
 
     func requestsSnapshot() -> [StubRefreshRequest] {
         refreshRequests
+    }
+
+    func rangeRequestsSnapshot() -> [StubRangeFetchRequest] {
+        rangeRequests
     }
 }

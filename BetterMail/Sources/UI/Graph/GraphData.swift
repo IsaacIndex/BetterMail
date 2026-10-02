@@ -577,10 +577,8 @@ internal struct GraphData: Codable, Hashable {
 
         var primaryBranches: [GraphPrimaryBranch] = []
         var primaryBranchIndexByID: [String: Int] = [:]
-        // Confirmed Groups are organization targets even before they contain a
-        // conversation. Keeping empty folders in the primary projection makes
-        // the first drag possible without manufacturing placeholder mail and
-        // preserves nested Group depth from the start.
+        // Preserve saved-folder ordering while collecting the current scope's
+        // conversations. Empty branches are removed before applying pagination.
         for (folderIndex, folder) in folders.sorted(by: { $0.id < $1.id }).enumerated() {
             let branchID = "folder:\(folder.id)"
             primaryBranchIndexByID[branchID] = primaryBranches.count
@@ -601,6 +599,7 @@ internal struct GraphData: Codable, Hashable {
                                                           candidates: [candidate]))
             }
         }
+        primaryBranches.removeAll { $0.candidates.isEmpty }
         let visibleLimit = branchLimit.map { max(0, $0) } ?? primaryBranches.count
         let pendingAutomationProposals = automationProposals.filter { $0.status == .pendingReview }
         let automationRawThreadIDs = Set(pendingAutomationProposals.flatMap { proposal in
@@ -786,6 +785,7 @@ internal struct GraphData: Codable, Hashable {
                 continue
             }
             let visibleChildren = visibleCandidatesByPrimaryBranchID[branch.id] ?? []
+            guard !visibleChildren.isEmpty else { continue }
             let grouping = GraphGrouping(id: branch.id,
                                          title: folder.title,
                                          kind: .folder,

@@ -234,4 +234,96 @@ final class MessageStoreBoundaryTests: XCTestCase {
         XCTAssertEqual(results.map(\.messageID), ["msg-expected"])
     }
 
+    func testPruneCachedMail_keepsOnlySelectedAccountRows() async throws {
+        let suiteName = "MessageStoreBoundaryTests-Prune-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let now = Date()
+        let work = makeMessage(id: "work", account: "Work", date: now)
+        let personal = makeMessage(id: "personal", account: "Personal", date: now)
+        let legacy = makeMessage(id: "legacy", account: "", date: now)
+        try await store.upsert(messages: [work, personal, legacy])
+        await store.addActionItem(for: work, folderID: nil, tags: [])
+        await store.addActionItem(for: personal, folderID: nil, tags: [])
+        await store.addActionItem(for: legacy, folderID: nil, tags: [])
+
+        let calendar = Calendar(identifier: .gregorian)
+        let dayInterval = calendar.dateInterval(of: .day, for: now)!
+        try await store.beginDayFetchCoverage(
+            scope: DayFetchScope(mailbox: "inbox", account: "Work", displayName: "Work / Inbox"),
+            dayInterval: dayInterval,
+            attemptedAt: now
+        )
+        try await store.beginDayFetchCoverage(
+            scope: DayFetchScope(mailbox: "inbox", account: "Personal", displayName: "Personal / Inbox"),
+            dayInterval: dayInterval,
+            attemptedAt: now
+        )
+        try await store.beginDayFetchCoverage(
+            scope: DayFetchScope(mailbox: "inbox",
+                                 account: nil,
+                                 displayName: "All Inboxes",
+                                 includesAllInboxAliases: true),
+            dayInterval: dayInterval,
+            attemptedAt: now
+        )
+
+        let result = try await store.pruneCachedMail(keepingAccount: "work")
+
+        XCTAssertEqual(result.removedMessageCount, 2)
+        XCTAssertEqual(result.removedActionItemCount, 2)
+        XCTAssertEqual(result.removedCoverageCount, 2)
+        let retainedMessages = try await store.fetchMessages()
+        let retainedActionItems = await store.fetchActionItems()
+        XCTAssertEqual(retainedMessages.map(\.accountName), ["Work"])
+        XCTAssertEqual(retainedActionItems.map(\.accountName), ["Work"])
+        let workCoverage = try await store.fetchDayFetchCoverages(
+            scope: DayFetchScope(mailbox: "inbox", account: "Work", displayName: "Work / Inbox")
+        )
+        let personalCoverage = try await store.fetchDayFetchCoverages(
+            scope: DayFetchScope(mailbox: "inbox", account: "Personal", displayName: "Personal / Inbox")
+        )
+        XCTAssertEqual(workCoverage.count, 1)
+        XCTAssertTrue(personalCoverage.isEmpty)
+    }
+
+    func testFetchMessagesForThreading_selectedAccountConstrainsPinnedThreadIDs() async throws {
+        let defaults = UserDefaults(suiteName: "MessageStoreBoundaryTests-ThreadScope-\(UUID().uuidString)")!
+        let store = MessageStore(userDefaults: defaults, storeType: NSInMemoryStoreType)
+        let oldDate = Date(timeIntervalSinceNow: -86_400)
+        let work = makeMessage(id: "work-pinned", account: "Work", date: oldDate, threadID: "shared")
+        let personal = makeMessage(id: "personal-pinned",
+                                   account: "Personal",
+                                   date: oldDate,
+                                   threadID: "shared")
+        try await store.upsert(messages: [work, personal])
+
+        let messages = try await store.fetchMessagesForThreading(
+            since: Date(),
+            account: "Work",
+            includeThreadIDs: ["shared"]
+        )
+
+        XCTAssertEqual(messages.map(\.messageID), ["work-pinned"])
+    }
+
+    private func makeMessage(id: String,
+                             account: String,
+                             date: Date,
+                             threadID: String? = nil) -> EmailMessage {
+        EmailMessage(messageID: id,
+                     mailboxID: "Inbox",
+                     accountName: account,
+                     subject: "Subject \(id)",
+                     from: "sender@example.com",
+                     to: "me@example.com",
+                     date: date,
+                     snippet: "",
+                     isUnread: false,
+                     inReplyTo: nil,
+                     references: [],
+                     threadID: threadID ?? "thread-\(id)")
+    }
+
 }

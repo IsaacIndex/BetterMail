@@ -2,6 +2,7 @@ import SwiftUI
 
 internal struct ContentView: View {
     @ObservedObject internal var settings: AutoRefreshSettings
+    @ObservedObject internal var mailAccountSelectionSettings: MailAccountSelectionSettings
     @ObservedObject internal var inspectorSettings: InspectorViewSettings
     @ObservedObject internal var displaySettings: ThreadCanvasDisplaySettings
     @ObservedObject internal var pinnedFolderSettings: PinnedFolderSettings
@@ -12,6 +13,7 @@ internal struct ContentView: View {
     private let onRenderedOrganizerReceipt: OrganizerRenderedGraphReceiptHandler
 
     internal init(settings: AutoRefreshSettings,
+                  mailAccountSelectionSettings: MailAccountSelectionSettings = MailAccountSelectionSettings(),
                   inspectorSettings: InspectorViewSettings,
                   displaySettings: ThreadCanvasDisplaySettings,
                   pinnedFolderSettings: PinnedFolderSettings,
@@ -21,6 +23,7 @@ internal struct ContentView: View {
                   graphViewModel: GraphCanvasViewModel? = nil,
                   onRenderedOrganizerReceipt: @escaping OrganizerRenderedGraphReceiptHandler = { _ in }) {
         self.settings = settings
+        self.mailAccountSelectionSettings = mailAccountSelectionSettings
         self.inspectorSettings = inspectorSettings
         self.displaySettings = displaySettings
         self.pinnedFolderSettings = pinnedFolderSettings
@@ -30,6 +33,7 @@ internal struct ContentView: View {
         self.onRenderedOrganizerReceipt = onRenderedOrganizerReceipt
         _viewModel = StateObject(wrappedValue: viewModel ?? ThreadCanvasViewModel(
             settings: settings,
+            mailAccountSelectionSettings: mailAccountSelectionSettings,
             inspectorSettings: inspectorSettings,
             pinnedFolderSettings: pinnedFolderSettings,
             activityCenter: activityCenter

@@ -271,7 +271,11 @@ internal nonisolated struct OrganizerRenderedGraphVisibilityTracker: Sendable {
 /// Distances are measured in screen points so drag/lasso thresholds remain
 /// stable at every zoom level.
 internal nonisolated struct OrganizerPointerStateMachine: Equatable, Sendable {
-    internal static let defaultMovementThreshold: CGFloat = 5
+    // Three screen points still protects click selection while making the mark
+    // feel grabbed as soon as the pointer commits to a drag. The previous
+    // five-point gate was perceptible on small graph marks and high-refresh
+    // displays.
+    internal static let defaultMovementThreshold: CGFloat = 3
 
     private enum Phase: Equatable, Sendable {
         case idle
@@ -353,6 +357,14 @@ internal nonisolated struct OrganizerPointerStateMachine: Equatable, Sendable {
             phase = .lasso(origin: origin, previous: location, additive: additive)
             return .lasso(Self.normalizedRect(from: origin, to: location))
         }
+    }
+
+    /// Camera panning changes the world point under the same physical pointer.
+    /// Rebase after applying each camera delta so that change is not fed back
+    /// into the next pointer sample as reverse movement.
+    internal mutating func rebasePan(at location: CGPoint) {
+        guard case .panning(let origin, _) = phase else { return }
+        phase = .panning(origin: origin, previous: location)
     }
 
     internal mutating func end(at location: CGPoint) -> OrganizerPointerCompletion {
